@@ -3,15 +3,30 @@ import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { validate, validationSchemas } from '../middleware/validation'
+import { prisma as sharedPrisma, hasDb } from '../services/prisma'
+import { welcomeEmail, verifyEmail } from '../services/email'
+import { createToken } from '../services/tokens'
 
 const router = express.Router()
-const prisma = new PrismaClient()
+
+// Only construct Prisma when a real database is configured; otherwise the app
+// runs on the in-memory store and auth endpoints return 503. Constructing it
+// unconditionally crashes boot when no DB (or engine) is present.
+let prisma: PrismaClient | null = null
+try {
+  if (process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('postgresql://user:password')) {
+    prisma = new PrismaClient()
+  }
+} catch {
+  prisma = null
+}
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production'
 
 // Register
 router.post('/register', validate(validationSchemas.register), async (req, res) => {
   try {
+    if (!prisma) return res.status(503).json({ error: 'Account registration requires a database (set DATABASE_URL).' })
     const { email, password, name } = req.body
 
     if (!email || !password) {
@@ -28,15 +43,29 @@ router.post('/register', validate(validationSchemas.register), async (req, res) 
 
     const hashedPassword = await bcrypt.hash(password, 10)
 
+    // Bootstrap: the very first account (or one matching ADMIN_EMAIL) is an admin.
+    const userCount = await prisma.user.count()
+    const adminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase()
+    const isAdmin = userCount === 0 || (!!adminEmail && email.toLowerCase() === adminEmail)
+
     const user = await prisma.user.create({
       data: {
         email,
         password: hashedPassword,
         name: name || email.split('@')[0],
+        role: isAdmin ? 'admin' : 'user',
       },
     })
 
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' })
+
+    // Fire-and-forget welcome + email verification (no-op without SMTP).
+    welcomeEmail(user.email, user.name).catch(() => {})
+    createToken(user.id, 'verify')
+      .then((t) => {
+        if (t) verifyEmail(user.email, user.name, `${(process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '')}/verify?token=${t}`)
+      })
+      .catch(() => {})
 
     res.json({
       token,
@@ -44,6 +73,7 @@ router.post('/register', validate(validationSchemas.register), async (req, res) 
         id: user.id,
         email: user.email,
         name: user.name,
+        role: user.role,
       },
     })
   } catch (error) {
@@ -55,6 +85,7 @@ router.post('/register', validate(validationSchemas.register), async (req, res) 
 // Login
 router.post('/login', validate(validationSchemas.login), async (req, res) => {
   try {
+    if (!prisma) return res.status(503).json({ error: 'Login requires a database (set DATABASE_URL).' })
     const { email, password } = req.body
 
     if (!email || !password) {
@@ -83,6 +114,7 @@ router.post('/login', validate(validationSchemas.login), async (req, res) => {
         id: user.id,
         email: user.email,
         name: user.name,
+        role: user.role,
       },
     })
   } catch (error) {
@@ -117,6 +149,27 @@ export const authenticateToken = (req: express.Request, res: express.Response, n
     ;(req as any).userId = decoded.userId
     next()
   })
+}
+
+/**
+ * Gate a route to admins. Must run after authenticateToken. Without a DB, allows
+ * access only in dev mode (so the local build stays usable).
+ */
+export const requireAdmin = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const userId = (req as any).userId
+  if (!hasDb || !sharedPrisma) {
+    const isDevMode = process.env.NODE_ENV === 'development' || process.env.ENABLE_DEV_MODE === 'true'
+    if (isDevMode) return next()
+    return res.status(503).json({ error: 'Admin portal requires a database.' })
+  }
+  try {
+    const user = await sharedPrisma.user.findUnique({ where: { id: userId } })
+    if (!user || user.role !== 'admin') return res.status(403).json({ error: 'Admin access required.' })
+    ;(req as any).userRole = user.role
+    next()
+  } catch (e: any) {
+    res.status(500).json({ error: 'Authorization check failed' })
+  }
 }
 
 export default router

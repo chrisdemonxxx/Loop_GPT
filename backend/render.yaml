@@ -1,29 +1,63 @@
+# Render blueprint for the Loop GPT backend + Postgres.
+# Deploy: push to GitHub, then in Render → "New +" → "Blueprint" and select this repo.
+# Secrets marked `sync: false` must be filled in the Render dashboard after creation.
 services:
   - type: web
     name: loop-gpt-backend
     env: node
+    rootDir: backend
     plan: starter
+    healthCheckPath: /health
     buildCommand: npm install && npm run build && npx prisma generate
-    startCommand: npm start
+    # Sync the DB schema (no migrations committed) then start.
+    startCommand: npx prisma db push --skip-generate --accept-data-loss && npm start
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PORT
+        value: 3001
       - key: DATABASE_URL
         fromDatabase:
           name: loop-gpt-db
           property: connectionString
       - key: JWT_SECRET
         generateValue: true
+      # ---- Model backend (fill these in the dashboard) ----
+      - key: HF_ENDPOINT_URL   # your dedicated endpoint URL, or https://router.huggingface.co
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+      - key: HF_MODEL
+        value: tgi
+      - key: DEFAULT_PROVIDER
+        value: huggingface
+      - key: HF_IMAGE_MODEL
+        value: black-forest-labs/FLUX.1-schnell
+      - key: HF_IMAGE_PROVIDER
+        value: nscale
+      # ---- Guardrails (keep on in production) ----
+      - key: GUARDRAILS_ENABLED
+        value: "true"
+      - key: REVEAL_MODEL
+        value: "false"
+      # Dev auth bypass MUST stay off in production.
+      - key: ENABLE_DEV_MODE
+        value: "false"
+      # ---- Optional ----
+      - key: TAVILY_API_KEY
+        sync: false
       - key: OPENAI_API_KEY
         sync: false
       - key: FRONTEND_URL
         value: https://your-frontend.vercel.app
-      - key: PORT
-        value: 3001
+    # Persist runtime config (MCP servers, connectors, custom tools, user skills).
+    disk:
+      name: loop-gpt-disk
+      mountPath: /opt/render/project/src/backend/data
+      sizeGB: 1
 
 databases:
   - name: loop-gpt-db
     plan: free
     databaseName: loopgpt
     user: loopgpt
-

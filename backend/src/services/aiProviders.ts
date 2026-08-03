@@ -5,7 +5,22 @@
 import OpenAI from 'openai'
 import axios from 'axios'
 
-export type AIProvider = 'openai' | 'anthropic' | 'local' | 'groq' | 'together' | 'ollama' | 'xai' | 'perplexity' | 'nvidia'
+export type AIProvider = 'openai' | 'anthropic' | 'local' | 'groq' | 'together' | 'ollama' | 'xai' | 'perplexity' | 'nvidia' | 'huggingface'
+
+/**
+ * Base URL for the Hugging Face Inference Endpoint (llama.cpp / TGI, OpenAI-compatible).
+ * The endpoint exposes /v1/chat/completions and is authenticated with an HF token.
+ */
+export function getHFBaseUrl(baseUrl?: string): string {
+  const raw = baseUrl || process.env.HF_ENDPOINT_URL || ''
+  const trimmed = raw.replace(/\/+$/, '')
+  // Accept the endpoint root or a URL already ending in /v1
+  return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`
+}
+
+export function getHFModel(model?: string): string {
+  return model || process.env.HF_MODEL || 'tgi'
+}
 
 export interface ProviderConfig {
   name: string
@@ -272,6 +287,51 @@ export class AIProviderService {
   }
 
   /**
+   * Get chat completion from a Hugging Face Inference Endpoint.
+   *
+   * The endpoint runs an OpenAI-compatible server (llama.cpp / TGI) so we reuse
+   * the OpenAI SDK, only swapping the baseURL and using the HF token as the key.
+   * Endpoints with scale-to-zero can take 30-120s to cold-start, so we use a
+   * long timeout and retry once on gateway/timeout errors.
+   */
+  async getHFEndpointChatCompletion(
+    messages: Array<{ role: string; content: any }>,
+    model?: string,
+    apiKey?: string,
+    baseUrl?: string
+  ): Promise<string> {
+    const client = new OpenAI({
+      apiKey: apiKey || process.env.HF_TOKEN || 'sk-no-key',
+      baseURL: getHFBaseUrl(baseUrl),
+      timeout: Number(process.env.HF_REQUEST_TIMEOUT_MS) || 300_000,
+      maxRetries: 0,
+    })
+
+    const doCall = async () => {
+      const completion = await client.chat.completions.create({
+        model: getHFModel(model),
+        messages: messages as any,
+        temperature: Number(process.env.AGENT_TEMPERATURE) || 0.7,
+        max_tokens: Number(process.env.HF_MAX_TOKENS) || 8192,
+      })
+      return completion.choices[0]?.message?.content || ''
+    }
+
+    try {
+      return await doCall()
+    } catch (error: any) {
+      // Cold-start / gateway hiccup — retry once after a short wait.
+      const status = error?.status || error?.response?.status
+      const retriable = status === 502 || status === 503 || status === 504 || error?.code === 'ETIMEDOUT' || error?.code === 'ECONNRESET'
+      if (retriable) {
+        await new Promise((r) => setTimeout(r, 3000))
+        return doCall()
+      }
+      throw error
+    }
+  }
+
+  /**
    * Get chat completion from any provider
    */
   async getChatCompletion(
@@ -305,6 +365,8 @@ export class AIProviderService {
         return this.getPerplexityChatCompletion(messages, finalModel, finalApiKey)
       case 'nvidia':
         return this.getNvidiaChatCompletion(messages, finalModel, finalApiKey, finalBaseUrl)
+      case 'huggingface':
+        return this.getHFEndpointChatCompletion(messages, finalModel, finalApiKey, finalBaseUrl)
       default:
         throw new Error(`Unsupported provider: ${provider}`)
     }
@@ -324,6 +386,7 @@ export class AIProviderService {
       xai: 'grok-beta',
       perplexity: 'llama-3.1-sonar-large-32k-online',
       nvidia: 'meta/llama-3.1-8b-instruct',
+      huggingface: process.env.HF_MODEL || 'tgi',
     }
     return defaults[provider] || 'gpt-3.5-turbo'
   }
@@ -378,6 +441,8 @@ export class AIProviderService {
       case 'local':
         // For local APIs, try to fetch but fallback to defaults
         return this.fetchLocalModels(finalBaseUrl)
+      case 'huggingface':
+        return this.getFallbackModels('huggingface')
       default:
         return this.getFallbackModels(provider)
     }
@@ -608,6 +673,7 @@ export class AIProviderService {
         'mistralai/mistral-7b-instruct',
         'mistralai/mixtral-8x7b-instruct-v0.1',
       ],
+      huggingface: [process.env.HF_MODEL || 'tgi'],
     }
     return models[provider] || []
   }

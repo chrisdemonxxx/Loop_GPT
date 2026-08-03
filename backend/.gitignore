@@ -5,3 +5,8 @@ dist/
 *.log
 .DS_Store
 
+# Runtime-generated data
+uploads/
+data/
+
+skills/

@@ -1,0 +1,61 @@
+# Full Loop GPT agentic portal stack: Postgres + backend + frontend.
+# Set HF_ENDPOINT_URL and HF_TOKEN in a .env file next to this compose file.
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: loopgpt
+      POSTGRES_PASSWORD: loopgpt
+      POSTGRES_DB: loopgpt
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U loopgpt"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      DATABASE_URL: postgresql://loopgpt:loopgpt@db:5432/loopgpt
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      FRONTEND_URL: http://localhost:3000
+      # Primary model backend — your Hugging Face Inference Endpoint:
+      HF_ENDPOINT_URL: ${HF_ENDPOINT_URL:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_MODEL: ${HF_MODEL:-tgi}
+      HF_IMAGE_MODEL: ${HF_IMAGE_MODEL:-black-forest-labs/FLUX.1-schnell}
+      DEFAULT_PROVIDER: ${DEFAULT_PROVIDER:-huggingface}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+    ports:
+      - "3001:3001"
+    volumes:
+      - artifacts:/app/uploads
+      - agentdata:/app/data
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
+  artifacts:
+  agentdata:

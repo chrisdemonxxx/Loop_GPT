@@ -2,7 +2,9 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // Include the engine that matches the Debian bookworm (OpenSSL 3) runtime image.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
@@ -18,6 +20,117 @@ model User {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   conversations Conversation[]
+
+  // Access control
+  role             String   @default("user")  // 'user' | 'admin'
+  unlimited        Boolean  @default(false)    // team/unlimited access (usually via voucher)
+  emailVerified    Boolean  @default(false)
+  stripeCustomerId String?
+  stripeSubId      String?
+
+  // Plan & metering (freemium)
+  plan             String   @default("free") // 'free' | 'pro'
+  credits          Int      @default(30)     // remaining daily message credits
+  imageCredits     Int      @default(5)      // remaining daily image credits
+  creditsResetAt   DateTime @default(now())
+  // Consent to use interactions for product improvement / model training.
+  consentTraining  Boolean  @default(false)
+
+  // Lifetime usage counters (fast admin stats without scanning events)
+  tokensInTotal    BigInt   @default(0)
+  tokensOutTotal   BigInt   @default(0)
+  imagesTotal      Int      @default(0)
+  messagesTotal    Int      @default(0)
+  lastActiveAt     DateTime @default(now())
+
+  redemptions   VoucherRedemption[]
+  usageEvents   UsageEvent[]
+  payments      Payment[]
+  tokens        Token[]
+
+  @@index([role])
+  @@index([plan])
+}
+
+/// Short-lived tokens for email verification and password reset.
+model Token {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  type      String   // 'verify' | 'reset'
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([type])
+}
+
+/// A redeemable code. `type=unlimited` flips the user to unlimited (team use);
+/// `type=credits` tops up message/image credits and optionally upgrades plan.
+model Voucher {
+  id              String    @id @default(cuid())
+  code            String    @unique
+  type            String    @default("credits") // 'unlimited' | 'credits'
+  plan            String?                        // optional plan to set on redeem (e.g. 'pro')
+  credits         Int       @default(0)          // message credits granted
+  imageCredits    Int       @default(0)          // image credits granted
+  maxRedemptions  Int       @default(1)          // how many distinct users may redeem
+  redemptionCount Int       @default(0)
+  active          Boolean   @default(true)
+  expiresAt       DateTime?
+  note            String?
+  createdAt       DateTime  @default(now())
+
+  redemptions     VoucherRedemption[]
+
+  @@index([active])
+}
+
+model VoucherRedemption {
+  id        String   @id @default(cuid())
+  voucherId String
+  voucher   Voucher  @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([voucherId, userId])
+  @@index([userId])
+}
+
+/// One row per billable action, for the admin usage feed and analytics.
+model UsageEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String   // 'chat' | 'agent' | 'research' | 'image'
+  tokensIn  Int      @default(0)
+  tokensOut Int      @default(0)
+  credits   Int      @default(0) // credits deducted for this event
+  model     String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([kind])
+}
+
+model Payment {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Int      // in cents
+  currency  String   @default("usd")
+  status    String   @default("succeeded") // 'succeeded' | 'pending' | 'failed' | 'refunded'
+  provider  String   @default("stripe")
+  reference String?  // external payment/session id
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
 }
 
 model Conversation {

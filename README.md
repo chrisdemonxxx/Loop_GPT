@@ -1,6 +1,12 @@
-# Loop GPT - ChatGPT-like Interface
+# Loop GPT — Agentic Chat Portal
 
-A modern, full-stack ChatGPT clone with a beautiful UI, built with Next.js, Node.js, and PostgreSQL.
+A flagship, agentic chat portal (Claude.ai / Manus-class) built with Next.js, Node.js, and PostgreSQL, with the primary model served by a **Hugging Face Inference Endpoint**.
+
+> 🧠 **New: agentic layer.** Real tool-using agent with streaming, deep research
+> (web search + cited synthesis), native vision, image generation, and document
+> generation (PDF/DOCX/XLSX/PPTX) — plus MCP servers, connectors, skills, and
+> plugins. See **[docs/AGENT_PORTAL.md](docs/AGENT_PORTAL.md)** for setup and
+> architecture. Configure your endpoint via `HF_ENDPOINT_URL` / `HF_TOKEN`.
 
 ## 🚀 Features
 

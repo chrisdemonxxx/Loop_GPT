@@ -10,10 +10,22 @@ const envSchema = z.object({
   // JWT
   JWT_SECRET: z.string().min(10, 'JWT_SECRET must be at least 10 characters').optional(),
   
+  // Hugging Face Inference Endpoint (primary backend)
+  HF_ENDPOINT_URL: z.string().url('HF_ENDPOINT_URL must be a valid URL').optional(),
+  HF_TOKEN: z.string().optional(),
+  HF_MODEL: z.string().optional(),
+  HF_IMAGE_MODEL: z.string().optional(),
+  DEFAULT_PROVIDER: z.string().optional(),
+  DEFAULT_MODEL: z.string().optional(),
+
+  // Deep research / background jobs
+  TAVILY_API_KEY: z.string().optional(),
+  REDIS_URL: z.string().optional(),
+
   // OpenAI
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().optional(),
-  
+
   // Other AI Providers
   ANTHROPIC_API_KEY: z.string().optional(),
   GROQ_API_KEY: z.string().optional(),
