@@ -1,0 +1,100 @@
+/* Loop GPT theme overlay for LibreChat — brand: warm terracotta on deep charcoal */
+
+:root {
+  --loop-accent: #d97757;
+  --loop-accent-hover: #e8896a;
+  --loop-bg: #141210;
+  --loop-surface: #1c1917;
+  --loop-surface-2: #262220;
+  --loop-border: #3a3330;
+  --loop-text: #f5f0ec;
+  --loop-text-dim: #b8ada6;
+}
+
+/* ---- global surfaces ---- */
+body {
+  background: var(--loop-bg) !important;
+}
+
+nav, header, [class*="bg-surface-primary"], [class*="bg-surface-secondary"] {
+  background-color: var(--loop-surface) !important;
+}
+
+/* ---- model selector polish ---- */
+[class*="model-selector"], [role="listbox"], [role="menu"] {
+  background: var(--loop-surface-2) !important;
+  border: 1px solid var(--loop-border) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55) !important;
+  backdrop-filter: blur(10px);
+}
+
+[role="option"], [role="menuitem"] {
+  border-radius: 8px !important;
+  margin: 2px 6px !important;
+  padding: 10px 12px !important;
+  transition: background 0.15s ease;
+}
+
+[role="option"]:hover, [role="menuitem"]:hover,
+[role="option"][data-highlighted], [aria-selected="true"] {
+  background: rgba(217, 119, 87, 0.16) !important;
+}
+
+/* ---- primary buttons / accents ---- */
+button[class*="bg-green"], [class*="bg-primary"] {
+  background-color: var(--loop-accent) !important;
+}
+button[class*="bg-green"]:hover, [class*="bg-primary"]:hover {
+  background-color: var(--loop-accent-hover) !important;
+}
+
+a, .text-green-600, [class*="text-primary"] {
+  color: var(--loop-accent) !important;
+}
+
+/* ---- composer ---- */
+form [class*="composer"], textarea, [contenteditable="true"] {
+  background: var(--loop-surface-2) !important;
+  border: 1px solid var(--loop-border) !important;
+  border-radius: 18px !important;
+}
+textarea:focus, [contenteditable="true"]:focus {
+  border-color: var(--loop-accent) !important;
+  box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.25) !important;
+  outline: none !important;
+}
+
+/* ---- message bubbles & markdown ---- */
+.markdown, .prose {
+  color: var(--loop-text) !important;
+}
+.prose code, code {
+  background: rgba(217, 119, 87, 0.14) !important;
+  color: #f0b8a4 !important;
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+.prose pre, pre {
+  background: #0d0b0a !important;
+  border: 1px solid var(--loop-border) !important;
+  border-radius: 12px !important;
+}
+.prose pre code {
+  background: transparent !important;
+  color: #e8e0da !important;
+}
+
+/* ---- scrollbars ---- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--loop-border); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: var(--loop-accent); }
+
+/* ---- landing greeting ---- */
+h1, h2, [class*="greeting"] {
+  letter-spacing: -0.01em;
+}
+
+/* ---- selection ---- */
+::selection { background: rgba(217, 119, 87, 0.35); }
