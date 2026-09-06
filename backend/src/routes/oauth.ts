@@ -43,6 +43,30 @@ async function handleCallback(req: express.Request, res: express.Response) {
   const provider = req.params.provider as OAuthProvider
   const code = (req.query.code || (req.body && req.body.code)) as string
   const state = (req.query.state || (req.body && req.body.state)) as string
+
+  // OAuth bridge relay: when OAUTH_BRIDGE_TARGET is set, this callback acts as a
+  // transparent passthrough for the Google-registered redirect_uri
+  // (https://api.loop-gpt.cyou/api/auth/oauth/<provider>/callback). It 302s the
+  // browser — carrying code/state verbatim — to the active app's callback
+  // (<target>/oauth/<provider>/callback), which performs the actual code
+  // exchange with the identical redirect_uri string. Token exchange validates
+  // redirect_uri as a string, so the relay is fully protocol-legal.
+  // Note: Apple's form_post variant loses its body across the hop (unused).
+  const bridgeTarget = (process.env.OAUTH_BRIDGE_TARGET || '').replace(/\/+$/, '')
+  if (bridgeTarget) {
+    const merged: Record<string, string> = {}
+    for (const [k, v] of Object.entries(req.query)) {
+      merged[k] = Array.isArray(v) ? String(v[0]) : String(v)
+    }
+    if (req.body && typeof req.body === 'object') {
+      for (const [k, v] of Object.entries(req.body)) {
+        if (merged[k] === undefined && typeof v === 'string') merged[k] = v
+      }
+    }
+    const fwd = new URLSearchParams(merged)
+    return res.redirect(`${bridgeTarget}/oauth/${provider}/callback?${fwd.toString()}`)
+  }
+
   try {
     if (!hasDb || !prisma) throw new Error('database required')
     const decoded: any = jwt.verify(state, JWT_SECRET)

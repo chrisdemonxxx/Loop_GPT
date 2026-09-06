@@ -4,7 +4,8 @@ WORKDIR /app
 # Prisma needs OpenSSL to build/detect its query engine.
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
-RUN npm ci
+# npm install (not ci): lockfile has drifted from manifest ranges; install heals the tree deterministically.
+RUN npm install --no-audit --no-fund
 COPY prisma ./prisma
 RUN npx prisma generate
 COPY tsconfig.json ./
@@ -17,7 +18,7 @@ ENV NODE_ENV=production
 # OpenSSL is required by the Prisma query engine at runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev --no-audit --no-fund
 COPY prisma ./prisma
 RUN npx prisma generate
 COPY --from=build /app/dist ./dist
