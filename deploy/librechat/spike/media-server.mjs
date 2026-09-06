@@ -231,9 +231,41 @@ server.tool(
     if (!HF_VIDEO_URL || !HF_TOKEN) return { content: [{ type: 'text', text: 'Server missing HF_VIDEO_URL/HF_TOKEN config.' }] };
     try {
       const vid = await generateVideo(prompt);
+      const sizeMB = (vid.bytes / 1048576).toFixed(1);
+      // Preferred path: publish to the media CDN and return a playable URL.
+      if (process.env.MEDIA_PUBLISH_URL && process.env.MEDIA_PUBLISH_KEY) {
+        try {
+          const pub = await fetch(process.env.MEDIA_PUBLISH_URL, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${process.env.MEDIA_PUBLISH_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ mime: 'video/mp4', b64: vid.b64, name: 'loop-video.mp4' }),
+          });
+          if (pub.ok) {
+            const j = await pub.json().catch(() => null);
+            if (j?.url) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: `Video generated (${sizeMB} MB) for prompt: "${prompt}".\n\n**Watch it here:** ${j.url}\n\nThe link plays or downloads the MP4 directly.`,
+                  },
+                ],
+              };
+            }
+          } else {
+            logErr('publish', new Error(`publish HTTP ${pub.status}`));
+          }
+        } catch (e) {
+          logErr('publish', e);
+        }
+      }
+      // Fallback: inline base64 payload.
       return {
         content: [
-          { type: 'text', text: `MP4 generated (${Math.round(vid.bytes / 1024)} KB). base64 follows.` },
+          { type: 'text', text: `MP4 generated (${sizeMB} MB). base64 follows.` },
           { type: 'text', text: `data:video/mp4;base64,${vid.b64}` },
         ],
       };

@@ -1,36 +1,125 @@
-﻿# Loop GPT spike configuration â€” LibreChat over our metering proxy (/v1)
+﻿# Loop GPT — LibreChat production configuration
+# Agentic chat over our metered backend (/v1) with vision, tools, MCP connectors,
+# web search, code execution, artifacts and skills enabled by default.
 version: 1.3.13
 cache: true
 
 interface:
+  modelSelect: true
+  parameters: true
+  sidePanel: true
+  presets: true
+  prompts: true
+  bookmarks: true
+  multiConvo: true
+  agents: true
   artifacts: true
+  webSearch: true
+  fileSearch: true
+  customWelcome: 'Welcome to Loop GPT — agentic AI with vision, tools, image & video generation, web search and code execution.'
 
 endpoints:
   custom:
-    - name: "LoopGPTStd"
+    - name: "LoopGPT"
       apiKey: "sk-loop-00125e79ada202ab537b8a751922f21bc6f39153cc36c571"
-      baseURL: "https://backend-production-4d0d6.up.railway.app/v1"
+      baseURL: "https://api.loop-gpt.cyou/v1"
       models:
-        default: [loop-chat]
-        list: [loop-chat]
+        default: [qwen-vl-loop, qwen-vl-loop-large]
+        list: [qwen-vl-loop, qwen-vl-loop-large]
       titleConvo: true
-      titleModel: loop-chat
+      titleModel: qwen-vl-loop
       summarize: false
-      # iconURL-temp-off
+      modelDisplayLabel: "Loop GPT"
+      iconURL: /assets/favicon.svg
 
-    - name: "LoopGPTLarge"
-      apiKey: "sk-loop-00125e79ada202ab537b8a751922f21bc6f39153cc36c571"
-      baseURL: "https://backend-production-4d0d6.up.railway.app/v1"
-      models:
-        default: [loop-chat-large]
-        list: [loop-chat-large]
-      titleConvo: true
-      titleModel: loop-chat-large
-      summarize: false
-      # iconURL-temp-off
+modelSpecs:
+  enforce: false
+  prioritize: true
+  list:
+    - name: "loop-standard"
+      label: "Loop GPT"
+      description: "Everyday agentic model — vision, tools, image & video generation, web search, code execution."
+      default: true
+      showOnLanding: true
+      iconURL: /assets/favicon.svg
+      conversation_starters:
+        - "Generate an image of a futuristic city at sunset"
+        - "Search the web for today's top AI news and summarize"
+        - "Write and run Python code to plot the fibonacci sequence"
+        - "Analyze this image I'm about to upload"
+      webSearch: true
+      artifacts: true
+      skills: true
+      mcpServers:
+        - loop-media
+        - loop-code
+        - loop-files
+        - loop-memory
+        - github
+        - sequential-thinking
+      preset:
+        endpoint: "LoopGPT"
+        model: qwen-vl-loop
+        temperature: 0.7
+        maxContextTokens: 32768
+        modelLabel: "Loop GPT"
 
-# Media generation tools backed by our HuggingFace endpoints.
-# Spawned as a local stdio MCP server; env inherited from container.
+    - name: "loop-large"
+      label: "Loop GPT Large"
+      description: "Flagship 256K-context model — deep reasoning, long documents, complex code, full tool stack."
+      iconURL: /assets/favicon.svg
+      conversation_starters:
+        - "Analyze this long document and extract key insights"
+        - "Build me a complete web scraper with error handling"
+        - "Generate a video of waves crashing on a beach"
+      webSearch: true
+      artifacts: true
+      skills: true
+      mcpServers:
+        - loop-media
+        - loop-code
+        - loop-files
+        - loop-memory
+        - github
+        - sequential-thinking
+      preset:
+        endpoint: "LoopGPT"
+        model: qwen-vl-loop-large
+        temperature: 0.7
+        maxContextTokens: 262144
+        modelLabel: "Loop GPT Large"
+
+# Native web search (Tavily) — key injected via env.
+webSearch:
+  tavilyApiKey: '${TAVILY_API_KEY}'
+
+# Skills catalog synced from the product repo (SKILL.md files).
+skillSync:
+  github:
+    enabled: true
+    intervalMinutes: 60
+    runOnStartup: true
+    sources:
+      - id: loop-skills
+        owner: Seentiourcio47
+        repo: loop-gpt
+        ref: main
+        paths:
+          - skills
+        skillDiscoveryDepth: 2
+        token: '${GITHUB_SKILLS_TOKEN}'
+
+# File uploads: images + documents for vision & analysis.
+fileConfig:
+  endpoints:
+    default:
+      fileLimit: 5
+      fileSizeLimit: 20
+      totalSizeLimit: 50
+  serverFileSizeLimit: 100
+  avatarSizeLimit: 2
+
+# MCP connectors — spawned as local stdio servers; env inherited from container.
 mcpServers:
   loop-media:
     type: stdio
@@ -38,3 +127,38 @@ mcpServers:
     args: [/app/loop-mcp/media-server.mjs]
     timeout: 600000
     initTimeout: 60000
+
+  loop-code:
+    type: stdio
+    command: node
+    args: [/app/loop-mcp/code-runner.mjs]
+    timeout: 120000
+    initTimeout: 30000
+
+  loop-files:
+    type: stdio
+    command: node
+    args: [/app/loop-mcp/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js, /tmp/loop-files]
+    timeout: 60000
+    initTimeout: 30000
+
+  loop-memory:
+    type: stdio
+    command: node
+    args: [/app/loop-mcp/node_modules/@modelcontextprotocol/server-memory/dist/index.js]
+    timeout: 60000
+    initTimeout: 30000
+
+  github:
+    type: stdio
+    command: node
+    args: [/app/loop-mcp/node_modules/@modelcontextprotocol/server-github/dist/index.js]
+    timeout: 60000
+    initTimeout: 30000
+
+  sequential-thinking:
+    type: stdio
+    command: node
+    args: [/app/loop-mcp/node_modules/@modelcontextprotocol/server-sequential-thinking/dist/index.js]
+    timeout: 60000
+    initTimeout: 30000

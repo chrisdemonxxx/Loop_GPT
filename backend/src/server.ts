@@ -80,7 +80,8 @@ app.use(
 // Stripe webhook needs the raw body for signature verification — mount BEFORE json().
 app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), stripeWebhook)
 
-app.use(express.json())
+// 75MB so /v1/media/publish can carry base64 video payloads (≈50MB decoded cap on the route).
+app.use(express.json({ limit: '75mb' }))
 
 // Rate limiting (100 requests per 15 minutes per user/IP)
 app.use('/api', rateLimiter(15 * 60 * 1000, 100))

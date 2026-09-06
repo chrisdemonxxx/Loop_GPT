@@ -9,6 +9,9 @@
  */
 import express from 'express'
 import { z } from 'zod'
+import crypto from 'crypto'
+import fs from 'fs'
+import path from 'path'
 import { createClient } from '../agent/llmClient'
 import { getHFModel } from '../services/aiProviders'
 import { resolveChatTarget, chatModelCatalog } from '../services/chatModels'
@@ -635,6 +638,54 @@ router.get('/usage', authenticateApiKey, async (req: ApiRequest, res) => {
       units: agg._sum.units || 0,
       spend_usd: Number(agg._sum.costMicros ?? 0n) / MICROS_PER_USD,
     },
+  })
+})
+
+/**
+ * POST /v1/media/publish — publish a base64 media blob (generated video/image)
+ * to the public uploads CDN so chat clients can stream it by URL instead of
+ * hauling megabytes of base64 through the message payload.
+ */
+router.post('/media/publish', authenticateApiKey, (req: ApiRequest, res) => {
+  const { mime, b64, name } = req.body || {}
+  if (!b64 || typeof b64 !== 'string') {
+    return apiError(res, 400, 'Missing b64 payload.', 'invalid_request_error', 'missing_payload')
+  }
+  let buf: Buffer
+  try {
+    buf = Buffer.from(b64, 'base64')
+  } catch {
+    return apiError(res, 400, 'Invalid base64 payload.', 'invalid_request_error', 'invalid_payload')
+  }
+  if (!buf.length || buf.length > 50 * 1024 * 1024) {
+    return apiError(res, 413, 'Payload empty or too large (max 50MB decoded).', 'invalid_request_error', 'payload_too_large')
+  }
+  const extByMime: Record<string, string> = {
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/webp': 'webp',
+  }
+  let ext = extByMime[String(mime || '').toLowerCase()] || ''
+  if (!ext && typeof name === 'string' && /\.[a-z0-9]{2,5}$/i.test(name)) {
+    ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
+  }
+  if (!ext) ext = 'bin'
+  const fileName = `pub-${Date.now().toString(36)}${crypto.randomBytes(5).toString('hex')}.${ext}`
+  const dir = path.join(__dirname, '../../uploads')
+  try {
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, fileName), buf)
+  } catch (e: any) {
+    return apiError(res, 500, `Failed to persist media: ${e?.message || e}`, 'api_error', 'persist_failed')
+  }
+  const base = (process.env.PUBLIC_API_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '')
+  return res.json({
+    object: 'media.publish',
+    url: `${base}/uploads/${fileName}`,
+    bytes: buf.length,
+    mime: mime || ext,
   })
 })
 
