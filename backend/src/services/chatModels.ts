@@ -49,7 +49,7 @@ export const CHAT_MODELS: Record<ChatTier, ChatModelSpec> = {
     label: 'Loop GPT Standard',
     description: 'Fast everyday model. Best for chat, drafting and tool use.',
     contextTokens: STANDARD_CONTEXT,
-    aliases: ['standard', 'loop-chat-standard', 'default', 'small', 'fast'],
+    aliases: ['standard', 'loop-chat-standard', 'default', 'small', 'fast', 'qwen-vl-loop', 'loop-chat-vision'],
   },
   large: {
     id: 'loop-chat-large',
@@ -57,7 +57,7 @@ export const CHAT_MODELS: Record<ChatTier, ChatModelSpec> = {
     label: 'Loop GPT Large',
     description: 'Flagship model with a 256K context window. Best for deep reasoning, long documents and complex code.',
     contextTokens: LARGE_CONTEXT,
-    aliases: ['large', 'loop-large', 'loop-chat-xl', 'xl', 'pro', 'max'],
+    aliases: ['large', 'loop-large', 'loop-chat-xl', 'xl', 'pro', 'max', 'qwen-vl-loop-large', 'loop-chat-large-vision'],
   },
 }
 

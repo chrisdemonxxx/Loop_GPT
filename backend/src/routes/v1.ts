@@ -75,6 +75,8 @@ const chatSchema = z.object({
         role: z.enum(['system', 'user', 'assistant', 'tool']),
         content: z.union([z.string(), z.array(z.any()), z.null()]).optional(),
         name: z.string().optional(),
+        tool_call_id: z.string().optional(),
+        tool_calls: z.array(z.any()).optional(),
       })
     )
     .min(1),
@@ -83,6 +85,9 @@ const chatSchema = z.object({
   max_tokens: z.number().int().min(1).max(32_000).optional(),
   top_p: z.number().min(0).max(1).optional(),
   stop: z.union([z.string(), z.array(z.string())]).optional(),
+  tools: z.array(z.any()).optional(),
+  tool_choice: z.any().optional(),
+  response_format: z.any().optional(),
 })
 
 /**
@@ -101,13 +106,18 @@ const IDENTITY_SYSTEM_PROMPT = [
 
 const IDENTITY_LOOPLINE = "I'm LoopGPT, an AI made by Loop GPT."
 
-function mergeIdentity(messages: Array<{ role: string; content: string }>): typeof messages {
-  const persona = { role: 'system', content: IDENTITY_SYSTEM_PROMPT }
-  // Sandwich: open the transcript with the identity contract AND close the
-  // system block with it — final-instruction bias favors us on stickily-trained hosts.
-  const systems = messages.filter((m) => m.role === 'system')
+function mergeIdentity(messages: Array<{ role: string; content: any }>): any[] {
+  // Fuse ALL system turns into ONE message (upstream chat engines hang on
+  // duplicate consecutive system roles), identity contract placed last so
+  // it wins; then ensure exactly one leading system turn exists.
+  // Multimodal/tool messages pass through untouched — only system text is fused.
+  const callerSystems = messages
+    .filter((m) => m.role === 'system')
+    .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '')))
+    .filter(Boolean)
+  const fused = [...callerSystems, IDENTITY_SYSTEM_PROMPT].join('\n\n')
   const dialogue = messages.filter((m) => m.role !== 'system')
-  return [persona, ...systems, persona, ...dialogue]
+  return [{ role: 'system', content: fused }, ...dialogue]
 }
 
 /**
@@ -140,10 +150,22 @@ router.post('/chat/completions', authenticateApiKey, requireBalance, async (req:
   const requestedModel = body.model || 'loop-chat'
   const target = resolveChatTarget(requestedModel)
   const model = target.model
-  const messages = mergeIdentity(body.messages.map((m) => ({
-    role: m.role,
-    content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''),
-  }))) as any[]
+  const messages = mergeIdentity(body.messages.map((m) => {
+    // Pass content through verbatim: strings stay strings, multimodal arrays
+    // (image_url etc.) stay arrays, tool history keeps its linkage fields.
+    const out: any = { role: m.role, content: m.content ?? null }
+    if (m.name) out.name = m.name
+    if (m.tool_call_id) out.tool_call_id = m.tool_call_id
+    if (m.tool_calls) out.tool_calls = m.tool_calls
+    return out
+  })) as any[]
+
+  // Forward agentic payloads the upstream supports (verified: tool_calls,
+  // vision, reasoning_content on the chat engine).
+  const toolPayload: Record<string, any> = {}
+  if (body.tools) toolPayload.tools = body.tools
+  if (body.tool_choice !== undefined) toolPayload.tool_choice = body.tool_choice
+  if (body.response_format !== undefined) toolPayload.response_format = body.response_format
 
   const promptText = messages.map((m) => String(m.content || '')).join('\n')
   const client = createClient('huggingface', undefined, target.baseUrl)
@@ -165,14 +187,18 @@ router.post('/chat/completions', authenticateApiKey, requireBalance, async (req:
         max_tokens: body.max_tokens ?? (Number(process.env.HF_MAX_TOKENS) || 4096),
         top_p: body.top_p,
         stop: body.stop as any,
+        ...toolPayload,
       })
 
       let full = ''
       let usageIn = 0
       let usageOut = 0
+      let lastFinish: string | null = null
       for await (const chunk of stream as any) {
         const delta = chunk?.choices?.[0]?.delta?.content || ''
         if (delta) full += delta
+        const fr = chunk?.choices?.[0]?.finish_reason
+        if (fr) lastFinish = fr
         if (chunk?.usage) {
           usageIn = chunk.usage.prompt_tokens || usageIn
           usageOut = chunk.usage.completion_tokens || usageOut
@@ -219,7 +245,7 @@ router.post('/chat/completions', authenticateApiKey, requireBalance, async (req:
           object: 'chat.completion.chunk',
           created,
           model: requestedModel,
-          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+          choices: [{ index: 0, delta: {}, finish_reason: lastFinish || 'stop' }],
           usage: { prompt_tokens: tokensIn, completion_tokens: tokensOut, total_tokens: tokensIn + tokensOut },
         })}\n\n`
       )
@@ -234,9 +260,11 @@ router.post('/chat/completions', authenticateApiKey, requireBalance, async (req:
       max_tokens: body.max_tokens ?? (Number(process.env.HF_MAX_TOKENS) || 4096),
       top_p: body.top_p,
       stop: body.stop as any,
+      ...toolPayload,
     })
 
-    const content = completion?.choices?.[0]?.message?.content || ''
+    const upstreamMsg = completion?.choices?.[0]?.message || {}
+    const content = upstreamMsg.content || ''
     const tokensIn = completion?.usage?.prompt_tokens || estimateTokens(promptText)
     const tokensOut = completion?.usage?.completion_tokens || estimateTokens(content)
     const cost = await chargeUsage({
@@ -259,7 +287,12 @@ router.post('/chat/completions', authenticateApiKey, requireBalance, async (req:
       choices: [
         {
           index: 0,
-          message: { role: 'assistant', content: sanitizeIdentity(content) },
+          message: {
+            role: 'assistant',
+            content: sanitizeIdentity(content),
+            ...(upstreamMsg.tool_calls ? { tool_calls: upstreamMsg.tool_calls } : {}),
+            ...(upstreamMsg.reasoning_content ? { reasoning_content: upstreamMsg.reasoning_content } : {}),
+          },
           finish_reason: completion?.choices?.[0]?.finish_reason || 'stop',
         },
       ],
