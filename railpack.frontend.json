@@ -1,6 +1,0 @@
-{
-  "provider": "node",
-  "build": {
-    "rootDirectory": "frontend"
-  }
-}
