@@ -33,7 +33,7 @@ import agentRoutes from './routes/agent'
 import telemetryRoutes from './routes/telemetry'
 import accountRoutes from './routes/account'
 import adminRoutes from './routes/admin'
-import { oauthRouter, mailRouter } from './routes/oauth'
+import { oauthRouter, mailRouter, oauthRelayRouter } from './routes/oauth'
 import billingRoutes, { stripeWebhook } from './routes/billing'
 import mediaRoutes from './routes/media'
 import developerRoutes from './routes/developer'
@@ -91,6 +91,8 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')))
 // Routes
 app.use('/api/auth', authRoutes)
 app.use('/api/auth', oauthRouter)
+// Root-level /oauth/:provider relay (social-login buttons built from DOMAIN_SERVER land here)
+app.use(oauthRelayRouter)
 app.use('/api/mail', mailRouter)
 app.use('/api/settings', settingsRoutes)
 app.use('/api/models', modelsRoutes)

@@ -17,6 +17,23 @@ const FRONTEND = () => (process.env.FRONTEND_URL || 'http://localhost:3000').rep
 export const oauthRouter = express.Router()
 export const mailRouter = express.Router()
 
+/**
+ * Root-level OAuth initiation relay. LibreChat builds its social-login button
+ * hrefs from DOMAIN_SERVER (this api host), so /oauth/<provider> must exist
+ * here: it 302s the browser to the live app's initiation endpoint, which then
+ * runs the real flow (state cookie on the app domain, whitelisted callback).
+ */
+export const oauthRelayRouter = express.Router()
+oauthRelayRouter.get('/oauth/:provider', (req, res) => {
+  const target = (process.env.OAUTH_BRIDGE_TARGET || '').replace(/\/+$/, '')
+  if (!target) return res.status(404).json({ error: 'oauth relay disabled' })
+  const provider = req.params.provider
+  if (!['google', 'github', 'apple'].includes(provider)) {
+    return res.status(404).json({ error: 'unknown provider' })
+  }
+  res.redirect(`${target}/oauth/${provider}`)
+})
+
 function reqBase(req: express.Request): string {
   const proto = (req.headers['x-forwarded-proto'] as string)?.split(',')[0] || req.protocol
   return `${proto}://${req.get('host')}`
