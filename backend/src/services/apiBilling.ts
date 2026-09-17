@@ -9,6 +9,8 @@
  */
 import { prisma, hasDb } from './prisma'
 import { chatModelCatalog } from './chatModels'
+import { ApiBillingError, apiAmount, apiCount, apiIdentifier, apiTransaction, MAX_API_MICROS, captureApiReservation } from './apiReservations'
+import type { Prisma } from '@prisma/client'
 
 /** 1 USD expressed in micro-USD. */
 export const MICROS_PER_USD = 1_000_000
@@ -112,7 +114,7 @@ export function formatMicros(micros: bigint | number): string {
 }
 
 export interface CostInput {
-  kind: 'chat' | 'image' | 'video'
+  kind: 'chat' | 'embedding' | 'image' | 'video'
   tokensIn?: number
   tokensOut?: number
   cachedTokensIn?: number
@@ -125,25 +127,24 @@ export interface CostInput {
  * Compute the gross cost of a request in micro-USD, before any plan discount.
  */
 export function grossCostMicros(input: CostInput): number {
-  if (input.kind === 'image') return RATE_IMAGE * Math.max(1, input.units || 1)
-  if (input.kind === 'video') return RATE_VIDEO * Math.max(1, input.units || 1)
-
+  const tokensIn = apiCount(input.tokensIn), tokensOut = apiCount(input.tokensOut)
+  const cached = apiCount(input.cachedTokensIn)
+  const units = apiCount(input.units ?? (input.kind === 'image' || input.kind === 'video' ? 1 : 0))
+  if (cached > tokensIn) throw new ApiBillingError('invalid_amount')
+  if (input.tier && !Object.prototype.hasOwnProperty.call(CHAT_TIER_RATES, input.tier)) throw new ApiBillingError('invalid_request')
+  if (input.kind === 'image' || input.kind === 'video') return Number(apiAmount(BigInt(units) * BigInt(input.kind === 'image' ? RATE_IMAGE : RATE_VIDEO)))
+  if (input.kind !== 'chat' && input.kind !== 'embedding') throw new ApiBillingError('invalid_request')
   const rates = chatRatesFor(input.tier)
-  const cached = Math.max(0, input.cachedTokensIn || 0)
-  const fresh = Math.max(0, (input.tokensIn || 0) - cached)
-  const out = Math.max(0, input.tokensOut || 0)
-
-  const inputCost =
-    (fresh * rates.input) / 1_000_000 +
-    (cached * rates.input * CACHED_INPUT_DISCOUNT) / 1_000_000
-  const outputCost = (out * rates.output) / 1_000_000
-  return Math.ceil(inputCost + outputCost)
+  const numerator = BigInt(tokensIn - cached) * BigInt(rates.input) * 10n +
+    BigInt(cached) * BigInt(rates.input) + BigInt(tokensOut) * BigInt(rates.output) * 10n
+  return Number(apiAmount((numerator + 9_999_999n) / 10_000_000n))
 }
 
 /** Apply the account's monthly-plan discount to a gross cost. */
 export function netCostMicros(gross: number, planId?: string | null): number {
-  const net = gross * (1 - discountFor(planId))
-  return Math.max(0, Math.ceil(net))
+  const amount = apiAmount(gross)
+  const percent = BigInt(100 - Math.round(discountFor(planId) * 100))
+  return Number((amount * percent + 99n) / 100n)
 }
 
 export interface ApiAccount {
@@ -172,46 +173,68 @@ export async function getApiAccount(userId: string): Promise<ApiAccount | null> 
   }
 }
 
-/** Credit a user's prepaid balance and record the ledger row. */
+/** Bound total credit (available + outstanding holds), preserving refund room. */
+async function creditBalance(tx: Prisma.TransactionClient, userId: string, amount: bigint) {
+  const holds = await tx.apiReservation.aggregate({ where: { userId, state: { in: ['reserved', 'dispatched', 'unknown'] } }, _sum: { amountMicros: true } })
+  const limit = MAX_API_MICROS - amount - (holds._sum.amountMicros ?? 0n)
+  const changed = await tx.user.updateMany({ where: { id: userId, apiBalanceMicros: { gte: 0n, lte: limit } }, data: { apiBalanceMicros: { increment: amount } } })
+  if (changed.count !== 1) throw new ApiBillingError('invalid_amount')
+}
+
+/** Credit + ledger + dedup identity commit together. Historical rows are only
+ * read: an existing matching reference is adopted, never credited a second time.
+ * Historical conflicting duplicate references require manual reconciliation. */
 export async function addBalance(
   userId: string,
   amountMicros: number | bigint,
   source: string,
   reference?: string
 ): Promise<void> {
-  if (!hasDb || !prisma) return
-  const amount = BigInt(amountMicros)
-  if (amount <= 0n) return
-  await prisma.$transaction([
-    prisma.user.update({
-      where: { id: userId },
-      data: { apiBalanceMicros: { increment: amount } },
-    }),
-    prisma.apiTopUp.create({ data: { userId, amountMicros: amount, source, reference } }),
-  ])
+  const amount = apiAmount(amountMicros)
+  apiIdentifier(userId)
+  apiIdentifier(source)
+  const ref = reference?.trim() ? apiIdentifier(reference) : null
+  await apiTransaction(async tx => {
+    if (ref) {
+      const previous = await tx.apiCreditIdentity.findUnique({ where: { source_reference: { source, reference: ref } } })
+      if (previous) {
+        if (previous.userId !== userId || previous.amountMicros !== amount) throw new ApiBillingError('conflict')
+        return
+      }
+      const historical = await tx.apiTopUp.findMany({ where: { source, reference: ref }, select: { userId: true, amountMicros: true } })
+      if (historical.some(row => row.userId !== userId || row.amountMicros !== amount)) throw new ApiBillingError('conflict')
+      await tx.apiCreditIdentity.create({ data: { source, reference: ref, userId, amountMicros: amount } })
+      if (historical.length) return
+    }
+    await creditBalance(tx, userId, amount)
+    await tx.apiTopUp.create({ data: { userId, amountMicros: amount, source, reference: ref } })
+  })
 }
 
 /**
  * Grant the one-time free preview credit. Returns true when it was granted.
  */
 export async function grantPreviewCredit(userId: string): Promise<boolean> {
-  if (!hasDb || !prisma) return false
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { apiPreviewGranted: true } })
-  if (!user || user.apiPreviewGranted) return false
-  await prisma.user.update({ where: { id: userId }, data: { apiPreviewGranted: true } })
-  await addBalance(userId, PREVIEW_CREDIT_MICROS, 'preview')
-  return true
+  apiIdentifier(userId)
+  return apiTransaction(async tx => {
+    const changed = await tx.user.updateMany({ where: { id: userId, apiPreviewGranted: false }, data: { apiPreviewGranted: true } })
+    if (!changed.count) return false
+    await creditBalance(tx, userId, BigInt(PREVIEW_CREDIT_MICROS))
+    await tx.apiTopUp.create({ data: { userId, amountMicros: BigInt(PREVIEW_CREDIT_MICROS), source: 'preview', reference: `preview:${userId}` } })
+    return true
+  })
 }
 
 /**
- * Debit usage and write the ApiUsage row. Returns the charged amount.
- * Balance is allowed to go to zero but not negative — the caller checks funds
- * up front, and a small overshoot on the final chunk of a stream is absorbed.
+ * Price and capture an existing reservation. There is deliberately no unreserved
+ * post-work debit path: callers must reserve and claim dispatch first. Repeating
+ * this call with the same settlement is idempotent; conflicting replays fail.
  */
 export async function chargeUsage(params: {
+  reservationId: string
   userId: string
   apiKeyId?: string | null
-  kind: 'chat' | 'image' | 'video'
+  kind: 'chat' | 'embedding' | 'image' | 'video'
   model?: string
   tokensIn?: number
   tokensOut?: number
@@ -223,33 +246,12 @@ export async function chargeUsage(params: {
 }): Promise<number> {
   const gross = grossCostMicros(params)
   const net = netCostMicros(gross, params.planId)
-  if (!hasDb || !prisma) return net
-
-  await prisma.$transaction([
-    prisma.user.update({
-      where: { id: params.userId },
-      data: { apiBalanceMicros: { decrement: BigInt(net) } },
-    }),
-    prisma.apiUsage.create({
-      data: {
-        userId: params.userId,
-        apiKeyId: params.apiKeyId || null,
-        kind: params.kind,
-        model: params.model || '',
-        tokensIn: Math.max(0, params.tokensIn || 0),
-        tokensOut: Math.max(0, params.tokensOut || 0),
-        units: Math.max(0, params.units || 0),
-        costMicros: BigInt(net),
-      },
-    }),
-  ])
-
-  if (params.apiKeyId) {
-    await prisma.apiKey
-      .update({ where: { id: params.apiKeyId }, data: { lastUsedAt: new Date() } })
-      .catch(() => {})
-  }
-  return net
+  return captureApiReservation({
+    id: params.reservationId, userId: params.userId, apiKeyId: params.apiKeyId,
+    costMicros: net, tokensIn: params.tokensIn,
+    tokensOut: params.tokensOut, units: params.units ?? (params.kind === 'image' || params.kind === 'video' ? 1 : 0),
+    expectedKind: params.kind, expectedModel: params.model,
+  })
 }
 
 /** Public pricing document served to the frontend and docs page. */
@@ -257,6 +259,11 @@ export function pricingConfig() {
   const catalog = chatModelCatalog()
   return {
     currency: 'USD',
+    metering: {
+      chat: 'Reserve the configured context budget; capture reported prompt and completion tokens, including tool/reasoning output. Missing usage requires reconciliation.',
+      embeddings: 'Estimated tokens: UTF-8 input bytes plus two special tokens per input; maximum 262144 estimated tokens per request.',
+      uncertainWork: 'Interrupted or uncertain work retains a visible reservation pending reconciliation; it is not automatically refunded.',
+    },
     rates: {
       chatInputPerMillionTokens: RATE_CHAT_INPUT_PER_MTOK / MICROS_PER_USD,
       chatOutputPerMillionTokens: RATE_CHAT_OUTPUT_PER_MTOK / MICROS_PER_USD,

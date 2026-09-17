@@ -1,21 +1,11 @@
 import express from 'express'
-import { PrismaClient } from '@prisma/client'
+import { prisma } from '../services/prisma'
+import { getOrCreateConversation } from '../services/chatStore'
 import { authenticateToken } from './auth'
 import { memoryStore } from '../services/memoryStore'
 import { validate, validationSchemas } from '../middleware/validation'
 
 const router = express.Router()
-let prisma: PrismaClient | null = null
-
-// Initialize Prisma only if DATABASE_URL is set
-try {
-  if (process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('postgresql://user:password')) {
-    prisma = new PrismaClient()
-  }
-} catch (error) {
-  console.log('Database not available, using in-memory store')
-}
-
 const USE_MEMORY_STORE = !prisma
 
 // Get all conversations for user
@@ -72,7 +62,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
         createdAt: conversation.createdAt.toISOString(),
         updatedAt: conversation.updatedAt.toISOString(),
         messages: messages.map(msg => ({
-          ...msg,
+            ...msg, imagePath: null,
           createdAt: msg.createdAt.toISOString(),
         })),
       })
@@ -94,7 +84,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Conversation not found' })
     }
 
-    res.json(conversation)
+    res.json({ ...conversation, messages: conversation.messages.map((message) => ({ ...message, imagePath: null })) })
   } catch (error) {
     console.error('Get conversation error:', error)
     res.status(500).json({ error: 'Internal server error' })
@@ -118,37 +108,7 @@ router.post('/', authenticateToken, validate(validationSchemas.createConversatio
       })
     }
 
-    // In development, ensure user exists
-    if (process.env.NODE_ENV === 'development' && userId === 'dev-user-123') {
-      let devUser = await prisma!.user.findUnique({
-        where: { id: userId },
-      })
-      
-      if (!devUser) {
-        const bcrypt = require('bcryptjs')
-        devUser = await prisma!.user.create({
-          data: {
-            id: 'dev-user-123',
-            email: 'dev@test.com',
-            password: await bcrypt.hash('dev', 10),
-            name: 'Dev User',
-          },
-        })
-      }
-    }
-
-    const conversation = await prisma!.conversation.create({
-      data: {
-        title: title || 'New Chat',
-        userId,
-      },
-      select: {
-        id: true,
-        title: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    })
+    const conversation = await getOrCreateConversation(userId, 'new', title || 'New Chat')
 
     res.json(conversation)
   } catch (error) {

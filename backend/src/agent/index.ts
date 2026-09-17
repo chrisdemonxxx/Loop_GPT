@@ -1,7 +1,6 @@
 /**
- * Agent bootstrap: register built-in tools and initialize the extensibility
- * registries (MCP servers, connectors, plugins). Call initAgent() once at
- * server startup.
+ * Agent bootstrap: register reviewed built-ins only. Legacy shared extensions
+ * are not initialized. Call initAgent() once at server startup.
  */
 import { toolRegistry } from './toolRegistry'
 import { webSearchTool } from './tools/webSearch'
@@ -10,11 +9,6 @@ import { currentTimeTool, calculatorTool } from './tools/utility'
 import { generateImageTool } from './tools/generateImage'
 import { generateVideoTool } from './tools/generateVideo'
 import { createDocumentTool } from './tools/createDocument'
-import { createSkillTool, createCustomToolTool } from './tools/metaTools'
-import { mcpRegistry } from './mcp/mcpRegistry'
-import { connectorRegistry } from './connectors/connectorRegistry'
-import { pluginRegistry } from './plugins/pluginLoader'
-import { customToolRegistry } from './customTools'
 
 const BUILTIN_TOOLS = [
   webSearchTool,
@@ -24,8 +18,6 @@ const BUILTIN_TOOLS = [
   generateImageTool,
   generateVideoTool,
   createDocumentTool,
-  createSkillTool,
-  createCustomToolTool,
 ]
 
 export function registerBuiltinTools() {
@@ -37,29 +29,13 @@ export function builtinToolNames(): string[] {
   return BUILTIN_TOOLS.map((t) => t.name)
 }
 
+/** Reviewed definitions, independent of registrations in the legacy map. */
+export function builtinTools() { return [...BUILTIN_TOOLS] }
+
 export async function initAgent() {
   registerBuiltinTools()
-  // Connectors and plugins are synchronous; MCP connects over the network.
-  try {
-    connectorRegistry.init()
-  } catch (e) {
-    console.warn('Connector init failed:', (e as any)?.message)
-  }
-  try {
-    pluginRegistry.init()
-  } catch (e) {
-    console.warn('Plugin init failed:', (e as any)?.message)
-  }
-  try {
-    customToolRegistry.init()
-  } catch (e) {
-    console.warn('Custom tools init failed:', (e as any)?.message)
-  }
-  try {
-    await mcpRegistry.init()
-  } catch (e) {
-    console.warn('MCP init failed:', (e as any)?.message)
-  }
+  // Do not load legacy shared credentials, plugins, commands or custom tools.
+  // Reviewed workspace adapters must be issued as per-run capabilities instead.
   console.log(`🧰 Agent ready — ${toolRegistry.list().length} tools registered`)
 }
 

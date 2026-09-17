@@ -3,6 +3,7 @@
  * balance and usage. The public API itself lives in `routes/v1.ts`.
  */
 import express from 'express'
+import { asyncHandler } from '../middleware/errorLogger'
 import { z } from 'zod'
 import { authenticateToken } from './auth'
 import { prisma, hasDb } from '../services/prisma'
@@ -28,7 +29,7 @@ function requireDb(res: express.Response): boolean {
 }
 
 /** GET /api/developer/overview — balance, plan, keys and usage in one call. */
-router.get('/overview', authenticateToken, async (req, res) => {
+router.get('/overview', authenticateToken, asyncHandler(async (req, res) => {
   if (!requireDb(res)) return
   const userId = (req as any).userId
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
@@ -86,7 +87,7 @@ router.get('/overview', authenticateToken, async (req, res) => {
     })),
     pricing: pricingConfig(),
   })
-})
+}))
 
 const createSchema = z.object({ name: z.string().trim().min(1).max(60).optional() })
 
@@ -94,7 +95,7 @@ const createSchema = z.object({ name: z.string().trim().min(1).max(60).optional(
  * POST /api/developer/keys — issue a key. The plaintext value is returned once
  * and never again. Grants the free preview credit on the first key.
  */
-router.post('/keys', authenticateToken, async (req, res) => {
+router.post('/keys', authenticateToken, asyncHandler(async (req, res) => {
   if (!requireDb(res)) return
   const parsed = createSchema.safeParse(req.body || {})
   if (!parsed.success) return res.status(400).json({ error: 'Invalid key name.' })
@@ -120,21 +121,21 @@ router.post('/keys', authenticateToken, async (req, res) => {
   } catch (error: any) {
     res.status(500).json({ error: error?.message || 'Could not create API key.' })
   }
-})
+}))
 
 /** GET /api/developer/keys — masked list. */
-router.get('/keys', authenticateToken, async (req, res) => {
+router.get('/keys', authenticateToken, asyncHandler(async (req, res) => {
   if (!requireDb(res)) return
   res.json(await listApiKeys((req as any).userId))
-})
+}))
 
 /** DELETE /api/developer/keys/:id — revoke. */
-router.delete('/keys/:id', authenticateToken, async (req, res) => {
+router.delete('/keys/:id', authenticateToken, asyncHandler(async (req, res) => {
   if (!requireDb(res)) return
   const ok = await revokeApiKey((req as any).userId, req.params.id)
   if (!ok) return res.status(404).json({ error: 'Key not found.' })
   res.json({ ok: true })
-})
+}))
 
 /** GET /api/developer/pricing — public rate card for the docs UI. */
 router.get('/pricing', (_req, res) => res.json(pricingConfig()))

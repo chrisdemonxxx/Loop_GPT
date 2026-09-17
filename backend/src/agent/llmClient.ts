@@ -7,13 +7,17 @@
  * back to the non-streaming aiProviderService elsewhere.
  */
 import OpenAI from 'openai'
+// Explicit, pinned Node transport via the SDK's supported custom-fetch option.
+import sdkFetch from 'node-fetch'
+import type { Fetch as SDKFetch } from 'openai/core'
 import type { AIProvider } from '../services/aiProviders'
 import { getHFBaseUrl, getHFModel } from '../services/aiProviders'
 import type { ChatMessage } from './types'
 import { agentConfig } from './config'
+import { guardedModelFetch, modelBaseUrl, modelCredential, ModelTransportError } from '../services/modelTransport'
 
 export interface OpenAITargetConfig {
-  baseURL?: string
+  baseURL: string
   apiKey: string
 }
 
@@ -38,38 +42,50 @@ export function resolveOpenAIConfig(
   baseUrl?: string
 ): OpenAITargetConfig {
   const env = process.env
+  let endpoint: string
+  let serverKey: string | undefined
   switch (provider) {
-    case 'huggingface':
-      return { baseURL: getHFBaseUrl(baseUrl), apiKey: apiKey || env.HF_TOKEN || 'sk-no-key' }
+    case 'huggingface': {
+      endpoint = modelBaseUrl(getHFBaseUrl(baseUrl))
+      const allowed = [env.HF_ENDPOINT_URL, env.HF_LARGE_ENDPOINT_URL].filter((value): value is string => !!value)
+        .map(value => modelBaseUrl(getHFBaseUrl(value)))
+      if (!allowed.includes(endpoint)) throw new ModelTransportError()
+      serverKey = env.HF_TOKEN
+      break
+    }
     case 'openai':
-      return { baseURL: baseUrl, apiKey: apiKey || env.OPENAI_API_KEY || '' }
+      endpoint = 'https://api.openai.com/v1'; serverKey = env.OPENAI_API_KEY; break
     case 'groq':
-      return { baseURL: 'https://api.groq.com/openai/v1', apiKey: apiKey || env.GROQ_API_KEY || '' }
+      endpoint = 'https://api.groq.com/openai/v1'; serverKey = env.GROQ_API_KEY; break
     case 'together':
-      return { baseURL: 'https://api.together.xyz/v1', apiKey: apiKey || env.TOGETHER_API_KEY || '' }
+      endpoint = 'https://api.together.xyz/v1'; serverKey = env.TOGETHER_API_KEY; break
     case 'nvidia':
-      return { baseURL: baseUrl || 'https://integrate.api.nvidia.com/v1', apiKey: apiKey || env.NVIDIA_API_KEY || '' }
+      endpoint = 'https://integrate.api.nvidia.com/v1'; serverKey = env.NVIDIA_API_KEY; break
     case 'xai':
-      return { baseURL: 'https://api.x.ai/v1', apiKey: apiKey || env.XAI_API_KEY || '' }
+      endpoint = 'https://api.x.ai/v1'; serverKey = env.XAI_API_KEY; break
     case 'perplexity':
-      return { baseURL: 'https://api.perplexity.ai', apiKey: apiKey || env.PERPLEXITY_API_KEY || '' }
-    case 'ollama':
-      return { baseURL: (baseUrl || 'http://localhost:11434') + '/v1', apiKey: 'ollama' }
-    case 'local':
-      return { baseURL: baseUrl || 'http://localhost:1234/v1', apiKey: apiKey || 'local' }
+      endpoint = 'https://api.perplexity.ai'; serverKey = env.PERPLEXITY_API_KEY; break
     default:
-      return { baseURL: baseUrl, apiKey: apiKey || '' }
+      throw new ModelTransportError()
   }
+  if (baseUrl !== undefined && modelBaseUrl(provider === 'huggingface' ? getHFBaseUrl(baseUrl) : baseUrl) !== endpoint) throw new ModelTransportError()
+  return { baseURL: endpoint, apiKey: modelCredential(apiKey === undefined ? serverKey : apiKey) }
 }
 
 export function createClient(provider: AIProvider, apiKey?: string, baseUrl?: string): OpenAI {
   const cfg = resolveOpenAIConfig(provider, apiKey, baseUrl)
-  return new OpenAI({
-    apiKey: cfg.apiKey || 'sk-no-key',
+  const client = new OpenAI({
+    apiKey: cfg.apiKey,
     baseURL: cfg.baseURL,
+    organization: null,
+    project: null,
+    // SDK declarations default to web Fetch without global Node shim augmentation;
+    // its installed Node runtime accepts node-fetch Responses (covered by SDK tests).
+    fetch: guardedModelFetch(cfg.baseURL, cfg.apiKey, sdkFetch, { timeoutMs: agentConfig.requestTimeoutMs }) as unknown as SDKFetch,
     timeout: agentConfig.requestTimeoutMs, // tolerate cold starts + long generations
     maxRetries: 0,
   })
+  return client
 }
 
 export function resolveModel(provider: AIProvider, model?: string): string {
@@ -159,13 +175,14 @@ export async function completeOnce(
   model: string,
   messages: ChatMessage[],
   temperature = 0.5,
-  maxTokens = 2000
+  maxTokens = 2000,
+  signal?: AbortSignal
 ): Promise<string> {
   const completion = await client.chat.completions.create({
     model,
     messages: messages as any,
     temperature,
     max_tokens: maxTokens,
-  })
+  }, { signal })
   return completion.choices[0]?.message?.content || ''
 }

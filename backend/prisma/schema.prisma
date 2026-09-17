@@ -56,12 +56,17 @@ model User {
 
   redemptions   VoucherRedemption[]
   usageEvents   UsageEvent[]
+  dailyReservations DailyReservation[]
   payments      Payment[]
   tokens        Token[]
   mediaJobs     MediaJob[]
   apiKeys       ApiKey[]
   apiUsage      ApiUsage[]
   apiTopUps     ApiTopUp[]
+  apiReservations ApiReservation[]
+  privateFiles  PrivateFile[]
+  personalWorkspace Workspace? @relation("PersonalWorkspace")
+  workspaceMemberships WorkspaceMember[]
 
   @@index([role])
   @@index([plan])
@@ -81,7 +86,9 @@ model ApiKey {
   createdAt  DateTime  @default(now())
 
   usage ApiUsage[]
+  reservations ApiReservation[]
 
+  @@unique([id, userId])
   @@index([userId])
   @@index([keyHash])
 }
@@ -99,6 +106,8 @@ model ApiUsage {
   tokensOut  Int      @default(0)
   units      Int      @default(0) // images or videos produced
   costMicros BigInt   @default(0) // charged amount in micro-USD (after discount)
+  reservationId String? @unique
+  reservation ApiReservation? @relation(fields: [reservationId], references: [id], onDelete: Restrict)
   createdAt  DateTime @default(now())
 
   @@index([userId, createdAt])
@@ -116,11 +125,13 @@ model ApiTopUp {
   createdAt     DateTime @default(now())
 
   @@index([userId, createdAt])
+  @@index([source, reference])
 }
 
 /// Short-lived tokens for email verification and password reset.
 model Token {
   id        String   @id @default(cuid())
+  /// SHA-256 digest of the secret sent to the user; never the raw secret.
   token     String   @unique
   type      String   // 'verify' | 'reset'
   userId    String
@@ -176,6 +187,8 @@ model UsageEvent {
   tokensOut Int      @default(0)
   credits   Int      @default(0) // credits deducted for this event
   model     String?
+  reservationId String? @unique
+  reservation DailyReservation? @relation(fields: [reservationId], references: [id], onDelete: Restrict)
   createdAt DateTime @default(now())
 
   @@index([userId])
@@ -205,10 +218,163 @@ model Conversation {
   userId    String
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages  Message[]
+  privateFiles PrivateFile[]
+  workspaceId String?
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
   @@index([userId])
+  @@index([workspaceId])
+}
+
+enum DailyReservationState {
+  reserved
+  dispatched
+  unknown
+  captured
+  released
+}
+
+/// Daily allowance is available credit, deducted before dispatch. Unknown and
+/// stale dispatched work require evidence-based reconciliation, never expiry.
+model DailyReservation {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind String
+  model String
+  credits Int
+  imageCredits Int
+  bypass Boolean
+  windowStart DateTime
+  state DailyReservationState @default(reserved)
+  settlementFingerprint String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  usage UsageEvent?
+  settlementIntent DailySettlementIntent?
+  videoJob AccountedVideoJob?
+  requestFingerprint String?
+  pricingSnapshot Json?
+
+  @@index([userId, createdAt])
+  @@index([state, updatedAt])
+}
+
+enum DailySettlementStatus {
+  pending
+  processing
+  succeeded
+  conflict
+  dead_letter
+}
+
+/// Immutable evidence for daily capture; mutable delivery state is lease-fenced.
+model DailySettlementIntent {
+  reservationId String @id
+  reservation DailyReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  userId String
+  kind String
+  model String
+  tokensIn Int
+  tokensOut Int
+  images Int
+  fingerprint String
+  status DailySettlementStatus @default(pending)
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  leaseToken String?
+  leaseExpiresAt DateTime?
+  lastErrorCode String? @db.VarChar(64)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([status, leaseExpiresAt])
+}
+
+enum ApiReservationState {
+  reserved
+  dispatched
+  unknown
+  captured
+  released
+}
+
+/// Balance is AVAILABLE credit: creating a hold debits it; settlement returns only
+/// the unused portion. Never expire/refund dispatched or unknown holds by age.
+/// Reconcile these (and stale dispatched rows after a crash) against provider
+/// evidence, using settleReservation with a durable reconciliation reference.
+model ApiReservation {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  apiKeyId String?
+  apiKey ApiKey? @relation(fields: [apiKeyId, userId], references: [id, userId], onDelete: Restrict)
+  kind String
+  model String
+  amountMicros BigInt
+  requestFingerprint String
+  pricingSnapshot Json?
+  state ApiReservationState @default(reserved)
+  settlementFingerprint String?
+  capturedMicros BigInt?
+  evidence Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  usage ApiUsage?
+  settlementIntent ApiSettlementIntent?
+  videoJob AccountedVideoJob?
+
+  @@index([state, updatedAt])
+  @@index([userId, createdAt])
+}
+
+/// New deduplication identities, separate from immutable historical top-up rows.
+/// source/reference is global: reuse for another owner or amount is a conflict.
+model ApiCreditIdentity {
+  source String
+  reference String
+  userId String
+  amountMicros BigInt
+  createdAt DateTime @default(now())
+  @@id([source, reference])
+}
+
+enum ApiSettlementStatus {
+  pending
+  processing
+  succeeded
+  conflict
+  dead_letter
+}
+
+/// Confirmed server-produced usage only; evidence immutable, delivery lease-fenced.
+model ApiSettlementIntent {
+  reservationId String @id
+  reservation ApiReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  userId String
+  apiKeyId String?
+  kind String
+  model String
+  costMicros BigInt
+  tokensIn Int
+  tokensOut Int
+  units Int
+  fingerprint String
+  reconciliationReference String
+  status ApiSettlementStatus @default(pending)
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  leaseToken String?
+  leaseExpiresAt DateTime?
+  lastErrorCode String? @db.VarChar(64)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([status, leaseExpiresAt])
 }
 
 model Message {
@@ -250,7 +416,123 @@ model MediaJob {
   startedAt     DateTime?
   completedAt   DateTime?
   updatedAt     DateTime @updatedAt
+  accountedVideo AccountedVideoJob?
 
   @@index([userId, createdAt])
   @@index([status, createdAt])
+}
+
+/// Only these jobs may be dispatched. Legacy MediaJob rows are read-only to workers.
+/// No credentials: endpoint/config are bound operator snapshots; token stays in env.
+model AccountedVideoJob {
+  jobId String @id
+  job MediaJob @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  reservationId String? @unique
+  reservation ApiReservation? @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  dailyReservationId String? @unique
+  dailyReservation DailyReservation? @relation(fields: [dailyReservationId], references: [id], onDelete: Restrict)
+  endpoint String
+  config Json
+  state String @default("queued")
+  submittedAt DateTime?
+  // Durable upstream occupancy, never released by lease expiry or uncertainty.
+  upstreamSlot Boolean @default(false)
+  cancelRequested Boolean @default(false)
+  attempts Int @default(0)
+  failures Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  leaseToken String?
+  leaseExpiresAt DateTime?
+  // Prepared bytes are inaccessible until capture + PrivateFile publication commit.
+  stagedArtifact Json?
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([state, nextAttemptAt])
+  @@index([leaseExpiresAt])
+  @@index([upstreamSlot])
+}
+
+/// DB-admin managed singleton. SQL checks and runtime validation fail closed.
+model VideoQueuePolicy {
+  id Int @id @default(1)
+  version Int @default(1)
+  revision Int @default(1)
+  globalOutstanding Int @default(64)
+  userOutstanding Int @default(8)
+  globalActive Int @default(8)
+  userActive Int @default(2)
+}
+
+model Workspace {
+  id String @id @default(uuid())
+  name String
+  personalOwnerId String? @unique
+  personalOwner User? @relation("PersonalWorkspace", fields: [personalOwnerId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  members WorkspaceMember[]
+  connections WorkspaceConnection[]
+  conversations Conversation[]
+  auditEvents WorkspaceAuditEvent[]
+}
+
+enum WorkspaceRole {
+  owner
+  editor
+  viewer
+}
+
+model WorkspaceMember {
+  workspaceId String
+  userId String
+  role WorkspaceRole
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  @@id([workspaceId, userId])
+  @@index([userId])
+}
+
+model WorkspaceConnection {
+  id String @id @default(uuid())
+  workspaceId String
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  type String
+  name String
+  encryptedConfig String @db.Text
+  configuredFields String[]
+  enabled Boolean @default(true)
+  version Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([workspaceId])
+}
+
+model WorkspaceAuditEvent {
+  id String @id @default(uuid())
+  workspaceId String
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actorId String
+  action String
+  resourceId String?
+  createdAt DateTime @default(now())
+  @@index([workspaceId, createdAt])
+}
+
+/// Private file metadata. Bytes live behind the storage service, never a static mount.
+model PrivateFile {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  name           String
+  mimeType       String
+  size           Int
+  sha256         String
+  purpose        String   // upload | artifact
+  createdAt      DateTime @default(now())
+  deletedAt      DateTime?
+
+  @@index([userId, createdAt])
+  @@index([conversationId])
 }

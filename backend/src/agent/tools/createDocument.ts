@@ -147,7 +147,7 @@ export const createDocumentTool: ToolDefinition = {
       return { content: `Document generation failed: ${error?.message || error}`, isError: true }
     }
 
-    const artifact: ArtifactRef = saveArtifact(`${base}.${ext}`, buffer)
+    const artifact: ArtifactRef = await saveArtifact(`${base}.${ext}`, buffer, { userId: ctx.userId, conversationId: ctx.conversationId })
     ctx.scratch.artifacts = ctx.scratch.artifacts || []
     ctx.scratch.artifacts.push(artifact)
     ctx.emit({ type: 'artifact', artifact })

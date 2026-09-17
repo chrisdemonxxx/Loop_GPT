@@ -1,0 +1,70 @@
+name: Backend validation
+
+on:
+  pull_request:
+    paths: ['backend/**', '.github/workflows/backend-validation.yml']
+  push:
+    paths: ['backend/**', '.github/workflows/backend-validation.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  foundation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: postgresql://loop_test:local-test-only@127.0.0.1:5432/loop_foundation_test
+      TEST_DATABASE_URL: postgresql://loop_test:local-test-only@127.0.0.1:5432/loop_foundation_test
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+        env:
+          POSTGRES_USER: loop_test
+          POSTGRES_PASSWORD: local-test-only
+          POSTGRES_DB: loop_foundation_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U loop_test -d loop_foundation_test"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run generate
+      - run: npm run build
+      - run: npm test
+      - name: Apply migrations and verify idempotence
+        run: |
+          npm run migrate:deploy
+          npm run migrate:deploy
+      - name: Verify migration matches schema
+        run: npx --no-install prisma migrate diff --from-url "$TEST_DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+      - run: npm run test:integration
+      - name: Build production container
+        run: docker build -t loop-gpt-backend:ci .
+      - name: Verify administrator CLI is packaged
+        run: docker run --rm --network none loop-gpt-backend:ci node scripts/make-admin.mjs --help
+      - name: Verify settlement worker is packaged
+        run: docker run --rm --network none loop-gpt-backend:ci node scripts/daily-settlement-worker.mjs --help
+      - name: Verify prepaid settlement worker is packaged
+        run: docker run --rm --network none loop-gpt-backend:ci node scripts/api-settlement-worker.mjs --help
+      - name: Verify accounted video worker is packaged
+        run: docker run --rm --network none loop-gpt-backend:ci node scripts/video-job-worker.mjs --help
+      - name: Verify bounded provider and sidecar transport
+        run: >-
+          docker run --rm --network none
+          --mount "type=bind,source=$PWD/scripts/provider-transport-smoke.cjs,target=/app/scripts/provider-transport-smoke.cjs,readonly"
+          loop-gpt-backend:ci node scripts/provider-transport-smoke.cjs
+      - name: Verify production startup rejects missing configuration
+        run: |
+          status=0
+          docker run --rm --network none loop-gpt-backend:ci || status=$?
+          test "$status" -eq 1

@@ -1,18 +1,12 @@
 import express from 'express'
-import { z } from 'zod'
+import { asyncHandler } from '../middleware/errorLogger'
 import { authenticateToken } from './auth'
-import { createVideoJob } from '../services/mediaJobs'
 import { hasDb, prisma } from '../services/prisma'
+import { createDailyVideoJob, cancelAccountedVideoJob, VideoJobError } from '../services/accountedVideoJobs'
+import { DailyCreditError } from '../services/dailyReservations'
+import { videoQueueLimitProjection } from '../services/videoQueuePolicy'
 
 const router = express.Router()
-
-const createVideoSchema = z.object({
-  prompt: z.string().trim().min(3).max(2_000),
-  width: z.number().int().min(256).max(1_920).optional(),
-  height: z.number().int().min(256).max(1_920).optional(),
-  fps: z.number().int().min(8).max(30).optional(),
-  numFrames: z.number().int().min(16).max(241).optional(),
-})
 
 function serialize(job: {
   id: string
@@ -46,26 +40,20 @@ function serialize(job: {
   }
 }
 
-router.post('/video-jobs', authenticateToken, async (req, res) => {
-  const parsed = createVideoSchema.safeParse(req.body)
-  if (!parsed.success) return res.status(400).json({ error: 'Invalid video request', details: parsed.error.flatten() })
-
+router.post('/video-jobs', authenticateToken, asyncHandler(async (req, res) => {
   try {
-    const job = await createVideoJob((req as any).userId, {
-      prompt: parsed.data.prompt,
-      width: parsed.data.width ?? 960,
-      height: parsed.data.height ?? 544,
-      fps: parsed.data.fps ?? 24,
-      numFrames: parsed.data.numFrames ?? 97,
-    })
-    res.status(202).json(serialize(job))
+    const job = await createDailyVideoJob((req as any).userId, req.body)
+    return res.status(202).json(serialize(job))
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Could not create video job'
-    res.status(message.includes('configured') ? 503 : 500).json({ error: message })
+    const limit = videoQueueLimitProjection(error)
+    if (limit) return res.status(limit.status).json({ code: limit.code, error: limit.message })
+    const status = error instanceof DailyCreditError ? error.status : error instanceof VideoJobError && error.code === 'invalid_request' ? 400 : 503
+    return res.status(status).json({ code: error instanceof DailyCreditError ? error.code : status === 400 ? 'INVALID_VIDEO_REQUEST' : 'DAILY_VIDEO_JOBS_UNAVAILABLE',
+      error: status === 402 ? 'Out of daily credits' : status === 400 ? 'Invalid video request' : 'Daily video creation unavailable' })
   }
-})
+}))
 
-router.get('/jobs', authenticateToken, async (req, res) => {
+router.get('/jobs', authenticateToken, asyncHandler(async (req, res) => {
   if (!hasDb || !prisma) return res.status(503).json({ error: 'Media jobs require a configured database' })
   const jobs = await prisma.mediaJob.findMany({
     where: { userId: (req as any).userId },
@@ -73,23 +61,28 @@ router.get('/jobs', authenticateToken, async (req, res) => {
     take: 50,
   })
   res.json(jobs.map(serialize))
-})
+}))
 
-router.get('/jobs/:id', authenticateToken, async (req, res) => {
+router.get('/jobs/:id', authenticateToken, asyncHandler(async (req, res) => {
   if (!hasDb || !prisma) return res.status(503).json({ error: 'Media jobs require a configured database' })
   const job = await prisma.mediaJob.findFirst({ where: { id: req.params.id, userId: (req as any).userId } })
   if (!job) return res.status(404).json({ error: 'Media job not found' })
   res.json(serialize(job))
-})
+}))
 
-router.post('/jobs/:id/cancel', authenticateToken, async (req, res) => {
+router.post('/jobs/:id/cancel', authenticateToken, asyncHandler(async (req, res) => {
   if (!hasDb || !prisma) return res.status(503).json({ error: 'Media jobs require a configured database' })
+  const accounted = await prisma.accountedVideoJob.findUnique({ where: { jobId: req.params.id }, select: { jobId: true } })
+  if (accounted) {
+    try { await cancelAccountedVideoJob(req.params.id, { userId: (req as any).userId }); return res.json({ ok: true }) }
+    catch (error) { return res.status(error instanceof VideoJobError && error.code === 'not_found' ? 404 : 503).json({ error: 'Video job cancellation unavailable' }) }
+  }
   const job = await prisma.mediaJob.updateMany({
-    where: { id: req.params.id, userId: (req as any).userId, status: { in: ['queued', 'processing'] } },
+    where: { id: req.params.id, userId: (req as any).userId, accountedVideo: { is: null }, status: { in: ['queued', 'processing'] } },
     data: { status: 'cancelled', completedAt: new Date() },
   })
   if (!job.count) return res.status(404).json({ error: 'Active media job not found' })
   res.json({ ok: true })
-})
+}))
 
 export default router

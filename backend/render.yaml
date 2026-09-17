@@ -8,12 +8,19 @@ services:
     rootDir: backend
     plan: starter
     healthCheckPath: /health
-    buildCommand: npm install && npm run build && npx prisma generate
-    # Sync the DB schema (no migrations committed) then start.
-    startCommand: npx prisma db push --skip-generate --accept-data-loss && npm start
+    buildCommand: npm ci && npm run generate && npm run build
+    # Apply reviewed migrations and initialize private storage separately before
+    # startup. Never reset/baseline an existing database from this manifest.
+    startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PRIVATE_FILES_STORAGE_MODE
+        value: shared-filesystem
+      - key: PRIVATE_FILES_DIR
+        value: /opt/render/project/src/backend/data/private-files
+      - key: PRIVATE_FILES_STORE_ID
+        sync: false
       - key: PORT
         value: 3001
       - key: DATABASE_URL
@@ -49,8 +56,8 @@ services:
       - key: OPENAI_API_KEY
         sync: false
       - key: FRONTEND_URL
-        value: https://your-frontend.vercel.app
-    # Persist runtime config (MCP servers, connectors, custom tools, user skills).
+        sync: false
+    # This single-service volume is not shared across independent worker services.
     disk:
       name: loop-gpt-disk
       mountPath: /opt/render/project/src/backend/data

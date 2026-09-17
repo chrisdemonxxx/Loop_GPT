@@ -80,18 +80,17 @@ export const validationSchemas = {
       conversationId: z.string().min(1, 'Conversation ID is required'),
     }),
     body: z.object({
-      content: z.string().optional(),
-      imagePath: z.string().optional(),
+      content: z.string().max(100_000).optional(),
+      imagePath: z.never().optional(),
+      attachmentId: z.string().uuid().optional(),
       tool: z.enum(['chat', 'generate-image', 'analyze-image', 'vision-chat', 'mcp', 'gpt-creation']).optional(),
-      provider: z.string().optional(),
-      model: z.string().optional(),
-      apiKey: z.string().optional(),
-      models: z.array(z.any()).optional(),
-      selectionMode: z.enum(['auto', 'all', 'best', 'first', 'round-robin']).optional(),
-      interactionMode: z.enum(['ask', 'plan', 'agentic', 'automation']).optional(),
-      schedule: z.any().optional(),
-    }).refine(data => data.content || data.imagePath, {
-      message: 'Either content or imagePath must be provided',
+      // Raw provider/destination overrides are rejected by the route before
+      // this schema can strip fields. Only request-local hosted selection remains.
+      provider: z.literal('huggingface').optional(),
+      model: z.string().trim().min(1).max(200).optional(),
+      interactionMode: z.literal('ask').optional(),
+    }).refine(data => data.content || data.attachmentId, {
+      message: 'Either content or attachmentId must be provided',
     }),
   }),
 

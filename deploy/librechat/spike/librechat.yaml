@@ -1,4 +1,4 @@
-﻿# Loop GPT — LibreChat production configuration
+# Loop GPT — LibreChat production configuration
 # Agentic chat over our metered backend (/v1) with vision, tools, MCP connectors,
 # web search, code execution, artifacts and skills enabled by default.
 version: 1.3.13
@@ -21,7 +21,7 @@ interface:
 endpoints:
   custom:
     - name: "LoopGPT"
-      apiKey: "sk-loop-00125e79ada202ab537b8a751922f21bc6f39153cc36c571"
+      apiKey: "${LOOP_API_KEY}"
       baseURL: "https://api.loop-gpt.cyou/v1"
       models:
         default: [qwen-vl-loop, qwen-vl-loop-large]

@@ -19,6 +19,7 @@ import { searchWeb, type SearchResult } from '../tools/webSearch'
 import { fetchReadable } from '../tools/webFetch'
 import type { ChatMessage, ToolContext } from '../types'
 import { agentConfig } from '../config'
+import { assertRunAccess } from '../runAuthorization'
 import {
   CONFIDENTIALITY_PROMPT,
   sanitizeText,
@@ -36,6 +37,7 @@ export interface DeepResearchOptions {
   ctx: ToolContext
   maxQueries?: number
   maxSources?: number
+  beforeDispatch?: () => Promise<void>
 }
 
 export interface DeepResearchResult {
@@ -64,7 +66,8 @@ async function planQueries(
   client: any,
   model: string,
   query: string,
-  max: number
+  max: number,
+  signal?: AbortSignal
 ): Promise<string[]> {
   const systemPrompt = `You are a research strategist. Given a topic, generate ${max} DIVERSE search queries that together give comprehensive coverage.
 
@@ -85,7 +88,9 @@ Example: ["what is X", "X vs Y comparison 2025", "X limitations problems", "X re
     { role: 'user', content: `Topic: ${query}` },
   ]
   try {
-    const out = await completeOnce(client, model, messages, 0.4, 600)
+    if (signal?.aborted) throw new Error('Research cancelled')
+    const out = await completeOnce(client, model, messages, 0.4, 600, signal)
+    if (signal?.aborted) throw new Error('Research cancelled')
     const m = out.match(/\[[\s\S]*\]/)
     if (m) {
       const arr = JSON.parse(m[0])
@@ -94,7 +99,7 @@ Example: ["what is X", "X vs Y comparison 2025", "X limitations problems", "X re
       }
     }
   } catch {
-    /* fall through */
+    if (signal?.aborted) throw new Error('Research cancelled')
   }
   // Fallback: manually construct 4 angles
   return [
@@ -119,9 +124,10 @@ async function runSearchPhase(
 
   await Promise.all(
     queries.map(async (q, qi) => {
+      await assertRunAccess(ctx, 'web_search')
       ctx.emit({ type: 'tool_call', step: step + qi, name: 'web_search', args: { query: q } })
       try {
-        const results = await searchWeb(q, resultsPerQuery)
+        const results = await searchWeb(q, resultsPerQuery, ctx.signal)
         let added = 0
         for (const r of results) {
           if (!seen.has(r.url)) {
@@ -166,10 +172,11 @@ async function fetchPhase(
 
   await Promise.all(
     chosen.map(async (r, i) => {
+      await assertRunAccess(ctx, 'web_fetch')
       const idx = i + 1
       ctx.emit({ type: 'tool_call', step: startStep + i, name: 'web_fetch', args: { url: r.url } })
       try {
-        const { title, text } = await fetchReadable(r.url, perSourceChars)
+        const { title, text } = await fetchReadable(r.url, perSourceChars, ctx.signal)
         sources.push({ index: idx, title: title || r.title, url: r.url, text })
         ctx.emit({
           type: 'tool_result',
@@ -209,6 +216,7 @@ async function extractAndVerifyClaims(
   step: number,
   ctx: ToolContext
 ): Promise<VerifiedClaim[]> {
+  await assertRunAccess(ctx)
   ctx.emit({ type: 'tool_call', step, name: 'verify_claims', args: { numSources: sources.length } })
 
   // Truncate each source for the verification call (keep it fast)
@@ -241,7 +249,8 @@ Output ONLY valid JSON — no prose, no markdown:
   ]
 
   try {
-    const out = await completeOnce(client, model, messages, 0.2, 1200)
+    const out = await completeOnce(client, model, messages, 0.2, 1200, ctx.signal)
+    if (ctx.signal?.aborted) throw new Error('Research cancelled')
     const m = out.match(/\[[\s\S]*\]/)
     if (m) {
       const arr = JSON.parse(m[0])
@@ -258,7 +267,7 @@ Output ONLY valid JSON — no prose, no markdown:
       }
     }
   } catch {
-    /* fall through */
+    if (ctx.signal?.aborted) throw new Error('Research cancelled')
   }
 
   ctx.emit({
@@ -284,6 +293,7 @@ async function synthesizePhase(
   step: number,
   ctx: ToolContext
 ): Promise<string> {
+  await assertRunAccess(ctx)
   ctx.emit({ type: 'warming', message: 'Synthesizing findings into a comprehensive report…' })
 
   const sourceBlock = sources
@@ -345,6 +355,8 @@ REQUIREMENTS:
 // ---------------------------------------------------------------------------
 export async function runDeepResearch(opts: DeepResearchOptions): Promise<DeepResearchResult> {
   const { ctx, query } = opts
+  await assertRunAccess(ctx, 'web_search')
+  await assertRunAccess(ctx, 'web_fetch')
   const model = resolveModel(opts.provider, opts.model)
   const client = createClient(opts.provider, opts.apiKey, opts.baseUrl)
   const maxQueries = opts.maxQueries ?? agentConfig.research.maxQueries
@@ -355,7 +367,10 @@ export async function runDeepResearch(opts: DeepResearchOptions): Promise<DeepRe
 
   // ── Phase 1: Plan ──────────────────────────────────────────────────────────
   ctx.emit({ type: 'warming', message: 'Planning research angles…' })
-  const queries = await planQueries(client, model, query, maxQueries)
+  // Outside planQueries' fallback so failed accounting cannot continue into search.
+  if (ctx.signal?.aborted) throw new Error('Research cancelled')
+  await opts.beforeDispatch?.()
+  const queries = await planQueries(client, model, query, maxQueries, ctx.signal)
 
   ctx.emit({
     type: 'tool_call',

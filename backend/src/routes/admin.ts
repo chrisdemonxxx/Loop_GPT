@@ -3,6 +3,7 @@
  * voucher management, and payments. All routes require an admin (see requireAdmin).
  */
 import express from 'express'
+import { asyncHandler } from '../middleware/errorLogger'
 import { authenticateToken, requireAdmin } from './auth'
 import { prisma, hasDb } from '../services/prisma'
 
@@ -16,7 +17,7 @@ function noDb(res: express.Response) {
 }
 
 /** GET /api/admin/stats — headline counters + last-24h activity + token totals. */
-router.get('/stats', async (_req, res) => {
+router.get('/stats', asyncHandler(async (_req, res) => {
   if (!hasDb || !prisma) return noDb(res)
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000)
   const [users, admins, unlimited, pro, gold, tokenAgg, imagesAgg, events24, newUsers24, payAgg, recentEvents] =
@@ -51,10 +52,10 @@ router.get('/stats', async (_req, res) => {
     },
     revenue: { totalCents: payAgg._sum.amount || 0, payments: payAgg._count || 0 },
   })
-})
+}))
 
 /** GET /api/admin/timeseries — hourly usage buckets for the last 24h (charts). */
-router.get('/timeseries', async (_req, res) => {
+router.get('/timeseries', asyncHandler(async (_req, res) => {
   if (!hasDb || !prisma) return noDb(res)
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000)
   const events = await prisma.usageEvent.findMany({
@@ -80,10 +81,10 @@ router.get('/timeseries', async (_req, res) => {
     if (e.kind === 'image') b.images += 1
   }
   res.json({ hasDb: true, series: Object.values(buckets) })
-})
+}))
 
 /** GET /api/admin/users?query=&take=&skip= — paginated user list. */
-router.get('/users', async (req, res) => {
+router.get('/users', asyncHandler(async (req, res) => {
   if (!hasDb || !prisma) return noDb(res)
   const q = String(req.query.query || '').trim()
   const take = Math.min(Number(req.query.take) || 25, 100)
@@ -110,10 +111,10 @@ router.get('/users', async (req, res) => {
     total,
     users: users.map((u) => ({ ...u, tokensInTotal: Number(u.tokensInTotal), tokensOutTotal: Number(u.tokensOutTotal) })),
   })
-})
+}))
 
 /** PATCH /api/admin/users/:id — update role/plan/unlimited/credits. */
-router.patch('/users/:id', async (req, res) => {
+router.patch('/users/:id', asyncHandler(async (req, res) => {
   if (!hasDb || !prisma) return noDb(res)
   const { role, plan, unlimited, credits, imageCredits } = req.body || {}
   const data: any = {}
@@ -125,10 +126,10 @@ router.patch('/users/:id', async (req, res) => {
   if (!Object.keys(data).length) return res.status(400).json({ error: 'Nothing to update.' })
   const user = await prisma.user.update({ where: { id: req.params.id }, data })
   res.json({ ok: true, user: { ...user, tokensInTotal: Number(user.tokensInTotal), tokensOutTotal: Number(user.tokensOutTotal) } })
-})
+}))
 
 /** GET /api/admin/usage?take= — recent usage events across all users (live feed). */
-router.get('/usage', async (req, res) => {
+router.get('/usage', asyncHandler(async (req, res) => {
   if (!hasDb || !prisma) return noDb(res)
   const take = Math.min(Number(req.query.take) || 50, 200)
   const events = await prisma.usageEvent.findMany({
@@ -137,16 +138,16 @@ router.get('/usage', async (req, res) => {
     include: { user: { select: { email: true, name: true } } },
   })
   res.json({ hasDb: true, events })
-})
+}))
 
 // ---- Vouchers ---------------------------------------------------------------
 
 /** GET /api/admin/vouchers — list all vouchers with redemption counts. */
-router.get('/vouchers', async (_req, res) => {
+router.get('/vouchers', asyncHandler(async (_req, res) => {
   if (!hasDb || !prisma) return noDb(res)
   const vouchers = await prisma.voucher.findMany({ orderBy: { createdAt: 'desc' } })
   res.json({ hasDb: true, vouchers })
-})
+}))
 
 function genCode(prefix = 'LOOP'): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -160,7 +161,7 @@ function genCode(prefix = 'LOOP'): string {
  * type: 'gold' (T1 team, capped-max) | 'pro' | 'unlimited' (internal) | 'credits'.
  * Defaults to a T1 Gold team code (plan upgrade to capped-max limits).
  */
-router.post('/vouchers', async (req, res) => {
+router.post('/vouchers', asyncHandler(async (req, res) => {
   if (!hasDb || !prisma) return noDb(res)
   const { code, type = 'gold', plan, credits = 0, imageCredits = 0, maxRedemptions = 1, expiresAt, note, count = 1 } =
     req.body || {}
@@ -192,10 +193,10 @@ router.post('/vouchers', async (req, res) => {
     }
   }
   res.json({ ok: true, vouchers: created })
-})
+}))
 
 /** PATCH /api/admin/vouchers/:id — toggle active / edit note. */
-router.patch('/vouchers/:id', async (req, res) => {
+router.patch('/vouchers/:id', asyncHandler(async (req, res) => {
   if (!hasDb || !prisma) return noDb(res)
   const { active, note } = req.body || {}
   const data: any = {}
@@ -203,19 +204,19 @@ router.patch('/vouchers/:id', async (req, res) => {
   if (typeof note === 'string') data.note = note
   const v = await prisma.voucher.update({ where: { id: req.params.id }, data })
   res.json({ ok: true, voucher: v })
-})
+}))
 
 /** DELETE /api/admin/vouchers/:id */
-router.delete('/vouchers/:id', async (req, res) => {
+router.delete('/vouchers/:id', asyncHandler(async (req, res) => {
   if (!hasDb || !prisma) return noDb(res)
   await prisma.voucher.delete({ where: { id: req.params.id } })
   res.json({ ok: true })
-})
+}))
 
 // ---- Payments ---------------------------------------------------------------
 
 /** GET /api/admin/payments — recent payments. */
-router.get('/payments', async (req, res) => {
+router.get('/payments', asyncHandler(async (req, res) => {
   if (!hasDb || !prisma) return noDb(res)
   const take = Math.min(Number(req.query.take) || 50, 200)
   const payments = await prisma.payment.findMany({
@@ -224,10 +225,10 @@ router.get('/payments', async (req, res) => {
     include: { user: { select: { email: true, name: true } } },
   })
   res.json({ hasDb: true, payments })
-})
+}))
 
 /** POST /api/admin/payments — manually record a payment (e.g. offline/comp). */
-router.post('/payments', async (req, res) => {
+router.post('/payments', asyncHandler(async (req, res) => {
   if (!hasDb || !prisma) return noDb(res)
   const { userId, amount, currency = 'usd', status = 'succeeded', provider = 'manual', reference, note } = req.body || {}
   if (!userId || !Number.isFinite(amount)) return res.status(400).json({ error: 'userId and amount (cents) are required.' })
@@ -235,6 +236,6 @@ router.post('/payments', async (req, res) => {
     data: { userId, amount: Math.floor(amount), currency, status, provider, reference: reference || null, note: note || null },
   })
   res.json({ ok: true, payment })
-})
+}))
 
 export default router

@@ -1,0 +1,19 @@
+# Context is web/. Allow only build inputs; exclude .env, caches and node_modules.
+**
+!package.json
+!package-lock.json
+!index.html
+!tsconfig.json
+!vite.config.ts
+!src/
+!src/**
+!public/
+!public/**
+!build/
+!build/**
+!nginx.template.conf
+
+# Keep last: public/src/build exceptions must never re-include credentials.
+**/.env
+**/.env.*
+**/tunnel-creds.json

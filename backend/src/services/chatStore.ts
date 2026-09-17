@@ -3,17 +3,9 @@
  * (Postgres) and the in-memory fallback store. Used by the streaming agent
  * route so it doesn't duplicate the branching logic in routes/messages.ts.
  */
-import { PrismaClient } from '@prisma/client'
+import { prisma } from './prisma'
 import { memoryStore } from './memoryStore'
-
-let prisma: PrismaClient | null = null
-try {
-  if (process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('postgresql://user:password')) {
-    prisma = new PrismaClient()
-  }
-} catch {
-  prisma = null
-}
+import { randomBytes } from 'crypto'
 
 export const USE_MEMORY_STORE = !prisma
 
@@ -41,14 +33,13 @@ export interface SaveMessageInput {
 
 async function ensureDevUser(userId: string) {
   if (!prisma) return
-  // The shared guest identity (used when ENABLE_DEV_MODE is on) must exist in the
-  // User table before conversations can reference it — regardless of NODE_ENV.
-  if (userId === 'dev-user-123') {
+  if (userId === 'dev-user-123' && process.env.NODE_ENV === 'development' && process.env.ENABLE_DEV_MODE === 'true') {
     const existing = await prisma.user.findUnique({ where: { id: userId } })
     if (!existing) {
       const bcrypt = require('bcryptjs')
-      await prisma.user.create({
-        data: { id: userId, email: 'guest@loop-gpt.local', password: await bcrypt.hash('guest', 10), name: 'Guest' },
+      await prisma.user.upsert({
+        where: { id: userId }, update: {},
+        create: { id: userId, email: 'guest@loop-gpt.local', password: await bcrypt.hash(randomBytes(32).toString('hex'), 10), name: 'Local Developer' },
       })
     }
   }
@@ -59,6 +50,7 @@ export async function getOrCreateConversation(
   conversationId: string,
   title: string
 ): Promise<{ id: string; title: string; userId: string } | null> {
+  if (typeof userId !== 'string' || !userId.trim()) return null
   if (USE_MEMORY_STORE) {
     memoryStore.ensureUser(userId)
     if (conversationId === 'new') return memoryStore.createConversation(userId, title.slice(0, 50) || 'New Chat')
@@ -71,16 +63,14 @@ export async function getOrCreateConversation(
   if (conversationId === 'new') {
     return prisma!.conversation.create({ data: { title: title.slice(0, 50) || 'New Chat', userId } })
   }
-  const whereClause: any = { id: conversationId }
-  if (process.env.NODE_ENV !== 'development' || userId !== 'dev-user-123') whereClause.userId = userId
-  let conv = await prisma!.conversation.findFirst({ where: whereClause })
-  if (!conv && process.env.NODE_ENV === 'development' && userId === 'dev-user-123') {
-    conv = await prisma!.conversation.create({ data: { id: conversationId, title: title.slice(0, 50) || 'New Chat', userId } })
-  }
-  return conv
+  return prisma!.conversation.findFirst({ where: { id: conversationId, userId } })
 }
 
 export async function getHistory(conversationId: string, take = 20): Promise<StoredMessage[]> {
+  if (!Number.isSafeInteger(take) || take < 0 || take > 500) {
+    throw new RangeError('History size must be an integer between 0 and 500')
+  }
+  if (take === 0) return []
   if (USE_MEMORY_STORE) {
     return memoryStore.getMessages(conversationId).slice(-take).map((m) => ({
       ...m,
@@ -89,10 +79,11 @@ export async function getHistory(conversationId: string, take = 20): Promise<Sto
   }
   const rows = await prisma!.message.findMany({
     where: { conversationId },
-    orderBy: { createdAt: 'asc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take,
   })
-  return rows.map((m) => ({ ...m, createdAt: m.createdAt.toISOString() })) as StoredMessage[]
+  // Fetch the newest window, then present it in conversational order.
+  return rows.reverse().map((m) => ({ ...m, createdAt: m.createdAt.toISOString() })) as StoredMessage[]
 }
 
 export async function saveMessage(conversationId: string, input: SaveMessageInput): Promise<StoredMessage> {

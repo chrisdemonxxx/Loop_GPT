@@ -2,8 +2,7 @@
  * AI Provider Service - Supports multiple AI providers
  */
 
-import OpenAI from 'openai'
-import axios from 'axios'
+import { providerRequest } from './providerHttp'
 
 export type AIProvider = 'openai' | 'anthropic' | 'local' | 'groq' | 'together' | 'ollama' | 'xai' | 'perplexity' | 'nvidia' | 'huggingface'
 
@@ -31,8 +30,29 @@ export interface ProviderConfig {
 
 export class AIProviderService {
   private providerConfigs: Map<AIProvider, ProviderConfig> = new Map()
-  private modelCache: Map<AIProvider, { models: string[]; timestamp: number }> = new Map()
-  private CACHE_DURATION = 60 * 60 * 1000 // 1 hour cache
+
+  /** Lazy import: llmClient imports the HF configuration helpers in this module. */
+  private async compatibleChat(
+    provider: AIProvider,
+    messages: Array<{ role: string; content: any }>,
+    model: string,
+    apiKey?: string,
+    baseUrl?: string,
+  ): Promise<string> {
+    try {
+      const { createClient } = await import('../agent/llmClient')
+      const client = createClient(provider, apiKey, baseUrl)
+      const hf = provider === 'huggingface'
+      const completion = await client.chat.completions.create({
+        model, messages: messages as any,
+        temperature: hf ? Math.min(2, Math.max(0, Number(process.env.AGENT_TEMPERATURE) || 0.7)) : 0.7,
+        max_tokens: hf ? Math.min(32_000, Math.max(1, Math.floor(Number(process.env.HF_MAX_TOKENS) || 8192))) : 2000,
+      })
+      return completion.choices[0]?.message?.content || ''
+    } catch {
+      throw new Error('Upstream model request failed.')
+    }
+  }
 
   /**
    * Set provider configuration
@@ -56,18 +76,7 @@ export class AIProviderService {
     model: string = 'gpt-3.5-turbo',
     apiKey?: string
   ): Promise<string> {
-    const openai = new OpenAI({
-      apiKey: apiKey || process.env.OPENAI_API_KEY,
-    })
-
-    const completion = await openai.chat.completions.create({
-      model,
-      messages: messages as any,
-      temperature: 0.7,
-      max_tokens: 2000,
-    })
-
-    return completion.choices[0]?.message?.content || ''
+    return this.compatibleChat('openai', messages, model, apiKey)
   }
 
   /**
@@ -78,26 +87,31 @@ export class AIProviderService {
     model: string = 'claude-3-haiku-20240307',
     apiKey?: string
   ): Promise<string> {
-    const response = await axios.post(
-      'https://api.anthropic.com/v1/messages',
-      {
-        model,
-        max_tokens: 2000,
-        messages: messages.map(msg => ({
-          role: msg.role === 'assistant' ? 'assistant' : 'user',
-          content: msg.content,
-        })),
-      },
-      {
+    try {
+      const response = await providerRequest('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        allowedOrigins: ['https://api.anthropic.com'],
+        timeoutMs: 120_000,
+        maxBytes: 8 * 1024 * 1024,
+        body: JSON.stringify({
+          model,
+          max_tokens: 2000,
+          messages: messages.map(msg => ({
+            role: msg.role === 'assistant' ? 'assistant' : 'user',
+            content: msg.content,
+          })),
+        }),
         headers: {
-          'x-api-key': apiKey || process.env.ANTHROPIC_API_KEY || '',
+          'x-api-key': apiKey ?? process.env.ANTHROPIC_API_KEY ?? '',
           'anthropic-version': '2023-06-01',
           'Content-Type': 'application/json',
         },
-      }
-    )
-
-    return response.data.content[0]?.text || ''
+      })
+      const data = await response.json()
+      return data.content[0]?.text || ''
+    } catch {
+      throw new Error('Upstream model request failed.')
+    }
   }
 
   /**
@@ -108,23 +122,7 @@ export class AIProviderService {
     model: string = 'llama3-8b-8192',
     apiKey?: string
   ): Promise<string> {
-    const response = await axios.post(
-      'https://api.groq.com/openai/v1/chat/completions',
-      {
-        model,
-        messages: messages as any,
-        temperature: 0.7,
-        max_tokens: 2000,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey || process.env.GROQ_API_KEY || ''}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    )
-
-    return response.data.choices[0]?.message?.content || ''
+    return this.compatibleChat('groq', messages, model, apiKey)
   }
 
   /**
@@ -135,23 +133,7 @@ export class AIProviderService {
     model: string = 'meta-llama/Llama-3-8b-chat-hf',
     apiKey?: string
   ): Promise<string> {
-    const response = await axios.post(
-      'https://api.together.xyz/v1/chat/completions',
-      {
-        model,
-        messages: messages as any,
-        temperature: 0.7,
-        max_tokens: 2000,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey || process.env.TOGETHER_API_KEY || ''}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    )
-
-    return response.data.choices[0]?.message?.content || ''
+    return this.compatibleChat('together', messages, model, apiKey)
   }
 
   /**
@@ -160,18 +142,9 @@ export class AIProviderService {
   async getOllamaChatCompletion(
     messages: Array<{ role: string; content: string }>,
     model: string = 'llama2',
-    baseUrl: string = 'http://localhost:11434'
+    baseUrl?: string
   ): Promise<string> {
-    const response = await axios.post(
-      `${baseUrl}/api/chat`,
-      {
-        model,
-        messages: messages as any,
-        stream: false,
-      }
-    )
-
-    return response.data.message?.content || ''
+    throw new Error('Local provider chat is disabled.')
   }
 
   /**
@@ -180,24 +153,9 @@ export class AIProviderService {
   async getLocalChatCompletion(
     messages: Array<{ role: string; content: string }>,
     model: string = 'gpt-3.5-turbo',
-    baseUrl: string = 'http://localhost:1234/v1'
+    baseUrl?: string
   ): Promise<string> {
-    const response = await axios.post(
-      `${baseUrl}/chat/completions`,
-      {
-        model,
-        messages: messages as any,
-        temperature: 0.7,
-        max_tokens: 2000,
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      }
-    )
-
-    return response.data.choices[0]?.message?.content || ''
+    throw new Error('Local provider chat is disabled.')
   }
 
   /**
@@ -208,26 +166,7 @@ export class AIProviderService {
     model: string = 'grok-beta',
     apiKey?: string
   ): Promise<string> {
-    const response = await axios.post(
-      'https://api.x.ai/v1/chat/completions',
-      {
-        model,
-        messages: messages.map(msg => ({
-          role: msg.role === 'assistant' ? 'assistant' : 'user',
-          content: msg.content,
-        })),
-        temperature: 0.7,
-        max_tokens: 2000,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey || process.env.XAI_API_KEY || ''}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    )
-
-    return response.data.choices[0]?.message?.content || ''
+    return this.compatibleChat('xai', messages, model, apiKey)
   }
 
   /**
@@ -238,23 +177,7 @@ export class AIProviderService {
     model: string = 'llama-3.1-sonar-large-32k-online',
     apiKey?: string
   ): Promise<string> {
-    const response = await axios.post(
-      'https://api.perplexity.ai/chat/completions',
-      {
-        model,
-        messages: messages as any,
-        temperature: 0.7,
-        max_tokens: 2000,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey || process.env.PERPLEXITY_API_KEY || ''}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    )
-
-    return response.data.choices[0]?.message?.content || ''
+    return this.compatibleChat('perplexity', messages, model, apiKey)
   }
 
   /**
@@ -266,33 +189,13 @@ export class AIProviderService {
     apiKey?: string,
     baseUrl: string = 'https://integrate.api.nvidia.com/v1'
   ): Promise<string> {
-    const response = await axios.post(
-      `${baseUrl}/chat/completions`,
-      {
-        model,
-        messages: messages as any,
-        temperature: 0.7,
-        max_tokens: 2000,
-        stream: false,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey || process.env.NVIDIA_API_KEY || ''}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    )
-
-    return response.data.choices[0]?.message?.content || ''
+    return this.compatibleChat('nvidia', messages, model, apiKey, baseUrl)
   }
 
   /**
    * Get chat completion from a Hugging Face Inference Endpoint.
    *
-   * The endpoint runs an OpenAI-compatible server (llama.cpp / TGI) so we reuse
-   * the OpenAI SDK, only swapping the baseURL and using the HF token as the key.
-   * Endpoints with scale-to-zero can take 30-120s to cold-start, so we use a
-   * long timeout and retry once on gateway/timeout errors.
+   * Delegates endpoint/credential policy and the bounded request to createClient.
    */
   async getHFEndpointChatCompletion(
     messages: Array<{ role: string; content: any }>,
@@ -300,35 +203,7 @@ export class AIProviderService {
     apiKey?: string,
     baseUrl?: string
   ): Promise<string> {
-    const client = new OpenAI({
-      apiKey: apiKey || process.env.HF_TOKEN || 'sk-no-key',
-      baseURL: getHFBaseUrl(baseUrl),
-      timeout: Number(process.env.HF_REQUEST_TIMEOUT_MS) || 300_000,
-      maxRetries: 0,
-    })
-
-    const doCall = async () => {
-      const completion = await client.chat.completions.create({
-        model: getHFModel(model),
-        messages: messages as any,
-        temperature: Number(process.env.AGENT_TEMPERATURE) || 0.7,
-        max_tokens: Number(process.env.HF_MAX_TOKENS) || 8192,
-      })
-      return completion.choices[0]?.message?.content || ''
-    }
-
-    try {
-      return await doCall()
-    } catch (error: any) {
-      // Cold-start / gateway hiccup — retry once after a short wait.
-      const status = error?.status || error?.response?.status
-      const retriable = status === 502 || status === 503 || status === 504 || error?.code === 'ETIMEDOUT' || error?.code === 'ECONNRESET'
-      if (retriable) {
-        await new Promise((r) => setTimeout(r, 3000))
-        return doCall()
-      }
-      throw error
-    }
+    return this.compatibleChat('huggingface', messages, getHFModel(model), apiKey, baseUrl)
   }
 
   /**
@@ -343,8 +218,8 @@ export class AIProviderService {
   ): Promise<string> {
     const config = this.getProviderConfig(provider)
     const finalModel = model || config?.model || this.getDefaultModel(provider)
-    const finalApiKey = apiKey || config?.apiKey
-    const finalBaseUrl = baseUrl || config?.baseUrl
+    const finalApiKey = apiKey ?? config?.apiKey
+    const finalBaseUrl = baseUrl ?? config?.baseUrl
 
     switch (provider) {
       case 'openai':
@@ -368,7 +243,7 @@ export class AIProviderService {
       case 'huggingface':
         return this.getHFEndpointChatCompletion(messages, finalModel, finalApiKey, finalBaseUrl)
       default:
-        throw new Error(`Unsupported provider: ${provider}`)
+        throw new Error('Unsupported provider.')
     }
   }
 
@@ -395,20 +270,11 @@ export class AIProviderService {
    * Get available models for provider - fetches from API if available
    */
   async getAvailableModels(provider: AIProvider, apiKey?: string, baseUrl?: string): Promise<string[]> {
-    // Check cache first
-    const cached = this.modelCache.get(provider)
-    if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
-      return cached.models
-    }
-
     try {
-      const models = await this.fetchModelsFromAPI(provider, apiKey, baseUrl)
-      // Cache the results
-      this.modelCache.set(provider, { models, timestamp: Date.now() })
-      return models
-    } catch (error: any) {
-      console.error(`Failed to fetch models from ${provider}:`, error.message)
-      // Return fallback models if API fetch fails
+      // Discovery is deliberately uncached: credentials/configurations must not
+      // share model results, and raw keys must never become cache identifiers.
+      return await this.fetchModelsFromAPI(provider, apiKey, baseUrl)
+    } catch {
       return this.getFallbackModels(provider)
     }
   }
@@ -418,8 +284,22 @@ export class AIProviderService {
    */
   private async fetchModelsFromAPI(provider: AIProvider, apiKey?: string, baseUrl?: string): Promise<string[]> {
     const config = this.getProviderConfig(provider)
-    const finalApiKey = apiKey || config?.apiKey
-    const finalBaseUrl = baseUrl || config?.baseUrl
+    const finalApiKey = apiKey ?? config?.apiKey
+    const finalBaseUrl = baseUrl ?? config?.baseUrl
+
+    const bases: Partial<Record<AIProvider, string>> = {
+      openai: 'https://api.openai.com/v1',
+      groq: 'https://api.groq.com/openai/v1',
+      together: 'https://api.together.xyz/v1',
+      xai: 'https://api.x.ai/v1',
+      perplexity: 'https://api.perplexity.ai',
+      nvidia: 'https://integrate.api.nvidia.com/v1',
+    }
+    // Never forward a request key, configured key or server fallback to a
+    // custom discovery URL. Static providers perform no network discovery.
+    if (finalBaseUrl !== undefined && finalBaseUrl.replace(/\/+$/, '') !== bases[provider]) {
+      return this.getFallbackModels(provider)
+    }
 
     switch (provider) {
       case 'openai':
@@ -431,16 +311,15 @@ export class AIProviderService {
       case 'together':
         return this.fetchTogetherModels(finalApiKey)
       case 'ollama':
-        return this.fetchOllamaModels(finalBaseUrl)
+        return this.getFallbackModels('ollama')
       case 'xai':
         return this.fetchXAIModels(finalApiKey)
       case 'perplexity':
         return this.fetchPerplexityModels(finalApiKey)
       case 'nvidia':
-        return this.fetchNvidiaModels(finalApiKey, finalBaseUrl)
+        return this.fetchNvidiaModels(finalApiKey)
       case 'local':
-        // For local APIs, try to fetch but fallback to defaults
-        return this.fetchLocalModels(finalBaseUrl)
+        return this.getFallbackModels('local')
       case 'huggingface':
         return this.getFallbackModels('huggingface')
       default:
@@ -448,18 +327,26 @@ export class AIProviderService {
     }
   }
 
+  private async discoveryJson(url: string, apiKey: string | undefined): Promise<any> {
+    // Call sites below supply fixed literals, never request-derived endpoints.
+    const response = await providerRequest(url, {
+      method: 'GET',
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      allowedOrigins: [new URL(url).origin],
+      timeoutMs: 15_000,
+      maxBytes: 2 * 1024 * 1024,
+    })
+    return response.json()
+  }
+
   /**
    * Fetch OpenAI models
    */
   private async fetchOpenAIModels(apiKey?: string): Promise<string[]> {
     try {
-      const response = await axios.get('https://api.openai.com/v1/models', {
-        headers: {
-          Authorization: `Bearer ${apiKey || process.env.OPENAI_API_KEY || ''}`,
-        },
-      })
+      const response = await this.discoveryJson('https://api.openai.com/v1/models', apiKey ?? process.env.OPENAI_API_KEY)
       // Filter for chat models
-      return response.data.data
+      return response.data
         .filter((model: any) => 
           model.id.includes('gpt') && 
           (model.id.includes('chat') || model.id.includes('turbo') || model.id.includes('gpt-4'))
@@ -484,12 +371,8 @@ export class AIProviderService {
    */
   private async fetchGroqModels(apiKey?: string): Promise<string[]> {
     try {
-      const response = await axios.get('https://api.groq.com/openai/v1/models', {
-        headers: {
-          Authorization: `Bearer ${apiKey || process.env.GROQ_API_KEY || ''}`,
-        },
-      })
-      return response.data.data
+      const response = await this.discoveryJson('https://api.groq.com/openai/v1/models', apiKey ?? process.env.GROQ_API_KEY)
+      return response.data
         .map((model: any) => model.id)
         .filter((id: string) => id.includes('llama') || id.includes('mixtral') || id.includes('gemma'))
         .sort()
@@ -503,12 +386,8 @@ export class AIProviderService {
    */
   private async fetchTogetherModels(apiKey?: string): Promise<string[]> {
     try {
-      const response = await axios.get('https://api.together.xyz/v1/models', {
-        headers: {
-          Authorization: `Bearer ${apiKey || process.env.TOGETHER_API_KEY || ''}`,
-        },
-      })
-      return response.data
+      const response = await this.discoveryJson('https://api.together.xyz/v1/models', apiKey ?? process.env.TOGETHER_API_KEY)
+      return response
         .filter((model: any) => model.type === 'chat' || model.name.includes('instruct') || model.name.includes('chat'))
         .map((model: any) => model.name)
         .sort()
@@ -518,31 +397,12 @@ export class AIProviderService {
   }
 
   /**
-   * Fetch Ollama models
-   */
-  private async fetchOllamaModels(baseUrl?: string): Promise<string[]> {
-    try {
-      const url = baseUrl || 'http://localhost:11434'
-      const response = await axios.get(`${url}/api/tags`)
-      return response.data.models
-        .map((model: any) => model.name)
-        .sort()
-    } catch (error) {
-      throw new Error('Failed to fetch Ollama models - make sure Ollama is running')
-    }
-  }
-
-  /**
    * Fetch x.ai models
    */
   private async fetchXAIModels(apiKey?: string): Promise<string[]> {
     try {
-      const response = await axios.get('https://api.x.ai/v1/models', {
-        headers: {
-          Authorization: `Bearer ${apiKey || process.env.XAI_API_KEY || ''}`,
-        },
-      })
-      return response.data.data
+      const response = await this.discoveryJson('https://api.x.ai/v1/models', apiKey ?? process.env.XAI_API_KEY)
+      return response.data
         .map((model: any) => model.id)
         .filter((id: string) => id.includes('grok'))
         .sort()
@@ -556,59 +416,25 @@ export class AIProviderService {
    */
   private async fetchPerplexityModels(apiKey?: string): Promise<string[]> {
     try {
-      const response = await axios.get('https://api.perplexity.ai/models', {
-        headers: {
-          Authorization: `Bearer ${apiKey || process.env.PERPLEXITY_API_KEY || ''}`,
-        },
-      })
-      return response.data.data?.map((model: any) => model.id).sort() || []
+      const response = await this.discoveryJson('https://api.perplexity.ai/models', apiKey ?? process.env.PERPLEXITY_API_KEY)
+      return response.data?.map((model: any) => model.id).sort() || []
     } catch (error) {
-      // Perplexity might not have a models endpoint, try alternate
-      try {
-        const response = await axios.get('https://api.perplexity.ai/chat/completions', {
-          method: 'OPTIONS',
-          headers: {
-            Authorization: `Bearer ${apiKey || process.env.PERPLEXITY_API_KEY || ''}`,
-          },
-        })
-        // If that doesn't work, return fallback
-        return this.getFallbackModels('perplexity')
-      } catch {
-        return this.getFallbackModels('perplexity')
-      }
+      return this.getFallbackModels('perplexity')
     }
   }
 
   /**
    * Fetch NVIDIA NIM models
    */
-  private async fetchNvidiaModels(apiKey?: string, baseUrl?: string): Promise<string[]> {
+  private async fetchNvidiaModels(apiKey?: string): Promise<string[]> {
     try {
-      const url = baseUrl || 'https://integrate.api.nvidia.com/v1'
-      const response = await axios.get(`${url}/models`, {
-        headers: {
-          Authorization: `Bearer ${apiKey || process.env.NVIDIA_API_KEY || ''}`,
-        },
-      })
-      return response.data.data
+      const response = await this.discoveryJson('https://integrate.api.nvidia.com/v1/models', apiKey ?? process.env.NVIDIA_API_KEY)
+      return response.data
         ?.map((model: any) => model.id)
         .filter((id: string) => id.includes('instruct') || id.includes('chat'))
         .sort() || []
     } catch (error) {
       throw new Error('Failed to fetch NVIDIA NIM models')
-    }
-  }
-
-  /**
-   * Fetch local OpenAI-compatible API models
-   */
-  private async fetchLocalModels(baseUrl?: string): Promise<string[]> {
-    try {
-      const url = (baseUrl || 'http://localhost:1234/v1').replace(/\/v1$/, '')
-      const response = await axios.get(`${url}/v1/models`)
-      return response.data.data?.map((model: any) => model.id).sort() || []
-    } catch (error) {
-      return this.getFallbackModels('local')
     }
   }
 
@@ -679,14 +505,9 @@ export class AIProviderService {
   }
 
   /**
-   * Clear model cache for a provider (useful when API key changes)
+   * Compatibility hook; discovery no longer caches credential-dependent data.
    */
   clearModelCache(provider?: AIProvider) {
-    if (provider) {
-      this.modelCache.delete(provider)
-    } else {
-      this.modelCache.clear()
-    }
   }
 }
 

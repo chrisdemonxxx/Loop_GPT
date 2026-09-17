@@ -1,14 +1,11 @@
 /**
  * Credit metering + voucher redemption for the freemium SaaS layer.
  *
- * All functions no-op / return permissive defaults when no database is
- * configured (in-memory / local dev), so the app keeps working without Postgres.
- * Admins and users flagged `unlimited` (e.g. via a team voucher) bypass limits.
+ * Daily accounting fails closed and reserves before dispatch. Explicit admin /
+ * unlimited exemptions are persisted in the reservation audit trail.
  */
 import { prisma, hasDb } from './prisma'
-import { lowCreditEmail } from './email'
-
-const LOW_CREDIT_THRESHOLD = 5
+import { enqueueDailySettlement, captureDailySettlement, DailyCreditError, getDailyAccountUser } from './dailyReservations'
 
 export type UsageKind = 'chat' | 'agent' | 'research' | 'image' | 'video'
 
@@ -34,8 +31,6 @@ export const CREDIT_COST: Record<UsageKind, number> = {
   image: 2,
   video: 10,
 }
-
-const DAY_MS = 24 * 60 * 60 * 1000
 
 function planLimits(plan: string) {
   return PLAN_LIMITS[plan] || PLAN_LIMITS.free
@@ -64,21 +59,11 @@ export interface AccountView {
 
 /**
  * Load the user, resetting daily credits if the 24h window elapsed. Returns null
- * when there's no DB (caller should treat as unlimited/dev).
+ * when there's no DB. This is an account view, never permission to dispatch.
  */
 export async function getAccount(userId: string): Promise<AccountView | null> {
   if (!hasDb || !prisma) return null
-  let user = await prisma.user.findUnique({ where: { id: userId } })
-  if (!user) return null
-
-  // Rolling daily reset.
-  if (Date.now() - new Date(user.creditsResetAt).getTime() >= DAY_MS) {
-    const lim = planLimits(user.plan)
-    user = await prisma.user.update({
-      where: { id: userId },
-      data: { credits: lim.credits, imageCredits: lim.imageCredits, creditsResetAt: new Date() },
-    })
-  }
+  const user = await getDailyAccountUser(userId)
 
   const lim = planLimits(user.plan)
   return {
@@ -112,11 +97,11 @@ export interface CreditCheck {
 
 /**
  * Check (without deducting) whether the user can afford an action of `kind`.
- * Permissive when there's no DB. Admin / unlimited always pass.
+ * Informational only: callers must reserveDailyCredits before dispatch.
  */
 export async function checkCredits(userId: string, kind: UsageKind): Promise<CreditCheck> {
   const acct = await getAccount(userId)
-  if (!acct) return { ok: true, unlimited: true } // no DB → dev/unlimited
+  if (!acct) throw new DailyCreditError(503, 'DAILY_ACCOUNTING_UNAVAILABLE', 'Daily credit accounting unavailable')
   if (acct.role === 'admin' || acct.unlimited) return { ok: true, unlimited: true }
   if (kind === 'image') {
     if (acct.imageCredits <= 0) {
@@ -132,50 +117,23 @@ export async function checkCredits(userId: string, kind: UsageKind): Promise<Cre
 }
 
 /**
- * Record a completed action: deduct credits, bump lifetime counters, and write a
- * UsageEvent row. Safe to call after the run; no-op without a DB.
+ * Capture an existing reservation once. Deduction already happened at reserve.
+ * The persisted server ID is mandatory; missing IDs cannot create free usage.
  */
 export async function recordUsage(
   userId: string,
   kind: UsageKind,
-  opts: { tokensIn?: number; tokensOut?: number; images?: number; model?: string } = {}
+  opts: { reservationId?: string; tokensIn?: number; tokensOut?: number; images?: number; model?: string } = {}
 ): Promise<void> {
-  if (!hasDb || !prisma) return
-  const user = await prisma.user.findUnique({ where: { id: userId } })
-  if (!user) return
-
-  const tokensIn = Math.max(0, Math.floor(opts.tokensIn || 0))
-  const tokensOut = Math.max(0, Math.floor(opts.tokensOut || 0))
-  const images = Math.max(0, Math.floor(opts.images || 0))
-  const bypass = user.role === 'admin' || user.unlimited
-  const cost = kind === 'image' ? 0 : CREDIT_COST[kind] || 1
-  const imageCost = kind === 'image' ? images || 1 : 0
-
-  const data: any = {
-    tokensInTotal: { increment: BigInt(tokensIn) },
-    tokensOutTotal: { increment: BigInt(tokensOut) },
-    imagesTotal: { increment: images },
-    messagesTotal: { increment: kind === 'image' ? 0 : 1 },
-    lastActiveAt: new Date(),
-  }
-  if (!bypass) {
-    if (cost) data.credits = { decrement: cost }
-    if (imageCost) data.imageCredits = { decrement: imageCost }
-  }
-
-  await prisma.$transaction([
-    prisma.user.update({ where: { id: userId }, data }),
-    prisma.usageEvent.create({
-      data: { userId, kind, tokensIn, tokensOut, credits: bypass ? 0 : cost + imageCost, model: opts.model || null },
-    }),
-  ])
-
-  // One-shot low-credit alert email the moment the user crosses the threshold.
-  if (!bypass && cost) {
-    const after = user.credits - cost
-    if (user.credits > LOW_CREDIT_THRESHOLD && after <= LOW_CREDIT_THRESHOLD) {
-      lowCreditEmail(user.email, user.name, Math.max(0, after)).catch(() => {})
-    }
+  if (!opts.reservationId) throw new DailyCreditError(409, 'DAILY_RESERVATION_REQUIRED', 'Usage requires a daily reservation')
+  try {
+    await enqueueDailySettlement(opts.reservationId, userId, kind, opts)
+    // A queued intent is not successful billing: callers still observe capture
+    // failures, while the independent worker can recover the committed metrics.
+    await captureDailySettlement(opts.reservationId)
+  } catch (error) {
+    if (error instanceof DailyCreditError) throw error
+    throw new DailyCreditError(503, 'DAILY_ACCOUNTING_UNAVAILABLE', 'Daily credit accounting unavailable')
   }
 }
 
@@ -189,6 +147,7 @@ export interface RedeemResult {
 export async function redeemVoucher(userId: string, code: string): Promise<RedeemResult> {
   const clean = String(code || '').trim().toUpperCase()
   if (!clean) return { ok: false, error: 'Voucher code is required.' }
+  if (!hasDb || !prisma) return { ok: false, error: 'Vouchers require a database.' }
 
   // Env-var team invite code: set ADMIN_INVITE_CODE in your deployment to give
   // any team member unlimited access without a per-code database voucher.
@@ -203,51 +162,55 @@ export async function redeemVoucher(userId: string, code: string): Promise<Redee
     return { ok: true, applied: { type: 'unlimited', unlimited: true, plan: 'pro' } }
   }
 
-  if (!hasDb || !prisma) return { ok: false, error: 'Vouchers require a database.' }
+  // Capacity checks, the unique redemption, and the grant must share one
+  // serializable transaction. Retry serialization conflicts with fresh reads.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await prisma.$transaction(async (tx): Promise<RedeemResult> => {
+        const voucher = await tx.voucher.findUnique({ where: { code: clean } })
+        if (!voucher || !voucher.active) return { ok: false, error: 'Invalid or inactive voucher.' }
+        const now = new Date()
+        if (voucher.expiresAt && voucher.expiresAt <= now) return { ok: false, error: 'This voucher has expired.' }
+        if (voucher.redemptionCount >= voucher.maxRedemptions) return { ok: false, error: 'This voucher has been fully redeemed.' }
+        const already = await tx.voucherRedemption.findUnique({
+          where: { voucherId_userId: { voucherId: voucher.id, userId } },
+        })
+        if (already) return { ok: false, error: 'You have already redeemed this voucher.' }
 
-  const voucher = await prisma.voucher.findUnique({ where: { code: clean } })
-  if (!voucher || !voucher.active) return { ok: false, error: 'Invalid or inactive voucher.' }
-  if (voucher.expiresAt && voucher.expiresAt.getTime() < Date.now()) return { ok: false, error: 'This voucher has expired.' }
-  if (voucher.redemptionCount >= voucher.maxRedemptions) return { ok: false, error: 'This voucher has been fully redeemed.' }
+        const userData: any = {}
+        if (voucher.type === 'unlimited') userData.unlimited = true
+        if (voucher.plan) {
+          userData.plan = voucher.plan
+          const lim = planLimits(voucher.plan)
+          userData.credits = lim.credits
+          userData.imageCredits = lim.imageCredits
+          userData.creditsResetAt = now
+        }
+        if (voucher.credits) userData.credits = typeof userData.credits === 'number' ? userData.credits + voucher.credits : { increment: voucher.credits }
+        if (voucher.imageCredits) userData.imageCredits = typeof userData.imageCredits === 'number' ? userData.imageCredits + voucher.imageCredits : { increment: voucher.imageCredits }
 
-  const already = await prisma.voucherRedemption.findUnique({
-    where: { voucherId_userId: { voucherId: voucher.id, userId } },
-  })
-  if (already) return { ok: false, error: 'You have already redeemed this voucher.' }
-
-  const userData: any = {}
-  if (voucher.type === 'unlimited') userData.unlimited = true
-  // Plan vouchers (e.g. T1 gold) upgrade the plan AND refill to that plan's daily
-  // cap immediately, so team members start with the full (capped) allowance.
-  if (voucher.plan) {
-    userData.plan = voucher.plan
-    const lim = planLimits(voucher.plan)
-    userData.credits = lim.credits
-    userData.imageCredits = lim.imageCredits
-    userData.creditsResetAt = new Date()
+        const claimed = await tx.voucher.updateMany({
+          where: { id: voucher.id, active: true, redemptionCount: { lt: voucher.maxRedemptions },
+            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+          data: { redemptionCount: { increment: 1 } },
+        })
+        if (claimed.count !== 1) return { ok: false, error: 'This voucher is no longer available.' }
+        await tx.voucherRedemption.create({ data: { voucherId: voucher.id, userId } })
+        if (Object.keys(userData).length) await tx.user.update({ where: { id: userId }, data: userData })
+        return {
+          ok: true,
+          applied: {
+            type: voucher.type, plan: voucher.plan || undefined,
+            credits: voucher.credits || undefined, imageCredits: voucher.imageCredits || undefined,
+            unlimited: voucher.type === 'unlimited' || undefined,
+          },
+        }
+      }, { isolationLevel: 'Serializable' })
+    } catch (error: any) {
+      if (error?.code === 'P2034' && attempt < 2) continue
+      if (error?.code === 'P2002') return { ok: false, error: 'You have already redeemed this voucher.' }
+      return { ok: false, error: 'Could not redeem voucher. Please try again.' }
+    }
   }
-  // Explicit credit grants stack on top of any plan refill.
-  if (voucher.credits) userData.credits = userData.credits ? userData.credits + voucher.credits : { increment: voucher.credits }
-  if (voucher.imageCredits) userData.imageCredits = userData.imageCredits ? userData.imageCredits + voucher.imageCredits : { increment: voucher.imageCredits }
-
-  try {
-    await prisma.$transaction([
-      prisma.voucherRedemption.create({ data: { voucherId: voucher.id, userId } }),
-      prisma.voucher.update({ where: { id: voucher.id }, data: { redemptionCount: { increment: 1 } } }),
-      ...(Object.keys(userData).length ? [prisma.user.update({ where: { id: userId }, data: userData })] : []),
-    ])
-  } catch (e: any) {
-    return { ok: false, error: 'Could not redeem voucher (it may have just been used up).' }
-  }
-
-  return {
-    ok: true,
-    applied: {
-      type: voucher.type,
-      plan: voucher.plan || undefined,
-      credits: voucher.credits || undefined,
-      imageCredits: voucher.imageCredits || undefined,
-      unlimited: voucher.type === 'unlimited' || undefined,
-    },
-  }
+  return { ok: false, error: 'Could not redeem voucher. Please try again.' }
 }

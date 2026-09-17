@@ -20,10 +20,7 @@ describe('billing metering', () => {
     expect(CREDIT_COST.research).toBeGreaterThan(CREDIT_COST.chat)
   })
 
-  it('is permissive when no database is configured (local/dev)', async () => {
-    // No DATABASE_URL in the test env → getAccount returns null → unlimited pass.
-    const res = await checkCredits('anyone', 'chat')
-    expect(res.ok).toBe(true)
-    expect(res.unlimited).toBe(true)
+  it('fails closed when no database is configured', async () => {
+    await expect(checkCredits('anyone', 'chat')).rejects.toMatchObject({ status: 503 })
   })
 })

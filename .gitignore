@@ -8,6 +8,10 @@ node_modules/
 .env*.local
 **/.env
 **/.env.local
+**/.env.*
+!**/.env.example
+deploy/cloudflared/tunnel-creds.json
+.railway/
 
 # Build outputs
 dist/
@@ -35,6 +39,5 @@ Thumbs.db
 *.db
 *.sqlite
 
-# Prisma
-**/prisma/migrations/
+# Prisma migrations are release source and must be version-controlled.
 

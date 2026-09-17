@@ -4,15 +4,20 @@
  * no database is configured.
  */
 import express from 'express'
+import { z } from 'zod'
+import { asyncHandler } from '../middleware/errorLogger'
 import { authenticateToken } from './auth'
 import { prisma, hasDb } from '../services/prisma'
 import { getAccount, redeemVoucher } from '../services/billing'
 import { voucherRedeemedEmail } from '../services/email'
 
 const router = express.Router()
+const usageQuery = z.object({
+  limit: z.string().regex(/^[1-9]\d{0,2}$/).transform(Number).refine(value => value <= 200).optional(),
+}).strict()
 
 /** GET /api/account/me — profile, plan, remaining credits, lifetime usage. */
-router.get('/me', authenticateToken, async (req, res) => {
+router.get('/me', authenticateToken, asyncHandler(async (req, res) => {
   const userId = (req as any).userId
   const acct = await getAccount(userId)
   if (!acct) {
@@ -32,23 +37,25 @@ router.get('/me', authenticateToken, async (req, res) => {
     })
   }
   res.json(acct)
-})
+}))
 
 /** GET /api/account/usage — recent usage events for the signed-in user. */
-router.get('/usage', authenticateToken, async (req, res) => {
+router.get('/usage', authenticateToken, asyncHandler(async (req, res) => {
   const userId = (req as any).userId
+  const query = usageQuery.safeParse(req.query)
+  if (!query.success) return res.status(400).json({ error: 'limit must be an integer from 1 to 200' })
   if (!hasDb || !prisma) return res.json({ events: [], hasDb: false })
-  const take = Math.min(Number(req.query.limit) || 50, 200)
+  const take = query.data.limit ?? 50
   const events = await prisma.usageEvent.findMany({
     where: { userId },
     orderBy: { createdAt: 'desc' },
     take,
   })
   res.json({ events, hasDb: true })
-})
+}))
 
 /** POST /api/account/redeem { code } — redeem a voucher. */
-router.post('/redeem', authenticateToken, async (req, res) => {
+router.post('/redeem', authenticateToken, asyncHandler(async (req, res) => {
   const userId = (req as any).userId
   const { code } = req.body || {}
   const result = await redeemVoucher(userId, code)
@@ -60,6 +67,6 @@ router.post('/redeem', authenticateToken, async (req, res) => {
     voucherRedeemedEmail(acct.email, acct.name, summary).catch(() => {})
   }
   res.json({ ...result, account: acct })
-})
+}))
 
 export default router

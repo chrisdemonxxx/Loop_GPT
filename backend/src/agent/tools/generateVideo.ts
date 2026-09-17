@@ -1,268 +1,117 @@
-/**
- * generate_video tool: text-to-video and image-to-video generation.
- *
- * Uses HuggingFace Inference Endpoints for video generation (SkyReels-V2,
- * Stable Video Diffusion, or similar). Supports both text prompts and
- * image+prompt for video generation with reference.
- */
 import { saveArtifact } from '../artifacts'
-import { fetchBuffer, postJson } from '../httpClient'
-import { checkCredits } from '../../services/billing'
+import { providerRequest } from '../../services/providerHttp'
+import { checkedMedia, decodeMedia, mediaAuth, mediaFailure, mediaOperation, mediaUrl, VIDEO_RESPONSE_BYTES, type MediaOperation } from '../httpClient'
+import { recordUsage } from '../../services/billing'
+import { reserveDailyCredits, dailyDispatch, cleanupDailyReservation, DailyCreditError } from '../../services/dailyReservations'
 import type { ToolDefinition } from '../types'
 
-interface VideoGenerationResult {
-  video_base64?: string
-  video_url?: string
-  model?: string
-  duration?: number
-  frames?: number
+/** Shared by synchronous tools and durable jobs. The configured origin is the
+ * only credential recipient; CDN URLs (including signed queries) are anonymous.
+ */
+export async function downloadVideo(endpoint: string, value: string, op: MediaOperation, depth = 0): Promise<Buffer> {
+  if (depth > 3) throw new Error('Too many video result links')
+  const url = mediaUrl(value, endpoint)
+  const auth = new URL(url).origin === new URL(mediaUrl(endpoint)).origin ? mediaAuth(endpoint) : {}
+  const response = await providerRequest(url, { ...auth, headers: { ...auth.headers, Accept: 'video/mp4, application/json' },
+    signal: op.signal, timeoutMs: op.remaining(120000), maxBytes: VIDEO_RESPONSE_BYTES })
+  op.check()
+  if (!(response.headers.get('content-type') || '').includes('json')) return checkedMedia(response.body)
+  return decodeVideoResponse(await response.json(), endpoint, op, depth + 1)
 }
 
-async function generateVideoFromEndpoint(
-  prompt: string,
-  imageBase64?: string,
-  numFrames = 97,
-  fps = 24,
-  width = 960,
-  height = 544
-): Promise<Buffer> {
-  const endpointUrl = process.env.VIDEO_API_URL || process.env.HF_VIDEO_ENDPOINT_URL
-  if (!endpointUrl) {
-    throw new Error('No video endpoint configured')
-  }
+export async function decodeVideoResponse(data: any, endpoint: string, op: MediaOperation, depth = 0): Promise<Buffer> {
+  op.check()
+  const encoded = [data?.video_base64, data?.video, data?.data?.[0]?.b64_json, data?.images?.[0]?.b64_json,
+    data?.data, data?.output].find(value => typeof value === 'string' && value.length > 0)
+  if (encoded) return decodeMedia(encoded)
+  const url = data?.video_url || data?.url || data?.data?.[0]?.url || data?.images?.[0]?.url || data?.result_url
+  if (typeof url === 'string') return downloadVideo(endpoint, url, op, depth)
+  throw new Error('Missing video data')
+}
 
-  const payload: any = {
-    inputs: prompt,
-    parameters: {
-      num_frames: numFrames,
-      fps: fps,
-      width: width,
-      height: height,
-    },
-  }
-
-  // If image is provided, use img2vid mode
-  if (imageBase64) {
-    payload.image = imageBase64
-    payload.parameters.guidance_scale = 7.5
-  }
-
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 300000) // 5 min for video
-
-  try {
-    const res = await fetch(endpointUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.HF_TOKEN || ''}`,
-        'Content-Type': 'application/json',
-        Accept: 'video/mp4',
-      },
-      body: JSON.stringify(payload),
-      signal: ctrl.signal,
-    })
-
-    if (!res.ok) {
-      const errorText = await res.text().catch(() => '')
-      throw new Error(`HTTP ${res.status}: ${errorText.slice(0, 300)}`)
+async function pollVideoJob(endpoint: string, statusUrl: string, resultUrl: string | undefined, op: MediaOperation): Promise<Buffer> {
+  // Validate both links before beginning, and status again before every request.
+  mediaUrl(statusUrl, endpoint, true)
+  if (resultUrl) mediaUrl(resultUrl, endpoint)
+  while (true) {
+    const response = await providerRequest(mediaUrl(statusUrl, endpoint, true), { ...mediaAuth(endpoint),
+      signal: op.signal, timeoutMs: op.remaining(30000), maxBytes: VIDEO_RESPONSE_BYTES })
+    op.check()
+    const status = await response.json()
+    const state = String(status?.status || '').toLowerCase()
+    if (state === 'completed' || state === 'succeeded') {
+      return decodeVideoResponse({ ...status, result_url: status?.result_url || resultUrl }, endpoint, op)
     }
-
-    const contentType = res.headers.get('content-type') || ''
-
-    // Handle job-based response (async video generation)
-    if (contentType.includes('application/json')) {
-      const jobData: any = await res.json()
-      
-      if (jobData.job_id && jobData.status_url) {
-        // Poll for completion
-        return await pollVideoJob(endpointUrl, jobData.job_id, jobData.status_url, jobData.result_url)
-      }
-      
-      // Handle direct base64 response
-      const b64 = jobData?.video || jobData?.data?.[0]?.b64_json || jobData?.images?.[0]?.b64_json
-      if (b64) {
-        return Buffer.from(b64, 'base64')
-      }
-      
-      // Handle URL response
-      const url = jobData?.url || jobData?.data?.[0]?.url
-      if (url) {
-        return fetchBuffer(url, { timeoutMs: 120000 })
-      }
-      
-      throw new Error('Video endpoint returned unexpected JSON format')
-    }
-
-    // Direct video bytes response
-    return Buffer.from(await res.arrayBuffer())
-  } finally {
-    clearTimeout(timer)
+    if (state === 'failed' || state === 'cancelled') throw new Error('Video generation failed')
+    await op.sleep(3000)
   }
 }
 
-async function pollVideoJob(
-  baseUrl: string,
-  jobId: string,
-  statusUrl: string,
-  resultUrl: string,
-  maxWaitMs = 300000
-): Promise<Buffer> {
-  const startTime = Date.now()
-  const pollInterval = 3000 // 3 seconds
-
-  while (Date.now() - startTime < maxWaitMs) {
-    const statusRes = await fetch(`${baseUrl}${statusUrl}`, {
-      headers: {
-        Authorization: `Bearer ${process.env.HF_TOKEN || ''}`,
-      },
-    })
-
-    if (!statusRes.ok) {
-      throw new Error(`Status check failed: ${statusRes.status}`)
-    }
-
-    const status: any = await statusRes.json()
-    
-    if (status.status === 'completed') {
-      // Fetch the actual video
-      const videoRes = await fetch(`${baseUrl}${resultUrl}`, {
-        headers: {
-          Authorization: `Bearer ${process.env.HF_TOKEN || ''}`,
-          Accept: 'video/mp4',
-        },
-      })
-
-      if (!videoRes.ok) {
-        throw new Error(`Failed to fetch video: ${videoRes.status}`)
-      }
-
-      return Buffer.from(await videoRes.arrayBuffer())
-    }
-
-    if (status.status === 'failed') {
-      throw new Error(`Video generation failed: ${status.error || status.message}`)
-    }
-
-    // Wait before next poll
-    await new Promise(resolve => setTimeout(resolve, pollInterval))
-  }
-
-  throw new Error('Video generation timed out')
+async function generateVideoFromEndpoint(prompt: string, image: string | undefined, numFrames: number,
+  fps: number, width: number, height: number, op: MediaOperation, beforeDispatch: () => Promise<void>): Promise<Buffer> {
+  const endpoint = mediaUrl(process.env.VIDEO_API_URL || process.env.HF_VIDEO_ENDPOINT_URL || '')
+  const auth = mediaAuth(endpoint)
+  await beforeDispatch()
+  const response = await providerRequest(endpoint, { ...auth, method: 'POST',
+    headers: { ...auth.headers, 'Content-Type': 'application/json', Accept: 'video/mp4, application/json' },
+    body: JSON.stringify({ inputs: prompt, parameters: { num_frames: numFrames, fps, width, height,
+      ...(image ? { guidance_scale: 7.5 } : {}) }, ...(image ? { image } : {}) }),
+    signal: op.signal, timeoutMs: op.remaining(), maxBytes: VIDEO_RESPONSE_BYTES })
+  op.check()
+  if (!(response.headers.get('content-type') || '').includes('json')) return checkedMedia(response.body)
+  const data = await response.json()
+  if (data?.job_id && data?.status_url) return pollVideoJob(endpoint, data.status_url, data.result_url, op)
+  return decodeVideoResponse(data, endpoint, op)
 }
 
 export const generateVideoTool: ToolDefinition = {
   name: 'generate_video',
   source: 'builtin',
-  description: 'Generate a short video clip from a text prompt or image+prompt. Use for creating cinematic scenes, animations, or motion graphics. Videos are typically 4-8 seconds at 24fps.',
+  description: 'Generate a short video clip from a text prompt or image+prompt. Videos are typically 4-8 seconds at 24fps.',
   parameters: {
     type: 'object',
     properties: {
-      prompt: {
-        type: 'string',
-        description: 'A detailed description of the video to generate. Include motion, style, lighting, and atmosphere. Example: "A serene mountain lake at sunrise with mist rising from the water, cinematic lighting, slow camera pan"',
-      },
-      image_prompt: {
-        type: 'string',
-        description: 'Optional base64-encoded image to use as a reference for img2video generation. Use this when the user wants to animate or add motion to an existing image.',
-      },
-      duration_seconds: {
-        type: 'number',
-        description: 'Desired video duration in seconds (2-10). Default: 4 seconds.',
-        default: 4,
-      },
-      fps: {
-        type: 'number',
-        description: 'Frames per second (12-30). Higher = smoother but larger file. Default: 24.',
-        default: 24,
-      },
-      aspect_ratio: {
-        type: 'string',
-        enum: ['landscape', 'portrait', 'square', 'wide'],
-        description: 'Video aspect ratio. Default: landscape (16:9).',
-        default: 'landscape',
-      },
+      prompt: { type: 'string', description: 'Describe motion, style, lighting and atmosphere.' },
+      image_prompt: { type: 'string', description: 'Optional base64 reference image for img2video.' },
+      duration_seconds: { type: 'number', description: 'Video duration (2-10 seconds).', default: 4 },
+      fps: { type: 'number', description: 'Frames per second (12-30).', default: 24 },
+      aspect_ratio: { type: 'string', enum: ['landscape', 'portrait', 'square', 'wide'], default: 'landscape' },
     },
     required: ['prompt'],
   },
   async handler(args, ctx) {
-    const prompt = String(args.prompt || '').trim()
-    if (!prompt) {
-      return { content: 'Error: prompt is required for video generation.', isError: true }
-    }
-
-    // Credit check
-    if (ctx.userId) {
-      try {
-        const credit = await checkCredits(ctx.userId, 'video')
-        if (!credit.ok) {
-          return { content: credit.reason || 'Out of video credits for today.', isError: true }
-        }
-      } catch {
-        // metering unavailable — allow
-      }
-    }
-
-    const duration = Number(args.duration_seconds) || 4
-    const fps = Number(args.fps) || 24
-    const numFrames = Math.min(Math.round(duration * fps), 120) // cap at 120 frames
-
-    const aspectRatio = String(args.aspect_ratio || 'landscape')
-    const SIZES: Record<string, [number, number]> = {
-      landscape: [960, 544],
-      portrait: [544, 960],
-      square: [768, 768],
-      wide: [1280, 720],
-    }
-    const [width, height] = SIZES[aspectRatio] || SIZES.landscape
-
-    const imagePrompt = args.image_prompt ? String(args.image_prompt) : undefined
-
-    ctx.emit({ 
-      type: 'status', 
-      message: `Generating ${duration}s video at ${fps}fps (${width}x${height})...` 
-    })
-
-    let buffer: Buffer | null = null
-    let usedModel = 'skyreels-v2'
-
+    const op = mediaOperation(300000, ctx.signal)
+    let reservation: Awaited<ReturnType<typeof reserveDailyCredits>> | undefined
     try {
-      buffer = await generateVideoFromEndpoint(
-        prompt,
-        imagePrompt,
-        numFrames,
-        fps,
-        width,
-        height
-      )
-    } catch (error: any) {
-      ctx.emit({ type: 'status', message: `Video generation failed: ${error?.message || error}` })
-      return { 
-        content: `Video generation failed: ${error?.message || error}. Try a shorter duration or simpler prompt.`, 
-        isError: true 
+      op.check()
+      const prompt = String(args.prompt || '').trim()
+      if (!prompt) return { content: 'Error: prompt is required for video generation.', isError: true }
+      reservation = await reserveDailyCredits(ctx.userId, 'video', 'skyreels-v2')
+      op.check()
+      const dispatch = dailyDispatch(reservation.id, op.signal)
+      const beforeDispatch = async () => { op.check(); await dispatch() }
+      const duration = Math.max(2, Math.min(10, Number(args.duration_seconds) || 4))
+      const fps = Math.max(12, Math.min(30, Number(args.fps) || 24))
+      const numFrames = Math.min(Math.round(duration * fps), 120)
+      const sizes: Record<string, [number, number]> = {
+        landscape: [960, 544], portrait: [544, 960], square: [768, 768], wide: [1280, 720],
       }
-    }
-
-    if (!buffer || buffer.length === 0) {
-      return { content: 'Video generation returned empty result.', isError: true }
-    }
-
-    // Save as artifact
-    const safePrompt = prompt.slice(0, 40).replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
-    const artifact = saveArtifact(`video-${safePrompt}.mp4`, buffer)
-    
-    ctx.scratch.artifacts = ctx.scratch.artifacts || []
-    ctx.scratch.artifacts.push(artifact)
-    ctx.emit({ type: 'artifact', artifact })
-
-    return {
-      content: `Generated a ${duration}-second video (${fps}fps, ${width}x${height}) for "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}". Video is ready to view.`,
-      data: { 
-        artifact,
-        duration,
-        fps,
-        frames: numFrames,
-        model: usedModel,
-      },
-    }
+      const [width, height] = sizes[String(args.aspect_ratio || 'landscape')] || sizes.landscape
+      ctx.emit({ type: 'status', message: `Generating ${duration}s video at ${fps}fps (${width}x${height})...` })
+      const buffer = await generateVideoFromEndpoint(prompt, args.image_prompt ? String(args.image_prompt) : undefined,
+        numFrames, fps, width, height, op, beforeDispatch)
+      op.check()
+      await recordUsage(ctx.userId, 'video', { reservationId: reservation.id, model: 'skyreels-v2' })
+      const safePrompt = prompt.slice(0, 40).replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
+      const artifact = await saveArtifact(`video-${safePrompt}.mp4`, checkedMedia(buffer),
+        { userId: ctx.userId, conversationId: ctx.conversationId })
+      op.check()
+      ctx.scratch.artifacts = ctx.scratch.artifacts || []
+      ctx.scratch.artifacts.push(artifact)
+      ctx.emit({ type: 'artifact', artifact })
+      return { content: `Generated a ${duration}-second video (${fps}fps, ${width}x${height}). Video is ready to view.`,
+        data: { artifact, duration, fps, frames: numFrames, model: 'skyreels-v2' } }
+    } catch (error) { return { content: error instanceof DailyCreditError ? error.message : mediaFailure(op, 'Video'), isError: true } }
+    finally { await cleanupDailyReservation(reservation?.id); op.dispose() }
   },
 }

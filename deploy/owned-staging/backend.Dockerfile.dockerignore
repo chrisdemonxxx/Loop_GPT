@@ -1,0 +1,23 @@
+**
+!backend/
+!backend/package.json
+!backend/package-lock.json
+!backend/tsconfig.json
+!backend/src/
+!backend/src/**
+!backend/prisma/
+!backend/prisma/**
+!backend/scripts/
+!backend/scripts/staging-runtime.mjs
+!backend/scripts/private-storage.mjs
+!backend/scripts/daily-settlement-worker.mjs
+!backend/scripts/api-settlement-worker.mjs
+!backend/scripts/video-job-worker.mjs
+!deploy/
+!deploy/owned-staging/
+!deploy/owned-staging/prepare-storage.mjs
+
+# Final rules override recursive source/schema exceptions at every depth.
+**/.env
+**/.env.*
+**/tunnel-creds.json

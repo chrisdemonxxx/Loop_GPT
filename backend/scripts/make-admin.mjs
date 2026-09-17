@@ -13,6 +13,11 @@ async function main() {
   const email = process.argv[2]
   const role = (process.argv[3] || 'admin').toLowerCase()
 
+  if (email === '--help') {
+    console.log('Usage: npm run make-admin -- <email> [admin|user]\nRequires DATABASE_URL; account must already exist. Changes role only.')
+    return
+  }
+
   if (!email) {
     console.error('Usage: npm run make-admin -- <email> [admin|user]')
     process.exit(1)
@@ -21,6 +26,7 @@ async function main() {
     console.error(`Invalid role "${role}". Expected "admin" or "user".`)
     process.exit(1)
   }
+  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required; no database is selected automatically.')
 
   const prisma = new PrismaClient()
   try {

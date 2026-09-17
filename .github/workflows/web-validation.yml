@@ -1,0 +1,33 @@
+name: Owned web validation
+
+on:
+  pull_request:
+    paths: ['web/**', '.github/workflows/web-validation.yml']
+  push:
+    paths: ['web/**', '.github/workflows/web-validation.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    env:
+      VITE_API_ORIGIN: ''
+      WEB_DEV_API_ORIGIN: http://127.0.0.1:9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: npm test
+      - run: npx --no-install playwright install --with-deps chromium
+      - run: npm run test:browser

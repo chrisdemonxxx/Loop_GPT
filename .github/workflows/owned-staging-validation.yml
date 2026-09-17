@@ -1,0 +1,23 @@
+name: Owned staging validation
+
+on:
+  pull_request:
+    paths: ['backend/**', 'web/**', 'deploy/owned-staging/**', '.github/workflows/owned-staging-validation.yml']
+  push:
+    paths: ['backend/**', 'web/**', 'deploy/owned-staging/**', '.github/workflows/owned-staging-validation.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-packaging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build and validate isolated web, API, workers and storage
+        # Fixture-only Compose project; no repository secrets or cloud deployment.
+        run: node deploy/owned-staging/smoke.mjs --build

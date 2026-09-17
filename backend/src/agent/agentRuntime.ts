@@ -26,6 +26,7 @@ import type {
   ToolDefinition,
 } from './types'
 import { agentConfig } from './config'
+import { assertRunAccess, grantedTools, restrictRunContext } from './runAuthorization'
 import { CONFIDENTIALITY_PROMPT, sanitizeText, sanitizeMetadata, makeStreamSanitizer, guardrailsEnabled } from './guardrails'
 
 /** Per-baseURL memo of whether native tool-calling works. */
@@ -76,13 +77,14 @@ function extractBalancedObjects(s: string): string[] {
   return out
 }
 
-function coerceCall(raw: string): { name: string; args: Record<string, any> } | null {
+function coerceCall(raw: string, includeUnknown = false): { name: string; args: Record<string, any> } | null {
   try {
     const obj = JSON.parse(raw.trim())
     const name = obj.tool || obj.tool_name || obj.name || obj.action
-    const args = obj.arguments || obj.args || obj.parameters || obj.input || {}
-    if (name && typeof name === 'string' && toolRegistry.has(name)) {
-      return { name, args: typeof args === 'object' && args ? args : {} }
+    const argumentKey = ['arguments', 'args', 'parameters', 'input'].find((key) => Object.prototype.hasOwnProperty.call(obj, key))
+    const args = argumentKey === undefined ? {} : obj[argumentKey]
+    if (name && typeof name === 'string' && (includeUnknown || toolRegistry.has(name))) {
+      return { name, args }
     }
   } catch {
     /* not valid JSON */
@@ -96,10 +98,10 @@ function coerceCall(raw: string): { name: string; args: Record<string, any> } | 
  * fenced ```json blocks, and bare balanced {...} objects — including MULTIPLE
  * calls in a single turn.
  */
-export function parseInlineToolCalls(content: string): Array<{ name: string; args: Record<string, any> }> {
+export function parseInlineToolCalls(content: string, includeUnknown = false): Array<{ name: string; args: Record<string, any> }> {
   if (!content) return []
   const calls: Array<{ name: string; args: Record<string, any> }> = []
-  const add = (raw: string) => { const c = coerceCall(raw); if (c) calls.push(c) }
+  const add = (raw: string) => { const c = coerceCall(raw, includeUnknown); if (c) calls.push(c) }
 
   // 1. <tool_call>...</tool_call> (and <tool_code>) tagged blocks.
   const tagRe = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi
@@ -126,25 +128,27 @@ export function parseInlineToolCall(content: string): { name: string; args: Reco
  * Run the agent loop, streaming events through ctx.emit. Returns the final
  * answer and a trace of the steps taken.
  */
-export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
+export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => Promise<void> }): Promise<RunAgentResult> {
   const {
     provider,
     apiKey,
     baseUrl,
-    ctx,
     maxSteps = agentConfig.maxSteps,
     systemPrompt,
     toolNames,
   } = opts
 
+  const ctx = restrictRunContext(opts.ctx, toolNames)
+  await assertRunAccess(ctx)
   const model = resolveModel(provider, opts.model)
-  const tools = toolRegistry.resolve(toolNames)
+  const tools = grantedTools(ctx)
   const hasTools = tools.length > 0
 
   // Providers that aren't OpenAI-compatible (e.g. Anthropic native): use the
   // simple non-streaming path with no tools.
   if (!isOpenAICompatible(provider)) {
     ctx.emit({ type: 'status', message: `Querying ${provider}…` })
+    await opts.beforeDispatch?.()
     const text = await aiProviderService.getChatCompletion(
       provider,
       opts.messages.map((m) => ({ role: m.role, content: contentToString(m.content) })),
@@ -180,7 +184,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
   if (sys) working.push({ role: 'system', content: sys })
   working.push(...opts.messages)
 
-  const openaiTools = hasTools ? toolRegistry.toOpenAITools(toolNames) : undefined
+  const openaiTools = hasTools ? tools.map((tool) => ({ type: 'function' as const,
+    function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+  })) : undefined
   const steps: RunAgentResult['steps'] = []
   const toolsUsed = new Set<string>()
 
@@ -190,11 +196,14 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
   ctx.emit({ type: 'warming', message: 'Contacting model (may take a moment on cold start)…' })
 
   for (let iter = 0; iter < maxSteps; iter++) {
+    await assertRunAccess(ctx)
     const useNative = hasTools && nativeToolSupport.get(cfgKey) !== false
 
     // Sanitize streamed deltas (hold-back buffer catches cross-chunk identifiers).
     const sanitizer = makeStreamSanitizer((text) => ctx.emit({ type: 'delta', step: stepIndex, text }))
     let turn
+    // Outside transport fallback: accounting failures must never trigger inference.
+    await opts.beforeDispatch?.()
     try {
       turn = await streamTurn({
         client,
@@ -230,13 +239,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
     if (native) {
       calls = turn.toolCalls.map((c) => {
         let args: Record<string, any> = {}
-        try { args = c.arguments ? JSON.parse(c.arguments) : {} } catch { args = {} }
+        try { args = c.arguments ? JSON.parse(c.arguments) : {} } catch { args = null as any }
         return { id: c.id, name: c.name, args }
       })
     } else if (hasTools) {
-      calls = parseInlineToolCalls(turn.content)
+      calls = parseInlineToolCalls(turn.content, true)
     }
-    calls = calls.filter((c) => c.name && toolRegistry.has(c.name)).slice(0, MAX_CALLS_PER_TURN)
+    calls = calls.filter((c) => typeof c.name === 'string' && c.name.length > 0).slice(0, MAX_CALLS_PER_TURN)
 
     if (calls.length === 0) {
       // No tool requested → this is the final answer.
@@ -260,9 +269,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
     // the UI replaces any streamed tool-call text with a tool card).
     const inlineResults: string[] = []
     for (const call of calls) {
-      ctx.emit({ type: 'tool_call', step: stepIndex, name: call.name, args: call.args, source: toolRegistry.get(call.name)?.source })
-      toolsUsed.add(call.name)
+      ctx.emit({ type: 'tool_call', step: stepIndex, name: call.name, args: call.args, source: tools.find((tool) => tool.name === call.name)?.source })
       const result = await toolRegistry.execute(call.name, call.args, ctx)
+      if (!result.isError) toolsUsed.add(call.name)
       ctx.emit({ type: 'tool_result', step: stepIndex, name: call.name, content: truncate(result.content, 4000), data: result.data, isError: result.isError })
       steps.push({ tool: call.name, args: call.args, result: truncate(result.content, 2000) })
 

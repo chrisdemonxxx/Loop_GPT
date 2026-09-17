@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+.cache/
+test-results/
+playwright-report/
+# This is build tooling source, not the repository-wide ignored build output.
+!build/
+!build/pwa.ts
+.env
+.env.*
+!.env.example

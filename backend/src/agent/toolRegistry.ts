@@ -1,11 +1,15 @@
 /**
- * Central registry of tools available to the agent.
+ * Legacy discovery registry. Registration is not execution authority.
  *
- * Built-in tools are registered at import time. MCP servers, skills, and
- * plugins register additional tools dynamically (see mcp/, skills/, plugins/).
+ * Execution uses a server-issued per-run grant and its captured definitions,
+ * never this mutable discovery map. Shared extensions are no longer bootstrapped.
  */
 import type OpenAI from 'openai'
 import type { ToolDefinition, ToolContext, ToolResult } from './types'
+import Ajv from 'ajv'
+import { assertRunAccess, grantedTool } from './runAuthorization'
+
+const validator = new Ajv({ strict: false, allErrors: false, coerceTypes: false })
 
 class ToolRegistry {
   private tools = new Map<string, ToolDefinition>()
@@ -58,14 +62,19 @@ class ToolRegistry {
   }
 
   async execute(name: string, args: Record<string, any>, ctx: ToolContext): Promise<ToolResult> {
-    const tool = this.tools.get(name)
-    if (!tool) {
-      return { content: `Error: unknown tool "${name}".`, isError: true }
-    }
     try {
-      return await tool.handler(args || {}, ctx)
-    } catch (error: any) {
-      return { content: `Tool "${name}" failed: ${error?.message || String(error)}`, isError: true }
+      await assertRunAccess(ctx, name)
+      const tool = grantedTool(ctx, name)
+      if (!tool) return { content: 'Tool is not permitted for this run.', isError: true }
+      const schema = { ...tool.parameters, additionalProperties: tool.parameters.additionalProperties ?? false }
+      let valid: boolean
+      try { valid = validator.validate(schema, args) as boolean }
+      finally { validator.removeSchema(schema) }
+      if (!valid) return { content: 'Invalid tool arguments.', isError: true }
+      return await tool.handler(args, ctx)
+    } catch {
+      // Never reflect credentials or provider exception payloads to the model.
+      return { content: 'Tool unavailable, access denied, or execution failed.', isError: true }
     }
   }
 }

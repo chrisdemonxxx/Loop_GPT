@@ -1,6 +1,11 @@
 node_modules
 dist
-.env
+.env*
 uploads
 data
-npm-debug.log
+*.log
+
+# Explicit recursive exclusions also protect nested source/schema directories.
+**/.env
+**/.env.*
+**/tunnel-creds.json

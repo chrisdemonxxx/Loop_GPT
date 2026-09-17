@@ -1,0 +1,104 @@
+name: loop-owned-staging-candidate
+
+x-backend: &backend
+  image: loop-owned-staging-backend:local
+  build:
+    context: ../..
+    dockerfile: deploy/owned-staging/backend.Dockerfile
+  environment: &backend-env
+    NODE_ENV: production
+    DATABASE_URL: postgresql://staging:${STAGING_DB_PASSWORD:?Supply an ephemeral alphanumeric staging DB password}@postgres:5432/loop_staging?connection_limit=5&pool_timeout=5&connect_timeout=5
+    JWT_SECRET: ${STAGING_JWT_SECRET:?Supply an ephemeral staging JWT secret of at least 32 characters}
+    CONNECTION_ENCRYPTION_KEY: ${STAGING_CONNECTION_KEY:?Supply an ephemeral 32-byte base64 key}
+    FRONTEND_URL: ${OWNED_WEB_ORIGIN:-https://localhost:8443}
+    ENABLE_DEV_MODE: "false"
+    PRIVATE_FILES_STORAGE_MODE: shared-filesystem
+    PRIVATE_FILES_DIR: /private-store/files
+    PRIVATE_FILES_STORE_ID: ${STAGING_STORE_ID:?Supply a fresh namespace UUID and retain it with the volume}
+    PRIVATE_FILES_MIN_FREE_BYTES: "67108864"
+    PORT: "3002"
+    STAGING_API_PORT: "3001"
+    STAGING_REPLICAS: "1"
+    STAGING_PAYMENTS_ENABLED: "false"
+    STRIPE_CHECKOUT_ENABLED: "false"
+    STRIPE_FULFILLMENT_ENABLED: "false"
+    ACCOUNTED_VIDEO_JOBS_ENABLED: "false"
+    ACCOUNTED_DAILY_VIDEO_JOBS_ENABLED: "false"
+  volumes:
+    - private-store:/private-store
+  stop_grace_period: 35s
+
+services:
+  postgres:
+    image: postgres:16.10-bookworm
+    environment:
+      POSTGRES_USER: staging
+      POSTGRES_DB: loop_staging
+      POSTGRES_PASSWORD: ${STAGING_DB_PASSWORD:?Supply an ephemeral alphanumeric staging DB password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U staging -d loop_staging"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    <<: *backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${STAGING_READY_PORT:-8302}:3002"
+    restart: "no"
+
+  web:
+    image: loop-owned-staging-web:local
+    build:
+      context: ../../web
+    environment:
+      PORT: "8080"
+      OWNED_WEB_ORIGIN: ${OWNED_WEB_ORIGIN:-https://localhost:8443}
+      API_UPSTREAM: http://backend:3001
+    ports:
+      - "127.0.0.1:${STAGING_WEB_PORT:-8088}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # Operator-only one-offs. No migrations or initialization in normal startup.
+  migrate:
+    <<: *backend
+    profiles: [release]
+    command: [node, node_modules/prisma/build/index.js, migrate, deploy]
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  storage-prepare:
+    <<: *backend
+    profiles: [release]
+    user: "0:0"
+    command: [node, scripts/prepare-storage.mjs]
+    healthcheck:
+      disable: true
+
+  storage-init:
+    <<: *backend
+    profiles: [release]
+    command: [node, scripts/private-storage.mjs, --init]
+    healthcheck:
+      disable: true
+
+  storage-check:
+    <<: *backend
+    profiles: [release]
+    command: [node, scripts/private-storage.mjs, --check]
+    healthcheck:
+      disable: true
+
+volumes:
+  postgres-data:
+  private-store:

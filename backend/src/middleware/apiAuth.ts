@@ -7,6 +7,7 @@
 import type { NextFunction, Request, Response } from 'express'
 import { resolveApiKey, looksLikeApiKey } from '../services/apiKeys'
 import { rateLimitFor } from '../services/apiBilling'
+import { asyncHandler } from './errorLogger'
 
 export interface ApiRequest extends Request {
   api?: {
@@ -36,7 +37,7 @@ setInterval(() => {
   for (const [key, win] of windows) if (win.resetAt <= now) windows.delete(key)
 }, 60_000).unref?.()
 
-export async function authenticateApiKey(req: ApiRequest, res: Response, next: NextFunction) {
+export const authenticateApiKey = asyncHandler(async (req: ApiRequest, res: Response, next: NextFunction) => {
   const header = req.headers.authorization || ''
   const raw = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
 
@@ -91,7 +92,7 @@ export async function authenticateApiKey(req: ApiRequest, res: Response, next: N
 
   req.api = resolved
   next()
-}
+})
 
 /** Reject the request when the prepaid balance is exhausted. */
 export function requireBalance(req: ApiRequest, res: Response, next: NextFunction) {

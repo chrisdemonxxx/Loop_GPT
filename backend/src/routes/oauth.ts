@@ -3,6 +3,7 @@
  * Mounted at /api/auth (alongside password auth) and /api/mail.
  */
 import express from 'express'
+import { asyncHandler } from '../middleware/errorLogger'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { prisma, hasDb } from '../services/prisma'
@@ -96,12 +97,10 @@ async function handleCallback(req: express.Request, res: express.Response) {
     let user = await prisma.user.findUnique({ where: { email } })
     let isNew = false
     if (!user) {
-      const userCount = await prisma.user.count()
-      const adminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase()
-      const isAdmin = userCount === 0 || (!!adminEmail && email === adminEmail)
       const randomPw = await bcrypt.hash(`oauth:${provider}:${profile.providerId}:${Date.now()}`, 10)
       user = await prisma.user.create({
-        data: { email, name: profile.name || email.split('@')[0], password: randomPw, role: isAdmin ? 'admin' : 'user' },
+        // Public OAuth signup never provisions platform administrators.
+        data: { email, name: profile.name || email.split('@')[0], password: randomPw, role: 'user' },
       })
       isNew = true
       welcomeEmail(email, user.name).catch(() => {})
@@ -118,21 +117,21 @@ async function handleCallback(req: express.Request, res: express.Response) {
 }
 
 // Google/GitHub return via GET; Apple posts a form (response_mode=form_post).
-oauthRouter.get('/oauth/:provider/callback', handleCallback)
-oauthRouter.post('/oauth/:provider/callback', express.urlencoded({ extended: true }), handleCallback)
+oauthRouter.get('/oauth/:provider/callback', asyncHandler(handleCallback))
+oauthRouter.post('/oauth/:provider/callback', express.urlencoded({ extended: true }), asyncHandler(handleCallback))
 
 // ---- Email verification -----------------------------------------------------
 
 /** POST /api/auth/verify { token } — confirm an email address. */
-oauthRouter.post('/verify', async (req, res) => {
+oauthRouter.post('/verify', asyncHandler(async (req, res) => {
   const userId = await consumeToken(String(req.body?.token || ''), 'verify')
   if (!userId || !prisma) return res.status(400).json({ error: 'Invalid or expired verification link.' })
   await prisma.user.update({ where: { id: userId }, data: { emailVerified: true } })
   res.json({ ok: true })
-})
+}))
 
 /** POST /api/auth/resend-verification — re-send the verification email (auth). */
-oauthRouter.post('/resend-verification', authenticateToken, async (req, res) => {
+oauthRouter.post('/resend-verification', authenticateToken, asyncHandler(async (req, res) => {
   const userId = (req as any).userId
   if (!hasDb || !prisma) return res.status(503).json({ error: 'Requires a database.' })
   const user = await prisma.user.findUnique({ where: { id: userId } })
@@ -141,12 +140,12 @@ oauthRouter.post('/resend-verification', authenticateToken, async (req, res) => 
   const token = await createToken(user.id, 'verify')
   if (token) verifyEmail(user.email, user.name, `${FRONTEND()}/verify?token=${token}`).catch(() => {})
   res.json({ ok: true })
-})
+}))
 
 // ---- Password reset ---------------------------------------------------------
 
 /** POST /api/auth/forgot { email } — email a reset link. Always returns ok. */
-oauthRouter.post('/forgot', async (req, res) => {
+oauthRouter.post('/forgot', asyncHandler(async (req, res) => {
   const email = String(req.body?.email || '').toLowerCase().trim()
   if (prisma && email) {
     const user = await prisma.user.findUnique({ where: { email } })
@@ -157,10 +156,10 @@ oauthRouter.post('/forgot', async (req, res) => {
   }
   // Don't leak whether the email exists.
   res.json({ ok: true })
-})
+}))
 
 /** POST /api/auth/reset { token, password } — set a new password. */
-oauthRouter.post('/reset', async (req, res) => {
+oauthRouter.post('/reset', asyncHandler(async (req, res) => {
   const { token, password } = req.body || {}
   if (!password || String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' })
   const userId = await consumeToken(String(token || ''), 'reset')
@@ -168,14 +167,14 @@ oauthRouter.post('/reset', async (req, res) => {
   const hashed = await bcrypt.hash(String(password), 10)
   await prisma.user.update({ where: { id: userId }, data: { password: hashed } })
   res.json({ ok: true })
-})
+}))
 
 /**
  * POST /api/mail/inbound — inbound email webhook. Point an inbound provider
  * (SES/Mailgun/Postmark inbound route, or your MX → webhook) here to receive
  * account-related replies/alerts. Secured with MAIL_INBOUND_SECRET when set.
  */
-mailRouter.post('/inbound', express.json({ limit: '10mb' }), express.urlencoded({ extended: true }), async (req, res) => {
+mailRouter.post('/inbound', express.json({ limit: '10mb' }), express.urlencoded({ extended: true }), asyncHandler(async (req, res) => {
   const secret = process.env.MAIL_INBOUND_SECRET
   if (secret && req.query.secret !== secret && req.headers['x-webhook-secret'] !== secret) {
     return res.status(401).json({ error: 'unauthorized' })
@@ -191,6 +190,6 @@ mailRouter.post('/inbound', express.json({ limit: '10mb' }), express.urlencoded(
     alertEmail(support, `[Inbound] ${subject}`, `From: ${from}<br><br>${String(text).replace(/\n/g, '<br>').slice(0, 5000)}`).catch(() => {})
   }
   res.json({ ok: true })
-})
+}))
 
 export default oauthRouter

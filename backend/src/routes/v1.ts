@@ -4,35 +4,101 @@
  * Point any OpenAI SDK at `https://<host>/v1` with an `sk-loop-…` key:
  *   const client = new OpenAI({ apiKey: 'sk-loop-…', baseURL: 'https://…/v1' })
  *
- * Every route authenticates the key, checks prepaid balance, meters real token
- * usage and debits the account. Errors use the OpenAI error envelope.
+ * Paid inference reserves available credit before dispatch and settles usage
+ * durably. Errors use the OpenAI envelope; uncertain work retains its hold.
  */
 import express from 'express'
+import { asyncHandler } from '../middleware/errorLogger'
 import { z } from 'zod'
-import crypto from 'crypto'
-import fs from 'fs'
-import path from 'path'
 import { createClient } from '../agent/llmClient'
 import { getHFModel } from '../services/aiProviders'
 import { resolveChatTarget, chatModelCatalog } from '../services/chatModels'
 import { saveArtifact } from '../agent/artifacts'
-import { createVideoJob } from '../services/mediaJobs'
+import { providerRequest } from '../services/providerHttp'
 import { prisma, hasDb } from '../services/prisma'
-import { authenticateApiKey, requireBalance, apiError, type ApiRequest } from '../middleware/apiAuth'
+import { authenticateApiKey, apiError, type ApiRequest } from '../middleware/apiAuth'
+import { createAccountedVideoJob, cancelAccountedVideoJob, VideoJobError } from '../services/accountedVideoJobs'
+import { videoQueueLimitProjection } from '../services/videoQueuePolicy'
 import {
-  chargeUsage,
   grossCostMicros,
   netCostMicros,
   pricingConfig,
   MICROS_PER_USD,
+  chatRatesFor,
+  discountFor,
+  RATE_IMAGE,
 } from '../services/apiBilling'
+import {
+  ApiBillingError, apiCount, apiFingerprint, newApiReservationId, reserveApiBalance,
+  dispatchApiReservation, settleApiReservation, captureApiReservation, abandonApiReservation,
+  type ReserveApiInput,
+} from '../services/apiReservations'
 
 const router = express.Router()
 
-/** Rough token estimate used when the upstream provider reports no usage. */
-function estimateTokens(text: string): number {
-  if (!text) return 0
-  return Math.max(1, Math.ceil(text.length / 4))
+async function accounting<T>(operation: () => Promise<T>): Promise<T> {
+  try { return await operation() }
+  catch (error) { throw error instanceof ApiBillingError ? error : new ApiBillingError('unavailable') }
+}
+
+/** Each HTTP invocation has a fresh SERVER identity. Client Idempotency-Key is
+ * not a dispatch/replay mechanism. Internal DB retries use this same identity. */
+function paidRequest(req: ApiRequest, res: express.Response) {
+  const owner = { id: newApiReservationId(), userId: req.api!.userId, apiKeyId: req.api!.apiKeyId }
+  let attempted = false
+  let settled = false
+  let dispatchCommitted = false
+  let workStarted = false
+  let captureIdentity: { expectedKind: ReserveApiInput['kind']; expectedModel: string } | undefined
+  return {
+    async reserve(input: Omit<ReserveApiInput, keyof typeof owner>) {
+      attempted = true
+      await accounting(() => reserveApiBalance({ ...owner, ...input }))
+      captureIdentity = { expectedKind: input.kind, expectedModel: input.model }
+      res.setHeader('X-Loop-Reservation-Id', owner.id)
+    },
+    async dispatch() { await accounting(() => dispatchApiReservation(owner)); dispatchCommitted = true },
+    startWork() { workStarted = true },
+    async capture(costMicros: number, tokensIn = 0, tokensOut = 0, units = 0) {
+      if (!captureIdentity) throw new ApiBillingError('conflict')
+      const cost = await accounting(() => captureApiReservation({ ...owner, ...captureIdentity!, costMicros, tokensIn, tokensOut, units }))
+      settled = true
+      return cost
+    },
+    async failed(error: unknown, message: string, completedUnits = 0) {
+      let accountingFailed = false
+      if (attempted && !settled) {
+        try {
+          if (dispatchCommitted && !workStarted) {
+            await settleApiReservation({ ...owner, outcome: 'release', costMicros: 0, reconciliationReference: 'server:no-upstream-invocation' })
+          } else await abandonApiReservation(owner, completedUnits)
+        }
+        catch { accountingFailed = true }
+      }
+      const code = accountingFailed ? 'accounting_unavailable' : error instanceof ApiBillingError ? error.code : 'upstream_error'
+      // Never log provider exception text, credentials, prompts, or raw bodies.
+      console.error('api_paid_request_failed', { reservationId: owner.id, code, completedUnits })
+      if (req.aborted || res.destroyed) return
+      const status = accountingFailed ? 503 : code === 'insufficient_quota' ? 402 : code === 'invalid_request' || code === 'invalid_amount' ? 400 : code === 'unavailable' ? 503 : 502
+      const safeMessage = status === 402 ? 'Insufficient prepaid credit for this request.' : status === 400 ? 'Invalid request or cost limit exceeded.' : status === 503 ? 'API accounting is temporarily unavailable.' : message
+      if (res.headersSent) {
+        res.write(`data: ${JSON.stringify({ error: { message: safeMessage, type: 'api_error', code } })}\n\n`)
+        return res.end()
+      }
+      return apiError(res, status, safeMessage, 'api_error', code)
+    },
+  }
+}
+
+/** Provider token usage includes tool/reasoning tokens. Missing/malformed usage
+ * is unknown work, never a zero-cost success or a guess based only on content. */
+function chatUsage(usage: any, inputLimit: number, outputLimit: number) {
+  if (!usage || typeof usage.prompt_tokens !== 'number' || typeof usage.completion_tokens !== 'number') throw new Error('Missing usage')
+  let tokensIn: number, tokensOut: number
+  try { tokensIn = apiCount(usage.prompt_tokens); tokensOut = apiCount(usage.completion_tokens) }
+  catch { throw new Error('Invalid provider usage') }
+  if (tokensIn > inputLimit || tokensOut > outputLimit) throw new Error('Provider exceeded reserved token limits')
+  return { tokensIn, tokensOut }
 }
 
 function defaultModel(): string {
@@ -71,7 +137,7 @@ router.get('/models', authenticateApiKey, (_req, res) => {
 router.get('/pricing', (_req, res) => res.json(pricingConfig()))
 
 const chatSchema = z.object({
-  model: z.string().optional(),
+  model: z.string().min(1).max(256).optional(),
   messages: z
     .array(
       z.object({
@@ -86,6 +152,7 @@ const chatSchema = z.object({
   stream: z.boolean().optional(),
   temperature: z.number().min(0).max(2).optional(),
   max_tokens: z.number().int().min(1).max(32_000).optional(),
+  max_completion_tokens: z.number().int().min(1).max(32_000).optional(),
   top_p: z.number().min(0).max(1).optional(),
   stop: z.union([z.string(), z.array(z.string())]).optional(),
   tools: z.array(z.any()).optional(),
@@ -137,7 +204,7 @@ function sanitizeIdentity(text: string): string {
 }
 
 /** POST /v1/chat/completions — streaming and non-streaming chat. */
-router.post('/chat/completions', authenticateApiKey, requireBalance, async (req: ApiRequest, res) => {
+router.post('/chat/completions', authenticateApiKey, asyncHandler(async (req: ApiRequest, res) => {
   const parsed = chatSchema.safeParse(req.body)
   if (!parsed.success) {
     return apiError(
@@ -170,41 +237,63 @@ router.post('/chat/completions', authenticateApiKey, requireBalance, async (req:
   if (body.tool_choice !== undefined) toolPayload.tool_choice = body.tool_choice
   if (body.response_format !== undefined) toolPayload.response_format = body.response_format
 
-  const promptText = messages.map((m) => String(m.content || '')).join('\n')
-  const client = createClient('huggingface', undefined, target.baseUrl)
   const id = `chatcmpl-${Date.now().toString(36)}`
   const created = Math.floor(Date.now() / 1000)
+  const lifetime = providerLifetime(req, res, 240_000)
+  const paid = paidRequest(req, res)
 
   try {
+    if (body.max_tokens !== undefined && body.max_completion_tokens !== undefined && body.max_tokens !== body.max_completion_tokens) throw new ApiBillingError('invalid_request')
+    const maxOutput = body.max_completion_tokens ?? body.max_tokens ?? Number(process.env.HF_MAX_TOKENS ?? 4096)
+    if (!Number.isSafeInteger(maxOutput) || maxOutput < 1 || maxOutput > 32_000) throw new ApiBillingError('invalid_request')
+    const context = apiCount(target.contextTokens)
+    if (!context || context > 1_048_576) throw new ApiBillingError('invalid_request')
+    const inputLimit = context - maxOutput
+    // Reserve the full remaining model context, covering multimodal expansion,
+    // hidden chat templates, system prompts and tool definitions conservatively.
+    // The serialized UTF-8 bound also rejects oversized textual/tool payloads.
+    if (inputLimit < 1 || Buffer.byteLength(JSON.stringify({ messages, ...toolPayload }), 'utf8') + 1024 + messages.length * 256 > inputLimit) throw new ApiBillingError('invalid_request')
+    const amountMicros = netCostMicros(grossCostMicros({ kind: 'chat', tokensIn: inputLimit, tokensOut: maxOutput, tier: target.tier }), ctx.plan)
+    await paid.reserve({ kind: 'chat', model: requestedModel, amountMicros,
+      pricingSnapshot: { version: 'v1', plan: ctx.plan, tier: target.tier, inputPerMillion: chatRatesFor(target.tier).input,
+        outputPerMillion: chatRatesFor(target.tier).output, discountPercent: Math.round(discountFor(ctx.plan) * 100), inputLimit, maxOutput },
+      requestFingerprint: apiFingerprint([body, messages, toolPayload, model, target.tier, ctx.plan, inputLimit, maxOutput, amountMicros]) })
+    const client = createClient('huggingface', undefined, target.baseUrl)
+    lifetime.remaining()
+    await paid.dispatch()
+    lifetime.remaining()
     if (body.stream) {
       res.setHeader('Content-Type', 'text/event-stream')
       res.setHeader('Cache-Control', 'no-cache, no-transform')
       res.setHeader('Connection', 'keep-alive')
       res.flushHeaders?.()
 
+      paid.startWork()
       const stream = await client.chat.completions.create({
         model,
         messages,
         stream: true,
         temperature: body.temperature ?? 0.7,
-        max_tokens: body.max_tokens ?? (Number(process.env.HF_MAX_TOKENS) || 4096),
+        max_tokens: maxOutput,
+        stream_options: { include_usage: true },
         top_p: body.top_p,
         stop: body.stop as any,
         ...toolPayload,
-      })
+      }, { signal: lifetime.signal, maxRetries: 0 })
 
-      let full = ''
-      let usageIn = 0
-      let usageOut = 0
+      let outputBytes = 0
+      let usage: any
       let lastFinish: string | null = null
       for await (const chunk of stream as any) {
+        lifetime.remaining()
         const delta = chunk?.choices?.[0]?.delta?.content || ''
-        if (delta) full += delta
+        outputBytes += Buffer.byteLength(JSON.stringify(chunk?.choices?.[0]?.delta ?? {}), 'utf8')
+        if (outputBytes > maxOutput * 128 + 65_536) throw new Error('Output limit exceeded')
         const fr = chunk?.choices?.[0]?.finish_reason
         if (fr) lastFinish = fr
         if (chunk?.usage) {
-          usageIn = chunk.usage.prompt_tokens || usageIn
-          usageOut = chunk.usage.completion_tokens || usageOut
+          chatUsage(chunk.usage, inputLimit, maxOutput)
+          usage = chunk.usage
         }
         // Re-emit with our own ids so the response is self-consistent.
         // Deltas pass through the identity sanitizer.
@@ -222,25 +311,18 @@ router.post('/chat/completions', authenticateApiKey, requireBalance, async (req:
             {
               index: 0,
               delta: outDelta,
-              finish_reason: chunk?.choices?.[0]?.finish_reason ?? null,
+              // Publish successful termination only after the ledger commits.
+              finish_reason: null,
             },
           ],
         }
         res.write(`data: ${JSON.stringify(out)}\n\n`)
       }
 
-      const tokensIn = usageIn || estimateTokens(promptText)
-      const tokensOut = usageOut || estimateTokens(full)
-      await chargeUsage({
-        userId: ctx.userId,
-        apiKeyId: ctx.apiKeyId,
-        kind: 'chat',
-        model: requestedModel,
-        tokensIn,
-        tokensOut,
-        planId: ctx.plan,
-        tier: target.tier,
-      }).catch(() => {})
+      lifetime.remaining()
+      if (!lastFinish) throw new Error('Truncated stream')
+      const { tokensIn, tokensOut } = chatUsage(usage, inputLimit, maxOutput)
+      await paid.capture(netCostMicros(grossCostMicros({ kind: 'chat', tokensIn, tokensOut, tier: target.tier }), ctx.plan), tokensIn, tokensOut)
 
       res.write(
         `data: ${JSON.stringify({
@@ -256,30 +338,24 @@ router.post('/chat/completions', authenticateApiKey, requireBalance, async (req:
       return res.end()
     }
 
+    paid.startWork()
     const completion: any = await client.chat.completions.create({
       model,
       messages,
       temperature: body.temperature ?? 0.7,
-      max_tokens: body.max_tokens ?? (Number(process.env.HF_MAX_TOKENS) || 4096),
+      max_tokens: maxOutput,
       top_p: body.top_p,
       stop: body.stop as any,
       ...toolPayload,
-    })
+    }, { signal: lifetime.signal, maxRetries: 0 })
 
+    lifetime.remaining()
+    if (!completion?.choices?.[0]?.message || !completion?.choices?.[0]?.finish_reason) throw new Error('Incomplete completion')
     const upstreamMsg = completion?.choices?.[0]?.message || {}
     const content = upstreamMsg.content || ''
-    const tokensIn = completion?.usage?.prompt_tokens || estimateTokens(promptText)
-    const tokensOut = completion?.usage?.completion_tokens || estimateTokens(content)
-    const cost = await chargeUsage({
-      userId: ctx.userId,
-      apiKeyId: ctx.apiKeyId,
-      kind: 'chat',
-      model: requestedModel,
-      tokensIn,
-      tokensOut,
-      planId: ctx.plan,
-      tier: target.tier,
-    }).catch(() => 0)
+    if (typeof content !== 'string' || Buffer.byteLength(JSON.stringify(upstreamMsg), 'utf8') > maxOutput * 128 + 65_536) throw new Error('Invalid completion')
+    const { tokensIn, tokensOut } = chatUsage(completion?.usage, inputLimit, maxOutput)
+    const cost = await paid.capture(netCostMicros(grossCostMicros({ kind: 'chat', tokensIn, tokensOut, tier: target.tier }), ctx.plan), tokensIn, tokensOut)
 
     res.setHeader('X-Loop-Cost-USD', (cost / MICROS_PER_USD).toFixed(6))
     return res.json({
@@ -306,45 +382,68 @@ router.post('/chat/completions', authenticateApiKey, requireBalance, async (req:
       },
     })
   } catch (error: any) {
-    console.error('[v1/chat] error:', error?.message)
-    if (res.headersSent) return res.end()
-    return apiError(
-      res,
-      502,
-      error?.message || 'Upstream model error.',
-      'api_error',
-      'upstream_error'
-    )
+    lifetime.stop()
+    return await paid.failed(error, 'Upstream model request failed.')
+  } finally {
+    lifetime.dispose()
   }
-})
+}))
 
 /** Upstream model served via HF serverless TEI. Override with HF_EMBED_MODEL. */
 const EMBED_UPSTREAM = process.env.HF_EMBED_MODEL || 'sentence-transformers/all-MiniLM-L6-v2'
 
 const embeddingsSchema = z.object({
-  input: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),
-  model: z.string().optional(),
+  input: z.union([z.string().min(1).max(32_768), z.array(z.string().min(1).max(32_768)).min(1).max(128)]),
+  model: z.string().min(1).max(256).optional(),
 })
+
+/** One deadline across all attempts, with prompt cancellation on disconnect. */
+function providerLifetime(req: express.Request, res: express.Response, timeoutMs: number) {
+  const controller = new AbortController()
+  const deadline = Date.now() + timeoutMs
+  const cancel = () => controller.abort()
+  req.once('aborted', cancel)
+  res.once('close', cancel)
+  const timer = setTimeout(cancel, timeoutMs)
+  timer.unref()
+  if (req.aborted || res.destroyed) cancel()
+  return {
+    signal: controller.signal,
+    stop: cancel,
+    remaining() {
+      const ms = deadline - Date.now()
+      if (controller.signal.aborted || ms <= 0) throw new Error('Provider request stopped.')
+      return ms
+    },
+    dispose() {
+      clearTimeout(timer)
+      req.off('aborted', cancel)
+      res.off('close', cancel)
+      cancel()
+    },
+  }
+}
 
 /** Mean-pool token-level matrices into one vector; pass through pooled ones. */
 function toEmbeddingVector(row: unknown): number[] {
   if (!Array.isArray(row) || !row.length) return []
   if (typeof row[0] === 'number') return row as number[]
-  const matrix = row.filter((r) => Array.isArray(r)) as number[][]
-  if (!matrix.length || typeof matrix[0][0] !== 'number') return []
+  if (!Array.isArray(row[0]) || !row[0].length) return []
+  const matrix = row as number[][]
   const dim = matrix[0].length
+  if (matrix.some(vec => !Array.isArray(vec) || vec.length !== dim || vec.some(value => !Number.isFinite(value)))) return []
   const out = new Array<number>(dim).fill(0)
-  for (const vec of matrix) for (let i = 0; i < dim; i++) out[i] += Number(vec[i]) || 0
+  for (const vec of matrix) for (let i = 0; i < dim; i++) out[i] += vec[i]
   return out.map((v) => v / matrix.length)
 }
 
 /**
  * POST /v1/embeddings — OpenAI-compatible embeddings backed by HF serverless
- * TEI. Metered through `chargeUsage` at the standard chat rate (embeddings
+ * TEI. Metered through reservations at the standard chat rate (embeddings
  * cost orders of magnitude less than chat; a dedicated rate can be carved
  * out later without changing this surface).
  */
-router.post('/embeddings', authenticateApiKey, requireBalance, async (req: ApiRequest, res) => {
+router.post('/embeddings', authenticateApiKey, asyncHandler(async (req: ApiRequest, res) => {
   const parsed = embeddingsSchema.safeParse(req.body)
   if (!parsed.success) {
     return apiError(
@@ -360,8 +459,24 @@ router.post('/embeddings', authenticateApiKey, requireBalance, async (req: ApiRe
   const requested = parsed.data.model || 'loop-embed'
   const created = Math.floor(Date.now() / 1000)
 
+  const lifetime = providerLifetime(req, res, 60_000)
+  const paid = paidRequest(req, res)
   try {
-    const upstream = await fetch(
+    // TEI does not return token usage. The public metering contract for this
+    // endpoint is one estimated token per UTF-8 input byte + two special tokens
+    // per input. Use the SAME deterministic count for reservation and capture.
+    const tokens = apiCount(inputs.reduce((sum, s) => sum + Buffer.byteLength(s, 'utf8') + 2, 0))
+    if (tokens > 262_144) throw new ApiBillingError('invalid_request')
+    const amountMicros = netCostMicros(grossCostMicros({ kind: 'embedding', tokensIn: tokens }), ctx.plan)
+    await paid.reserve({ kind: 'embedding', model: requested, amountMicros,
+      pricingSnapshot: { version: 'v1', plan: ctx.plan, inputPerMillion: chatRatesFor('standard').input,
+        discountPercent: Math.round(discountFor(ctx.plan) * 100), tokens, estimator: 'utf8-bytes-plus-special-tokens' },
+      requestFingerprint: apiFingerprint([inputs, EMBED_UPSTREAM, ctx.plan, tokens, amountMicros]) })
+    lifetime.remaining()
+    await paid.dispatch()
+    lifetime.remaining()
+    paid.startWork()
+    const upstream = await providerRequest(
       `https://router.huggingface.co/hf-inference/models/${EMBED_UPSTREAM}/pipeline/feature-extraction`,
       {
         method: 'POST',
@@ -370,14 +485,14 @@ router.post('/embeddings', authenticateApiKey, requireBalance, async (req: ApiRe
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ inputs, options: { wait_for_model: true } }),
-        signal: AbortSignal.timeout(60_000),
+        allowedOrigins: ['https://router.huggingface.co'],
+        timeoutMs: lifetime.remaining(),
+        maxBytes: 8 * 1024 * 1024,
+        signal: lifetime.signal,
       }
     )
-    if (!upstream.ok) {
-      const detail = (await upstream.text()).slice(0, 300)
-      throw new Error(`embeddings upstream returned HTTP ${upstream.status}: ${detail}`)
-    }
     const raw: unknown = await upstream.json()
+    lifetime.remaining()
     if (!Array.isArray(raw)) throw new Error('embeddings upstream returned unexpected payload')
 
     // Shapes observed from TEI: [float] (single), [ [float…] ] (pooled batch),
@@ -386,18 +501,13 @@ router.post('/embeddings', authenticateApiKey, requireBalance, async (req: ApiRe
     const vectors = Array.isArray(first)
       ? (raw as unknown[][]).map(toEmbeddingVector)
       : [toEmbeddingVector(raw)]
-    const tokens = inputs.reduce((sum, s) => sum + estimateTokens(s), 0)
-
-    await chargeUsage({
-      userId: ctx.userId,
-      apiKeyId: ctx.apiKeyId,
-      kind: 'chat',
-      model: requested,
-      tokensIn: tokens,
-      tokensOut: 0,
-      planId: ctx.plan,
-      tier: 'standard',
-    }).catch(() => {})
+    if (vectors.length !== inputs.length || vectors.some(vector => !vector.length || vector.some(value => !Number.isFinite(value)))) {
+      throw new Error('Invalid embeddings payload.')
+    }
+    const cost = await paid.capture(amountMicros, tokens)
+    lifetime.remaining()
+    res.setHeader('X-Loop-Cost-USD', (cost / MICROS_PER_USD).toFixed(6))
+    res.setHeader('X-Loop-Usage-Estimated', 'utf8-bytes-plus-special-tokens')
 
     return res.json({
       object: 'list',
@@ -406,79 +516,63 @@ router.post('/embeddings', authenticateApiKey, requireBalance, async (req: ApiRe
       data: vectors.map((embedding, index) => ({ object: 'embedding', index, embedding })),
       usage: { prompt_tokens: tokens, total_tokens: tokens },
     })
-  } catch (error: any) {
-    console.error('[v1/embeddings] error:', error?.message)
-    return apiError(res, 502, error?.message || 'Upstream embeddings error.', 'api_error', 'upstream_error')
+  } catch (error) {
+    lifetime.stop()
+    return await paid.failed(error, 'Upstream embeddings request failed.')
+  } finally {
+    lifetime.dispose()
   }
-})
+}))
 
 /**
  * Call the dedicated HF image endpoint once.
  *
- * The endpoint scales to zero, so the first request after an idle period comes
- * back 503 while a GPU replica boots (~90s). Retry through that rather than
- * surfacing a spurious failure to API consumers.
+ * No automatic paid POST retries: a gateway 502/503/504 is not proof that the
+ * upstream did no billable work. Such failures retain the hold for reconciliation.
  */
-async function generateOne(endpoint: string, prompt: string): Promise<string> {
-  const deadline = Date.now() + 240_000
-  let lastError = 'image endpoint unavailable'
-
-  while (Date.now() < deadline) {
-    let upstream: Response
-    try {
-      upstream = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.HF_TOKEN || process.env.HF_API_TOKEN || ''}`,
-          'Content-Type': 'application/json',
-          Accept: 'image/png',
-        },
-        body: JSON.stringify({
-          inputs: prompt,
-          parameters: { num_inference_steps: 28, guidance_scale: 3.5 },
-        }),
-        signal: AbortSignal.timeout(300_000),
-      })
-    } catch (e: any) {
-      lastError = e?.message || 'image endpoint request failed'
-      await new Promise((r) => setTimeout(r, 8_000))
-      continue
-    }
-
-    // 503/502/504 mean the endpoint is still waking up — keep waiting.
-    if (upstream.status === 503 || upstream.status === 502 || upstream.status === 504) {
-      lastError = `image endpoint warming up (HTTP ${upstream.status})`
-      await new Promise((r) => setTimeout(r, 8_000))
-      continue
-    }
-    if (!upstream.ok) {
-      throw new Error(`image endpoint returned HTTP ${upstream.status}: ${(await upstream.text()).slice(0, 200)}`)
-    }
-
-    const contentType = upstream.headers.get('content-type') || ''
-    if (contentType.includes('application/json')) {
-      const payload: any = await upstream.json()
-      const b64 =
-        payload?.image || payload?.[0]?.image || payload?.images?.[0]?.b64_json || payload?.data?.[0]?.b64_json
-      if (b64) return String(b64)
-      throw new Error('image endpoint returned JSON without image data')
-    }
-    return Buffer.from(await upstream.arrayBuffer()).toString('base64')
+async function generateOne(
+  endpoint: string, prompt: string, lifetime: ReturnType<typeof providerLifetime>,
+): Promise<string> {
+  const upstream = await providerRequest(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.HF_TOKEN || process.env.HF_API_TOKEN || ''}`,
+      'Content-Type': 'application/json',
+      Accept: 'image/png',
+    },
+    body: JSON.stringify({
+      inputs: prompt,
+      parameters: { num_inference_steps: 28, guidance_scale: 3.5 },
+    }),
+    // endpoint is operator configuration, never a request field.
+    allowedOrigins: [new URL(endpoint).origin],
+    timeoutMs: lifetime.remaining(),
+    maxBytes: 16 * 1024 * 1024,
+    signal: lifetime.signal,
+  })
+  lifetime.remaining()
+  const contentType = upstream.headers.get('content-type') || ''
+  if (contentType.includes('application/json')) {
+    const payload: any = await upstream.json()
+    const b64 =
+      payload?.image || payload?.[0]?.image || payload?.images?.[0]?.b64_json || payload?.data?.[0]?.b64_json
+    if (typeof b64 === 'string' && /^[A-Za-z0-9+/]+={0,2}$/.test(b64) && Buffer.from(b64, 'base64').length) return b64
+    throw new Error('Invalid image payload.')
   }
-
-  throw new Error(lastError)
+  if (!contentType.startsWith('image/') || !upstream.body.length) throw new Error('Invalid image payload.')
+  return upstream.body.toString('base64')
 }
 
 const imageSchema = z.object({
   prompt: z.string().trim().min(1).max(2_000),
-  model: z.string().optional(),
+  model: z.string().min(1).max(256).optional(),
   n: z.number().int().min(1).max(4).optional(),
   size: z.string().optional(),
   response_format: z.enum(['b64_json', 'url']).optional(),
 })
 
 /** POST /v1/images/generations — text-to-image. */
-router.post('/images/generations', authenticateApiKey, requireBalance, async (req: ApiRequest, res) => {
+router.post('/images/generations', authenticateApiKey, asyncHandler(async (req: ApiRequest, res) => {
   const parsed = imageSchema.safeParse(req.body)
   if (!parsed.success) {
     return apiError(
@@ -497,46 +591,47 @@ router.post('/images/generations', authenticateApiKey, requireBalance, async (re
     return apiError(res, 503, 'Image generation is not configured.', 'api_error', 'not_configured')
   }
 
+  const lifetime = providerLifetime(req, res, 240_000)
+  const paid = paidRequest(req, res)
+  const images: { b64: string }[] = []
   try {
-    const images: { b64: string }[] = []
+    const amountMicros = netCostMicros(grossCostMicros({ kind: 'image', units: n }), ctx.plan)
+    await paid.reserve({ kind: 'image', model: parsed.data.model || 'loop-image', amountMicros,
+      pricingSnapshot: { version: 'v1', plan: ctx.plan, perUnitMicros: RATE_IMAGE, discountPercent: Math.round(discountFor(ctx.plan) * 100), units: n },
+      requestFingerprint: apiFingerprint([parsed.data, ctx.plan, amountMicros]) })
+    const endpointUrl = new URL(endpoint)
+    if (endpointUrl.protocol !== 'https:' || endpointUrl.username || endpointUrl.password) throw new Error('Invalid endpoint')
+    lifetime.remaining()
+    await paid.dispatch()
     for (let i = 0; i < n; i++) {
-      images.push({ b64: await generateOne(endpoint, prompt) })
+      lifetime.remaining()
+      paid.startWork()
+      images.push({ b64: await generateOne(endpoint, prompt, lifetime) })
     }
+    lifetime.remaining()
 
-    const cost = await chargeUsage({
-      userId: ctx.userId,
-      apiKeyId: ctx.apiKeyId,
-      kind: 'image',
-      model: parsed.data.model || 'loop-image',
-      units: images.length,
-      planId: ctx.plan,
-    }).catch(() => 0)
+    const cost = await paid.capture(amountMicros, 0, 0, images.length)
+    lifetime.remaining()
 
     res.setHeader('X-Loop-Cost-USD', (cost / MICROS_PER_USD).toFixed(6))
-    const data = images.map((img, idx) => {
+    const data = await Promise.all(images.map(async (img, idx) => {
       if (response_format === 'b64_json') return { b64_json: img.b64 }
-      const artifact = saveArtifact(
+      const artifact = await saveArtifact(
         `api-${Date.now().toString(36)}-${idx}.png`,
-        Buffer.from(img.b64, 'base64')
+        Buffer.from(img.b64, 'base64'), { userId: ctx.userId }
       )
       const base = (process.env.PUBLIC_API_URL || '').replace(/\/+$/, '')
       return { url: base ? `${base}${artifact.url}` : artifact.url }
-    })
+    }))
+    lifetime.remaining()
     return res.json({ created: Math.floor(Date.now() / 1000), data })
-  } catch (error: any) {
-    console.error('[v1/images] error:', error?.message)
-    return apiError(res, 502, error?.message || 'Image generation failed.', 'api_error', 'upstream_error')
+  } catch (error) {
+    lifetime.stop()
+    return await paid.failed(error, 'Image generation failed.', images.length)
+  } finally {
+    lifetime.dispose()
   }
-})
-
-const videoSchema = z.object({
-  prompt: z.string().trim().min(3).max(2_000),
-  model: z.string().optional(),
-  width: z.number().int().min(256).max(1_920).optional(),
-  height: z.number().int().min(256).max(1_920).optional(),
-  fps: z.number().int().min(8).max(30).optional(),
-  num_frames: z.number().int().min(16).max(241).optional(),
-})
+}))
 
 function serializeVideoJob(job: any) {
   return {
@@ -554,69 +649,53 @@ function serializeVideoJob(job: any) {
   }
 }
 
-/** POST /v1/videos/generations — async; returns 202 with a job to poll. */
-router.post('/videos/generations', authenticateApiKey, requireBalance, async (req: ApiRequest, res) => {
-  const parsed = videoSchema.safeParse(req.body)
-  if (!parsed.success) {
-    return apiError(
-      res,
-      400,
-      parsed.error.issues[0]?.message || 'Invalid request body.',
-      'invalid_request_error',
-      'invalid_body'
-    )
-  }
-  const ctx = req.api!
+/** Server-generated job identities; this endpoint is NOT HTTP-idempotent.
+ * No provider I/O or process-local work starts in the request handler. */
+router.post('/videos/generations', authenticateApiKey, asyncHandler(async (req: ApiRequest, res) => {
   try {
-    const job = await createVideoJob(ctx.userId, {
-      prompt: parsed.data.prompt,
-      width: parsed.data.width ?? 832,
-      height: parsed.data.height ?? 480,
-      fps: parsed.data.fps ?? 24,
-      numFrames: parsed.data.num_frames ?? 49,
-    })
-    const cost = await chargeUsage({
-      userId: ctx.userId,
-      apiKeyId: ctx.apiKeyId,
-      kind: 'video',
-      model: parsed.data.model || 'loop-video',
-      units: 1,
-      planId: ctx.plan,
-    }).catch(() => 0)
-    res.setHeader('X-Loop-Cost-USD', (cost / MICROS_PER_USD).toFixed(6))
+    const job = await createAccountedVideoJob(req.api!, req.body)
     return res.status(202).json(serializeVideoJob(job))
-  } catch (error: any) {
-    const message = error?.message || 'Could not create video job.'
-    return apiError(
-      res,
-      message.includes('configured') ? 503 : 500,
-      message,
-      'api_error',
-      'video_error'
-    )
+  } catch (error) {
+    const limit = videoQueueLimitProjection(error)
+    if (limit) return apiError(res, limit.status, limit.message, 'api_error', limit.code)
+    const status = error instanceof ApiBillingError && error.code === 'insufficient_quota' ? 402 :
+      error instanceof VideoJobError && error.code === 'invalid_request' ? 400 : 503
+    return apiError(res, status, status === 402 ? 'Insufficient prepaid credit.' : status === 400 ? 'Invalid video request.' : 'Video billing is temporarily unavailable.',
+      'api_error', status === 503 ? 'video_accounting_unavailable' : status === 402 ? 'insufficient_quota' : 'invalid_request')
   }
-})
+}))
 
 /** GET /v1/videos/generations/:id — poll an async video job. */
-router.get('/videos/generations/:id', authenticateApiKey, async (req: ApiRequest, res) => {
+router.get('/videos/generations/:id', authenticateApiKey, asyncHandler(async (req: ApiRequest, res) => {
   if (!hasDb || !prisma) {
     return apiError(res, 503, 'Video jobs require a database.', 'api_error', 'not_configured')
   }
   const job = await prisma.mediaJob.findFirst({
-    where: { id: req.params.id, userId: req.api!.userId },
+    where: { id: req.params.id, userId: req.api!.userId, OR: [
+      { accountedVideo: { is: null } },
+      { accountedVideo: { is: { dailyReservationId: null, reservation: { is: { apiKeyId: req.api!.apiKeyId, userId: req.api!.userId } } } } },
+    ] },
   })
   if (!job) return apiError(res, 404, 'Video job not found.', 'invalid_request_error', 'not_found')
   return res.json(serializeVideoJob(job))
-})
+}))
+
+router.post('/videos/generations/:id/cancel', authenticateApiKey, asyncHandler(async (req: ApiRequest, res) => {
+  try { await cancelAccountedVideoJob(req.params.id, req.api!); return res.json({ ok: true }) }
+  catch (error) {
+    const status = error instanceof VideoJobError && error.code === 'not_found' ? 404 : 503
+    return apiError(res, status, status === 404 ? 'Video job not found.' : 'Video accounting unavailable.', 'api_error', status === 404 ? 'not_found' : 'video_accounting_unavailable')
+  }
+}))
 
 /** GET /v1/usage — balance and recent spend for the calling key's account. */
-router.get('/usage', authenticateApiKey, async (req: ApiRequest, res) => {
+router.get('/usage', authenticateApiKey, asyncHandler(async (req: ApiRequest, res) => {
   if (!hasDb || !prisma) {
     return apiError(res, 503, 'Usage requires a database.', 'api_error', 'not_configured')
   }
   const ctx = req.api!
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-  const [user, agg] = await Promise.all([
+  const [user, agg, holds] = await Promise.all([
     prisma.user.findUnique({
       where: { id: ctx.userId },
       select: { apiBalanceMicros: true, apiPlan: true },
@@ -626,10 +705,13 @@ router.get('/usage', authenticateApiKey, async (req: ApiRequest, res) => {
       _sum: { costMicros: true, tokensIn: true, tokensOut: true, units: true },
       _count: true,
     }),
+    prisma.apiReservation.groupBy({ by: ['state'], where: { userId: ctx.userId, state: { in: ['reserved', 'dispatched', 'unknown'] } }, _sum: { amountMicros: true }, _count: true }),
   ])
   return res.json({
     object: 'usage',
     balance_usd: Number(user?.apiBalanceMicros ?? 0n) / MICROS_PER_USD,
+    // Outstanding holds are visible and durable even after process termination.
+    reservations: holds.map(row => ({ state: row.state, count: row._count, held_usd: Number(row._sum.amountMicros ?? 0n) / MICROS_PER_USD })),
     plan: user?.apiPlan ?? null,
     last_30_days: {
       requests: agg._count,
@@ -639,14 +721,13 @@ router.get('/usage', authenticateApiKey, async (req: ApiRequest, res) => {
       spend_usd: Number(agg._sum.costMicros ?? 0n) / MICROS_PER_USD,
     },
   })
-})
+}))
 
 /**
  * POST /v1/media/publish — publish a base64 media blob (generated video/image)
- * to the public uploads CDN so chat clients can stream it by URL instead of
- * hauling megabytes of base64 through the message payload.
+ * to owned storage. Returned URLs require the owner's JWT or developer key.
  */
-router.post('/media/publish', authenticateApiKey, (req: ApiRequest, res) => {
+router.post('/media/publish', authenticateApiKey, asyncHandler(async (req: ApiRequest, res) => {
   const { mime, b64, name } = req.body || {}
   if (!b64 || typeof b64 !== 'string') {
     return apiError(res, 400, 'Missing b64 payload.', 'invalid_request_error', 'missing_payload')
@@ -672,22 +753,15 @@ router.post('/media/publish', authenticateApiKey, (req: ApiRequest, res) => {
     ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
   }
   if (!ext) ext = 'bin'
-  const fileName = `pub-${Date.now().toString(36)}${crypto.randomBytes(5).toString('hex')}.${ext}`
-  const dir = path.join(__dirname, '../../uploads')
   try {
-    fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(path.join(dir, fileName), buf)
+    const artifact = await saveArtifact(`media.${ext}`, buf, { userId: req.api!.userId })
+    const base = (process.env.PUBLIC_API_URL || '').replace(/\/+$/, '')
+    return res.json({ object: 'media.publish', id: artifact.id, access: 'private', url: `${base}${artifact.url}`,
+      bytes: buf.length, mime: artifact.mimeType })
   } catch (e: any) {
-    return apiError(res, 500, `Failed to persist media: ${e?.message || e}`, 'api_error', 'persist_failed')
+    return apiError(res, 503, 'Private media storage is unavailable.', 'api_error', 'persist_failed')
   }
-  const base = (process.env.PUBLIC_API_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '')
-  return res.json({
-    object: 'media.publish',
-    url: `${base}/uploads/${fileName}`,
-    bytes: buf.length,
-    mime: mime || ext,
-  })
-})
+}))
 
 /** Unknown /v1 path — OpenAI-style 404 so SDKs report it cleanly. */
 router.use((req, res) =>

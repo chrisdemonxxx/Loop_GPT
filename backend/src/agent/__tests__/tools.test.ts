@@ -1,11 +1,27 @@
-import { describe, it, expect, beforeAll } from 'vitest'
-import { registerBuiltinTools } from '../index'
+import { describe, it, expect, beforeAll, vi } from 'vitest'
+vi.mock('../../services/privateFiles', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/privateFiles')>()
+  return { ...actual, storePrivateFile: vi.fn(async (input) => ({
+    id: '12345678-1234-4123-8123-123456789abc', name: input.name,
+    mimeType: input.mimeType, size: input.buffer.length,
+  })) }
+})
+import { storePrivateFile } from '../../services/privateFiles'
+import { registerBuiltinTools, builtinTools } from '../index'
+import { authorizeRunContext } from '../runAuthorization'
+vi.mock('../../services/workspaces', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/workspaces')>()
+  return { ...actual, workspaceDb: () => ({ conversation: { findFirst: async () => ({ id: 'c' }) } }) }
+})
 import { toolRegistry } from '../toolRegistry'
 import type { ToolContext } from '../types'
 
-const ctx: ToolContext = { userId: 'u', conversationId: 'c', emit: () => {}, scratch: {} }
+let ctx: ToolContext
 
-beforeAll(() => registerBuiltinTools())
+beforeAll(async () => {
+  registerBuiltinTools()
+  ctx = await authorizeRunContext({ userId: 'u', conversationId: 'c', emit: () => {}, scratch: {} }, 'w', builtinTools())
+})
 
 describe('built-in tools', () => {
   it('calculator evaluates arithmetic', async () => {
@@ -32,7 +48,8 @@ describe('built-in tools', () => {
       ctx
     )
     expect(r.isError).toBeFalsy()
-    expect(r.data?.artifact?.url).toMatch(/\/uploads\/artifacts\//)
+    expect(r.data?.artifact?.url).toMatch(/^\/api\/files\/.+\/content$/)
+    expect(storePrivateFile).toHaveBeenLastCalledWith(expect.objectContaining({ userId: 'u', conversationId: 'c', purpose: 'artifact' }))
     expect(r.data?.artifact?.kind).toBe('csv')
   })
 
@@ -44,6 +61,8 @@ describe('built-in tools', () => {
     )
     expect(r.isError).toBeFalsy()
     expect(r.data?.artifact?.kind).toBe('pdf')
+    const saved = vi.mocked(storePrivateFile).mock.calls.at(-1)![0]
+    expect(saved.buffer.subarray(0, 4).toString()).toBe('%PDF')
   })
 
   it('unknown tool returns an error result, not a throw', async () => {

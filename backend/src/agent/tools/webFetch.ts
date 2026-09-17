@@ -4,22 +4,26 @@
 import { JSDOM } from 'jsdom'
 import { Readability } from '@mozilla/readability'
 import type { ToolDefinition } from '../types'
-import { fetchText } from '../httpClient'
+import { publicRequest, PublicHttpError } from '../../services/publicHttp'
 
-export async function fetchReadable(url: string, maxChars = 6000): Promise<{ title: string; text: string }> {
-  const html = await fetchText(url, {
+export async function fetchReadable(url: string, maxChars = 6000, signal?: AbortSignal): Promise<{ title: string; text: string }> {
+  if (!Number.isInteger(maxChars) || maxChars < 1 || maxChars > 20000) throw new PublicHttpError('invalid_request', 'Invalid readable-text limit')
+  const response = await publicRequest(url, {
+    signal, redirects: 3, maxBytes: 1024 * 1024,
     headers: {
       'User-Agent': 'Mozilla/5.0 (compatible; LoopGPT-Agent/1.0; +https://github.com/chrisdemonxxx/loop_gpt)',
       Accept: 'text/html,application/xhtml+xml',
     },
   })
-  const dom = new JSDOM(html, { url })
-  const reader = new Readability(dom.window.document)
-  const article = reader.parse()
-  const title = article?.title || dom.window.document.title || url
-  let text = (article?.textContent || dom.window.document.body?.textContent || '').replace(/\s+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
-  if (text.length > maxChars) text = text.slice(0, maxChars) + `\n…[truncated]`
-  return { title, text }
+  const dom = new JSDOM(response.body.toString('utf8'), { url: response.url })
+  try {
+    const reader = new Readability(dom.window.document)
+    const article = reader.parse()
+    const title = article?.title || dom.window.document.title || url
+    let text = (article?.textContent || dom.window.document.body?.textContent || '').replace(/\s+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+    if (text.length > maxChars) text = text.slice(0, maxChars) + `\n…[truncated]`
+    return { title, text }
+  } finally { dom.window.close() }
 }
 
 export const webFetchTool: ToolDefinition = {
@@ -33,16 +37,16 @@ export const webFetchTool: ToolDefinition = {
     },
     required: ['url'],
   },
-  async handler(args) {
+  async handler(args, ctx) {
     const url = String(args.url || '')
     if (!/^https?:\/\//i.test(url)) {
       return { content: 'Error: url must be an absolute http(s) URL.', isError: true }
     }
     try {
-      const { title, text } = await fetchReadable(url)
+      const { title, text } = await fetchReadable(url, 6000, ctx.signal)
       return { content: `# ${title}\nSource: ${url}\n\n${text}`, data: { url, title } }
-    } catch (error: any) {
-      return { content: `Failed to fetch ${url}: ${error?.message || error}`, isError: true }
+    } catch {
+      return { content: 'Page could not be retrieved within the public-network policy and resource limits.', isError: true }
     }
   },
 }

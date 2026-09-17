@@ -27,6 +27,8 @@ export interface ToolParameterSchema {
 export interface ToolContext {
   userId: string
   conversationId: string
+  /** Identity only; execution authority is held server-side, not in this field. */
+  workspaceId?: string
   /** Emit a progress event to the client (SSE). */
   emit: (event: AgentEvent) => void
   /** Signal used to abort long-running work. */

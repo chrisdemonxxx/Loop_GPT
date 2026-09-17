@@ -1,6 +1,39 @@
 # Loop GPT — Production Codebase (single source of truth)
 
-Everything Loop GPT lives in this one folder. It is deployed and live. There are no other copies — older duplicates were deleted 2026-09-07.
+Everything Loop GPT lives in this one folder. The architecture below describes the existing deployment; local rebuild work is tracked separately. Older duplicates were deleted 2026-09-07.
+
+## Active production rebuild
+
+- [Build progress and remaining milestones](docs/BUILD_PROGRESS.md)
+- [Complete remaining production-build checklist](docs/PRODUCTION_CHECKLIST.md)
+- [Foundation validation and database release runbook](docs/FOUNDATION_RUNBOOK.md)
+- [Verified foundation results](docs/validation/foundation-01.md)
+- [Private-file and account API changes](docs/PRIVATE_FILES.md)
+- [Workspace configuration and encrypted credentials](docs/WORKSPACES.md)
+- [Workspace-bound runtime and retired configuration routes](docs/RUNTIME_AUTHORIZATION.md)
+- [Public HTTP controls and connector readiness](docs/PUBLIC_HTTP.md)
+- [Verified isolation results](docs/validation/foundation-02.md)
+- [Verified opt-in Notion/GitLab connector results](docs/validation/foundation-03d.md)
+- [Hosted model request-boundary validation](docs/validation/foundation-03e.md)
+- [Legacy messages and global model-state retirement](docs/validation/foundation-03f.md)
+- [Model SDK destination policy and limits](docs/MODEL_HTTP.md)
+- [Pinned DNS and bounded model-stream validation](docs/validation/foundation-03h.md)
+- [Provider/media transport and isolated sidecar policy](docs/PROVIDER_MEDIA_HTTP.md)
+- [Verified provider/media migration results](docs/validation/foundation-03i.md)
+- [Daily and prepaid reservation contracts](docs/ACCOUNTING.md)
+- [Combined ledger/backend validation](docs/validation/foundation-03j.md)
+- [Daily settlement recovery worker](docs/DAILY_SETTLEMENT_RECOVERY.md)
+- [Verified recovery results](docs/validation/foundation-03k.md)
+- [Prepaid capture recovery worker](docs/API_SETTLEMENT_RECOVERY.md)
+- [Verified prepaid recovery results](docs/validation/foundation-03l.md)
+- [Reservation-linked prepaid video jobs](docs/ACCOUNTED_VIDEO_JOBS.md)
+- [Verified video lifecycle results](docs/validation/foundation-03m.md)
+- [Verified daily/JWT video accounting](docs/validation/foundation-03n.md)
+- [Owned web/PWA client setup](web/README.md)
+- [Owned client validation and limitations](web/VALIDATION.md)
+
+Local changes are not automatically deployed. The backend now requires a separate
+reviewed migration release step; read the runbook before deploying this revision.
 
 ## Live architecture
 
@@ -9,7 +42,7 @@ Everything Loop GPT lives in this one folder. It is deployed and live. There are
 | Landing page | https://loop-gpt.cyou | `gateway/` (nginx, static mirror + reverse proxy) |
 | Chat app (LibreChat) | https://loop-gpt.cyou/* and https://chat.loop-gpt.cyou | Railway service `librechat`, built from `deploy/librechat/spike/` |
 | Public API (OpenAI-compatible) | https://api.loop-gpt.cyou/v1 | Railway service `backend`, built from `backend/` via git push to `main` |
-| Media CDN | https://api.loop-gpt.cyou/uploads/* | backend `/v1/media/publish` writes here |
+| Legacy media CDN | https://api.loop-gpt.cyou/uploads/* | Existing deployment only; rebuilt source returns authenticated `/api/files/:id/content` URLs |
 
 Railway project: `loop-gpt` (id `c4381399-65b9-4998-8716-b1d5b71c802f`, production env `78eea8e7-c69e-427d-bcee-57b33cb88f9c`).
 Services: `frontend` (= the gateway, snapshot-deployed), `backend` (git-deployed), `librechat` (snapshot-deployed), `librechat-rag` (image `ghcr.io/danny-avila/librechat-rag-api:latest`), `cf-tunnel`, `Postgres`, `MongoDB`.
@@ -55,7 +88,7 @@ Google/GitHub apps whitelist only `https://api.loop-gpt.cyou/api/auth/oauth/<pro
 
 - Railway `rootDirectory` is per service-instance; CLI snapshot uploads are prefix-trimmed — flat build contexts only.
 - Railway private DNS returns IPv6 first; nginx literals need brackets or `getent ahostsv4`.
-- `prisma db push --accept-data-loss` runs on backend boot — schema drift wipes data (it emptied the ApiKey table once; keys are sha256-hashed rows in Postgres).
+- Historical backend images ran destructive schema synchronization on boot. The rebuilt source removes it and provides committed migrations; existing databases require reconciliation/baselining before deploying this revision. API keys are sha256-hashed rows in Postgres.
 - LibreChat model vision detection is substring matching against a whitelist — model ids `qwen-vl-loop` / `qwen-vl-loop-large` are chosen to match; backend `chatModels.ts` maps them to tiers.
 - Failed Railway deployments never replace running instances; safe to iterate.
 

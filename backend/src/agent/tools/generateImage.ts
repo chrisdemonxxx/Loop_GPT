@@ -1,217 +1,130 @@
-/**
- * generate_image tool: text-to-image and img2img generation.
- *
- * Primary path uses HuggingFace Inference Providers with FLUX.1-dev.
- * Supports img2img mode for face cloning and style transfer when reference image is provided.
- */
 import { saveArtifact } from '../artifacts'
 import { imageApiService } from '../../services/imageApi'
-import { fetchBuffer, postJson } from '../httpClient'
-import { checkCredits } from '../../services/billing'
+import { providerRequest } from '../../services/providerHttp'
+import { checkedMedia, decodeMedia, IMAGE_RESPONSE_BYTES, mediaAuth, mediaFailure, mediaOperation, mediaUrl, type MediaOperation } from '../httpClient'
+import { recordUsage } from '../../services/billing'
+import { reserveDailyCredits, dailyDispatch, cleanupDailyReservation, DailyCreditError } from '../../services/dailyReservations'
 import type { ToolDefinition } from '../types'
 
-/**
- * Generate via a dedicated HuggingFace Inference Endpoint supporting img2img.
- */
-async function hfImageEndpoint(
-  prompt: string,
-  imageBase64?: string,
-  strength = 0.75
-): Promise<Buffer> {
-  const raw = (process.env.HF_IMAGE_ENDPOINT_URL || '').replace(/\/+$/, '')
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 180000)
-  
-  try {
-    const payload: any = {
-      inputs: prompt,
-      parameters: {
-        num_inference_steps: 28,
-        guidance_scale: 3.5,
-      },
-    }
-    
-    if (imageBase64) {
-      payload.image = imageBase64
-      payload.parameters.strength = strength
-    }
-    
-    const res = await fetch(raw, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.HF_TOKEN || ''}`,
-        'Content-Type': 'application/json',
-        Accept: 'image/png',
-      },
-      body: JSON.stringify(payload),
-      signal: ctrl.signal,
+async function imageResponse(response: Awaited<ReturnType<typeof providerRequest>>, op: MediaOperation): Promise<Buffer> {
+  op.check()
+  if (!(response.headers.get('content-type') || '').includes('json')) return checkedMedia(response.body)
+  const data = await response.json()
+  const item = data?.data?.[0] || data?.images?.[0] || data?.[0] || data
+  const encoded = item?.b64_json || item?.image_base64 || item?.image
+  if (typeof encoded === 'string') return decodeMedia(encoded)
+  const url = item?.url || item?.image_url
+  if (typeof url === 'string') {
+    // Returned image downloads are always anonymous, including same-origin URLs.
+    const result = await providerRequest(mediaUrl(url), {
+      signal: op.signal, timeoutMs: op.remaining(60000), maxBytes: IMAGE_RESPONSE_BYTES,
     })
-    
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
-    const ct = res.headers.get('content-type') || ''
-    
-    if (ct.includes('application/json')) {
-      const j: any = await res.json()
-      const b64 = j?.image || j?.[0]?.image || j?.images?.[0]?.b64_json || j?.data?.[0]?.b64_json
-      if (b64) return Buffer.from(b64, 'base64')
-      const url = j?.url || j?.[0]?.url || j?.images?.[0]?.url || j?.data?.[0]?.url
-      if (url) return fetchBuffer(url, { timeoutMs: 60000 })
-      throw new Error('endpoint returned JSON without an image')
-    }
-    return Buffer.from(await res.arrayBuffer())
-  } finally {
-    clearTimeout(timer)
+    op.check()
+    return checkedMedia(result.body)
   }
+  throw new Error('Missing image data')
 }
 
-function inferenceParams(model: string, width = 1024, height = 1024, imageBase64?: string, strength = 0.75) {
-  const isSchnell = model.toLowerCase().includes('schnell')
-  const params: any = {
-    num_inference_steps: isSchnell ? 4 : 28,
-    guidance_scale: isSchnell ? 0 : 3.5,
-    width,
-    height,
-  }
-  if (imageBase64) {
-    params.image = imageBase64
-    params.strength = strength
-  }
-  return params
+async function hfImageEndpoint(prompt: string, op: MediaOperation, beforeDispatch: () => Promise<void>, imageBase64?: string, strength = 0.75): Promise<Buffer> {
+  const endpoint = mediaUrl(process.env.HF_IMAGE_ENDPOINT_URL || '')
+  const payload: any = { inputs: prompt, parameters: { num_inference_steps: 28, guidance_scale: 3.5 } }
+  if (imageBase64) { payload.image = imageBase64; payload.parameters.strength = strength }
+  const auth = mediaAuth(endpoint)
+  await beforeDispatch()
+  return imageResponse(await providerRequest(endpoint, { ...auth, method: 'POST',
+    headers: { ...auth.headers, 'Content-Type': 'application/json', Accept: 'image/png' },
+    body: JSON.stringify(payload), signal: op.signal, timeoutMs: op.remaining(180000), maxBytes: IMAGE_RESPONSE_BYTES,
+  }), op)
 }
 
-async function hfTextToImage(
-  prompt: string,
-  model: string,
-  width = 1024,
-  height = 1024,
-  imageBase64?: string,
-  strength = 0.75
-): Promise<Buffer> {
+async function hfTextToImage(prompt: string, model: string, width: number, height: number,
+  op: MediaOperation, beforeDispatch: () => Promise<void>, imageBase64?: string, strength = 0.75): Promise<Buffer> {
+  const allowed = ['fal-ai', 'together', 'nscale']
   const configured = process.env.HF_IMAGE_PROVIDER
-  const providers = configured ? [configured] : ['fal-ai', 'together', 'nscale']
-  const auth = { Authorization: `Bearer ${process.env.HF_TOKEN || ''}` }
-  const params = inferenceParams(model, width, height, imageBase64, strength)
-  let lastErr = ''
-
+  if (configured && !allowed.includes(configured)) throw new Error('Invalid image provider')
+  const providers = configured ? [configured] : allowed
   for (const provider of providers) {
+    op.check()
     try {
-      const payload: any = { model, prompt, response_format: 'b64_json', ...params }
-      if (imageBase64) {
-        payload.image = imageBase64
-        payload.strength = strength
+      const endpoint = `https://router.huggingface.co/${provider}/v1/images/generations`
+      const auth = mediaAuth(endpoint)
+      const schnell = model.toLowerCase().includes('schnell')
+      const payload = { model, prompt, response_format: 'b64_json', width, height,
+        num_inference_steps: schnell ? 4 : 28, guidance_scale: schnell ? 0 : 3.5,
+        ...(imageBase64 ? { image: imageBase64, strength } : {}),
       }
-      const data = await postJson<any>(
-        `https://router.huggingface.co/${provider}/v1/images/generations`,
-        payload,
-        { headers: auth, timeoutMs: 120000 }
-      )
-      const item = data?.data?.[0] || data?.images?.[0]
-      if (item?.b64_json) return Buffer.from(item.b64_json, 'base64')
-      if (item?.url) return fetchBuffer(item.url, { timeoutMs: 60000 })
-      lastErr = `provider ${provider} returned no image`
-    } catch (e: any) {
-      lastErr = `${provider}: ${e?.message || e}`
-    }
+      await beforeDispatch()
+      return await imageResponse(await providerRequest(endpoint, { ...auth, method: 'POST',
+        headers: { ...auth.headers, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        signal: op.signal, timeoutMs: op.remaining(120000), maxBytes: IMAGE_RESPONSE_BYTES,
+      }), op)
+    } catch { op.check() }
   }
-  throw new Error(lastErr || 'no image provider succeeded')
+  throw new Error('Image providers failed')
 }
 
 export const generateImageTool: ToolDefinition = {
   name: 'generate_image',
   source: 'builtin',
-  description: 'Generate images from text prompts using FLUX.1-dev. Supports img2img for face cloning when reference image provided.',
+  description: 'Generate images from text prompts using FLUX.1-dev. Supports img2img with a reference image.',
   parameters: {
     type: 'object',
     properties: {
       prompt: { type: 'string', description: 'Detailed description of the image to generate.' },
-      image_prompt: { type: 'string', description: 'Optional base64 reference image for img2img (face cloning/style transfer).' },
-      aspect_ratio: {
-        type: 'string',
-        enum: ['square', 'landscape', 'portrait', 'wide'],
-        description: 'Aspect ratio. Default: square.',
-      },
-      strength: {
-        type: 'number',
-        description: 'For img2img: transformation strength (0.0-1.0). Default: 0.75.',
-        default: 0.75,
-      },
+      image_prompt: { type: 'string', description: 'Optional base64 reference image for img2img.' },
+      aspect_ratio: { type: 'string', enum: ['square', 'landscape', 'portrait', 'wide'] },
+      strength: { type: 'number', description: 'Reference transformation strength (0-1).', default: 0.75 },
     },
     required: ['prompt'],
   },
   async handler(args, ctx) {
-    const prompt = String(args.prompt || '').trim()
-    const imagePrompt = args.image_prompt ? String(args.image_prompt) : undefined
-    const strength = Number(args.strength) || 0.75
-    
-    if (!prompt) return { content: 'Error: prompt is required.', isError: true }
-
-    if (ctx.userId) {
-      try {
-        const credit = await checkCredits(ctx.userId, 'image')
-        if (!credit.ok) return { content: credit.reason || 'Out of credits.', isError: true }
-      } catch {}
-    }
-
-    const model = process.env.HF_IMAGE_MODEL || 'black-forest-labs/FLUX.1-dev'
-    const ratio = String(args.aspect_ratio || 'square')
-    const SIZES: Record<string, [number, number]> = {
-      square: [1024, 1024],
-      landscape: [1344, 768],
-      portrait: [768, 1344],
-      wide: [1536, 640],
-    }
-    const [imgW, imgH] = SIZES[ratio] || SIZES.square
-    const mode = imagePrompt ? 'img2img' : 'text2img'
-
-    ctx.emit({ type: 'status', message: `Generating image (${mode} mode)...` })
-
-    let buffer: Buffer | null = null
-    let usedModel = model
-    
-    if (process.env.HF_IMAGE_ENDPOINT_URL) {
-      try {
-        buffer = await hfImageEndpoint(prompt, imagePrompt, strength)
-        usedModel = 'custom endpoint'
-      } catch (e: any) {
-        ctx.emit({ type: 'status', message: `Endpoint failed, trying providers...` })
+    const op = mediaOperation(300000, ctx.signal)
+    let reservation: Awaited<ReturnType<typeof reserveDailyCredits>> | undefined
+    try {
+      op.check()
+      const prompt = String(args.prompt || '').trim()
+      const imagePrompt = args.image_prompt ? String(args.image_prompt) : undefined
+      const parsedStrength = args.strength == null ? 0.75 : Number(args.strength)
+      const strength = Number.isFinite(parsedStrength) ? Math.max(0, Math.min(1, parsedStrength)) : 0.75
+      if (!prompt) return { content: 'Error: prompt is required.', isError: true }
+      const model = process.env.HF_IMAGE_MODEL || 'black-forest-labs/FLUX.1-dev'
+      reservation = await reserveDailyCredits(ctx.userId, 'image', model)
+      op.check()
+      const dispatch = dailyDispatch(reservation.id, op.signal)
+      const beforeDispatch = async () => { op.check(); await dispatch() }
+      const sizes: Record<string, [number, number]> = {
+        square: [1024, 1024], landscape: [1344, 768], portrait: [768, 1344], wide: [1536, 640],
       }
-    }
-    
-    if (!buffer && process.env.HF_TOKEN) {
-      try {
-        buffer = await hfTextToImage(prompt, model, imgW, imgH, imagePrompt, strength)
-      } catch (e: any) {
-        ctx.emit({ type: 'status', message: `HF providers failed, trying fallback...` })
+      const [width, height] = sizes[String(args.aspect_ratio || 'square')] || sizes.square
+      const mode = imagePrompt ? 'img2img' : 'text2img'
+      ctx.emit({ type: 'status', message: `Generating image (${mode} mode)...` })
+      let buffer: Buffer | undefined
+      if (process.env.HF_IMAGE_ENDPOINT_URL) {
+        try { buffer = await hfImageEndpoint(prompt, op, beforeDispatch, imagePrompt, strength) }
+        catch { op.check(); ctx.emit({ type: 'status', message: 'Endpoint failed, trying providers...' }) }
       }
-    }
-
-    if (!buffer && process.env.IMAGE_API_URL) {
-      try {
-        const result = await imageApiService.generateImage({ 
-          prompt, image_prompt: imagePrompt, strength,
-          model: 'flux-dev', return_base64: true 
-        })
-        if (result.image_base64) {
-          buffer = Buffer.from(result.image_base64, 'base64')
-          usedModel = result.model
-        }
-      } catch (e: any) {
-        return { content: `Image generation failed: ${e?.message}`, isError: true }
+      if (!buffer && process.env.HF_TOKEN) {
+        try { buffer = await hfTextToImage(prompt, model, width, height, op, beforeDispatch, imagePrompt, strength) }
+        catch { op.check(); ctx.emit({ type: 'status', message: 'HF providers failed, trying fallback...' }) }
       }
-    }
-
-    if (!buffer) {
-      return { content: 'Image generation not configured.', isError: true }
-    }
-
-    const artifact = saveArtifact(`${prompt.slice(0, 30).replace(/\s+/g, '-')}.png`, buffer)
-    ctx.scratch.artifacts = ctx.scratch.artifacts || []
-    ctx.scratch.artifacts.push(artifact)
-    ctx.emit({ type: 'artifact', artifact })
-    
-    return {
-      content: `Generated image (${mode} mode) for "${prompt.slice(0, 80)}...".`,
-      data: { artifact, mode },
-    }
+      if (!buffer && process.env.IMAGE_API_URL) {
+        op.check()
+        await beforeDispatch()
+        const result = await imageApiService.generateImage({ prompt, image_prompt: imagePrompt, strength,
+          model: 'flux-dev', return_base64: true }, op.signal)
+        if (result.image_base64) buffer = decodeMedia(result.image_base64)
+      }
+      op.check()
+      if (!buffer) return { content: 'Image generation unavailable.', isError: true }
+      await recordUsage(ctx.userId, 'image', { reservationId: reservation.id, images: 1, model })
+      const artifact = await saveArtifact(`${prompt.slice(0, 30).replace(/\s+/g, '-')}.png`, checkedMedia(buffer),
+        { userId: ctx.userId, conversationId: ctx.conversationId })
+      op.check()
+      ctx.scratch.artifacts = ctx.scratch.artifacts || []
+      ctx.scratch.artifacts.push(artifact)
+      ctx.emit({ type: 'artifact', artifact })
+      return { content: `Generated image (${mode} mode) for "${prompt.slice(0, 80)}...".`, data: { artifact, mode } }
+    } catch (error) { return { content: error instanceof DailyCreditError ? error.message : mediaFailure(op, 'Image'), isError: true } }
+    finally { await cleanupDailyReservation(reservation?.id); op.dispose() }
   },
 }

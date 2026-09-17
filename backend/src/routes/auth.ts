@@ -1,27 +1,15 @@
 import express from 'express'
-import { PrismaClient } from '@prisma/client'
+import { randomBytes } from 'crypto'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { validate, validationSchemas } from '../middleware/validation'
-import { prisma as sharedPrisma, hasDb } from '../services/prisma'
+import { prisma, hasDb } from '../services/prisma'
 import { welcomeEmail, verifyEmail } from '../services/email'
 import { createToken } from '../services/tokens'
 
 const router = express.Router()
 
-// Only construct Prisma when a real database is configured; otherwise the app
-// runs on the in-memory store and auth endpoints return 503. Constructing it
-// unconditionally crashes boot when no DB (or engine) is present.
-let prisma: PrismaClient | null = null
-try {
-  if (process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('postgresql://user:password')) {
-    prisma = new PrismaClient()
-  }
-} catch {
-  prisma = null
-}
-
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production'
+const JWT_SECRET = process.env.JWT_SECRET || randomBytes(32).toString('hex')
 
 // Register
 router.post('/register', validate(validationSchemas.register), async (req, res) => {
@@ -43,17 +31,13 @@ router.post('/register', validate(validationSchemas.register), async (req, res) 
 
     const hashedPassword = await bcrypt.hash(password, 10)
 
-    // Bootstrap: the very first account (or one matching ADMIN_EMAIL) is an admin.
-    const userCount = await prisma.user.count()
-    const adminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase()
-    const isAdmin = userCount === 0 || (!!adminEmail && email.toLowerCase() === adminEmail)
-
     const user = await prisma.user.create({
       data: {
         email,
         password: hashedPassword,
         name: name || email.split('@')[0],
-        role: isAdmin ? 'admin' : 'user',
+        // Administration is provisioned explicitly using the operator CLI.
+        role: 'user',
       },
     })
 
@@ -63,7 +47,7 @@ router.post('/register', validate(validationSchemas.register), async (req, res) 
     welcomeEmail(user.email, user.name).catch(() => {})
     createToken(user.id, 'verify')
       .then((t) => {
-        if (t) verifyEmail(user.email, user.name, `${(process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '')}/verify?token=${t}`)
+        if (t) return verifyEmail(user.email, user.name, `${(process.env.FRONTEND_URL || 'http://localhost:3000').split(',')[0].trim().replace(/\/+$/, '')}/verify?token=${t}`)
       })
       .catch(() => {})
 
@@ -125,14 +109,11 @@ router.post('/login', validate(validationSchemas.login), async (req, res) => {
 
 // Middleware to verify JWT token
 export const authenticateToken = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const authHeader = req.headers['authorization']
-  const token = authHeader && authHeader.split(' ')[1]
-
-  // Development mode: Auto-create/use a default user if no token provided
-  // Allow dev mode if NODE_ENV is development OR if ENABLE_DEV_MODE is set
-  const isDevMode = process.env.NODE_ENV === 'development' || process.env.ENABLE_DEV_MODE === 'true'
+  const authHeader = req.headers.authorization
+  const token = typeof authHeader === 'string' ? /^Bearer ([^\s]+)$/i.exec(authHeader)?.[1] : undefined
+  const isDevMode = process.env.NODE_ENV === 'development' && process.env.ENABLE_DEV_MODE === 'true'
   
-  if (isDevMode && !token) {
+  if (isDevMode && authHeader === undefined) {
     // Use a default test user ID for development
     ;(req as any).userId = 'dev-user-123'
     return next()
@@ -142,9 +123,10 @@ export const authenticateToken = (req: express.Request, res: express.Response, n
     return res.status(401).json({ error: 'No token provided' })
   }
 
-  jwt.verify(token, JWT_SECRET, (err: any, decoded: any) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid token' })
+  jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }, (err: any, decoded: any) => {
+    if (err || !decoded || typeof decoded === 'string' || typeof decoded.userId !== 'string' ||
+        decoded.userId.trim().length === 0 || decoded.userId.length > 128) {
+      return res.status(401).json({ error: 'Invalid token' })
     }
     ;(req as any).userId = decoded.userId
     next()
@@ -152,18 +134,16 @@ export const authenticateToken = (req: express.Request, res: express.Response, n
 }
 
 /**
- * Gate a route to admins. Must run after authenticateToken. Without a DB, allows
- * access only in dev mode (so the local build stays usable).
+ * Gate a route to an explicitly provisioned administrator. No dev-role bypass.
  */
 export const requireAdmin = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const userId = (req as any).userId
-  if (!hasDb || !sharedPrisma) {
-    const isDevMode = process.env.NODE_ENV === 'development' || process.env.ENABLE_DEV_MODE === 'true'
-    if (isDevMode) return next()
+  if (!userId) return res.status(401).json({ error: 'Authentication required.' })
+  if (!hasDb || !prisma) {
     return res.status(503).json({ error: 'Admin portal requires a database.' })
   }
   try {
-    const user = await sharedPrisma.user.findUnique({ where: { id: userId } })
+    const user = await prisma.user.findUnique({ where: { id: userId } })
     if (!user || user.role !== 'admin') return res.status(403).json({ error: 'Admin access required.' })
     ;(req as any).userRole = user.role
     next()

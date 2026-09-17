@@ -1,65 +1,70 @@
 import express from 'express'
-import { authenticateToken } from './auth'
+import { z } from 'zod'
+import { authenticateToken, requireAdmin } from './auth'
 import { aiProviderService, AIProvider } from '../services/aiProviders'
 
 const router = express.Router()
+const providerSchema = z.enum(['openai', 'anthropic', 'local', 'groq', 'together', 'ollama', 'xai', 'perplexity', 'nvidia', 'huggingface'])
+const apiKeySchema = z.string().max(4096).regex(/^[\x20-\x7e]*$/).optional()
+const discoverySchema = z.object({ apiKey: apiKeySchema }).strict()
+const configSchema = z.object({
+  provider: providerSchema,
+  apiKey: apiKeySchema,
+  model: z.string().max(512).optional(),
+  baseUrl: z.string().max(2048).optional(),
+}).strict()
 
-// Conditional auth middleware (skip in dev mode)
-const optionalAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  if (process.env.NODE_ENV === 'development' || process.env.ENABLE_DEV_MODE === 'true') {
-    return next()
-  }
-  authenticateToken(req, res, next)
-}
+// Process-wide provider configuration is operator-only, including development.
+router.use(authenticateToken, requireAdmin)
 
-// Get available providers and models (with optional API key for fetching models)
-router.get('/providers', optionalAuth, async (req, res) => {
+// Credentials are provider-specific; GET discovery accepts no query overrides.
+router.get('/providers', async (req, res) => {
+  if (Object.keys(req.query).length) return res.status(400).json({ error: 'Invalid discovery request.' })
+  res.setHeader('Cache-Control', 'no-store')
   try {
-    const { apiKey, baseUrl } = req.query
-    
-    // Fetch models for each provider (with optional API key)
+    // Each provider resolves only its own configured/server credentials.
     const providers = await Promise.all([
-      aiProviderService.getAvailableModels('openai', apiKey as string).then(models => ({
+      aiProviderService.getAvailableModels('openai').then(models => ({
         id: 'openai',
         name: 'OpenAI',
         models,
       })),
-      aiProviderService.getAvailableModels('anthropic', apiKey as string).then(models => ({
+      aiProviderService.getAvailableModels('anthropic').then(models => ({
         id: 'anthropic',
         name: 'Anthropic Claude',
         models,
       })),
-      aiProviderService.getAvailableModels('groq', apiKey as string).then(models => ({
+      aiProviderService.getAvailableModels('groq').then(models => ({
         id: 'groq',
         name: 'Groq',
         models,
       })),
-      aiProviderService.getAvailableModels('together', apiKey as string).then(models => ({
+      aiProviderService.getAvailableModels('together').then(models => ({
         id: 'together',
         name: 'Together AI',
         models,
       })),
-      aiProviderService.getAvailableModels('ollama', undefined, baseUrl as string).then(models => ({
+      aiProviderService.getAvailableModels('ollama').then(models => ({
         id: 'ollama',
         name: 'Ollama (Local)',
         models,
       })),
-      aiProviderService.getAvailableModels('local', undefined, baseUrl as string).then(models => ({
+      aiProviderService.getAvailableModels('local').then(models => ({
         id: 'local',
         name: 'Local API',
         models,
       })),
-      aiProviderService.getAvailableModels('xai', apiKey as string).then(models => ({
+      aiProviderService.getAvailableModels('xai').then(models => ({
         id: 'xai',
         name: 'x.ai (Grok)',
         models,
       })),
-      aiProviderService.getAvailableModels('perplexity', apiKey as string).then(models => ({
+      aiProviderService.getAvailableModels('perplexity').then(models => ({
         id: 'perplexity',
         name: 'Perplexity AI',
         models,
       })),
-      aiProviderService.getAvailableModels('nvidia', apiKey as string, baseUrl as string).then(models => ({
+      aiProviderService.getAvailableModels('nvidia').then(models => ({
         id: 'nvidia',
         name: 'NVIDIA NIM',
         models,
@@ -68,46 +73,36 @@ router.get('/providers', optionalAuth, async (req, res) => {
 
     res.json(providers)
   } catch (error: any) {
-    console.error('Error fetching providers:', error)
     res.status(500).json({ error: 'Failed to fetch providers' })
   }
 })
 
 // Get models for a specific provider (requires API key in body for authenticated fetch)
-router.post('/providers/:providerId/models', optionalAuth, async (req, res) => {
+router.post('/providers/:providerId/models', async (req, res) => {
+  const provider = providerSchema.safeParse(req.params.providerId)
+  const parsed = discoverySchema.safeParse(req.body ?? {})
+  if (!provider.success || !parsed.success || Object.keys(req.query).length) {
+    return res.status(400).json({ error: 'Invalid discovery request.' })
+  }
+  res.setHeader('Cache-Control', 'no-store')
   try {
-    const { providerId } = req.params
-    const { apiKey, baseUrl } = req.body
-
-    // Clear cache for this provider to force fresh fetch
-    aiProviderService.clearModelCache(providerId as AIProvider)
-
     const models = await aiProviderService.getAvailableModels(
-      providerId as AIProvider,
-      apiKey,
-      baseUrl
+      provider.data,
+      parsed.data.apiKey,
     )
 
-    res.json({ provider: providerId, models })
+    res.json({ provider: provider.data, models })
   } catch (error: any) {
-    console.error(`Error fetching models for ${req.params.providerId}:`, error)
-    res.status(500).json({ error: `Failed to fetch models: ${error.message}` })
+    res.status(500).json({ error: 'Failed to fetch models.' })
   }
 })
 
 // Update provider configuration
-router.post('/provider', optionalAuth, async (req, res) => {
+router.post('/provider', async (req, res) => {
+  const parsed = configSchema.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid provider configuration.' })
   try {
-    const { provider, apiKey, model, baseUrl } = req.body
-
-    if (!provider) {
-      return res.status(400).json({ error: 'Provider is required' })
-    }
-
-    // Clear cache when API key changes to force refresh
-    if (apiKey) {
-      aiProviderService.clearModelCache(provider as AIProvider)
-    }
+    const { provider, apiKey, model, baseUrl } = parsed.data
 
     aiProviderService.setProviderConfig(provider as AIProvider, {
       name: provider,
@@ -127,7 +122,6 @@ router.post('/provider', optionalAuth, async (req, res) => {
         )
       } catch (error) {
         // Continue even if model fetch fails
-        console.warn(`Could not fetch models for ${provider}`, error)
       }
     }
 
@@ -137,13 +131,16 @@ router.post('/provider', optionalAuth, async (req, res) => {
       models: models.length > 0 ? models : undefined,
     })
   } catch (error: any) {
-    console.error('Update provider error:', error)
     res.status(500).json({ error: 'Failed to update provider configuration' })
   }
 })
 
 // Get current provider configuration
-router.get('/provider/:providerId', optionalAuth, (req, res) => {
+router.get('/provider/:providerId', (req, res) => {
+  if (!providerSchema.safeParse(req.params.providerId).success) {
+    return res.status(400).json({ error: 'Invalid provider request.' })
+  }
+  res.setHeader('Cache-Control', 'no-store')
   const { providerId } = req.params
   const config = aiProviderService.getProviderConfig(providerId as AIProvider)
 

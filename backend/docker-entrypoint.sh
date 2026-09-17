@@ -1,12 +1,8 @@
 #!/bin/sh
 set -e
 
-# When a real database is configured, sync the Prisma schema (no migrations are
-# committed, so `db push` creates/updates tables from schema.prisma). If it
-# fails or no DB is set, the app falls back to its in-memory store.
-if [ -n "$DATABASE_URL" ] && ! echo "$DATABASE_URL" | grep -q "postgresql://user:password"; then
-  echo "→ Applying database schema (prisma db push)…"
-  npx prisma db push --skip-generate --accept-data-loss || echo "⚠️  prisma db push failed; continuing."
-fi
+# Application startup must never change the schema. Apply reviewed migrations
+# with `npm run migrate:deploy` as a separate, fail-fast release step.
+# Environment validation runs before application modules are initialized.
 
 exec node dist/server.js

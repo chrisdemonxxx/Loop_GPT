@@ -1,14 +1,11 @@
-import axios from 'axios'
-
-const IMAGE_API_URL = process.env.IMAGE_API_URL || 'http://localhost:8081'
+import { sidecarRequest } from './providerHttp'
+import { IMAGE_RESPONSE_BYTES, mediaOperation, type MediaOperation } from '../agent/httpClient'
 
 interface GenerateImageRequest {
   prompt: string
   model?: 'flux-schnell' | 'flux-dev' | 'sd35'
   return_base64?: boolean
-  /** Optional base64 reference image for img2img / style transfer. */
   image_prompt?: string
-  /** How strongly the reference image is transformed (0-1). */
   strength?: number
 }
 
@@ -20,195 +17,75 @@ interface GenerateImageResponse {
   generation_time?: number
 }
 
-interface AnalyzeImageRequest {
-  image_path: string
-  model?: 'blip' | 'llava'
-}
-
-interface AnalyzeImageResponse {
-  description: string
-  success: boolean
-  model: string
-}
-
-interface VisionChatRequest {
-  image_path: string
-  question: string
-  model?: 'llava'
-}
-
-interface VisionChatResponse {
-  answer: string
-  success: boolean
-  model: string
-}
+interface AnalyzeImageRequest { image_path: string; model?: 'blip' | 'llava' }
+interface AnalyzeImageResponse { description: string; success: boolean; model: string }
+interface VisionChatRequest { image_path: string; question: string; model?: 'llava' }
+interface VisionChatResponse { answer: string; success: boolean; model: string }
 
 class ImageApiService {
-  private apiUrl: string
-
-  constructor() {
-    this.apiUrl = IMAGE_API_URL
+  private async request(path: '/api/generate' | '/api/analyze' | '/api/vision-chat', body: object, op: MediaOperation) {
+    await this.ensureApiAvailable(op.signal, op.remaining(5000))
+    const response = await sidecarRequest(path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: op.signal, timeoutMs: op.remaining(), maxBytes: IMAGE_RESPONSE_BYTES })
+    op.check()
+    return response.json()
   }
 
-  /**
-   * Generate image from text prompt
-   */
-  async generateImage(request: GenerateImageRequest): Promise<GenerateImageResponse> {
+  async generateImage(request: GenerateImageRequest, signal?: AbortSignal): Promise<GenerateImageResponse> {
+    const op = mediaOperation(120000, signal)
     try {
-      // Check API availability first
-      await this.ensureApiAvailable()
-
-      if (!request.prompt || request.prompt.trim().length === 0) {
-        throw new Error('Prompt is required for image generation')
-      }
-
-      const response = await axios.post(`${this.apiUrl}/api/generate`, {
-        prompt: request.prompt,
-        model: request.model || 'flux-schnell',
-        return_base64: request.return_base64 !== false, // Default to true
-      }, {
-        timeout: 120000, // 2 minutes timeout for image generation
-      })
-
-      if (!response.data || (!response.data.image_path && !response.data.image_base64)) {
-        throw new Error('Invalid response from image API: missing image data')
-      }
-
-      return {
-        success: true,
-        image_path: response.data.image_path,
-        image_base64: response.data.image_base64,
-        model: response.data.model || request.model || 'flux-schnell',
-        generation_time: response.data.generation_time,
-      }
-    } catch (error: any) {
-      console.error('Image generation error:', error)
-      
-      // Provide more specific error messages
-      if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
-        throw new Error(`Image API is not reachable at ${this.apiUrl}. Please check if the service is running.`)
-      }
-      
-      if (error.response?.status === 400) {
-        throw new Error(error.response?.data?.error || 'Invalid request to image API')
-      }
-      
-      if (error.response?.status === 500) {
-        throw new Error('Image API server error. Please try again later.')
-      }
-      
-      throw new Error(error.message || 'Failed to generate image')
-    }
+      if (!request.prompt?.trim()) throw new Error('Invalid prompt')
+      const data = await this.request('/api/generate', {
+        prompt: request.prompt, model: request.model || 'flux-schnell', return_base64: request.return_base64 !== false,
+        image_prompt: request.image_prompt, strength: request.strength,
+      }, op)
+      if (data?.success === false || (!data?.image_path && !data?.image_base64)) throw new Error('Missing image')
+      return { success: true, image_path: data.image_path, image_base64: data.image_base64,
+        model: data.model || request.model || 'flux-schnell', generation_time: data.generation_time }
+    } catch { op.check(); throw new Error('Image generation failed') }
+    finally { op.dispose() }
   }
 
-  /**
-   * Analyze image and get description
-   */
-  async analyzeImage(request: AnalyzeImageRequest): Promise<AnalyzeImageResponse> {
+  async analyzeImage(request: AnalyzeImageRequest, signal?: AbortSignal): Promise<AnalyzeImageResponse> {
+    const op = mediaOperation(30000, signal)
     try {
-      await this.ensureApiAvailable()
-
-      if (!request.image_path) {
-        throw new Error('Image path is required for analysis')
-      }
-
-      const response = await axios.post(`${this.apiUrl}/api/analyze`, {
-        image_path: request.image_path,
-        model: request.model || 'blip',
-      }, {
-        timeout: 30000,
-      })
-
-      if (!response.data || !response.data.description) {
-        throw new Error('Invalid response from image API: missing description')
-      }
-
-      return {
-        success: true,
-        description: response.data.description,
-        model: response.data.model || request.model || 'blip',
-      }
-    } catch (error: any) {
-      console.error('Image analysis error:', error)
-      
-      if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
-        throw new Error(`Image API is not reachable at ${this.apiUrl}. Please check if the service is running.`)
-      }
-      
-      throw new Error(error.response?.data?.error || error.message || 'Failed to analyze image')
-    }
+      if (!request.image_path) throw new Error('Missing image')
+      const data = await this.request('/api/analyze', { image_path: request.image_path, model: request.model || 'blip' }, op)
+      if (data?.success === false || typeof data?.description !== 'string') throw new Error('Missing description')
+      return { success: true, description: data.description, model: data.model || request.model || 'blip' }
+    } catch { op.check(); throw new Error('Image analysis failed') }
+    finally { op.dispose() }
   }
 
-  /**
-   * Vision Q&A - ask questions about images
-   */
-  async visionChat(request: VisionChatRequest): Promise<VisionChatResponse> {
+  async visionChat(request: VisionChatRequest, signal?: AbortSignal): Promise<VisionChatResponse> {
+    const op = mediaOperation(60000, signal)
     try {
-      await this.ensureApiAvailable()
-
-      if (!request.image_path) {
-        throw new Error('Image path is required for vision chat')
-      }
-
-      if (!request.question || request.question.trim().length === 0) {
-        throw new Error('Question is required for vision chat')
-      }
-
-      const response = await axios.post(`${this.apiUrl}/api/vision-chat`, {
-        image_path: request.image_path,
-        question: request.question,
-        model: request.model || 'llava',
-      }, {
-        timeout: 60000,
-      })
-
-      if (!response.data || !response.data.answer) {
-        throw new Error('Invalid response from image API: missing answer')
-      }
-
-      return {
-        success: true,
-        answer: response.data.answer,
-        model: response.data.model || request.model || 'llava',
-      }
-    } catch (error: any) {
-      console.error('Vision chat error:', error)
-      
-      if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
-        throw new Error(`Image API is not reachable at ${this.apiUrl}. Please check if the service is running.`)
-      }
-      
-      throw new Error(error.response?.data?.error || error.message || 'Failed to process vision chat')
-    }
+      if (!request.image_path || !request.question?.trim()) throw new Error('Invalid request')
+      const data = await this.request('/api/vision-chat', {
+        image_path: request.image_path, question: request.question, model: request.model || 'llava',
+      }, op)
+      if (data?.success === false || typeof data?.answer !== 'string') throw new Error('Missing answer')
+      return { success: true, answer: data.answer, model: data.model || request.model || 'llava' }
+    } catch { op.check(); throw new Error('Vision chat failed') }
+    finally { op.dispose() }
   }
 
-  /**
-   * Health check for image API
-   */
-  async healthCheck(): Promise<{ healthy: boolean; error?: string }> {
+  async healthCheck(signal?: AbortSignal, timeoutMs = 5000): Promise<{ healthy: boolean; error?: string }> {
+    const op = mediaOperation(Math.min(5000, timeoutMs), signal)
     try {
-      const response = await axios.get(`${this.apiUrl}/health`, {
-        timeout: 5000,
-      })
+      const response = await sidecarRequest('/health', { signal: op.signal, timeoutMs: op.remaining(), maxBytes: 65536 })
+      op.check()
       return { healthy: response.status === 200 }
-    } catch (error: any) {
-      return {
-        healthy: false,
-        error: error.message || 'Image API is not reachable',
-      }
+    } catch {
+      if (signal?.aborted) throw new Error('Media operation cancelled')
+      return { healthy: false, error: 'Image API is not reachable' }
     }
+    finally { op.dispose() }
   }
 
-  /**
-   * Check if image API is available before making requests
-   */
-  private async ensureApiAvailable(): Promise<void> {
-    const health = await this.healthCheck()
-    if (!health.healthy) {
-      throw new Error(`Image API is not available: ${health.error || 'Unknown error'}`)
-    }
+  private async ensureApiAvailable(signal?: AbortSignal, timeoutMs = 5000): Promise<void> {
+    if (!(await this.healthCheck(signal, timeoutMs)).healthy) throw new Error('Image API is not available')
   }
 }
 
 export const imageApiService = new ImageApiService()
-
