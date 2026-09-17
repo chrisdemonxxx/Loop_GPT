@@ -1,8 +1,49 @@
 # Release-candidate review 03p
 
 Date: 2026-09-17. Based on foundation03o; this record covers release review fixes,
-not production qualification. Remote CI and isolated Railway acceptance must be
-recorded separately once executed. Payments and video remain default-off.
+not production qualification. Remote CI passed; Railway creation is blocked by
+an expired trial as recorded below. Payments and video remain default-off.
+
+## Publication and remote CI
+
+Release branch: `release/owned-staging-20260917`.
+Code commit: `b9dd2cb35aaa338ba9525ee396c42d0a3e6453ae`
+(`feat!: prepare isolated owned staging candidate`). Pushed to the existing origin;
+no PR, merge, production cutover or history rewrite was performed.
+
+All four workflows completed successfully for that exact commit:
+
+| Workflow | Successful run |
+| --- | --- |
+| Backend validation | https://github.com/chrisdemonxxx/Loop_GPT/actions/runs/35263937079 |
+| Owned web validation | https://github.com/chrisdemonxxx/Loop_GPT/actions/runs/35263936999 |
+| Owned staging validation | https://github.com/chrisdemonxxx/Loop_GPT/actions/runs/35263937029 |
+| Release secret scan | https://github.com/chrisdemonxxx/Loop_GPT/actions/runs/35263936997 |
+
+## Railway attempt and resume point
+
+Authenticated project/workspace metadata was inspected without fetching variables.
+Railway's `ServiceCreateInput.environmentId` documentation states that service
+creation can propagate across non-fork environments in a project. To avoid any
+change to the existing production project, creation was attempted for a separate
+private project `loop-gpt-owned-staging-20260917`, default environment `staging`,
+in the same workspace, with PR deployments disabled and no source duplication.
+
+`projectCreate` returned no data and this error:
+
+> Your trial has expired. Please select a plan to continue using Railway.
+
+A subsequent `railway list --json` confirmed that no project with the requested
+name exists. No new staging database, volume, service, secret or domain was
+provisioned. Existing production resources were not mutated. No billing plan was
+selected or purchased. **An active Railway plan is required to resume.**
+
+After the operator resolves billing, recheck access and project absence; create
+the isolated project once, then use only its returned project/environment/service
+IDs for new DB/PVC/secrets. Deploy the reviewed candidate with explicit migration
+and attached-volume maintenance, then verify real HTTPS/readiness/auth/file and
+shutdown behavior. Do not fall back to an existing production service or duplicate
+production secrets just to bypass this block.
 
 ## Review fixes
 

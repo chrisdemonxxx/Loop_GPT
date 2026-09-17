@@ -420,3 +420,9 @@ Evidence: `docs/validation/foundation-03o.md`,
   by successful local tests; remote CI and new staging require separate evidence.
 
 Evidence: `docs/validation/release-candidate-03p.md`.
+
+Publication: code commit `b9dd2cb` pushed on `release/owned-staging-20260917`;
+backend, owned-web, owned-staging and complete candidate secret-scan CI all passed.
+Separate Railway staging project creation was rejected because the workspace trial
+expired. Post-attempt listing confirms no project was created. Operator activation
+of a Railway plan is required before provisioning; production remains untouched.
