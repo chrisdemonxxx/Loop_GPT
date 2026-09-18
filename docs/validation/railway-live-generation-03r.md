@@ -65,6 +65,17 @@ ordinance respected: `ApiSettlementIntent` → `ApiUsage` → `ApiReservation` �
 `Restrict` relations demanded ordered deletion). Final state:
 `totalUsersInFreshDb: 0`.
 
+## Owner provisioned
+
+The first resident: `owner@loop-gpt.cyou` (real domain; password printed once,
+flagged for rotation), registered through the public origin, then promoted to
+`admin` by direct database update — registration always creates `role: user`
+and no promotion CLI exists yet. Verified through the public origin: fresh
+login, `/api/account/me` → `role: admin`, `/api/admin/stats` → 200 with
+`{total: 1, admins: 1, free: 1, new24h: 1}`, anonymous → 401. Final
+population: one user, one admin, zero guests. Starter grant: 30 account
+credits. Owner id: `cmu7f33j800008ssokymbyyd1`.
+
 ## Honest residuals
 
 - Both model tiers are text-only; the product's `*-vl-*` vision naming outruns

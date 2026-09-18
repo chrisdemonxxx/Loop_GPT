@@ -467,3 +467,9 @@ removed respecting the settlement→usage→reservation→user foreign-key order
 Fresh database ended at zero users. Still not a cutover; images/video need
 provisioned endpoints; both tiers are text-only despite the `-vl` branding.
 See `docs/validation/railway-live-generation-03r.md`.
+
+Owner provisioned as the first resident (`owner@loop-gpt.cyou`, 30 starter
+credits), promoted to admin by direct database update — no promotion CLI yet.
+`requireAdmin` gates verified through the public origin: authenticated 200 with
+a one-user/one-admin census, anonymous 401. Owner password printed once and
+flagged for rotation.
