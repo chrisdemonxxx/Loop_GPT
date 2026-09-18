@@ -1,6 +1,6 @@
 # Remaining production build — current scope, not a completion claim
 
-Updated through release review 03p. See the release evidence for publication status. Existing
+Updated through live isolated candidate 03q. See the release evidence for publication status. Existing
 gateway/LibreChat deployment is separate from the owned product being built.
 Most remaining items are implementation work, not merely external approvals.
 
@@ -114,7 +114,13 @@ store approval, native signing credentials or distribution eligibility is assume
 - [ ] Multi-replica, failure-injection, load, capacity, latency and cost qualification.
 - [ ] Monitoring, alerts, audit retention, incident response and support operations.
 - [x] Local isolated owned-staging package, smoke harness and CI workflow definition.
-- [ ] Reviewed release branch, remote CI, isolated Railway deployment, attached-volume maintenance and TLS acceptance.
+- [x] Reviewed release branch and remote CI; isolated Railway deployment, attached-volume initialization and initial TLS/auth/file/browser acceptance.
++- [x] Working hosted models: dedicated endpoints wired with discovered model names; standard/large chat, embeddings and fail-closed fences verified live with metered ledger evidence (03r).
++- [ ] Provision image (and, with accounted flags, video) endpoints; retire the shared-router embeddings dependence; reconcile the `-vl` naming with text-only checkpoints.
++- [ ] Provision the owner account (fresh database currently has zero users) and qualify real invitations, email/OAuth integration.
++- [ ] Replace deprecated Railway config-as-code release instructions with current IaC and qualify runtime shutdown/rollback.
+- [x] Configure hosted model credentials (03r); owner account still unprovisioned (zero users).
+- [ ] Replace deprecated Railway config-as-code release instructions with current IaC and qualify runtime shutdown/rollback.
 - [ ] Migration baselining, backups, restore rehearsal and deployed rollback qualification.
 - [ ] End-to-end browser/native/product acceptance against staging with real integrations.
 - [ ] Explicit reviewed release/cutover preserving existing environments.
@@ -133,3 +139,5 @@ Evidence and exact scope: `BUILD_PROGRESS.md`, `ACCOUNTING.md`,
 `DAILY_SETTLEMENT_RECOVERY.md`, `API_SETTLEMENT_RECOVERY.md`,
 `ACCOUNTED_VIDEO_JOBS.md`, `validation/foundation-03o.md`, `validation/release-candidate-03p.md`, `../web/VALIDATION.md`,
 `../deploy/owned-staging/README.md`.
+
+Live candidate evidence: `validation/railway-live-candidate-03q.md`.

@@ -426,3 +426,44 @@ backend, owned-web, owned-staging and complete candidate secret-scan CI all pass
 Separate Railway staging project creation was rejected because the workspace trial
 expired. Post-attempt listing confirms no project was created. Operator activation
 of a Railway plan is required before provisioning; production remains untouched.
+
+## Live candidate 03q
+
+On 2026-09-18 the new `red-kits's Projects` workspace had ADMIN access and PRO.
+The isolated candidate is deployed at https://web-production-20d369.up.railway.app
+using release revision `d0c8765`. New web, backend/three-worker and PostgreSQL
+services plus two private volumes were provisioned; ten migrations applied.
+
+Twenty live HTTPS requests verified registration/login, workspace isolation,
+validation failures, private upload/download integrity and cleanup. Chromium
+desktop/phone login/logout passed with no page errors or horizontal overflow.
+Runtime PID1 is UID1000; marker identity and readiness passed. All three temporary
+test accounts and their test artifacts were removed.
+
+No production domains or data were moved. Owner access, hosted model credentials,
+email/OAuth, production migration/backups/rollback and the unfinished product
+milestones still block a full cutover. Payments/video remain off. See
+`docs/validation/railway-live-candidate-03q.md` for resource IDs, deployment failures
+and fixes, exact evidence and remaining limitations.
+
+## Live generation 03r
+
+On 2026-09-18 evening the candidate gained working hosted models. Two shipped
+fixes: the web nginx template now proxies `/v1/` (the SPA catch-all had answered
+`/v1/*` with index.html — a 200 that was secretly HTML, 405 on POST; commit
+`94a58f3`), and the previously lost `HF_TOKEN` was honestly re-set (rollout
+`f4c0db8c`) after an SSH stack trace pinpointed `modelCredential(undefined)`.
+
+Dedicated HF endpoints were wired with discovered — not guessed — model names
+(`Qwen3.8-27B-Uncensored-Cyber`, `s-zaizen/DeepSeek-V4.1-Flash-Abliterated`).
+Live results through the public origin: standard 200 `"WIRED"`, large 200
+`"LARGE-WIRED"` with tier-differentiated pricing (+0.00069 vs +0.00051),
+embeddings 200/384-dim on the coded router default with the documented
+byte-estimator (+0.00002), images/video 503 fail-closed with honest codes.
+Ledger: 1.0 → 0.998803 USD, failures refunded, successes alone billed.
+
+Cleanup: the paying canary, its key, workspace and six reservation/usage rows
+removed respecting the settlement→usage→reservation→user foreign-key order.
+Fresh database ended at zero users. Still not a cutover; images/video need
+provisioned endpoints; both tiers are text-only despite the `-vl` branding.
+See `docs/validation/railway-live-generation-03r.md`.
