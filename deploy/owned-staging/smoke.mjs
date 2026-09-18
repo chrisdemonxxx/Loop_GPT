@@ -143,6 +143,21 @@ await withSmokeCleanup({ run: async () => {
   await reader.cancel()
   await delay(200)
   assert.equal((await (await response(`${fixtureBase}/api/disconnected`)).json()).disconnected, true)
+  // The developer API is a separate nginx location; prove it forwards the same
+  // way and streams SSE without buffering (the chat path's real risk).
+  const v1echo = await (await response(`${fixtureBase}/v1/echo?target=https://untrusted.invalid`, {
+    method: 'POST', headers: { authorization: 'Bearer nonsecret-fixture', origin: 'https://untrusted.invalid' }, body: 'v1-fixture-body',
+  })).json()
+  assert.equal(v1echo.host, 'backend:3001')
+  assert.equal(v1echo.authorization, 'Bearer nonsecret-fixture')
+  assert.equal(v1echo.body, 'v1-fixture-body')
+  assert.ok(String(v1echo.url).startsWith('/v1/echo'), '/v1 path must be forwarded verbatim')
+  const v1start = Date.now()
+  const v1stream = await response(`${fixtureBase}/v1/stream`, { method: 'POST', body: '{}' })
+  const v1reader = v1stream.body.getReader()
+  assert.match(new TextDecoder().decode((await v1reader.read()).value), /first/)
+  assert.ok(Date.now() - v1start < 1200, '/v1 SSE first frame must arrive before delayed final frame')
+  await v1reader.cancel()
   docker(['restart', webFixture])
   await waitHttp(`${fixtureBase}/healthz`)
   docker(['run', '--rm', '--network', 'none', '--label', fixtureLabel, '-e', 'API_UPSTREAM=https://good.invalid;include /tmp/evil;',
@@ -166,7 +181,7 @@ await withSmokeCleanup({ run: async () => {
       }
     }
   }
-  console.log('PASS: fixed upstream, POST/auth/query forwarding, early SSE frame, disconnect propagation, restart, injection rejection')
+  console.log('PASS: fixed upstream, POST/auth/query forwarding, /v1 forwarding, early SSE frames (/api and /v1), disconnect propagation, restart, injection rejection')
 
   // An exited essential worker must terminate the WHOLE container nonzero.
   const id = dc('ps', '-q', 'backend')

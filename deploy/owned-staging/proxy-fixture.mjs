@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 let disconnected = false
 createServer((req, res) => {
   if (req.url === '/api/disconnected') { res.end(JSON.stringify({ disconnected })); return }
-  if (req.url === '/api/stream') {
+  if (req.url === '/api/stream' || req.url === '/v1/stream') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream' })
     res.write('data: first\n\n')
     const timer = setTimeout(() => res.end('data: last\n\n'), 1500)

@@ -473,3 +473,21 @@ credits), promoted to admin by direct database update — no promotion CLI yet.
 `requireAdmin` gates verified through the public origin: authenticated 200 with
 a one-user/one-admin census, anonymous 401. Owner password printed once and
 flagged for rotation.
+
+## Production-readiness audit 03s
+
+Independent re-verification of the live candidate found no hidden breakage within
+staging scope. The previously untested core was exercised for real: the product
+chat path (`POST /api/agent/new/stream`) streamed `PONG`, persisted both
+messages and moved the daily ledger; the browser UI sent and rendered a live
+answer with zero page errors; 22/22 app-facing endpoints answered honestly; and
+the local packaging smoke was extended to cover the changed nginx `/v1` block
+(`/v1` forwarding and `/v1` SSE) and re-passed. Added and verified
+`backend/scripts/promote-admin.mjs` (user→admin, idempotent; missing user
+exit 3; missing DATABASE_URL exit 2).
+
+Remaining work is provisioning and native/cutover, not wiring: image/video
+endpoints (`HF_IMAGE_ENDPOINT_URL`, accounted video flags), dedicated
+embeddings capacity, a real VL checkpoint for the `-vl` naming, and the
+production data/backup/domain migration. See
+`docs/validation/production-readiness-audit-03s.md`.

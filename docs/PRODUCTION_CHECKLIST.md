@@ -115,11 +115,11 @@ store approval, native signing credentials or distribution eligibility is assume
 - [ ] Monitoring, alerts, audit retention, incident response and support operations.
 - [x] Local isolated owned-staging package, smoke harness and CI workflow definition.
 - [x] Reviewed release branch and remote CI; isolated Railway deployment, attached-volume initialization and initial TLS/auth/file/browser acceptance.
-+- [x] Working hosted models: dedicated endpoints wired with discovered model names; standard/large chat, embeddings and fail-closed fences verified live with metered ledger evidence (03r).
-+- [ ] Provision image (and, with accounted flags, video) endpoints; retire the shared-router embeddings dependence; reconcile the `-vl` naming with text-only checkpoints.
-+- [ ] Provision the owner account (fresh database currently has zero users) and qualify real invitations, email/OAuth integration.
-+- [ ] Replace deprecated Railway config-as-code release instructions with current IaC and qualify runtime shutdown/rollback.
-- [x] Configure hosted model credentials (03r); owner account still unprovisioned (zero users).
+- [x] Working hosted models: dedicated endpoints wired with discovered model names; standard/large chat, embeddings and fail-closed fences verified live with metered ledger evidence (03r).
+- [x] Owner account provisioned (`owner@loop-gpt.cyou`, admin) with verified `requireAdmin` gates; real invitations and email/OAuth integration still pending.
+- [x] Product chat verified live end-to-end: SSE stream, message persistence and daily ledger; browser UI send/render with zero page errors (03s).
+- [x] `backend/scripts/promote-admin.mjs` operator CLI added and verified (idempotent; exit 2 for usage, 3 for missing user).
+- [ ] Provision image (and, with accounted flags, video) endpoints; retire the shared-router embeddings dependence; reconcile the `-vl` naming with text-only checkpoints.
 - [ ] Replace deprecated Railway config-as-code release instructions with current IaC and qualify runtime shutdown/rollback.
 - [ ] Migration baselining, backups, restore rehearsal and deployed rollback qualification.
 - [ ] End-to-end browser/native/product acceptance against staging with real integrations.
