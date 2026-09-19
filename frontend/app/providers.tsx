@@ -1,7 +1,7 @@
 'use client'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -14,6 +14,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
         },
       })
   )
+  // Shell-only service worker (generated post-build). Same-origin, no
+  // credentials; authenticated API responses are never cached.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
+    const register = () => navigator.serviceWorker.register('/sw.js').catch(() => undefined)
+    if (document.readyState === 'complete') register()
+    else window.addEventListener('load', register, { once: true })
+    return () => window.removeEventListener('load', register)
+  }, [])
 
   return (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>

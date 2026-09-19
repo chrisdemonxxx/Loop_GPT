@@ -10,6 +10,11 @@ const inter = Inter({ subsets: ['latin'] })
 export const metadata: Metadata = {
   title: 'Loop GPT - AI Chat Assistant',
   description: 'A modern ChatGPT-like interface',
+  manifest: '/manifest.webmanifest',
+  icons: {
+    icon: '/icon.svg',
+    apple: '/apple-touch-icon.png',
+  },
 }
 
 // viewport-fit=cover exposes the real iOS safe-area insets (notch/status bar +

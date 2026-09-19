@@ -1,0 +1,26 @@
+# Root-context ignore for web/Dockerfile (BuildKit per-Dockerfile ignore).
+# Recursive allowlist first, then sensitive-name exclusions.
+**
+!frontend
+!frontend/app
+!frontend/build
+!frontend/public
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/next.config.js
+!frontend/postcss.config.js
+!frontend/tailwind.config.js
+!frontend/tsconfig.json
+!frontend/.eslintrc.json
+!web/nginx.template.conf
+**/*env*
+**/*secret*
+**/*cred*
+**/*token*
+**/*.pem
+**/*.key
+**/node_modules
+**/out
+**/.git
+**/.cache
+**/*.log

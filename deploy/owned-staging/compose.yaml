@@ -55,7 +55,8 @@ services:
   web:
     image: loop-owned-staging-web:local
     build:
-      context: ../../web
+      context: ../..
+      dockerfile: web/Dockerfile
     environment:
       PORT: "8080"
       OWNED_WEB_ORIGIN: ${OWNED_WEB_ORIGIN:-https://localhost:8443}

@@ -1,19 +1,17 @@
-# Context: web/. Node digest matches the existing backend base.
+# Context: REPOSITORY ROOT (builds the Next.js product UI in frontend/ and
+# serves its static export through the hardened shared nginx template).
 FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS build
 WORKDIR /app
 RUN node -e "const [a,b]=process.versions.node.split('.').map(Number);if(a<22||(a===22&&b<12))process.exit(1)"
-COPY package.json package-lock.json ./
+COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
-COPY index.html tsconfig.json vite.config.ts ./
-COPY src ./src
-COPY public ./public
-COPY build ./build
-# Deliberately same-origin. No operator secret or API origin is a build argument.
-RUN VITE_API_ORIGIN= npm run build
+COPY frontend ./
+# Static export; then the hardened shell-only PWA worker + icons.
+RUN npm run build && node build/pwa.mjs
 
 FROM nginx:1.28.0-alpine@sha256:30f1c0d78e0ad60901648be663a710bdadf19e4c10ac6782c235200619158284 AS runtime
-COPY --from=build /app/dist /usr/share/nginx/html
-COPY nginx.template.conf /etc/nginx/templates/default.conf.template
+COPY --from=build /app/out /usr/share/nginx/html
+COPY web/nginx.template.conf /etc/nginx/templates/default.conf.template
 COPY <<'SH' /docker-entrypoint.d/19-owned-upstream.sh
 #!/bin/sh
 set -eu
