@@ -53,6 +53,7 @@ export default function Composer({
 }: ComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
+  const slashIndexRef = useRef(0)
   const { t } = useI18n()
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -74,7 +75,7 @@ export default function Composer({
           <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-slate-500 font-medium">
             {t('commands')}
           </div>
-          {slashFilter.map((c) => {
+          {slashFilter.map((c, i) => {
             const Icon = c.icon
             return (
               <button
@@ -84,7 +85,10 @@ export default function Composer({
                   e.preventDefault()
                   onSelectSlashCommand(c.cmd + ' ')
                 }}
-                className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/[0.05] text-left transition"
+                data-slash-index={i}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition ${
+                  i === slashIndexRef.current ? 'bg-white/[0.05]' : 'hover:bg-white/[0.05]'
+                }`}
               >
                 <Icon size={15} className="text-slate-400 shrink-0" />
                 <span className="min-w-0">
@@ -128,8 +132,23 @@ export default function Composer({
           }}
           onKeyDown={(e) => {
             if (e.key === 'Escape') { /* close handled by parent */ }
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend() }
+            if (e.key === 'ArrowDown' && showSlash && slashFilter.length > 0) {
+              e.preventDefault()
+              slashIndexRef.current = (slashIndexRef.current + 1) % slashFilter.length
+            } else if (e.key === 'ArrowUp' && showSlash && slashFilter.length > 0) {
+              e.preventDefault()
+              slashIndexRef.current = (slashIndexRef.current - 1 + slashFilter.length) % slashFilter.length
+            } else if (e.key === 'Tab' && showSlash && slashFilter.length > 0) {
+              e.preventDefault()
+              onSelectSlashCommand(slashFilter[slashIndexRef.current]?.cmd + ' ')
+            } else if (e.key === 'Enter' && !e.shiftKey) {
+              if (showSlash && slashFilter.length > 0 && input.trim() === '/' + (slashFilter[0]?.cmd || '').slice(1)) {
+                e.preventDefault()
+                onSelectSlashCommand(slashFilter[0].cmd + ' ')
+              } else { e.preventDefault(); onSend() }
+            }
           }}
+          aria-label={t('placeholder')}
           placeholder={t('placeholder')}
           rows={1}
           className="w-full bg-transparent px-4 pt-3 pb-1 resize-none focus:outline-none placeholder-slate-600 text-[15px] text-slate-100 leading-relaxed"
@@ -191,6 +210,7 @@ export default function Composer({
                 type="button"
                 onClick={onStop}
                 title="Stop"
+                aria-label="Stop response"
                 className="w-9 h-9 flex items-center justify-center rounded-lg border border-white/[0.08] text-slate-300 hover:border-rose-400/30 hover:text-rose-400 transition"
               >
                 <X size={18} />
@@ -200,6 +220,7 @@ export default function Composer({
                 type="submit"
                 disabled={!canSend}
                 title="Send"
+                aria-label="Send message"
                 className="w-9 h-9 flex items-center justify-center rounded-lg text-white bg-[#c96442] disabled:opacity-25 disabled:cursor-not-allowed hover:bg-[#b5593a] active:bg-[#a34e34] transition"
               >
                 <Send size={16} />

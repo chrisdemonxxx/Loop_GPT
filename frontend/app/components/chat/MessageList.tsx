@@ -127,13 +127,13 @@ export default function MessageList({
                   </button>
                 )}
                 {statusMsg && !liveAnswer && (
-                  <div className="flex items-center gap-2 text-[13px] text-slate-500">
-                    <span className="shimmer inline-block h-2.5 w-28 rounded-full" />
+                  <div className="flex items-center gap-2 text-[13px] text-slate-500" aria-live="polite">
+                    <span className="shimmer inline-block h-2.5 w-28 rounded-full" aria-hidden="true" />
                     <span>{statusMsg}</span>
                   </div>
                 )}
                 {liveAnswer && (
-                  <div className={running ? 'cursor' : ''}>
+                  <div className={running ? 'cursor' : ''} aria-live="polite">
                     <Markdown content={liveAnswer} />
                   </div>
                 )}
@@ -178,7 +178,7 @@ function EmptyState() {
 
 function ThinkingDots() {
   return (
-    <div className="flex gap-1.5 py-2">
+    <div className="flex gap-1.5 py-2" role="status" aria-label="Thinking">
       {[0, 150, 300].map((d) => (
         <span
           key={d}
@@ -275,19 +275,20 @@ function MessageBubble({
         </div>
       )}
 
-      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity -ml-1">
-        <ActionBtn onClick={copy} title="Copy" icon={copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />} />
-        {onRetry && <ActionBtn onClick={onRetry} title="Retry" icon={<RotateCcw size={14} />} />}
+      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity -ml-1">
+        <ActionBtn onClick={copy} title="Copy" ariaLabel="Copy message" icon={copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />} />
+        {onRetry && <ActionBtn onClick={onRetry} title="Retry" ariaLabel="Retry response" icon={<RotateCcw size={14} />} />}
       </div>
     </motion.div>
   )
 }
 
-function ActionBtn({ onClick, title, icon }: { onClick: () => void; title: string; icon: React.ReactNode }) {
+function ActionBtn({ onClick, title, ariaLabel, icon }: { onClick: () => void; title: string; ariaLabel?: string; icon: React.ReactNode }) {
   return (
     <button
       onClick={onClick}
       title={title}
+      aria-label={ariaLabel || title}
       className="p-1.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-white/[0.05] transition"
     >
       {icon}
@@ -349,7 +350,11 @@ function ArtifactViewer({ a, onClose }: { a: ArtifactRef; onClose: () => void })
     >
       <motion.div
         initial={{ scale: 0.97, y: 8 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.97, y: 8 }} transition={{ duration: 0.16 }}
-        className="max-w-4xl w-full max-h-full glass rounded-2xl border border-white/10 overflow-hidden flex flex-col"
+        role="dialog" aria-modal="true" aria-label={a.name}
+        ref={(node) => { if (node) (node as HTMLElement).focus() }}
+        tabIndex={-1}
+        onKeyDown={(e) => { if (e.key === 'Escape') onClose() }}
+        className="max-w-4xl w-full max-h-full glass rounded-2xl border border-white/10 overflow-hidden flex flex-col outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
