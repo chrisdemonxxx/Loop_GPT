@@ -13,11 +13,11 @@ node_modules/
 deploy/cloudflared/tunnel-creds.json
 .railway/
 
-# Build outputs
-dist/
-build/
+# Build outputs (root-level only; packages ignore their own artifacts)
+/dist/
+/build/
 .next/
-out/
+/out/
 
 # Logs
 *.log
