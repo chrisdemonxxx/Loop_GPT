@@ -12,8 +12,7 @@
 /.next/
 /out/
 
-# production
-/build
+# production (build/ holds committed build scripts; artifacts go to /out and /.next)
 
 # misc
 .DS_Store
