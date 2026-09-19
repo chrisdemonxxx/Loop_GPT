@@ -77,7 +77,18 @@ export default function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
         setLoading(false)
         return
       }
-      if (data.token) setAuth(data.token, data.user)
+      // Sign-up completes by logging in with the same credentials. Never trust
+      // register's token field: it is the email-verification token, not a
+      // session JWT (the hardened backend issues sessions only at login).
+      if (isSignup) {
+        const loginRes = await fetch(`${API_URL}/api/auth/login`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        })
+        const loginData = await loginRes.json()
+        if (!loginData.token) throw new Error(loginData.error || 'Sign-up succeeded but sign-in failed.')
+        setAuth(loginData.token, loginData.user || data.user)
+      } else if (data.token) setAuth(data.token, data.user)
       track(isSignup ? 'signed_up' : 'logged_in', { method: 'email' })
       router.push(data.user?.role === 'admin' ? '/admin' : '/chat')
     } catch (err: any) {
