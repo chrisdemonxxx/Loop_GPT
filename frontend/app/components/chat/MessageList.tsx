@@ -31,6 +31,50 @@ function useAttachmentUrl(attachmentId?: string): string | null {
   return url
 }
 
+/** Authed artifact URL → object URL. Artifact refs point at the auth-only
+ * content endpoint; a raw <img src>/href would 401 (the reported bug).
+ * Same proven pattern as useAttachmentUrl, for any authed href. */
+function useAuthedUrl(href: string | undefined): string | null {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    let objectUrl: string | null = null
+    let revoked = false
+    if (!href || href.startsWith('blob:')) { setUrl(href ?? null); return }
+    if (!href.startsWith(`${API_URL}/api/files/`) && !href.startsWith('/api/files/')) { setUrl(href); return }
+    (async () => {
+      try {
+        const res = await fetch(href.startsWith('http') ? href : `${API_URL}${href}`, { headers: authHeaders(false) })
+        if (!res.ok) return
+        const blob = await res.blob()
+        if (revoked) return
+        objectUrl = URL.createObjectURL(blob)
+        setUrl(objectUrl)
+      } catch { /* leave the fallback affordance */ }
+    })()
+    return () => { revoked = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
+  }, [href])
+  return url
+}
+
+/** Authed download: fetch with the session token, then hand the browser a
+ * correctly named, correct-MIME file. Never a raw href on auth-only URLs. */
+async function downloadArtifact(a: ArtifactRef, href?: string | null) {
+  if (!href) return
+  try {
+    const res = await fetch(href.startsWith('http') ? href : `${API_URL}${href}`, { headers: authHeaders(false) })
+    if (!res.ok) return
+    const blob = await res.blob()
+    const objectUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = a.name || 'artifact'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(objectUrl)
+  } catch { /* offline or expired */ }
+}
+
 interface Message {
   id: string
   role: 'user' | 'assistant'
@@ -298,20 +342,32 @@ function ActionBtn({ onClick, title, ariaLabel, icon }: { onClick: () => void; t
 
 function ArtifactCard({ a, onOpen }: { a: ArtifactRef; onOpen?: () => void }) {
   const href = a.url ? (a.url.startsWith('http') ? a.url : `${API_URL}${a.url}`) : undefined
-  if (a.kind === 'image' && href) {
+  const imageSrc = useAuthedUrl(a.kind === 'image' ? href : undefined)
+  if (a.kind === 'image' && imageSrc) {
     return (
-      <button type="button" onClick={onOpen} className="block group relative">
-        <img src={href} alt={a.name} className="max-w-md max-h-96 rounded-2xl border border-white/10 group-hover:border-white/20 transition" />
-        <span className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 text-slate-300 opacity-0 group-hover:opacity-100 transition">
-          <Maximize2 size={13} />
-        </span>
-      </button>
+      <div className="group relative inline-flex">
+        <button type="button" onClick={onOpen} className="block group relative">
+          <img src={imageSrc} alt={a.name} className="max-w-md max-h-96 rounded-2xl border border-white/10 group-hover:border-white/20 transition" />
+          <span className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 text-slate-300 opacity-0 group-hover:opacity-100 transition">
+            <Maximize2 size={13} />
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => downloadArtifact(a, href)}
+          title="Download"
+          aria-label={`Download ${a.name}`}
+          className="absolute bottom-2 right-2 p-1.5 rounded-lg bg-black/50 text-slate-300 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition"
+        >
+          <FileDown size={13} />
+        </button>
+      </div>
     )
   }
   return (
     <button
       type="button"
-      onClick={onOpen}
+      onClick={() => downloadArtifact(a, href)}
       className="inline-flex items-center gap-2 px-3 py-2 rounded-xl glass hover:border-white/15 hover:bg-white/[0.06] transition text-[13px] text-left"
     >
       <FileDown size={14} className="text-[#c96442] shrink-0" />
@@ -326,6 +382,7 @@ function ArtifactCard({ a, onOpen }: { a: ArtifactRef; onOpen?: () => void }) {
 /** Fullscreen in-app artifact viewer: images zoom, code/markdown render. */
 function ArtifactViewer({ a, onClose }: { a: ArtifactRef; onClose: () => void }) {
   const href = a.url ? (a.url.startsWith('http') ? a.url : `${API_URL}${a.url}`) : undefined
+  const viewerImage = useAuthedUrl(a.kind === 'image' ? href : undefined)
   const isImage = a.kind === 'image'
   const isMarkdown = /\.(md|txt)$/i.test(a.name) || a.kind === 'document'
   const [textContent, setTextContent] = useState<string | null>(null)
@@ -364,10 +421,11 @@ function ArtifactViewer({ a, onClose }: { a: ArtifactRef; onClose: () => void })
           </div>
           <div className="flex items-center gap-2">
             {href && (
-              <a href={href} target="_blank" rel="noreferrer" download={a.name}
+              <button type="button" onClick={() => downloadArtifact(a, href)}
+                title="Download" aria-label={`Download ${a.name}`}
                 className="p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition">
                 <FileDown size={15} />
-              </a>
+              </button>
             )}
             <button type="button" onClick={onClose}
               className="p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition">
@@ -376,7 +434,7 @@ function ArtifactViewer({ a, onClose }: { a: ArtifactRef; onClose: () => void })
           </div>
         </div>
         <div className="flex-1 overflow-auto p-4">
-          {isImage && href && <img src={href} alt={a.name} className="max-w-full rounded-xl border border-white/10" />}
+          {isImage && viewerImage && <img src={viewerImage} alt={a.name} className="max-w-full rounded-xl border border-white/10" />}
           {!isImage && textContent !== null && (isMarkdown
             ? <Markdown content={textContent} />
             : <pre className="text-[13px] leading-relaxed text-slate-200 whitespace-pre-wrap font-mono">{textContent}</pre>)}

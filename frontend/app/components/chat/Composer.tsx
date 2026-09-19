@@ -55,6 +55,26 @@ export default function Composer({
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const slashIndexRef = useRef(0)
   const { t } = useI18n()
+  const canScreenshot = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia
+  const captureScreen = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+      const track = stream.getVideoTracks()[0]
+      const video = document.createElement('video')
+      video.srcObject = stream
+      await video.play()
+      // Give the capture a frame to land, then grab one still.
+      await new Promise((r) => setTimeout(r, 250))
+      const canvas = document.createElement('canvas')
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
+      canvas.getContext('2d')?.drawImage(video, 0, 0)
+      track.stop()
+      canvas.toBlob((blob) => {
+        if (blob) onImageSelected(new File([blob], 'screenshot.png', { type: 'image/png' }))
+      }, 'image/png')
+    } catch { /* user dismissed the picker; no-op */ }
+  }
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -175,9 +195,11 @@ export default function Composer({
             </button>
             {showPlus && (
               <div className="absolute bottom-full mb-2 left-0 w-52 glass rounded-xl border border-white/[0.08] overflow-hidden z-20 shadow-panel">
-                <PlusItem icon={Paperclip} label={t('uploadFile')} onClick={() => { onClosePlus(); fileInputRef.current?.click() }} />
-                <PlusItem icon={ImageIcon} label={t('addPhoto')} onClick={() => { onClosePlus(); fileInputRef.current?.click() }} />
-                <PlusItem icon={Camera} label={t('takePhoto')} onClick={() => { onClosePlus(); cameraInputRef.current?.click() }} />
+                {/* ONE attach entry (GAP-002): the old triple-duplicate photo
+                    entries are gone; screenshot capture is a real feature or
+                    absent, never a dead button. */}
+                <PlusItem icon={ImageIcon} label={t('addFiles')} onClick={() => { onClosePlus(); fileInputRef.current?.click() }} />
+                {canScreenshot && <PlusItem icon={Camera} label={t('takeScreenshot')} onClick={() => { onClosePlus(); captureScreen() }} />}
                 <PlusItem icon={Plug} label={t('connectors')} onClick={() => { onClosePlus(); onOpenConnectors() }} />
               </div>
             )}
