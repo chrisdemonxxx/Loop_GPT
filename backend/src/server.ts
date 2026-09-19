@@ -48,6 +48,7 @@ import v1Routes from './routes/v1'
 import { rateLimiter } from './middleware/rateLimiter'
 import { createCorsOriginPolicy } from './middleware/corsPolicy'
 import { asyncHandler, errorLogger } from './middleware/errorLogger'
+import { requestLog, recentRequests, metricsSummary, activeStreamCount } from './middleware/requestLog'
 import { initAgent } from './agent'
 import { filesRouter, imageUploadRouter, rejectLegacyUploads } from './routes/files'
 import workspaceRoutes from './routes/workspaces'
@@ -70,6 +71,10 @@ app.use(
     credentials: true,
   })
 )
+// Per-request structured observability. One JSON line per completed request
+// (SSE 'finish' fires at stream close, so agent-turn durations are visible).
+// Never logs headers, bodies, query strings, tokens, or exception details.
+app.use(requestLog())
 // Stripe webhook needs the raw body for signature verification — mount BEFORE json().
 app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyncHandler(stripeWebhook))
 
