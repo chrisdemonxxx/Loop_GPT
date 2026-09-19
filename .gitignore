@@ -18,6 +18,11 @@ deploy/cloudflared/tunnel-creds.json
 /build/
 .next/
 /out/
+/mobile/.expo/
+/mobile/android/
+/mobile/ios/
+*.apk
+*.aab
 
 # Logs
 *.log
