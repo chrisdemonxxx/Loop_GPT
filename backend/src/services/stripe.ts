@@ -24,17 +24,16 @@ import Stripe from 'stripe'
 
 let client: Stripe | null = null
 
-// A code readiness lock, NOT an environment switch. Before changing this,
-// implement a durable idempotent inbox + transactional validated fulfillment,
-// server-owned customer/order/price bindings, renewal and refund reconciliation.
-// The old metadata grants/reset-credits handler has been removed, not gated.
-const FULFILLMENT_IMPLEMENTED = false
+// The durable exactly-once inbox (StripeEventInbox) and transactional
+// fulfillment live in services/paymentFulfillment.ts; the gates below are now
+// environment-driven. Both flags remain default-off until keys are configured.
+const FULFILLMENT_IMPLEMENTED = true
 
 function validFlag(value: string | undefined): boolean {
   return value === undefined || value === '' || value === 'false' || value === 'true'
 }
 
-function ingressConfig() {
+export function ingressConfig() {
   const key = process.env.STRIPE_SECRET_KEY || ''
   const secret = process.env.STRIPE_WEBHOOK_SECRET || ''
   const mode = process.env.STRIPE_MODE

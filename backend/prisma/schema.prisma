@@ -94,6 +94,18 @@ model ApiKey {
 }
 
 /// One row per billable developer API request.
+// Durable Stripe webhook inbox: exactly-once fulfillment processing.
+model StripeEventInbox {
+  id          String    @id @default(cuid())
+  eventId     String    @unique
+  type        String
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+  errorCount  Int       @default(0)
+  lastError   String?
+  payloadJson String
+}
+
 model ApiUsage {
   id         String   @id @default(cuid())
   userId     String

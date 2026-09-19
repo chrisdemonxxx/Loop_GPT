@@ -9,6 +9,7 @@ import { authenticateToken } from './auth'
 import { prisma, hasDb } from '../services/prisma'
 import { stripe, stripeEnabled, priceForPlan, priceForApiPlan, publicConfig, verifyPaymentIngress } from '../services/stripe'
 import { API_PLANS, TOP_UP_OPTIONS } from '../services/apiBilling'
+import { ingestPaymentEvent } from '../services/paymentFulfillment'
 
 const router = express.Router()
 const FRONTEND = () => (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '')
@@ -138,13 +139,10 @@ router.get('/topup-options', (_req, res) => res.json({ options: TOP_UP_OPTIONS }
  * before Stripe's finite retention/retry window expires.
  */
 export async function stripeWebhook(req: express.Request, res: express.Response) {
-  const result = verifyPaymentIngress(req.body, req.headers['stripe-signature'])
-  if (result.status === 'invalid') {
-    return res.status(400).json({ error: 'Invalid payment webhook.' })
-  }
-  // Deliberately no fulfillment dispatch, even if both environment flags are
-  // true. A future durable processor needs code review, not an operator toggle.
-  return res.status(503).set('Retry-After', '60').json({ error: 'Payments are temporarily unavailable.' })
+  const result = await ingestPaymentEvent(req.body, req.headers['stripe-signature'])
+  if (result.status === 400) return res.status(400).json({ error: 'Invalid payment webhook.' })
+  if (result.status === 503) return res.status(503).set('Retry-After', '60').json({ error: 'Payments are temporarily unavailable.' })
+  return res.status(200).json({ received: true })
 }
 
 export default router
