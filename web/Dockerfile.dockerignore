@@ -12,6 +12,7 @@
 !frontend/tailwind.config.js
 !frontend/tsconfig.json
 !frontend/.eslintrc.json
+!web
 !web/nginx.template.conf
 **/*env*
 **/*secret*
