@@ -20,8 +20,9 @@ import { DailyCreditError } from './dailyReservations'
  */
 export const spendBudgetPolicySchema = z.object({
   id: z.literal(1), version: z.literal(1), revision: z.number().int().positive(),
-  perUserDailyReservationCap: z.number().int().min(0).max(10_000_000),
-  globalDailyReservationCap: z.number().int().min(0).max(10_000_000),
+  // BIGINT columns: raw queries return BigInt (SQL CHECK bounds the values).
+  perUserDailyReservationCap: z.bigint().min(0n).max(10_000_000n),
+  globalDailyReservationCap: z.bigint().min(0n).max(10_000_000n),
 }).strict()
 export type SpendBudgetPolicy = z.infer<typeof spendBudgetPolicySchema>
 
@@ -50,10 +51,10 @@ export async function admitDailyReservationTx(tx: Prisma.TransactionClient, user
     SELECT count(*) FILTER (WHERE r."userId" = ${userId} AND r."windowStart" = ${windowStart}) AS "user",
       count(*) FILTER (WHERE r."windowStart" >= ${new Date(Date.now() - 86_400_000)}) AS "global"
     FROM "DailyReservation" r`
-  if (BigInt(policy.perUserDailyReservationCap) !== SPEND_BUDGET_DISABLED && counts.user >= BigInt(policy.perUserDailyReservationCap)) {
+  if (policy.perUserDailyReservationCap !== SPEND_BUDGET_DISABLED && counts.user >= policy.perUserDailyReservationCap) {
     throw new DailyCreditError(429, 'USER_DAILY_BUDGET_REACHED', 'Your daily request budget has been reached. Try again tomorrow or upgrade your plan.')
   }
-  if (BigInt(policy.globalDailyReservationCap) !== SPEND_BUDGET_DISABLED && counts.global >= BigInt(policy.globalDailyReservationCap)) {
+  if (policy.globalDailyReservationCap !== SPEND_BUDGET_DISABLED && counts.global >= policy.globalDailyReservationCap) {
     throw new DailyCreditError(503, 'GLOBAL_DAILY_BUDGET_REACHED', 'Daily request capacity is temporarily at its platform budget. Please retry shortly.')
   }
 }
