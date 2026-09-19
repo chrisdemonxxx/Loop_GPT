@@ -11,6 +11,7 @@ import { createHash, randomUUID } from 'crypto'
 import type { Prisma } from '@prisma/client'
 import { prisma, hasDb } from './prisma'
 import { CREDIT_COST, PLAN_LIMITS, type UsageKind } from './billing'
+import { admitDailyReservationTx } from './spendBudgetPolicy'
 
 const DAY_MS = 86_400_000
 export class DailyCreditError extends Error {
@@ -47,7 +48,12 @@ export async function reserveDailyCredits(userId: string, kind: UsageKind, model
 }
 export async function reserveDailyCreditsTx(tx: Prisma.TransactionClient, userId: string, kind: UsageKind, model = '') {
   if (!Object.prototype.hasOwnProperty.call(CREDIT_COST, kind)) throw new DailyCreditError(400, 'INVALID_DAILY_KIND', 'Invalid usage kind')
+  // Spend budget admission is a policy-class lock: BEFORE the user-row ledger
+  // lock, matching the documented policy -> ledger order. Callers that hold
+  // ledger locks before calling here must not introduce a reverse path (see
+  // spendBudgetPolicy.ts).
   const user = await resetUser(tx, await lockedUser(tx, userId))
+  await admitDailyReservationTx(tx, userId, user.creditsResetAt)
   const bypass = user.role === 'admin' || user.unlimited
   // Preserve the daily image allowance contract: one image unit, not two chat credits.
   const credits = bypass || kind === 'image' ? 0 : CREDIT_COST[kind]

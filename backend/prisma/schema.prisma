@@ -94,7 +94,16 @@ model ApiKey {
 }
 
 /// One row per billable developer API request.
-// Durable Stripe webhook inbox: exactly-once fulfillment processing.
+// Spend budget policy singleton: daily reservation count caps across all
+// product paths. DB admins update the row and increment revision; there is
+// deliberately no environment or per-worker override.
+model SpendBudgetPolicy {
+  id                          Int       @id
+  version                     Int
+  revision                    Int
+  perUserDailyReservationCap  BigInt
+  globalDailyReservationCap   BigInt
+}
 model StripeEventInbox {
   id          String    @id @default(cuid())
   eventId     String    @unique
