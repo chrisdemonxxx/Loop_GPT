@@ -6,18 +6,19 @@ import {
   Paperclip, Image as ImageIcon, Camera, Plug, Search, MessageSquare,
 } from 'lucide-react'
 import type { AgentMode } from '../../lib/api'
+import { useI18n } from '../../lib/i18n'
 
 interface SlashCommand {
   cmd: string
   mode: AgentMode
-  label: string
+  labelKey: 'research' | 'chat'
   icon: any
-  hint: string
+  hintKey: 'researchHint' | 'chatHint'
 }
 
 const SLASH_COMMANDS: SlashCommand[] = [
-  { cmd: '/research', mode: 'research', label: 'Deep Research', icon: Search, hint: 'Search the web and synthesise a cited answer' },
-  { cmd: '/chat', mode: 'chat', label: 'Quick Chat', icon: MessageSquare, hint: 'Fast reply, no tools' },
+  { cmd: '/research', mode: 'research', labelKey: 'research', icon: Search, hintKey: 'researchHint' },
+  { cmd: '/chat', mode: 'chat', labelKey: 'chat', icon: MessageSquare, hintKey: 'chatHint' },
 ]
 
 interface ComposerProps {
@@ -52,6 +53,7 @@ export default function Composer({
 }: ComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
+  const { t } = useI18n()
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -70,7 +72,7 @@ export default function Composer({
       {showSlash && slashFilter.length > 0 && (
         <div className="absolute bottom-full mb-2 left-0 right-0 glass rounded-xl border border-white/[0.08] overflow-hidden z-10 shadow-panel">
           <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-slate-500 font-medium">
-            Commands
+            {t('commands')}
           </div>
           {slashFilter.map((c) => {
             const Icon = c.icon
@@ -86,9 +88,9 @@ export default function Composer({
               >
                 <Icon size={15} className="text-slate-400 shrink-0" />
                 <span className="min-w-0">
-                  <span className="text-[13px] text-slate-200">{c.label} </span>
+                  <span className="text-[13px] text-slate-200">{t(c.labelKey)} </span>
                   <span className="text-[12px] text-slate-500 font-mono">{c.cmd}</span>
-                  <span className="block text-[12px] text-slate-500 truncate">{c.hint}</span>
+                  <span className="block text-[12px] text-slate-500 truncate">{t(c.hintKey)}</span>
                 </span>
               </button>
             )
@@ -128,7 +130,7 @@ export default function Composer({
             if (e.key === 'Escape') { /* close handled by parent */ }
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend() }
           }}
-          placeholder="Message Loop GPT…   ( / for commands )"
+          placeholder={t('placeholder')}
           rows={1}
           className="w-full bg-transparent px-4 pt-3 pb-1 resize-none focus:outline-none placeholder-slate-600 text-[15px] text-slate-100 leading-relaxed"
           style={{ maxHeight: 220 }}
@@ -154,10 +156,10 @@ export default function Composer({
             </button>
             {showPlus && (
               <div className="absolute bottom-full mb-2 left-0 w-52 glass rounded-xl border border-white/[0.08] overflow-hidden z-20 shadow-panel">
-                <PlusItem icon={Paperclip} label="Upload a file" onClick={() => { onClosePlus(); fileInputRef.current?.click() }} />
-                <PlusItem icon={ImageIcon} label="Add photo" onClick={() => { onClosePlus(); fileInputRef.current?.click() }} />
-                <PlusItem icon={Camera} label="Take a photo" onClick={() => { onClosePlus(); cameraInputRef.current?.click() }} />
-                <PlusItem icon={Plug} label="Connectors" onClick={() => { onClosePlus(); onOpenConnectors() }} />
+                <PlusItem icon={Paperclip} label={t('uploadFile')} onClick={() => { onClosePlus(); fileInputRef.current?.click() }} />
+                <PlusItem icon={ImageIcon} label={t('addPhoto')} onClick={() => { onClosePlus(); fileInputRef.current?.click() }} />
+                <PlusItem icon={Camera} label={t('takePhoto')} onClick={() => { onClosePlus(); cameraInputRef.current?.click() }} />
+                <PlusItem icon={Plug} label={t('connectors')} onClick={() => { onClosePlus(); onOpenConnectors() }} />
               </div>
             )}
           </div>
@@ -208,7 +210,7 @@ export default function Composer({
       </form>
 
       <p className="text-[11px] text-slate-700 mt-2 text-center">
-        Loop GPT can make mistakes. Verify important info.
+        {t('disclaimer')}
       </p>
     </div>
   )

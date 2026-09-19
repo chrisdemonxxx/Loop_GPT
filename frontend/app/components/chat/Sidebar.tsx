@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useI18n, locales, localeNames, type Locale } from '../../lib/i18n'
 
 interface Conversation { id: string; title: string; createdAt: string; updatedAt: string }
 
@@ -31,6 +32,7 @@ export default function Sidebar({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [showUserMenu, setShowUserMenu] = useState(false)
+  const { locale, setLocale, t } = useI18n()
 
   const filtered = conversations.filter((c) =>
     !searchQuery || (c.title || '').toLowerCase().includes(searchQuery.toLowerCase())
@@ -65,13 +67,13 @@ export default function Sidebar({
           onClick={() => { onSelectConversation(null); onClose() }}
           className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium text-white bg-[#c96442] hover:bg-[#b5593a] active:bg-[#a34e34] transition"
         >
-          <Plus size={17} strokeWidth={2.5} /> New session
+          <Plus size={17} strokeWidth={2.5} /> {t('newSession')}
         </button>
         <div className="relative">
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
           <input
             type="text"
-            placeholder="Search chats…"
+            placeholder={t('searchChats')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-7 pr-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-[13px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-white/12 focus:bg-white/[0.06] transition"
@@ -140,7 +142,7 @@ export default function Sidebar({
           </p>
         )}
         {!searchQuery && conversations.length === 0 && (
-          <p className="px-3 py-6 text-center text-[12px] text-slate-600">No sessions yet</p>
+          <p className="px-3 py-6 text-center text-[12px] text-slate-600">{t('noSessions')}</p>
         )}
       </div>
 
@@ -155,7 +157,7 @@ export default function Sidebar({
               {(user?.name?.[0] || user?.email?.[0] || 'U').toUpperCase()}
             </div>
             <div className="min-w-0 flex-1 text-left">
-              <div className="text-[13px] text-slate-200 truncate">{user?.name || user?.email || 'Anonymous'}</div>
+              <div className="text-[13px] text-slate-200 truncate">{user?.name || user?.email || t('anonymous')}</div>
               {user?.plan && (
                 <div className="text-[11px] text-slate-500 capitalize">{user.plan} plan</div>
               )}
@@ -196,7 +198,17 @@ export default function Sidebar({
                   />
                 )}
                 <div className="my-0.5 border-t border-white/[0.05]" />
-                <MenuItem icon={LogOut} label="Sign out" onClick={onLogout} danger />
+                <MenuItem icon={LogOut} label={t('signOut')} onClick={onLogout} danger />
+                <div className="px-3 py-2 border-t border-white/[0.06]">
+                  <label className="block text-[10px] uppercase tracking-widest text-slate-600 mb-1.5">{t('language')}</label>
+                  <select
+                    value={locale}
+                    onChange={(e) => setLocale(e.target.value as Locale)}
+                    className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-2 py-1.5 text-[12px] text-slate-200 focus:outline-none focus:border-white/12 transition"
+                  >
+                    {locales.map((l) => <option key={l} value={l} className="bg-[#1c1c1f]">{localeNames[l]}</option>)}
+                  </select>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
