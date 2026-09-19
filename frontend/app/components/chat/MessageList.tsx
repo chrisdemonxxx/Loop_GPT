@@ -1,12 +1,35 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Copy, Check, Edit2, RotateCcw, FileDown, Loader2, Sparkles } from 'lucide-react'
-import { motion } from 'framer-motion'
-import { API_URL, type AgentMode } from '../../lib/api'
+import { Copy, Check, Edit2, RotateCcw, FileDown, Loader2, Sparkles, X, Maximize2 } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { API_URL, authHeaders, type AgentMode } from '../../lib/api'
 import { type ArtifactRef } from '../../lib/stream'
 import Markdown from './Markdown'
 import type { LiveStep } from '../AgentComputer'
+
+/** Resolve a private attachment to a local object URL via the authenticated
+ * content endpoint. The retired public /uploads path is never used. */
+function useAttachmentUrl(attachmentId?: string): string | null {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    let objectUrl: string | null = null
+    let revoked = false
+    if (!attachmentId) { setUrl(null); return }
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/files/${attachmentId}/content`, { headers: authHeaders(false) })
+        if (!res.ok) return
+        const blob = await res.blob()
+        if (revoked) return
+        objectUrl = URL.createObjectURL(blob)
+        setUrl(objectUrl)
+      } catch { /* offline or expired: leave the placeholder */ }
+    })()
+    return () => { revoked = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
+  }, [attachmentId])
+  return url
+}
 
 interface Message {
   id: string
@@ -14,7 +37,9 @@ interface Message {
   content: string
   createdAt: string
   imageUrl?: string
-  imagePath?: string
+  attachmentId?: string
+  messageType?: string
+  toolUsed?: string
   metadata?: any
 }
 
@@ -82,7 +107,14 @@ export default function MessageList({
                 </div>
               </motion.div>
 
-              {/* Live assistant response */}
+              {/* In-run artifacts render in the flow, not only after reload */}
+          {liveArtifacts.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {liveArtifacts.map((a) => <ArtifactCard key={a.id} a={a} />)}
+            </div>
+          )}
+
+          {/* Live assistant response */}
               <div className="min-w-0 space-y-2">
                 {running && (mode === 'research' || mode === 'agent') && !liveAnswer && (
                   <button
@@ -166,8 +198,10 @@ function MessageBubble({
   onRetry?: () => void
 }) {
   const [copied, setCopied] = useState(false)
+  const [viewer, setViewer] = useState<ArtifactRef | null>(null)
   const artifacts: ArtifactRef[] = message.metadata?.artifacts || []
   const sources = message.metadata?.sources as { index: number; title: string; url: string }[] | undefined
+  const attachedImage = useAttachmentUrl(message.attachmentId)
 
   const copy = () => {
     navigator.clipboard?.writeText(message.content || '').then(() => {
@@ -185,9 +219,9 @@ function MessageBubble({
         className="group flex flex-col items-end gap-1"
       >
         <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-[#1e1e21] border border-white/[0.07] px-4 py-3">
-          {message.imagePath && (
+          {(attachedImage || message.imageUrl) && (
             <img
-              src={message.imageUrl || `${API_URL}/uploads/${message.imagePath.split('/').pop()}`}
+              src={attachedImage || message.imageUrl}
               alt="Uploaded"
               className="max-w-[280px] max-h-64 rounded-xl border border-white/10 mb-2.5"
             />
@@ -220,9 +254,10 @@ function MessageBubble({
 
       {artifacts.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {artifacts.map((a) => <ArtifactCard key={a.id} a={a} />)}
+          {artifacts.map((a) => <ArtifactCard key={a.id} a={a} onOpen={() => setViewer(a)} />)}
         </div>
       )}
+      <AnimatePresence>{viewer && <ArtifactViewer a={viewer} onClose={() => setViewer(null)} />}</AnimatePresence>
 
       {sources && sources.length > 0 && (
         <div className="text-[12px] text-slate-500 space-y-1">
@@ -260,21 +295,93 @@ function ActionBtn({ onClick, title, icon }: { onClick: () => void; title: strin
   )
 }
 
-function ArtifactCard({ a }: { a: ArtifactRef }) {
+function ArtifactCard({ a, onOpen }: { a: ArtifactRef; onOpen?: () => void }) {
   const href = a.url ? (a.url.startsWith('http') ? a.url : `${API_URL}${a.url}`) : undefined
   if (a.kind === 'image' && href) {
-    return <img src={href} alt={a.name} className="max-w-md max-h-96 rounded-2xl border border-white/10" />
+    return (
+      <button type="button" onClick={onOpen} className="block group relative">
+        <img src={href} alt={a.name} className="max-w-md max-h-96 rounded-2xl border border-white/10 group-hover:border-white/20 transition" />
+        <span className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 text-slate-300 opacity-0 group-hover:opacity-100 transition">
+          <Maximize2 size={13} />
+        </span>
+      </button>
+    )
   }
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl glass hover:border-white/15 hover:bg-white/[0.06] transition text-[13px]"
+    <button
+      type="button"
+      onClick={onOpen}
+      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl glass hover:border-white/15 hover:bg-white/[0.06] transition text-[13px] text-left"
     >
-      <FileDown size={14} className="text-[#c96442]" />
-      <span className="text-slate-200">{a.name}</span>
-      <span className="text-[10px] uppercase text-slate-500">{a.kind}</span>
-    </a>
+      <FileDown size={14} className="text-[#c96442] shrink-0" />
+      <span className="min-w-0">
+        <span className="block text-slate-200 truncate">{a.name}</span>
+        <span className="block text-[10px] uppercase text-slate-500">{a.kind}</span>
+      </span>
+    </button>
+  )
+}
+
+/** Fullscreen in-app artifact viewer: images zoom, code/markdown render. */
+function ArtifactViewer({ a, onClose }: { a: ArtifactRef; onClose: () => void }) {
+  const href = a.url ? (a.url.startsWith('http') ? a.url : `${API_URL}${a.url}`) : undefined
+  const isImage = a.kind === 'image'
+  const isMarkdown = /\.(md|txt)$/i.test(a.name) || a.kind === 'document'
+  const [textContent, setTextContent] = useState<string | null>(null)
+  useEffect(() => {
+    if (isImage || !href) return
+    let revoked = false
+    ;(async () => {
+      try {
+        const res = await fetch(href, { headers: authHeaders(false) })
+        if (!res.ok) return
+        const text = await res.text()
+        if (!revoked) setTextContent(text.slice(0, 512_000))
+      } catch { /* leave the download affordance */ }
+    })()
+    return () => { revoked = true }
+  }, [href, isImage])
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 sm:p-8"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.97, y: 8 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.97, y: 8 }} transition={{ duration: 0.16 }}
+        className="max-w-4xl w-full max-h-full glass rounded-2xl border border-white/10 overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+          <div className="min-w-0">
+            <div className="text-[14px] text-slate-100 truncate">{a.name}</div>
+            <div className="text-[11px] uppercase tracking-wide text-slate-500">{a.kind}</div>
+          </div>
+          <div className="flex items-center gap-2">
+            {href && (
+              <a href={href} target="_blank" rel="noreferrer" download={a.name}
+                className="p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition">
+                <FileDown size={15} />
+              </a>
+            )}
+            <button type="button" onClick={onClose}
+              className="p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition">
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-auto p-4">
+          {isImage && href && <img src={href} alt={a.name} className="max-w-full rounded-xl border border-white/10" />}
+          {!isImage && textContent !== null && (isMarkdown
+            ? <Markdown content={textContent} />
+            : <pre className="text-[13px] leading-relaxed text-slate-200 whitespace-pre-wrap font-mono">{textContent}</pre>)}
+          {!isImage && textContent === null && (
+            <div className="flex items-center gap-2 text-slate-500 text-[13px] py-8 justify-center">
+              <Loader2 size={14} className="animate-spin" /> Loading preview…
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
   )
 }

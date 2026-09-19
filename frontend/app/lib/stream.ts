@@ -30,7 +30,7 @@ export interface StreamHandlers {
 
 export interface StreamBody {
   content: string
-  imagePath?: string
+  attachmentId?: string
   mode?: string
   provider?: string
   model?: string

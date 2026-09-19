@@ -24,7 +24,7 @@ interface Message {
   createdAt: string
   messageType?: string
   imageUrl?: string
-  imagePath?: string
+  attachmentId?: string
   toolUsed?: string
   metadata?: any
 }
@@ -187,8 +187,8 @@ export default function ChatPage() {
     let convId: string | null = null
     try {
       convId = await ensureConversation(content)
-      let imagePath: string | undefined
-      if (image) imagePath = await uploadImage(convId, image)
+      let attachmentId: string | undefined
+      if (image) attachmentId = await uploadImage(convId, image)
       const { provider, model, apiKey } = getProviderSettings()
       const abort = new AbortController()
       abortRef.current = abort
@@ -197,7 +197,7 @@ export default function ChatPage() {
         ? `Plan first: briefly outline the steps you'll take, then carry them out.\n\n${content}`
         : content
 
-      await runAgentStream(convId, { content: sendContent, imagePath, mode: sendMode, provider, model, apiKey }, {
+      await runAgentStream(convId, { content: sendContent, attachmentId, mode: sendMode }, {
         onStatus: (m) => { if (!m.startsWith('conversation:')) setStatusMsg(m) },
         onWarming: (m) => setStatusMsg(m),
         onDelta: (step, text) => {
