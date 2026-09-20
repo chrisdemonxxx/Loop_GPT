@@ -79,6 +79,51 @@ export function visionModelEnabled(): boolean {
   return !!(process.env.HF_VISION_ENDPOINT_URL || largeModelEnabled())
 }
 
+/** Smart task router: analyses turn signals and recommends a tier.
+ *
+ * Returns the recommended target WITHOUT resolving the caller-supplied model
+ * override (the caller may still select a specific tier — this is the default).
+ *
+ * Rules:
+ *   mode = research → flagship (deep reasoning, multi-step).
+ *   attachment (image) → useVLLM (vision) OR flagship if no dedicated vision endpoint.
+ *   content length > 4 000 chars → flagship (long context).
+ *   Heavy tool count (>= 4) → flagship.
+ *   tool list includes code_execution / sandbox / web_search → flagship.
+ *   otherwise → fast (Qwen3.8‑Cyber, fast/cheap).
+ */
+export function smartRouteTask(
+  contentLength: number,
+  mode: string,
+  hasImage: boolean,
+  toolNames: string[],
+): ChatTarget {
+  const ctx = contentLength
+  const heavyTools = ['sandbox', 'code_execution', 'browser', 'web_search', 'web_fetch']
+  const HEAVY_TOOL_LIMIT = 4
+
+  // Research mode always uses the flagship tier.
+  if (mode === 'research') {
+    if (largeModelEnabled()) return resolveChatTarget('large')
+    return resolveChatTarget('standard')
+  }
+
+  // Vision: route to the vision pipeline (dedicated VLM or DeepSeek large tier).
+  if (hasImage && visionModelEnabled()) {
+    const visionTarget = resolveVisionTarget({ provider: 'huggingface', model: '', baseUrl: '', apiKey: undefined })
+    if (visionTarget) return visionTarget as unknown as ChatTarget
+  }
+
+  // Heavy context or tools → flagship.
+  const toolCount = toolNames?.length || 0
+  if (ctx > 4_000 || toolCount >= HEAVY_TOOL_LIMIT || toolNames?.some((t) => heavyTools.includes(t))) {
+    if (largeModelEnabled()) return resolveChatTarget('large')
+  }
+
+  // Default: fast tier (standard → Qwen3.8‑Cyber).
+  return resolveChatTarget('standard')
+}
+
 export function availableChatModels(): ChatModelSpec[] {
   const out = [CHAT_MODELS.standard]
   if (largeModelEnabled()) out.push(CHAT_MODELS.large)

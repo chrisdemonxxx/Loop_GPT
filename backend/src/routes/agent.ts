@@ -98,7 +98,7 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
   const userId = (req as any).userId
   const { conversationId } = req.params
   let target: ReturnType<typeof resolveHostedModelRequest>
-  try { target = resolveHostedModelRequest(req.body) }
+  try { target = resolveHostedModelRequest(req.body, { contentLength: String(req.body?.content || '').length, mode: req.body?.mode, hasImage: !!req.body?.attachmentId, toolNames: req.body?.toolNames }) }
   catch { return res.status(400).json({ code: 'HOSTED_MODEL_REQUIRED', error: 'Invalid hosted model selection or unsupported provider override' }) }
   const input = streamInput.safeParse(req.body)
   if (!input.success) return res.status(400).json({ error: 'Invalid message; use attachmentId instead of server file paths' })
