@@ -100,12 +100,13 @@ interface MessageListProps {
   onOpenComputer: () => void
   onEditMessage: (content: string) => void
   onRetryBefore: (beforeIndex: number) => void
+  onStartPrompt?: (prompt: string) => void
 }
 
 export default function MessageList({
   messages, liveUser, liveSteps, liveAnswer, liveArtifacts,
-  running, statusMsg, mode, computerOpen,
-  onOpenComputer, onEditMessage, onRetryBefore,
+  running, statusMsg, mode,   computerOpen,
+  onOpenComputer, onEditMessage, onRetryBefore, onStartPrompt,
 }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null)
   const showEmpty = messages.length === 0 && !liveUser
@@ -117,7 +118,7 @@ export default function MessageList({
   return (
     <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 sm:py-8 min-h-0">
       {showEmpty ? (
-        <EmptyState />
+        <EmptyState onStartPrompt={onStartPrompt} />
       ) : (
         <div className="max-w-[48rem] mx-auto space-y-6">
           {messages.map((m, idx) => (
@@ -193,28 +194,46 @@ export default function MessageList({
   )
 }
 
-function EmptyState() {
+const STARTER_PROMPTS = [
+  'Explain quantum computing like I’m 10',
+  'Write a Python script to plot a sine wave',
+  'Summarise the latest AI research trends',
+  'Draft a business plan for a SaaS startup',
+] as const
+
+function EmptyState({ onStartPrompt }: { onStartPrompt?: (p: string) => void }) {
   return (
     <div className="flex flex-col items-center justify-center h-full max-w-[48rem] mx-auto text-center px-4">
       <motion.div
         initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.3 }}
-        className="space-y-3"
+        className="space-y-4"
       >
-        <div className="w-10 h-10 rounded-2xl bg-[#c96442]/12 border border-[#c96442]/20 flex items-center justify-center mx-auto">
-          <Sparkles size={18} className="text-[#c96442]" />
+        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#c96442]/20 to-[#c96442]/8 flex items-center justify-center mx-auto">
+          <Sparkles size={22} className="text-gradient" />
         </div>
-        <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight text-slate-100">
+        <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight text-gradient">
           How can I help you today?
         </h1>
-        <p className="text-slate-500 text-[14px] max-w-xs">
-          Ask anything. Type{' '}
-          <span className="font-mono text-slate-400 bg-white/[0.05] px-1.5 py-0.5 rounded text-[13px]">
-            /
-          </span>{' '}
-          for commands like deep research.
+        <p className="text-slate-500 text-[14px] max-w-sm mx-auto">
+          Type <span className="font-mono text-slate-400 bg-white/[0.05] px-1.5 py-0.5 rounded text-[13px]">/</span> for
+          deep research. <span className="font-mono text-slate-400 bg-white/[0.05] px-1.5 py-0.5 rounded text-[13px]">⌘K</span> for commands.
         </p>
+
+        {/* Starter prompt cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mt-6 max-w-md mx-auto">
+          {STARTER_PROMPTS.map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => onStartPrompt?.(p)}
+              className="text-left px-4 py-3 rounded-2xl glass bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] hover:border-white/12 transition text-[13px] text-slate-300 hover:text-slate-100 leading-relaxed"
+            >
+              {p}
+            </button>
+          ))}
+        </div>
       </motion.div>
     </div>
   )

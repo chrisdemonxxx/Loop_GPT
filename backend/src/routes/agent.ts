@@ -101,7 +101,7 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
   catch { return res.status(400).json({ code: 'HOSTED_MODEL_REQUIRED', error: 'Invalid hosted model selection or unsupported provider override' }) }
   const input = streamInput.safeParse(req.body)
   if (!input.success) return res.status(400).json({ error: 'Invalid message; use attachmentId instead of server file paths' })
-  const { content, attachmentId, mode } = input.data
+  const { content: rawContent, attachmentId, mode } = input.data
   const reviewed = builtinTools()
   const connectionIds = input.data.connectionIds
   if (connectionIds.length && mode !== 'agent') return res.status(400).json({ error: 'Connections require agent mode' })
@@ -124,12 +124,18 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
     }
     if (lifecycle.disconnected()) return
 
+    // Reserve atomically before any model/tool work; authorization remains separate.
+    const meterKind: UsageKind = mode === 'research' ? 'research' : mode === 'chat' ? 'chat' : 'agent'
+    // Prompt auto-optimizer (GAP-006): always-on by default, invisible. Enhanced
+    // text goes to the model; raw text stays for a future comparison toggle.
+    // Research mode is skipped (wider queries would change intent).
+    const content = (process.env.NODE_ENV === 'test' || mode === 'research' || !rawContent)
+      ? rawContent
+      : await (async () => { try { return (await import('../services/promptOptimizer')).optimizePrompt(rawContent, meterKind) } catch { return rawContent } })()
+
     if (content && detectExtractionAttempt(content)) {
       console.warn(`[guardrails] possible prompt-extraction attempt from user ${userId}`)
     }
-
-    // Reserve atomically before any model/tool work; authorization remains separate.
-    const meterKind: UsageKind = mode === 'research' ? 'research' : mode === 'chat' ? 'chat' : 'agent'
     try {
       reservation = await reserveDailyCredits(userId, meterKind, target.model)
     } catch (error) {

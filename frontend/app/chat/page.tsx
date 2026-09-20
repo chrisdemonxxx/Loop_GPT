@@ -11,6 +11,8 @@ import { runAgentStream, type ArtifactRef } from '../lib/stream'
 import SettingsPanel from '../components/SettingsPanel'
 import { track } from '../components/Analytics'
 import type { LiveStep } from '../components/AgentComputer'
+import { CommandPalette } from '../components/CommandPalette'
+import { ShortcutSheet } from '../components/ShortcutSheet'
 
 import Sidebar from '../components/chat/Sidebar'
 import Composer from '../components/chat/Composer'
@@ -358,6 +360,7 @@ export default function ChatPage() {
           liveSteps={liveSteps}
           liveAnswer={liveAnswer}
           liveArtifacts={liveArtifacts}
+          onStartPrompt={(prompt) => { setInput(prompt); setTimeout(() => document.querySelector('textarea')?.focus(), 100) }}
           running={running}
           statusMsg={statusMsg}
           mode={mode}
@@ -415,6 +418,23 @@ export default function ChatPage() {
           onClose={() => { setShowSettings(false); setSettingsTab(undefined) }}
         />
       )}
+
+      <CommandPalette
+onNewSession={() => { setCurrentConversationId(null); setSidebarOpen(false) }}
+onToggleSidebar={() => setSidebarOpen((s) => !s)}
+        onOpenSettings={() => { setSettingsTab(undefined); setShowSettings(true) }}
+        onLogout={() => { logout(); setSidebarOpen(false) }}
+      />
+      <ShortcutSheet />
+      <button
+        type="button"
+        aria-label="Keyboard shortcuts"
+        onClick={() => { /* The ShortcutSheet catches '?' key; this button is a visual hint */ }}
+        className="fixed bottom-4 right-4 z-30 p-2 rounded-lg text-slate-600 hover:text-slate-400 hover:bg-white/[0.04] transition text-[12px] font-mono"
+        title="Keyboard shortcuts (?)"
+      >
+        ⌘K ?
+      </button>
     </div>
   )
 }
