@@ -1,0 +1,47 @@
+# Loop GPT SearXNG configuration — direct JSON output for the backend's
+# webSearch tool. Engines are limited to the stable public ones; falling
+# back to Brave or Tavily when blocked.
+# Reference: https://docs.searxng.org/admin/settings/
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  secret_key: "$SEARXNG_SECRET"    # set in Space Secrets
+  base_url: "$SEARXNG_BASE_URL"
+  limiter: false                    # internal access only → no public rate limit
+
+search:
+  safe_search: 0                    # no filtering (Direct edition service)
+  autocomplete: ""
+  formats:
+    - json                          # Loop GPT backend sends ?format=json
+
+# Minimal engine set; the webSearch client falls back to Brave → Tavily.
+engines:
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    disabled: false
+
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+
+  - name: startpage
+    engine: startpage
+    shortcut: sp
+    disabled: true                   # often blocked from cloud IPs
+
+  - name: brave
+    engine: brave
+    shortcut: br
+    api_key: "$BRAVE_API_KEY"        # optional secondary fallback
+    disabled: true
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 20.0
+  useragent_suffix: ""
+  # Docker Spaced on HF run behind a NAT that blocks most engines.
+  # If SearXNG returns empty results, the webSearch client falls back
+  # to Brave (via API key) then Tavily (env fallback chain).

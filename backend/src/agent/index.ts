@@ -9,6 +9,9 @@ import { currentTimeTool, calculatorTool } from './tools/utility'
 import { generateImageTool } from './tools/generateImage'
 import { generateVideoTool } from './tools/generateVideo'
 import { createDocumentTool } from './tools/createDocument'
+import { transcribeTool } from './tools/transcribe'
+import { speakTool } from './tools/speakText'
+import { ocrTool } from './tools/ocr'
 
 const BUILTIN_TOOLS = [
   webSearchTool,
@@ -18,6 +21,9 @@ const BUILTIN_TOOLS = [
   generateImageTool,
   generateVideoTool,
   createDocumentTool,
+  transcribeTool,
+  speakTool,
+  ocrTool,
 ]
 
 export function registerBuiltinTools() {
