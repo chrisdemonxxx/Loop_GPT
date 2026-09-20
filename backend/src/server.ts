@@ -52,6 +52,8 @@ import { requestLog, recentRequests, metricsSummary, activeStreamCount } from '.
 import { initAgent } from './agent'
 import { filesRouter, imageUploadRouter, rejectLegacyUploads } from './routes/files'
 import workspaceRoutes from './routes/workspaces'
+import { oauthConnectorRouter } from './routes/oauthConnector'
+
 
 // Register reviewed built-ins; legacy shared extensions are not bootstrapped.
 initAgent().catch((err) => console.error('Agent init error:', err))
@@ -95,6 +97,8 @@ app.use('/api/conversations', imageUploadRouter)
 // Routes
 app.use('/api/auth', authRoutes)
 app.use('/api/auth', oauthRouter)
+app.use('/api/oauth-connector', oauthConnectorRouter)
+app.use('/api/oauth-connector', oauthConnectorRouter)
 // Root-level /oauth/:provider relay (social-login buttons built from DOMAIN_SERVER land here)
 app.use(oauthRelayRouter)
 app.use('/api/mail', mailRouter)
