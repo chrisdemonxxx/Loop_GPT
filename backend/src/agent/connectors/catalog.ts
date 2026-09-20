@@ -303,6 +303,56 @@ const WORKING: CatalogConnector[] = [
       { suffix: 'search', description: '[SerpAPI] Google search. Args: q.', method: 'GET', path: '/search', query: ['q'], parameters: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] } },
     ],
   },
+  {
+    type: 'github',
+    name: 'GitHub',
+    description: 'GitHub API — search repos, list issues, read files and review PRs using a personal access token.',
+    category: 'Developer',
+    icon: '🐙',
+    auth: 'bearer',
+    authField: 'token',
+    baseUrl: 'https://api.github.com',
+    headers: { Accept: 'application/vnd.github.v3+json' },
+    fields: [{ key: 'token', label: 'GitHub personal access token (classic, with repo scope)', secret: true, required: true, placeholder: 'ghp_...' }],
+    tools: [
+      {
+        suffix: 'search_repos',
+        description: '[GitHub] Search repositories. Args: q (query), sort, order.',
+        method: 'GET', path: '/search/repositories', query: ['q', 'sort', 'order', 'per_page'],
+        parameters: { type: 'object', properties: { q: { type: 'string' }, sort: { type: 'string', enum: ['stars', 'forks', 'updated'] }, order: { type: 'string', enum: ['desc', 'asc'] }, per_page: { type: 'number' } }, required: ['q'] },
+      },
+      {
+        suffix: 'list_issues',
+        description: '[GitHub] List issues/PRs for a repo. Args: owner, repo, state, sort, per_page.',
+        method: 'GET', path: '/repos/{owner}/{repo}/issues', query: ['state', 'sort', 'per_page'],
+        parameters: { type: 'object', properties: { owner: { type: 'string' }, repo: { type: 'string' }, state: { type: 'string', enum: ['open', 'closed', 'all'] }, sort: { type: 'string', enum: ['created', 'updated', 'comments'] }, per_page: { type: 'number' } } },
+      },
+      {
+        suffix: 'get_repo',
+        description: '[GitHub] Get repository details. Args: owner, repo.',
+        method: 'GET', path: '/repos/{owner}/{repo}',
+        parameters: { type: 'object', properties: { owner: { type: 'string' }, repo: { type: 'string' } }, required: ['owner', 'repo'] },
+      },
+      {
+        suffix: 'list_files',
+        description: '[GitHub] List files in a repository path. Args: owner, repo, path, ref.',
+        method: 'GET', path: '/repos/{owner}/{repo}/contents/{path}', query: ['ref'],
+        parameters: { type: 'object', properties: { owner: { type: 'string' }, repo: { type: 'string' }, path: { type: 'string' }, ref: { type: 'string' } }, required: ['owner', 'repo', 'path'] },
+      },
+      {
+        suffix: 'get_file',
+        description: '[GitHub] Get a single file content. Args: owner, repo, path, ref.',
+        method: 'GET', path: '/repos/{owner}/{repo}/contents/{path}', query: ['ref'],
+        parameters: { type: 'object', properties: { owner: { type: 'string' }, repo: { type: 'string' }, path: { type: 'string' }, ref: { type: 'string' } }, required: ['owner', 'repo', 'path'] },
+      },
+      {
+        suffix: 'list_pull_requests',
+        description: '[GitHub] List PRs. Args: owner, repo, state, sort.',
+        method: 'GET', path: '/repos/{owner}/{repo}/pulls', query: ['state', 'sort', 'per_page'],
+        parameters: { type: 'object', properties: { owner: { type: 'string' }, repo: { type: 'string' }, state: { type: 'string', enum: ['open', 'closed', 'all'] }, sort: { type: 'string', enum: ['created', 'updated', 'popularity'] }, per_page: { type: 'number' } } },
+      },
+    ],
+  },
 ]
 
 // ---------------------------------------------------------------------------
