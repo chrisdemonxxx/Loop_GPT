@@ -67,6 +67,7 @@ async function makePptx(title: string, slides: Array<{ title?: string; bullets?:
 export const createDocumentTool: ToolDefinition = {
   name: 'create_document',
   source: 'builtin',
+  needsApproval: true,
   description:
     'Create a downloadable file. To build a website/web page/landing page, use format "html" and put the COMPLETE working HTML/CSS/JS in "content". For code files use format "code" (pass "content" and a "filename" with the right extension, e.g. app.js). For pdf/docx/markdown pass "content" (use "# " and "## " for headings). For xlsx/csv pass "rows" (array of arrays). For pptx pass "slides" (array of {title, bullets}). Do NOT use pdf for websites or code.',
   parameters: {

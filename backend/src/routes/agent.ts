@@ -21,6 +21,7 @@ import { initSSE, sendEvent, endSSE, makeEmitter } from '../agent/streaming'
 import type { AgentEvent, ChatMessage, ContentPart, ToolContext } from '../agent/types'
 import { resolveHostedModelRequest } from '../services/hostedModelRequest'
 import { resolveVisionTarget, visionModelEnabled } from '../services/chatModels'
+import { clearApproval, resolveApproval } from '../agent/approvalStore'
 import { BUILTIN_SKILLS } from '../agent/skills/builtin'
 import { sanitizeMetadata, detectExtractionAttempt } from '../agent/guardrails'
 import { agentConfig } from '../agent/config'
@@ -100,6 +101,8 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
   let target: ReturnType<typeof resolveHostedModelRequest>
   try { target = resolveHostedModelRequest(req.body, { contentLength: String(req.body?.content || '').length, mode: req.body?.mode, hasImage: !!req.body?.attachmentId, toolNames: req.body?.toolNames }) }
   catch { return res.status(400).json({ code: 'HOSTED_MODEL_REQUIRED', error: 'Invalid hosted model selection or unsupported provider override' }) }
+  // Clear any stale approvals from a previous turn in this conversation.
+  clearApproval(conversationId)
   const input = streamInput.safeParse(req.body)
   if (!input.success) return res.status(400).json({ error: 'Invalid message; use attachmentId instead of server file paths' })
   const { content: rawContent, attachmentId, mode } = input.data
@@ -380,6 +383,18 @@ router.post('/completions', authenticateToken, asyncHandler(async (req, res) => 
     try { await cleanupDailyReservation(reservation?.id) }
     finally { lifecycle.dispose() }
   }
+}))
+
+/** POST /api/agent/:conversationId/approve — resolve a tool approval decision. */
+router.post('/:conversationId/approve', authenticateToken, asyncHandler(async (req, res) => {
+  const { conversationId } = req.params
+  const { toolName, approved } = req.body || {}
+  if (typeof toolName !== 'string' || !toolName || typeof approved !== 'boolean') {
+    return res.status(400).json({ error: 'toolName (string) and approved (boolean) are required.' })
+  }
+  const ok = resolveApproval(conversationId, toolName, approved)
+  if (!ok) return res.status(404).json({ error: 'No pending approval for this tool in this conversation.' })
+  res.status(200).json({ ok: true })
 }))
 
 export default router

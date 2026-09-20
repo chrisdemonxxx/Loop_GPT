@@ -43,6 +43,10 @@ export interface ToolDefinition {
   parameters: ToolParameterSchema
   /** Source of the tool: builtin, mcp server id, skill id, plugin id. */
   source?: string
+  /** When true, the tool requires the user to approve execution mid‑stream.
+   * The agent loop emits a `pending_approval` event and pauses until the
+   * user submits a decision via POST /api/agent/:conversationId/approve. */
+  needsApproval?: boolean
   handler: (args: Record<string, any>, ctx: ToolContext) => Promise<ToolResult>
 }
 
@@ -62,6 +66,7 @@ export type AgentEvent =
   | { type: 'tool_call'; step: number; name: string; args: Record<string, any>; source?: string }
   | { type: 'tool_result'; step: number; name: string; content: string; data?: any; isError?: boolean }
   | { type: 'artifact'; artifact: ArtifactRef }
+  | { type: 'pending_approval'; tool_name: string; args: Record<string, any>; prompt: string }
   | { type: 'final'; content: string; metadata?: any }
   | { type: 'error'; message: string }
   | { type: 'done' }

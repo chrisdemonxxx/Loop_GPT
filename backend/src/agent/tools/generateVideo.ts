@@ -67,6 +67,7 @@ async function generateVideoFromEndpoint(prompt: string, image: string | undefin
 export const generateVideoTool: ToolDefinition = {
   name: 'generate_video',
   source: 'builtin',
+  needsApproval: true,
   description: 'Generate a short video clip from a text prompt or image+prompt. Videos are typically 4-8 seconds at 24fps.',
   parameters: {
     type: 'object',

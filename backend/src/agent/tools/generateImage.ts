@@ -66,6 +66,7 @@ async function hfTextToImage(prompt: string, model: string, width: number, heigh
 export const generateImageTool: ToolDefinition = {
   name: 'generate_image',
   source: 'builtin',
+  needsApproval: true,
   description: 'Generate images from text prompts using FLUX.1-dev. Supports img2img with a reference image.',
   parameters: {
     type: 'object',

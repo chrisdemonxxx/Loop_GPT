@@ -28,6 +28,7 @@ import type {
 import { agentConfig } from './config'
 import { assertRunAccess, grantedTools, restrictRunContext } from './runAuthorization'
 import { CONFIDENTIALITY_PROMPT, sanitizeText, sanitizeMetadata, makeStreamSanitizer, guardrailsEnabled } from './guardrails'
+import { storeApproval, waitForApproval, clearApproval } from './approvalStore'
 
 /** Per-baseURL memo of whether native tool-calling works. */
 const nativeToolSupport = new Map<string, boolean>()
@@ -270,6 +271,29 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
     const inlineResults: string[] = []
     for (const call of calls) {
       ctx.emit({ type: 'tool_call', step: stepIndex, name: call.name, args: call.args, source: tools.find((tool) => tool.name === call.name)?.source })
+
+      // Approval gate: if the tool requires approval and hasn't been
+      // pre-approved, emit a pending_approval event and wait for the user
+      // to respond via POST /api/agent/:conversationId/approve.
+      const toolDef = toolRegistry.get(call.name)
+      if (toolDef?.needsApproval) {
+        storeApproval(ctx.conversationId, call.name, call.args)
+        ctx.emit({ type: 'pending_approval', tool_name: call.name, args: call.args, prompt: `Approve "${call.name}" with the provided arguments?` })
+        const approved = await waitForApproval(ctx.conversationId, call.name)
+        if (!approved) {
+          const denialResult = { content: `Tool "${call.name}" was not approved by the user.`, isError: true }
+          ctx.emit({ type: 'tool_result', step: stepIndex, name: call.name, content: denialResult.content, isError: true })
+          steps.push({ tool: call.name, args: call.args, result: denialResult.content })
+          if (native) {
+            working.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: denialResult.content })
+          } else {
+            inlineResults.push(`TOOL_RESULT (${call.name}):\n${denialResult.content}`)
+          }
+          stepIndex++
+          continue
+        }
+      }
+
       const result = await toolRegistry.execute(call.name, call.args, ctx)
       if (!result.isError) toolsUsed.add(call.name)
       ctx.emit({ type: 'tool_result', step: stepIndex, name: call.name, content: truncate(result.content, 4000), data: result.data, isError: result.isError })
