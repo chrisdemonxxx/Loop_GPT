@@ -20,6 +20,7 @@ import { runDeepResearch } from '../agent/research/deepResearch'
 import { initSSE, sendEvent, endSSE, makeEmitter } from '../agent/streaming'
 import type { AgentEvent, ChatMessage, ContentPart, ToolContext } from '../agent/types'
 import { resolveHostedModelRequest } from '../services/hostedModelRequest'
+import { resolveVisionTarget } from '../services/chatModels'
 import { BUILTIN_SKILLS } from '../agent/skills/builtin'
 import { sanitizeMetadata, detectExtractionAttempt } from '../agent/guardrails'
 import { agentConfig } from '../agent/config'
@@ -115,13 +116,19 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
   try {
     if (lifecycle.disconnected()) return
     let image: Awaited<ReturnType<typeof readOwnedImage>> | null = null
-    if (attachmentId) {
-      try { image = await readOwnedImage(userId, conversationId, attachmentId) }
-      catch (error) {
-        if (!lifecycle.disconnected()) return fileErrorResponse(error, res)
-        return
+      if (attachmentId) {
+        try { image = await readOwnedImage(userId, conversationId, attachmentId) }
+        catch (error) {
+          if (!lifecycle.disconnected()) return fileErrorResponse(error, res)
+          return
+        }
       }
-    }
+      // When the user attaches an image, route to the vision endpoint/VLM.
+      // The vision messages (content + dataUri) are built a few lines below.
+      if (image) {
+        const visionTarget = await import('../services/chatModels').then(m => m.resolveVisionTarget(target as any)).catch(() => null)
+        if (visionTarget) target = { provider: 'huggingface' as const, model: visionTarget.model, baseUrl: visionTarget.baseUrl, apiKey: undefined }
+      }
     if (lifecycle.disconnected()) return
 
     // Reserve atomically before any model/tool work; authorization remains separate.

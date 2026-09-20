@@ -97,6 +97,16 @@ model ApiKey {
 // Spend budget policy singleton: daily reservation count caps across all
 // product paths. DB admins update the row and increment revision; there is
 // deliberately no environment or per-worker override.
+model KnowledgeChunk {
+  id             String    @id @default(cuid())
+  userId         String
+  conversationId String?
+  content        String
+  createdAt      DateTime  @default(now())
+
+  @@index([userId])
+}
+
 model SpendBudgetPolicy {
   id                          Int       @id
   version                     Int

@@ -1,20 +1,20 @@
 /**
  * Selectable chat model tiers.
  *
- * Loop GPT ships two hosted chat backends. Both are OpenAI-compatible, so the
- * only thing that varies is the base URL and the upstream model name:
+ * Loop GPT ships two hosted chat backends and one vision backend. All are
+ * OpenAI-compatible, so the only thing that varies is the base URL and the
+ * upstream model name:
  *
  *   standard — the everyday model (Qwen3.8-27B via the HF router). Fast, cheap.
- *   large    — the flagship GLM deployment on a dedicated vLLM endpoint with a
- *              256K context window. Slower and pricier, better at hard reasoning
- *              and long documents.
+ *   large    — the flagship DeepSeek-V4.1‑Flash‑Abliterated deployment.
+ *   vision   — the best unrestricted VLM (huihui-ai abliterated Qwen3-VL).
  *
  * User-facing copy deliberately never names the upstream model — see
  * `agent/guardrails.ts`, which forbids disclosing model/provider identity.
  * Callers select a tier by id or alias; unknown values fall back to standard.
  */
 
-export type ChatTier = 'standard' | 'large'
+export type ChatTier = 'standard' | 'large' | 'vision'
 
 export interface ChatModelSpec {
   /** Stable public id, used as the `model` value in API requests. */
@@ -59,16 +59,28 @@ export const CHAT_MODELS: Record<ChatTier, ChatModelSpec> = {
     contextTokens: LARGE_CONTEXT,
     aliases: ['large', 'loop-large', 'loop-chat-xl', 'xl', 'pro', 'max', 'qwen-vl-loop-large', 'loop-chat-large-vision'],
   },
+  vision: {
+    id: 'loop-vision',
+    tier: 'vision',
+    label: 'Loop GPT Vision',
+    description: 'Unrestricted vision-language model. Understands images, diagrams, documents and screenshots.',
+    contextTokens: 32_768,
+    aliases: ['vision', 'loop-vision', 'vl', 'qwen-vl'],
+  },
 }
 
 /** True when the large endpoint is configured; otherwise it is hidden entirely. */
 export function largeModelEnabled(): boolean {
   return !!process.env.HF_LARGE_ENDPOINT_URL
 }
+export function visionModelEnabled(): boolean {
+  return !!process.env.HF_VISION_ENDPOINT_URL
+}
 
 export function availableChatModels(): ChatModelSpec[] {
   const out = [CHAT_MODELS.standard]
   if (largeModelEnabled()) out.push(CHAT_MODELS.large)
+  if (visionModelEnabled()) out.push(CHAT_MODELS.vision)
   return out
 }
 
@@ -92,11 +104,10 @@ export function tierFor(model?: string | null): ChatTier {
     if (spec.id.toLowerCase() === m) return spec.tier
     if (spec.aliases.some((a) => a.toLowerCase() === m)) return spec.tier
   }
-  // Match on the configured upstream names too, so `HF_LARGE_MODEL` works.
+  // Match on the configured upstream names too.
   if (largeModelEnabled()) {
     const upstream = (process.env.HF_LARGE_MODEL || '').toLowerCase()
     if (upstream && upstream === m) return 'large'
-    // GLM deployments are commonly requested by family name.
     if (/^(glm|zai|z-ai)[\w.\-]*/.test(m)) return 'large'
   }
   return 'standard'
@@ -115,12 +126,46 @@ export function resolveChatTarget(model?: string | null): ChatTarget {
     }
   }
 
+  if (tier === 'vision' && visionModelEnabled()) {
+    return {
+      tier: 'vision',
+      model: process.env.HF_VISION_MODEL || 'tgi',
+      baseUrl: toV1(process.env.HF_VISION_ENDPOINT_URL as string),
+      contextTokens: CHAT_MODELS.vision.contextTokens,
+    }
+  }
+
   return {
     tier: 'standard',
     model: process.env.HF_MODEL || 'tgi',
     baseUrl: process.env.HF_ENDPOINT_URL ? toV1(process.env.HF_ENDPOINT_URL) : undefined,
     contextTokens: STANDARD_CONTEXT,
   }
+}
+
+/** When the user attaches an image, the agent stream route select the vision
+ * target instead of the chat target (unless the caller explicitly requested a
+ * non-standard tier). Returns the existing target when vision is unconfigured. */
+export function resolveVisionTarget(callerTarget: ChatTarget): ChatTarget | null {
+  if (!visionModelEnabled()) return null
+  return resolveChatTarget('vision')
+}
+
+/** Build an OpenAI‑compatible vision messages array from text + image buffer. */
+export function buildVisionMessages(
+  text: string,
+  imageBuffer: Buffer,
+  mimeType: string,
+): Array<{ role: string; content: Array<{ type: string; text?: string; image_url?: { url: string } }> }> {
+  return [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text },
+        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBuffer.toString('base64')}` } },
+      ],
+    },
+  ]
 }
 
 /** Public catalogue entries for `/v1/models` and the UI model picker. */
