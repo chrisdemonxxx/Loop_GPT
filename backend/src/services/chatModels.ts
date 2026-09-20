@@ -74,7 +74,9 @@ export function largeModelEnabled(): boolean {
   return !!process.env.HF_LARGE_ENDPOINT_URL
 }
 export function visionModelEnabled(): boolean {
-  return !!process.env.HF_VISION_ENDPOINT_URL
+  // When a dedicated vision endpoint is configured, use it; otherwise fall
+  // back to the large/DeepSeek tier (which already supports vision natively).
+  return !!(process.env.HF_VISION_ENDPOINT_URL || largeModelEnabled())
 }
 
 export function availableChatModels(): ChatModelSpec[] {
@@ -143,12 +145,32 @@ export function resolveChatTarget(model?: string | null): ChatTarget {
   }
 }
 
-/** When the user attaches an image, the agent stream route select the vision
- * target instead of the chat target (unless the caller explicitly requested a
- * non-standard tier). Returns the existing target when vision is unconfigured. */
-export function resolveVisionTarget(callerTarget: ChatTarget): ChatTarget | null {
-  if (!visionModelEnabled()) return null
-  return resolveChatTarget('vision')
+/** When the user attaches an image, the agent stream route selects the vision
+ * target instead of the chat target. Uses a dedicated vision endpoint if one is
+ * configured; otherwise falls back to the large/DeepSeek tier (which natively
+ * supports multimodal input — the DeepSeek-V4.1-Flash-Abliterated endpoint).
+ * Returns null when no vision-capable model is available. */
+export function resolveVisionTarget(callerTarget: CallerTarget): CallerTarget | null {
+  // Dedicated VLM endpoint configured → route to it.
+  if (process.env.HF_VISION_ENDPOINT_URL && process.env.HF_VISION_MODEL) {
+    const t = resolveChatTarget('vision')
+    return { provider: 'huggingface', model: t.model, baseUrl: t.baseUrl, apiKey: undefined }
+  }
+  // No dedicated vision endpoint but the large/DeepSeek tier is set → it is
+  // vision-capable; route to it for image-attachment turns.
+  if (largeModelEnabled()) {
+    const t = resolveChatTarget('large')
+    return { provider: 'huggingface', model: t.model, baseUrl: t.baseUrl, apiKey: undefined }
+  }
+  return null
+}
+
+/** Minimal shape the caller target and our return need to match the agent route. */
+interface CallerTarget {
+  provider: string
+  model: string
+  baseUrl?: string
+  apiKey?: string
 }
 
 /** Build an OpenAI‑compatible vision messages array from text + image buffer. */

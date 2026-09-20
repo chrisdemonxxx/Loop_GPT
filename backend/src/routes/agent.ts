@@ -20,7 +20,7 @@ import { runDeepResearch } from '../agent/research/deepResearch'
 import { initSSE, sendEvent, endSSE, makeEmitter } from '../agent/streaming'
 import type { AgentEvent, ChatMessage, ContentPart, ToolContext } from '../agent/types'
 import { resolveHostedModelRequest } from '../services/hostedModelRequest'
-import { resolveVisionTarget } from '../services/chatModels'
+import { resolveVisionTarget, visionModelEnabled } from '../services/chatModels'
 import { BUILTIN_SKILLS } from '../agent/skills/builtin'
 import { sanitizeMetadata, detectExtractionAttempt } from '../agent/guardrails'
 import { agentConfig } from '../agent/config'
@@ -125,9 +125,11 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
       }
       // When the user attaches an image, route to the vision endpoint/VLM.
       // The vision messages (content + dataUri) are built a few lines below.
-      if (image) {
-        const visionTarget = await import('../services/chatModels').then(m => m.resolveVisionTarget(target as any)).catch(() => null)
-        if (visionTarget) target = { provider: 'huggingface' as const, model: visionTarget.model, baseUrl: visionTarget.baseUrl, apiKey: undefined }
+      // When the user attaches an image, route to the vision-capable model
+      // (a dedicated VLM or the large DeepSeek tier which supports vision).
+      if (image && visionModelEnabled()) {
+        const visionTarget = resolveVisionTarget(target as any)
+        if (visionTarget) target = visionTarget as typeof target
       }
     if (lifecycle.disconnected()) return
 
