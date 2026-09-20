@@ -10,10 +10,13 @@ interface ActivityPanelProps {
   steps: LiveStep[]
   artifacts: ArtifactRef[]
   toolCount: number
+  pendingApproval?: { toolName: string; approve: (ok: boolean) => Promise<any> } | null
+  onApprove?: () => void
+  onDeny?: () => void
   onClose: () => void
 }
 
-export default function ActivityPanel({ running, status, steps, artifacts, toolCount, onClose }: ActivityPanelProps) {
+export default function ActivityPanel({ running, status, steps, artifacts, toolCount, pendingApproval, onApprove, onDeny, onClose }: ActivityPanelProps) {
   return (
     <motion.aside
       initial={{ x: 400, opacity: 0 }}
@@ -28,6 +31,9 @@ export default function ActivityPanel({ running, status, steps, artifacts, toolC
         steps={steps}
         artifacts={artifacts}
         toolCount={toolCount}
+        pendingApproval={pendingApproval}
+        onApprove={onApprove}
+        onDeny={onDeny}
         onClose={onClose}
       />
     </motion.aside>

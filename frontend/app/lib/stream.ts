@@ -23,6 +23,7 @@ export interface StreamHandlers {
   onToolCall?: (step: number, name: string, args: any, source?: string) => void
   onToolResult?: (step: number, name: string, content: string, data: any, isError?: boolean) => void
   onArtifact?: (artifact: ArtifactRef) => void
+  onPendingApproval?: (tool_name: string, args: any, prompt: string) => void
   onFinal?: (content: string, metadata: any) => void
   onError?: (message: string) => void
   onDone?: () => void
@@ -113,6 +114,9 @@ function dispatch(event: any, h: StreamHandlers) {
       break
     case 'tool_call':
       h.onToolCall?.(event.step, event.name, event.args, event.source)
+      break
+    case 'pending_approval':
+      h.onPendingApproval?.(event.tool_name, event.args, event.prompt)
       break
     case 'tool_result':
       h.onToolResult?.(event.step, event.name, event.content, event.data, event.isError)

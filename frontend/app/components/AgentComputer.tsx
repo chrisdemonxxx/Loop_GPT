@@ -19,6 +19,9 @@ interface Props {
   steps: LiveStep[]
   artifacts: ArtifactRef[]
   toolCount: number
+  pendingApproval?: { toolName: string; approve: (ok: boolean) => Promise<any> } | null
+  onApprove?: () => void
+  onDeny?: () => void
   onClose?: () => void
 }
 
@@ -26,7 +29,7 @@ interface Props {
  * The "Agent Computer" — a Manus-style live activity panel. Streams the agent's
  * tool calls as a terminal feed and surfaces generated artifacts in real time.
  */
-export default function AgentComputer({ running, status, steps, artifacts, toolCount, onClose }: Props) {
+export default function AgentComputer({ running, status, steps, artifacts, toolCount, pendingApproval, onApprove, onDeny, onClose }: Props) {
   const feedRef = useRef<HTMLDivElement>(null)
   const toolSteps = steps.filter((s) => s.kind === 'tool' && s.tool)
 
@@ -91,6 +94,21 @@ export default function AgentComputer({ running, status, steps, artifacts, toolC
             </motion.div>
           ))}
         </AnimatePresence>
+
+        {pendingApproval && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-2 p-3 rounded-xl glass border border-white/10 bg-[#c96442]/10"
+          >
+            <div className="text-[12px] font-medium text-slate-200 mb-2">Tool requires approval</div>
+            <div className="text-[13px] text-slate-400 mb-2">Approve <code className="text-slate-200 bg-white/5 px-1 rounded">{pendingApproval.toolName}</code>?</div>
+            <div className="flex gap-2">
+              <button type="button" onClick={onApprove} className="flex-1 px-3 py-1.5 rounded-lg bg-[#c96442] text-white text-[12px] font-medium hover:bg-[#b5593a] transition">Approve</button>
+              <button type="button" onClick={onDeny} className="flex-1 px-3 py-1.5 rounded-lg border border-white/10 text-slate-300 text-[12px] hover:bg-white/5 transition">Deny</button>
+            </div>
+          </motion.div>
+        )}
 
         {running && (
           <div className="flex items-center gap-2 text-slate-500">

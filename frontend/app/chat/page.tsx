@@ -63,6 +63,7 @@ export default function ChatPage() {
   const [statusMsg, setStatusMsg] = useState('')
   const [liveUser, setLiveUser] = useState<{ content: string; image?: string } | null>(null)
   const [liveSteps, setLiveSteps] = useState<LiveStep[]>([])
+  const [pendingApproval, setPendingApproval] = useState<{ toolName: string; approve: (ok: boolean) => Promise<any> } | null>(null)
   const [liveArtifacts, setLiveArtifacts] = useState<ArtifactRef[]>([])
   const [toolCount, setToolCount] = useState(0)
 
@@ -227,6 +228,19 @@ export default function ChatPage() {
           )
         },
         onArtifact: (a) => setLiveArtifacts((prev) => [...prev, a]),
+        onPendingApproval: (toolName, args, _prompt) => {
+          // Build the approval fetch URL with the current conversation id.
+          const approve = (approved: boolean) =>
+            axios.post(`${API_URL}/api/agent/${convId}/approve`, { toolName, approved }, { headers: authHeaders(false) }).catch(() => undefined)
+          setLiveSteps((prev) => {
+            const idx = Date.now()
+            const next = [...prev]
+            next.push({ index: idx, kind: 'tool', text: '', tool: { name: toolName, args, source: 'approval' } })
+            return next
+          })
+          // Store the resolve function for the approval UI to call.
+          setPendingApproval({ toolName, approve })
+        },
         onError: (m) => setStatusMsg(`⚠️ ${m}`),
         onFinal: () => {},
         onDone: () => {},
@@ -407,6 +421,9 @@ export default function ChatPage() {
             steps={liveSteps}
             artifacts={liveArtifacts}
             toolCount={toolCount}
+            pendingApproval={pendingApproval}
+            onApprove={() => { pendingApproval?.approve(true).then(() => setPendingApproval(null)) }}
+            onDeny={() => { pendingApproval?.approve(false).then(() => setPendingApproval(null)) }}
             onClose={() => setComputerOpen(false)}
           />
         )}
