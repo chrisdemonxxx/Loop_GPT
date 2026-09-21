@@ -10,6 +10,7 @@ import { generateImageTool } from './tools/generateImage'
 import { generateVideoTool } from './tools/generateVideo'
 import { createDocumentTool } from './tools/createDocument'
 import { transcribeTool } from './tools/transcribe'
+import { searchKnowledgeTool } from './tools/searchKnowledge'
 import { speakTool } from './tools/speakText'
 import { ocrTool } from './tools/ocr'
 
@@ -24,6 +25,7 @@ const BUILTIN_TOOLS = [
   transcribeTool,
   speakTool,
   ocrTool,
+  searchKnowledgeTool,
 ]
 
 export function registerBuiltinTools() {

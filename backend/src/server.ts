@@ -52,6 +52,7 @@ import { requestLog, recentRequests, metricsSummary, activeStreamCount } from '.
 import { initAgent } from './agent'
 import { filesRouter, imageUploadRouter, rejectLegacyUploads } from './routes/files'
 import workspaceRoutes from './routes/workspaces'
+import { projectRouter } from './routes/projects'
 import { oauthConnectorRouter } from './routes/oauthConnector'
 
 
@@ -83,6 +84,7 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
 // Credential-bearing workspace requests have their own small parser and error
 // boundary; do not send parse errors/bodies through general request logging.
 app.use('/api/workspaces', rateLimiter(15 * 60 * 1000, 100), workspaceRoutes)
+app.use('/api/workspaces', projectRouter)
 
 // 75MB so /v1/media/publish can carry base64 video payloads (≈50MB decoded cap on the route).
 app.use(express.json({ limit: '75mb' }))
