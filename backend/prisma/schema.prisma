@@ -102,6 +102,7 @@ model KnowledgeChunk {
   userId         String
   conversationId String?
   content        String
+  embedding      Json?
   createdAt      DateTime  @default(now())
 
   @@index([userId])
