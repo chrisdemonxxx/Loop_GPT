@@ -12,6 +12,7 @@ import { createDocumentTool } from './tools/createDocument'
 import { transcribeTool } from './tools/transcribe'
 import { searchKnowledgeTool } from './tools/searchKnowledge'
 import { rememberTool } from './tools/remember'
+import { generateStyleTool } from './tools/generateStyle'
 import { speakTool } from './tools/speakText'
 import { ocrTool } from './tools/ocr'
 
@@ -28,6 +29,7 @@ const BUILTIN_TOOLS = [
   ocrTool,
   searchKnowledgeTool,
   rememberTool,
+  generateStyleTool,
 ]
 
 export function registerBuiltinTools() {

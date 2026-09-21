@@ -90,4 +90,6 @@ export interface RunAgentOptions {
   systemPrompt?: string
   maxSteps?: number
   ctx: ToolContext
+  /** Optional style preset (system prompt snippet from UserStyle). */
+  style?: string
 }

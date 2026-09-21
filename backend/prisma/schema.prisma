@@ -60,6 +60,7 @@ model User {
   payments      Payment[]
   tokens        Token[]
   memories      Memory[]
+  styles        UserStyle[]
   mediaJobs     MediaJob[]
   apiKeys       ApiKey[]
   apiUsage      ApiUsage[]
@@ -185,6 +186,23 @@ model Memory {
 
   @@index([userId])
   @@index([projectId])
+}
+
+/// User-defined writing styles: named presets with a system prompt snippet and
+/// optional temperature override. Styles are injected into the agent context
+/// when a conversation has an active style.
+model UserStyle {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  systemPrompt String  @default("")
+  temperature Float?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
 }
 
 /// Prepaid balance top-ups (Stripe payment-mode checkout, voucher, or admin grant).

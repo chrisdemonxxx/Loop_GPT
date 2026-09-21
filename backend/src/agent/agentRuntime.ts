@@ -177,6 +177,7 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
   const sys = [
     preamble,
     systemPrompt,
+    opts.style,
     guardrailsEnabled ? CONFIDENTIALITY_PROMPT : '',
     hasTools ? buildToolGuide(tools) : '',
     qwenSuffix,

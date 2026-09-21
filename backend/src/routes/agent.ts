@@ -253,6 +253,7 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
           baseUrl,
           toolNames: selectedNames,
           systemPrompt,
+          style: req.body?.style || undefined,
           ctx: authorizedCtx,
           beforeDispatch,
         })
