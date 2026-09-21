@@ -28,6 +28,6 @@ export default {
       eas: { projectId: '4efa483b-7940-4bb3-b075-33d9a306a1ba' },
     },
     owner: 'mmaadd2x5s-team',
-    plugins: ['./app.plugin'],
+    plugins: ['./app.plugin.js'],
   },
 }
