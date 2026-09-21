@@ -5,7 +5,7 @@
 server:
   port: 8080
   bind_address: "0.0.0.0"
-  secret_key: "$SEARXNG_SECRET"    # set in Space Secrets
+  secret_key: "change-me-please"    # override in Space secrets
   base_url: "$SEARXNG_BASE_URL"
   limiter: false                    # internal access only → no public rate limit
 
