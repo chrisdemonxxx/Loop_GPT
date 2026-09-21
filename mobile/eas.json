@@ -2,9 +2,7 @@
   "cli": { "version": ">= 12.0.0" },
   "build": {
     "android-store": { "android": { "buildType": "app-bundle" }, "env": { "APP_VARIANT": "store" } },
-    "android-direct": { "android": { "buildType": "apk" }, "env": { "APP_VARIANT": "direct" } },
-    "ios-store": { "ios": { "buildType": "store" }, "env": { "APP_VARIANT": "store" } },
-    "ios-direct": { "ios": { "buildType": "release" }, "env": { "APP_VARIANT": "direct" } }
+    "android-direct": { "android": { "buildType": "apk" }, "env": { "APP_VARIANT": "direct" } }
   },
   "submit": {
     "android-store": {},

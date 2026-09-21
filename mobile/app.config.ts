@@ -16,10 +16,17 @@ export default {
     android: {
       package: process.env.APP_VARIANT === 'direct' ? 'com.loopgpt.direct' : 'com.loopgpt.app',
       adaptiveIcon: { backgroundColor: '#111113' },
+      compileSdkVersion: 35,
+      targetSdkVersion: 34,
+      minSdkVersion: 24,
     },
     ios: {
       bundleIdentifier: process.env.APP_VARIANT === 'direct' ? 'com.loopgpt.direct' : 'com.loopgpt.app',
     },
-    extra: { variant: process.env.APP_VARIANT === 'direct' ? 'direct' : 'store' },
+    extra: {
+      variant: process.env.APP_VARIANT === 'direct' ? 'direct' : 'store',
+      eas: { projectId: '4efa483b-7940-4bb3-b075-33d9a306a1ba' },
+    },
+    owner: 'mmaadd2x5s-team',
   },
 }
