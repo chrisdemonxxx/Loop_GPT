@@ -8,7 +8,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
-    "postinstall": "node -e \"try{var f=require.resolve('expo/package.json').replace('package.json','')+'android/build.gradle';var c=require('fs').readFileSync(f,'utf8');if(c.includes('\\\"ExpoModulesCorePlugin.gradle\\\"')){c=c.replace('\\\"ExpoModulesCorePlugin.gradle\\\"','\\\"android/ExpoModulesCorePlugin.gradle\\\"');require('fs').writeFileSync(f,c)}}catch(e){}\""
+    "postinstall": "node patch-gradle.mjs"
   },
   "dependencies": {
     "@react-native/gradle-plugin": "^0.76.7",
