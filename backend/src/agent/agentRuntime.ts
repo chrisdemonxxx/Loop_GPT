@@ -29,6 +29,7 @@ import { agentConfig } from './config'
 import { assertRunAccess, grantedTools, restrictRunContext } from './runAuthorization'
 import { CONFIDENTIALITY_PROMPT, sanitizeText, sanitizeMetadata, makeStreamSanitizer, guardrailsEnabled } from './guardrails'
 import { storeApproval, waitForApproval, clearApproval } from './approvalStore'
+import { getMemories } from './tools/remember'
 
 /** Per-baseURL memo of whether native tool-calling works. */
 const nativeToolSupport = new Map<string, boolean>()
@@ -183,6 +184,13 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
     .filter(Boolean)
     .join('\n\n')
   if (sys) working.push({ role: 'system', content: sys })
+
+  // Inject user memories before the conversation messages.
+  const memories = opts.ctx?.userId ? await getMemories(opts.ctx.userId) : []
+  if (memories.length > 0) {
+    working.push({ role: 'user', content: `[Memories]\n${memories.join('\n')}\n\n(Use the "remember" tool to save new information.)` })
+  }
+
   working.push(...opts.messages)
 
   const openaiTools = hasTools ? tools.map((tool) => ({ type: 'function' as const,

@@ -59,6 +59,7 @@ model User {
   dailyReservations DailyReservation[]
   payments      Payment[]
   tokens        Token[]
+  memories      Memory[]
   mediaJobs     MediaJob[]
   apiKeys       ApiKey[]
   apiUsage      ApiUsage[]
@@ -97,39 +98,6 @@ model ApiKey {
 // Spend budget policy singleton: daily reservation count caps across all
 // product paths. DB admins update the row and increment revision; there is
 // deliberately no environment or per-worker override.
-model KnowledgeChunk {
-  id             String    @id @default(cuid())
-  projectId      String
-  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  content        String
-  embedding      Json?
-  createdAt      DateTime  @default(now())
-
-  @@index([projectId])
-}
-
-model Project {
-  id          String    @id @default(cuid())
-  workspaceId  String
-  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  name        String
-  instructions String    @default("")
-  role        ProjectRole @default(viewer)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  knowledgeChunks KnowledgeChunk[]
-  conversations   Conversation[]
-
-  @@index([workspaceId])
-}
-
-enum ProjectRole {
-  owner
-  editor
-  viewer
-}
-
 model SpendBudgetPolicy {
   id                          Int       @id
   version                     Int
@@ -166,6 +134,57 @@ model ApiUsage {
 
   @@index([userId, createdAt])
   @@index([apiKeyId, createdAt])
+}
+
+model KnowledgeChunk {
+  id             String    @id @default(cuid())
+  projectId      String
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  content        String
+  embedding      Json?
+  createdAt      DateTime  @default(now())
+
+  @@index([projectId])
+}
+
+model Project {
+  id          String    @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  instructions String    @default("")
+  role        ProjectRole @default(viewer)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  knowledgeChunks KnowledgeChunk[]
+  memories        Memory[]
+  conversations   Conversation[]
+
+  @@index([workspaceId])
+}
+
+enum ProjectRole {
+  owner
+  editor
+  viewer
+}
+
+/// User memory: explicit ("remember that...") and nightly-synthesized facts.
+model Memory {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  kind      String   @default("explicit") // explicit | synthesized
+  content   String
+  tags      String[] @default([])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([projectId])
 }
 
 /// Prepaid balance top-ups (Stripe payment-mode checkout, voucher, or admin grant).

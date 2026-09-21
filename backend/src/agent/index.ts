@@ -11,6 +11,7 @@ import { generateVideoTool } from './tools/generateVideo'
 import { createDocumentTool } from './tools/createDocument'
 import { transcribeTool } from './tools/transcribe'
 import { searchKnowledgeTool } from './tools/searchKnowledge'
+import { rememberTool } from './tools/remember'
 import { speakTool } from './tools/speakText'
 import { ocrTool } from './tools/ocr'
 
@@ -26,6 +27,7 @@ const BUILTIN_TOOLS = [
   speakTool,
   ocrTool,
   searchKnowledgeTool,
+  rememberTool,
 ]
 
 export function registerBuiltinTools() {
