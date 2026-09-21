@@ -27,6 +27,31 @@ async function imageResponse(response: Awaited<ReturnType<typeof providerRequest
 
 async function hfImageEndpoint(prompt: string, op: MediaOperation, beforeDispatch: () => Promise<void>, imageBase64?: string, strength = 0.75): Promise<Buffer> {
   const endpoint = mediaUrl(process.env.HF_IMAGE_ENDPOINT_URL || '')
+
+  // Gradio Space detection — the endpoint URL ends with .hf.space
+  if (endpoint.includes('.hf.space')) {
+    const gradioUrl = endpoint.replace(/\/+$/, '') + '/run/predict'
+    const payload = { data: [prompt, imageBase64 || null], event_data: null }
+    const auth = mediaAuth(endpoint)
+    await beforeDispatch()
+    const res = await providerRequest(gradioUrl, { ...auth, method: 'POST',
+      headers: { ...auth.headers, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      signal: op.signal, timeoutMs: op.remaining(180000), maxBytes: IMAGE_RESPONSE_BYTES,
+    })
+    op.check()
+    const data = await res.json()
+    const output = data?.data?.[0]
+    if (typeof output === 'string') {
+      if (output.startsWith('http')) {
+        const imgRes = await providerRequest(mediaUrl(output), { signal: op.signal, timeoutMs: op.remaining(60000), maxBytes: IMAGE_RESPONSE_BYTES })
+        return checkedMedia(imgRes.body)
+      }
+      return decodeMedia(output)
+    }
+    if (Buffer.isBuffer(output)) return checkedMedia(output)
+    throw new Error('Missing image data from Gradio Space')
+  }
+
   const payload: any = { inputs: prompt, parameters: { num_inference_steps: 28, guidance_scale: 3.5 } }
   if (imageBase64) { payload.image = imageBase64; payload.parameters.strength = strength }
   const auth = mediaAuth(endpoint)

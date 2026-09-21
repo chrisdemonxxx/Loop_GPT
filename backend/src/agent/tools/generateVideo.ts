@@ -52,6 +52,24 @@ async function generateVideoFromEndpoint(prompt: string, image: string | undefin
   const endpoint = mediaUrl(process.env.VIDEO_API_URL || process.env.HF_VIDEO_ENDPOINT_URL || '')
   const auth = mediaAuth(endpoint)
   await beforeDispatch()
+
+  // Gradio Space detection
+  if (endpoint.includes('.hf.space')) {
+    const gradioUrl = endpoint.replace(/\/+$/, '') + '/run/predict'
+    const payload = { data: [prompt, image || null, numFrames, fps, width, height], event_data: null }
+    const res = await providerRequest(gradioUrl, { ...auth, method: 'POST',
+      headers: { ...auth.headers, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      signal: op.signal, timeoutMs: op.remaining(300000), maxBytes: VIDEO_RESPONSE_BYTES,
+    })
+    op.check()
+    const data = await res.json()
+    const output = data?.data?.[0]
+    if (typeof output === 'string' && output.startsWith('http')) return downloadVideo(endpoint, output, op)
+    if (typeof output === 'string') return decodeMedia(output)
+    if (Buffer.isBuffer(output)) return checkedMedia(output)
+    throw new Error('Missing video data from Gradio Space')
+  }
+
   const response = await providerRequest(endpoint, { ...auth, method: 'POST',
     headers: { ...auth.headers, 'Content-Type': 'application/json', Accept: 'video/mp4, application/json' },
     body: JSON.stringify({ inputs: prompt, parameters: { num_frames: numFrames, fps, width, height,
