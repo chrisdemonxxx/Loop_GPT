@@ -99,13 +99,35 @@ model ApiKey {
 // deliberately no environment or per-worker override.
 model KnowledgeChunk {
   id             String    @id @default(cuid())
-  userId         String
-  conversationId String?
+  projectId      String
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   content        String
   embedding      Json?
   createdAt      DateTime  @default(now())
 
-  @@index([userId])
+  @@index([projectId])
+}
+
+model Project {
+  id          String    @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  instructions String    @default("")
+  role        ProjectRole @default(viewer)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  knowledgeChunks KnowledgeChunk[]
+  conversations   Conversation[]
+
+  @@index([workspaceId])
+}
+
+enum ProjectRole {
+  owner
+  editor
+  viewer
 }
 
 model SpendBudgetPolicy {
@@ -253,6 +275,8 @@ model Conversation {
   privateFiles PrivateFile[]
   workspaceId String?
   workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  projectId String?
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -505,6 +529,7 @@ model Workspace {
   connections WorkspaceConnection[]
   conversations Conversation[]
   auditEvents WorkspaceAuditEvent[]
+  projects Project[]
 }
 
 enum WorkspaceRole {
