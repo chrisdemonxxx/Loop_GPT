@@ -151,7 +151,43 @@ export function getSkillSource(id: string): string | null {
   return fm
 }
 
-/** Update (or create) a user skill by id, writing SKILL.md. */
+/** Version snapshots for a user skill (brief §2.4): on every overwrite the
+ * current SKILL.md is archived to <dir>/history/<ts>.md (last 10 kept). */
+const HISTORY_CAP = 10
+function snapshotSkill(id: string): void {
+  try {
+    const file = path.join(USER_SKILL_DIR, id, 'SKILL.md')
+    if (!fs.existsSync(file)) return
+    const histDir = path.join(USER_SKILL_DIR, id, 'history')
+    fs.mkdirSync(histDir, { recursive: true })
+    const ts = new Date().toISOString().replace(/[:.]/g, '-')
+    fs.writeFileSync(path.join(histDir, `${ts}.md`), fs.readFileSync(file))
+    const entries = fs.readdirSync(histDir).filter((f) => f.endsWith('.md')).sort()
+    for (const old of entries.slice(0, Math.max(0, entries.length - HISTORY_CAP))) {
+      fs.unlinkSync(path.join(histDir, old))
+    }
+  } catch { /* versioning must never break a save */ }
+}
+
+/** List saved versions (newest first) for a user skill. */
+export function listSkillVersions(id: string): Array<{ version: string; at: string; chars: number }> {
+  try {
+    const histDir = path.join(USER_SKILL_DIR, id, 'history')
+    if (!fs.existsSync(histDir)) return []
+    return fs.readdirSync(histDir)
+      .filter((f) => f.endsWith('.md'))
+      .sort()
+      .reverse()
+      .map((f) => ({
+        version: f.replace(/\.md$/, ''),
+        at: f.replace(/\.md$/, '').replace(/(\d{4})-(\d{2})-(\d{2})T/, '$1-$2-$2 ').replace(/-/g, ':').slice(0, 19),
+        chars: fs.statSync(path.join(histDir, f)).size,
+      }))
+  } catch { return [] }
+}
+
+/** Update (or create) a user skill by id, writing SKILL.md (snapshotting the
+ * previous version first). */
 export function updateUserSkill(id: string, input: {
   name: string
   description: string
@@ -162,8 +198,34 @@ export function updateUserSkill(id: string, input: {
   if (BUILTIN_SKILLS.some((s) => s.id === id)) return null
   const safeId = id.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 48)
   if (!safeId) return null
+  snapshotSkill(safeId)
   const skill = createUserSkill({ id: safeId, ...input })
   return skill
+}
+
+/** Restore a user skill from a saved version (re-snapshots the current first). */
+export function revertSkill(id: string, version: string): Skill | null {
+  try {
+    if (BUILTIN_SKILLS.some((s) => s.id === id)) return null
+    const histFile = path.join(USER_SKILL_DIR, id, 'history', path.basename(version) + '.md')
+    if (!fs.existsSync(histFile)) return null
+    const raw = fs.readFileSync(histFile, 'utf-8')
+    const fm = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
+    if (!fm) return null
+    const meta: Record<string, string> = {}
+    for (const line of fm[1].split('\n')) {
+      const idx = line.indexOf(':')
+      if (idx > 0) meta[line.slice(0, idx).trim()] = line.slice(idx + 1).trim()
+    }
+    snapshotSkill(id)
+    return updateUserSkill(id, {
+      name: meta.name || id,
+      description: meta.description || '',
+      instructions: fm[2].trim(),
+      triggers: meta.triggers ? meta.triggers.split(',').map((t) => t.trim()).filter(Boolean) : undefined,
+      tools: meta.tools ? meta.tools.split(',').map((t) => t.trim()).filter(Boolean) : undefined,
+    })
+  } catch { return null }
 }
 
 /**

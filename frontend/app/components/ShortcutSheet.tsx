@@ -15,10 +15,25 @@ const SHORTCUTS = [
   { keys: '/', label: 'Commands (in chat box)' },
 ]
 
-export function ShortcutSheet() {
-  const [open, setOpen] = useState(false)
+interface Props {
+  /** When provided, the sheet is controlled by the parent and the `?` hotkey
+   *  is bound to `onOpenChange(true)`. When omitted, the sheet manages its
+   *  own open state via the `?` key. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+}
+
+export function ShortcutSheet({ open: controlledOpen, onOpenChange }: Props = {}) {
+  const [internalOpen, setInternalOpen] = useState(false)
+  const isControlled = controlledOpen !== undefined && onOpenChange !== undefined
+  const open = isControlled ? controlledOpen : internalOpen
+  const setOpen = (next: boolean) => {
+    if (isControlled) onOpenChange!(next)
+    else setInternalOpen(next)
+  }
+
   useHotkey({ key: '?' }, () => setOpen(true))
-  useHotkey({ key: 'Escape' }, () => { if (open) { setOpen(false) } })
+  useHotkey({ key: 'Escape' }, () => { if (open) setOpen(false) })
 
   return (
     <AnimatePresence>

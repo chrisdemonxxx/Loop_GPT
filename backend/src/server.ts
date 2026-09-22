@@ -168,6 +168,24 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 
+// Nightly memory synthesis (brief §2.3 / GAP-044): 03:00 server time.
+// Extracts durable user facts from recent conversations into Memory rows
+// (kind 'synthesized', source 'agent'). Env kill-switch:
+// MEMORY_SYNTHESIS_ENABLED=false. Manual trigger: admin route below.
+import { runMemorySynthesis, synthesisEnabled } from './services/memorySynthesis'
+import cron from 'node-cron'
+if (synthesisEnabled()) {
+  cron.schedule('0 3 * * *', async () => {
+    try {
+      const r = await runMemorySynthesis()
+      console.log(`[memory-synthesis] users=${r.usersConsidered} processed=${r.usersProcessed} created=${r.memoriesCreated} errors=${r.errors}`)
+    } catch (e: any) {
+      console.error('[memory-synthesis] failed:', e?.message)
+    }
+  })
+  console.log('[memory-synthesis] scheduled nightly at 03:00')
+}
+
 // Report errors to Sentry (no-op without SENTRY_DSN), then log.
 if (process.env.SENTRY_DSN) {
   Sentry.setupExpressErrorHandler(app)

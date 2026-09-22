@@ -61,6 +61,15 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
   const [ingestMsg, setIngestMsg] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // Escape closes the modal — must work even when focus is in a textarea
+  // (e.g. the project name input), so we listen on document, not via useHotkey
+  // (which intentionally skips when the target is an INPUT/TEXTAREA).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   async function load() {
     if (!workspaceId) { setProjects([]); setLoading(false); return }
     setLoading(true)
@@ -84,11 +93,20 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
       const project = await res.json()
       // Optional seed knowledge from the creation flow.
       for (const file of seedFiles) {
-        const text = await readTextFile(file).catch(() => '')
-        if (text.trim()) {
-          await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${project.id}/ingest`, {
-            method: 'POST', headers: authHeaders(), body: JSON.stringify({ text }),
+        const isDoc = /\.(pdf|docx|xlsx)$/i.test(file.name)
+        if (isDoc) {
+          const fd = new FormData()
+          fd.append('file', file)
+          await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${project.id}/ingest-file`, {
+            method: 'POST', headers: authHeaders(false) as Record<string, string>, body: fd,
           }).catch(() => {})
+        } else {
+          const text = await readTextFile(file).catch(() => '')
+          if (text.trim()) {
+            await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${project.id}/ingest`, {
+              method: 'POST', headers: authHeaders(), body: JSON.stringify({ text }),
+            }).catch(() => {})
+          }
         }
       }
       setForm({ name: '', instructions: '' }); setSeedFiles([]); setSeedMsg('')
@@ -120,15 +138,35 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
     if (!workspaceId || !files.length) return
     setIngestMsg(`Reading ${files.length} file${files.length > 1 ? 's' : ''}…`)
     let indexed = 0
+    let failures = 0
     for (const file of files.slice(0, 5)) {
-      const text = await readTextFile(file).catch(() => '')
-      if (!text.trim()) { setIngestMsg(`${file.name}: not a readable text file`); continue }
-      const res = await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${id}/ingest`, {
-        method: 'POST', headers: authHeaders(), body: JSON.stringify({ text }),
-      }).catch(() => null)
-      if (res?.ok) indexed++
+      const isDoc = /\.(pdf|docx|xlsx)$/i.test(file.name)
+      try {
+        let res: Response | null = null
+        if (isDoc) {
+          // Documents extract server-side (PDF/DOCX/XLSX).
+          const fd = new FormData()
+          fd.append('file', file)
+          res = await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${id}/ingest-file`, {
+            method: 'POST', headers: authHeaders(false) as Record<string, string>, body: fd,
+          })
+        } else {
+          // Plain text formats parse in the browser, as before.
+          const text = await readTextFile(file).catch(() => '')
+          if (!text.trim()) { failures++; continue }
+          res = await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${id}/ingest`, {
+            method: 'POST', headers: authHeaders(), body: JSON.stringify({ text }),
+          })
+        }
+        if (res?.ok) indexed++
+        else {
+          failures++
+          const err = await res?.json().catch(() => null)
+          if (err?.error) setIngestMsg(`${file.name}: ${err.error}`)
+        }
+      } catch { failures++ }
     }
-    setIngestMsg(indexed ? `Indexed ${indexed} file${indexed > 1 ? 's' : ''}.` : 'No files could be indexed.')
+    setIngestMsg(indexed ? `Indexed ${indexed} file${indexed > 1 ? 's' : ''}${failures ? ` (${failures} failed)` : ''}.` : 'No files could be indexed.')
     load()
   }
 
@@ -142,7 +180,14 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold text-slate-100">Projects</h2>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-300" aria-label="Close"><X size={16} /></button>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="p-1.5 -m-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/5 transition"
+          >
+            <X size={16} />
+          </button>
         </div>
 
         {/* Create — dedicated flow */}
@@ -168,12 +213,12 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
                 >
                   <Upload size={20} className="text-slate-500" />
                   <span className="text-[13px] text-slate-300">Upload knowledge files</span>
-                  <span className="text-[11px] text-slate-600">.txt · .md · .csv (parsed in your browser)</span>
+                  <span className="text-[11px] text-slate-600">.txt · .md · .csv · .pdf · .docx · .xlsx</span>
                 </button>
                 <input
                   ref={fileRef}
                   type="file"
-                  accept=".txt,.md,.markdown,.csv,text/plain,text/markdown,text/csv"
+                  accept=".txt,.md,.markdown,.csv,.pdf,.docx,.xlsx,text/plain,text/markdown,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                   multiple
                   className="hidden"
                   onChange={(e) => { const f = Array.from(e.target.files || []); setSeedFiles(f); setSeedMsg(f.length ? `${f.length} file(s) ready to index` : ''); e.target.value = '' }}
@@ -244,13 +289,13 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
                       <button
                         onClick={() => fileRef.current?.click()}
                         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] bg-white/[0.05] text-slate-200 hover:bg-white/[0.09] transition"
-                      ><FileText size={12} /> Upload .txt / .md / .csv</button>
+                      ><FileText size={12} /> Upload text or document files</button>
                       <span className="text-[11px] text-slate-600">or paste text:</span>
                     </div>
                     <input
                       ref={fileRef}
                       type="file"
-                      accept=".txt,.md,.markdown,.csv,text/plain,text/markdown,text/csv"
+                      accept=".txt,.md,.markdown,.csv,.pdf,.docx,.xlsx,text/plain,text/markdown,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                       multiple
                       className="hidden"
                       onChange={(e) => { ingestFiles(p.id, Array.from(e.target.files || [])); e.target.value = '' }}

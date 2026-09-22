@@ -5,7 +5,7 @@ import {
   Plus, Send, X, Zap, ClipboardCheck, Check, ChevronDown, ListChecks,
   Paperclip, Image as ImageIcon, Camera, Plug, Search, MessageSquare,
   FilePlus, RotateCcw, Download as DownloadIcon, Settings2 as Settings2Icon,
-  Mic, Square, FolderKanban, Blocks, Puzzle, Cable,
+  Mic, Square, FolderKanban, Blocks, Puzzle, Cable, FileText,
 } from 'lucide-react'
 import type { AgentMode } from '../../lib/api'
 import { API_URL, authHeaders } from '../../lib/api'
@@ -28,6 +28,7 @@ export type RunMode = 'auto' | 'plan' | 'step' | 'accept'
 interface ComposerProps {
   input: string
   imagePreviews: string[]
+  docNames: string[]
   running: boolean
   runMode: RunMode
   showSlash: boolean
@@ -39,6 +40,7 @@ interface ComposerProps {
   onStop: () => void
   onImagesSelected: (files: File[]) => void
   onRemoveImage: (index: number) => void
+  onRemoveDoc: (index: number) => void
   onTogglePlus: () => void
   onClosePlus: () => void
   onToggleModeMenu: () => void
@@ -61,10 +63,10 @@ const MODES: Array<{ id: RunMode; label: string; hint: string; icon: any }> = [
 ]
 
 export default function Composer({
-  input, imagePreviews, running, runMode,
+  input, imagePreviews, docNames, running, runMode,
   showSlash, showPlus, showModeMenu,
   onInputChange, onSelectSlashCommand, onSend, onStop,
-  onImagesSelected, onRemoveImage,
+  onImagesSelected, onRemoveImage, onRemoveDoc,
   onTogglePlus, onClosePlus, onToggleModeMenu, onCloseModeMenu,
   onRunModeChange, onOpenConnectors, onOpenSettingsTab, toolSelectionCount,
 }: ComposerProps) {
@@ -170,7 +172,7 @@ export default function Composer({
         </div>
       )}
 
-      {/* Image previews (up to four) */}
+      {/* Attachment previews: images + document chips (up to four total) */}
       {imagePreviews.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
           {imagePreviews.map((src, i) => (
@@ -182,6 +184,19 @@ export default function Composer({
                 aria-label={`Remove image ${i + 1}`}
                 className="absolute -top-1.5 -right-1.5 p-1 bg-[#1a1a1d] rounded-full text-slate-300 border border-white/10 hover:bg-[#222226]"
               >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {docNames.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-2">
+          {docNames.map((name, i) => (
+            <div key={name + i} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-white/10 bg-white/[0.03]">
+              <FileText size={13} className="text-slate-400 shrink-0" />
+              <span className="text-[12px] text-slate-200 truncate max-w-[180px]">{name}</span>
+              <button type="button" onClick={() => onRemoveDoc(i)} aria-label={`Remove ${name}`} className="p-0.5 text-slate-500 hover:text-rose-400">
                 <X size={12} />
               </button>
             </div>
@@ -206,7 +221,7 @@ export default function Composer({
       )}
 
       {/* Hidden file inputs */}
-      <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={handleImageChange} className="hidden" />
+      <input ref={fileInputRef} type="file" accept="image/*,.pdf,.docx,.xlsx,.csv,.txt,.md,.markdown" multiple onChange={handleImageChange} className="hidden" />
       <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageChange} className="hidden" />
 
       {/* Input form */}

@@ -167,6 +167,13 @@ export async function readOwnedImage(userId: string, conversationId: string, id:
   return { reference: fileReference(file), dataUri: `data:${mime};base64,${buffer.toString('base64')}` }
 }
 
+/** Read an owned extracted-text attachment (chat document upload companion). */
+export async function readOwnedDocumentText(userId: string, conversationId: string, id: string) {
+  const { file, buffer } = await readOwnedFile(userId, id, conversationId)
+  if (file.mimeType !== 'text/plain') throw new FileAccessError(415, 'Attachment is not an extracted text document')
+  return { name: file.name.replace(/\.extracted\.txt$/i, ''), text: buffer.toString('utf8') }
+}
+
 const PUBLISH_TOKEN = /^[a-f0-9]{32}$/
 
 /** Publish a view-only link. Idempotent: re-publishing keeps the same token. */

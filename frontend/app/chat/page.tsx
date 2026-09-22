@@ -59,18 +59,20 @@ export default function ChatPage() {
 
   const [selectedImages, setSelectedImages] = useState<File[]>([])
   const [imagePreviews, setImagePreviews] = useState<string[]>([])
+  const [selectedDocs, setSelectedDocs] = useState<File[]>([])
   // null = all tools (server default); a set = an explicit per-chat selection.
   const [selectedTools, setSelectedTools] = useState<Set<string> | null>(null)
   // Projects
   const [projectsOpen, setProjectsOpen] = useState(false)
   const [researchOpen, setResearchOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [workspaceId, setWorkspaceId] = useState<string | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
 
   const [running, setRunning] = useState(false)
   const [statusMsg, setStatusMsg] = useState('')
-  const [liveUser, setLiveUser] = useState<{ content: string; image?: string; images?: string[] } | null>(null)
+  const [liveUser, setLiveUser] = useState<{ content: string; image?: string; images?: string[]; docs?: string[] } | null>(null)
   const [liveSteps, setLiveSteps] = useState<LiveStep[]>([])
   const [pendingApproval, setPendingApproval] = useState<{ toolName: string; approve: (ok: boolean) => Promise<any> } | null>(null)
   const [liveArtifacts, setLiveArtifacts] = useState<ArtifactRef[]>([])
@@ -221,26 +223,46 @@ export default function ChatPage() {
     } catch { return undefined }
   }
 
+  /** Documents (PDF/DOCX/XLSX/CSV/TXT/MD) — extracted server-side; the
+   * returned attachment id inlines the text into the prompt. */
+  async function uploadDocument(convId: string, file: File): Promise<string | undefined> {
+    const fd = new FormData()
+    fd.append('document', file)
+    try {
+      const res = await axios.post(`${API_URL}/api/conversations/${convId}/upload-document`, fd, { headers: authHeaders(false) })
+      return res.data.attachmentId
+    } catch (e: any) {
+      setStatusMsg(`⚠️ ${file.name}: ${e?.response?.data?.error || 'could not read this document'}`)
+      return undefined
+    }
+  }
+
   async function handleSend(e?: React.FormEvent) {
     e?.preventDefault()
-    if ((!input.trim() && !selectedImages.length) || running) return
+    if ((!input.trim() && !selectedImages.length && !selectedDocs.length) || running) return
     const { mode: sendMode, text: content, tools: commandTools } = parseCommand(input.trim())
-    if (!content && !selectedImages.length) return
+    if (!content && !selectedImages.length && !selectedDocs.length) return
 
     setMode(sendMode)
     setShowSlash(false); setShowPlus(false); setShowModeMenu(false)
+    // Surface deep-research runs in the side panel so the user can watch
+    // progress and read the cited report instead of it living only in chat.
+    if (sendMode === 'research') setResearchOpen(true)
     const images = selectedImages
+    const docs = selectedDocs
     const previews = imagePreviews
-    setInput(''); setSelectedImages([]); setImagePreviews([])
+    setInput(''); setSelectedImages([]); setImagePreviews([]); setSelectedDocs([])
     setRunning(true); setStatusMsg(''); setLiveSteps([]); setLiveArtifacts([])
     autoOpenedRef.current = false
-    setLiveUser({ content, image: previews[0], images: previews })
+    setLiveUser({ content, image: previews[0], images: previews, docs: docs.map((d) => d.name) })
     track('message_sent', { mode: sendMode })
 
     let convId: string | null = null
     try {
       convId = await ensureConversation(content)
-      const attachmentIds = (await Promise.all(images.map((f) => uploadImage(convId!, f)))).filter(Boolean) as string[]
+      const imageIds = (await Promise.all(images.map((f) => uploadImage(convId!, f)))).filter(Boolean) as string[]
+      const docIds = (await Promise.all(docs.map((f) => uploadDocument(convId!, f)))).filter(Boolean) as string[]
+      const attachmentIds = [...imageIds, ...docIds]
       const abort = new AbortController()
       abortRef.current = abort
 
@@ -311,19 +333,27 @@ export default function ChatPage() {
     }
   }
 
-  /** Add up to four images at once; previews are read locally. */
+  /** Add up to four attachments at once. Images preview locally; documents
+   * (PDF/DOCX/XLSX/CSV/TXT/MD) show as chips and are extracted server-side. */
   function handleImagesSelected(files: File[]) {
     const images = files.filter((f) => f.type.startsWith('image/'))
-    if (!images.length) return
-    setSelectedImages((prev) => {
-      const next = [...prev, ...images].slice(0, 4)
-      return next
-    })
-    for (const file of images.slice(0, Math.max(0, 4 - selectedImages.length))) {
-      const r = new FileReader()
-      r.onloadend = () => setImagePreviews((prev) => (prev.length >= 4 ? prev : [...prev, r.result as string]))
-      r.readAsDataURL(file)
+    const docs = files.filter((f) => !f.type.startsWith('image/') && /\.(pdf|docx|xlsx|csv|txt|md|markdown)$/i.test(f.name))
+    const slots = Math.max(0, 4 - selectedImages.length - selectedDocs.length)
+    if (images.length) {
+      setSelectedImages((prev) => [...prev, ...images].slice(0, 4))
+      for (const file of images.slice(0, slots)) {
+        const r = new FileReader()
+        r.onloadend = () => setImagePreviews((prev) => (prev.length >= 4 ? prev : [...prev, r.result as string]))
+        r.readAsDataURL(file)
+      }
     }
+    if (docs.length) {
+      setSelectedDocs((prev) => [...prev, ...docs.slice(0, Math.max(0, 4 - prev.length))].slice(0, 4))
+    }
+  }
+
+  function removeDoc(index: number) {
+    setSelectedDocs((prev) => prev.filter((_, i) => i !== index))
   }
 
   function handleInputChange(value: string) {
@@ -580,6 +610,7 @@ export default function ChatPage() {
             <Composer
               input={input}
               imagePreviews={imagePreviews}
+              docNames={selectedDocs.map((d) => d.name)}
               running={running}
               runMode={runMode}
               showSlash={showSlash}
@@ -589,11 +620,12 @@ export default function ChatPage() {
               onSelectSlashCommand={handleSlashCommand}
               onSend={handleSend}
               onStop={stopRun}
-              onImagesSelected={handleImagesSelected}
-              onRemoveImage={(i) => {
-                setSelectedImages((prev) => prev.filter((_, idx) => idx !== i))
-                setImagePreviews((prev) => prev.filter((_, idx) => idx !== i))
-              }}
+               onImagesSelected={handleImagesSelected}
+               onRemoveImage={(i) => {
+                 setSelectedImages((prev) => prev.filter((_, idx) => idx !== i))
+                 setImagePreviews((prev) => prev.filter((_, idx) => idx !== i))
+               }}
+               onRemoveDoc={removeDoc}
               onTogglePlus={() => setShowPlus((v) => !v)}
               onClosePlus={() => setShowPlus(false)}
               onToggleModeMenu={() => setShowModeMenu((v) => !v)}
@@ -645,11 +677,11 @@ onToggleSidebar={() => setSidebarOpen((s) => !s)}
         onOpenSettings={() => { setSettingsTab(undefined); setShowSettings(true) }}
         onLogout={() => { logout(); setSidebarOpen(false) }}
       />
-      <ShortcutSheet />
+      <ShortcutSheet open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       <button
         type="button"
         aria-label="Keyboard shortcuts"
-        onClick={() => { /* The ShortcutSheet catches '?' key; this button is a visual hint */ }}
+        onClick={() => setShortcutsOpen(true)}
         className="fixed bottom-4 right-4 z-30 p-2 rounded-lg text-slate-600 hover:text-slate-400 hover:bg-white/[0.04] transition text-[12px] font-mono"
         title="Keyboard shortcuts (?)"
       >

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Copy, Check, Edit2, RotateCcw, FileDown, Loader2, Sparkles, X, Maximize2, Volume2, Pause, Square } from 'lucide-react'
+import { Copy, Check, Edit2, RotateCcw, FileDown, FileText, Loader2, Sparkles, X, Maximize2, Volume2, Pause, Square } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { API_URL, authHeaders, type AgentMode } from '../../lib/api'
 import { type ArtifactRef } from '../../lib/stream'
@@ -90,7 +90,7 @@ interface Message {
 
 interface MessageListProps {
   messages: Message[]
-  liveUser: { content: string; image?: string; images?: string[] } | null
+  liveUser: { content: string; image?: string; images?: string[]; docs?: string[] } | null
   liveSteps: LiveStep[]
   liveAnswer: string
   liveArtifacts: ArtifactRef[]
@@ -152,6 +152,15 @@ export default function MessageList({
                       ))}
                     </div>
                   )}
+                  {liveUser.docs?.length ? (
+                    <div className="flex flex-wrap gap-1.5 mb-2.5">
+                      {liveUser.docs.map((name) => (
+                        <span key={name} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-white/10 bg-white/[0.04] text-[11px] text-slate-300">
+                          <FileText size={11} className="text-slate-400" /> {name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                   <div className="whitespace-pre-wrap text-slate-100 text-[15px] leading-relaxed">
                     {liveUser.content}
                   </div>

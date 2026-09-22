@@ -5,7 +5,8 @@
 import express from 'express'
 import { asyncHandler } from '../middleware/errorLogger'
 import { z } from 'zod'
-import { readOwnedImage } from '../services/privateFiles'
+import { readOwnedImage, readOwnedDocumentText, FileAccessError } from '../services/privateFiles'
+import { documentInline } from '../services/documentText'
 import { fileErrorResponse } from './files'
 import { authenticateToken } from './auth'
 import { getHistory, saveMessage } from '../services/chatStore'
@@ -13,7 +14,7 @@ import { prepareRunConversation } from '../services/runWorkspace'
 import { WorkspaceError } from '../services/workspaces'
 import { authorizeRunContext } from '../agent/runAuthorization'
 import { availableTools } from '../agent'
-import { getAllSkills, createUserSkill, deleteUserSkill, getActiveSkills, getSkill, getSkillSource, updateUserSkill } from '../agent/skills/skillLoader'
+import { getAllSkills, createUserSkill, deleteUserSkill, getActiveSkills, getSkill, getSkillSource, updateUserSkill, listSkillVersions, revertSkill } from '../agent/skills/skillLoader'
 import { configStore } from '../agent/configStore'
 import { pluginRegistry } from '../agent/plugins/pluginLoader'
 import { connectorRegistry } from '../agent/connectors/connectorRegistry'
@@ -135,6 +136,23 @@ router.put('/skills/:id', authenticateToken, (req, res) => {
   if (!skill) return res.status(400).json({ error: 'Built-in skills cannot be edited' })
   const set = new Set(configStore.getEnabledSkills()); set.add(skill.id); configStore.setEnabledSkills([...set])
   res.json({ id: skill.id, name: skill.name, description: skill.description, enabled: true, builtin: false })
+})
+
+/** Skill version history (brief §2.4 — snapshots kept on every edit). */
+router.get('/skills/:id/versions', authenticateToken, (req, res) => {
+  noStore(res)
+  res.json({ versions: listSkillVersions(req.params.id) })
+})
+
+/** Revert a user skill to a saved version (current is snapshotted first). */
+router.post('/skills/:id/revert', authenticateToken, (req, res) => {
+  noStore(res)
+  const version = String(req.body?.version || '')
+  if (!version) return res.status(400).json({ error: 'version is required' })
+  const skill = revertSkill(req.params.id, version)
+  if (!skill) return res.status(400).json({ error: 'Unknown version or built-in skill' })
+  const set = new Set(configStore.getEnabledSkills()); set.add(skill.id); configStore.setEnabledSkills([...set])
+  res.json({ ok: true, id: skill.id, name: skill.name })
 })
 
 router.get('/plugins', authenticateToken, (_req, res) => { noStore(res); res.json(pluginRegistry.list()) })
@@ -384,11 +402,25 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
   try {
     if (lifecycle.disconnected()) return
     // Read every attached image (up to 4) — all are sent as image parts.
+    // Non-image attachments fall back to extracted-text documents (PDF/DOCX/
+    // XLSX uploads) and are inlined into the prompt instead.
     const images: Awaited<ReturnType<typeof readOwnedImage>>[] = []
+    const documents: Array<{ name: string; text: string }> = []
     for (const id of attachmentIds) {
-      try { images.push(await readOwnedImage(userId, conversationId, id)) }
-      catch (error) {
-        if (!lifecycle.disconnected()) return fileErrorResponse(error, res)
+      try {
+        images.push(await readOwnedImage(userId, conversationId, id))
+      } catch (imageError) {
+        if (imageError instanceof FileAccessError && imageError.status === 415) {
+          try {
+            const doc = await readOwnedDocumentText(userId, conversationId, id)
+            documents.push(doc)
+            continue
+          } catch (docError) {
+            if (!lifecycle.disconnected()) return fileErrorResponse(docError, res)
+            return
+          }
+        }
+        if (!lifecycle.disconnected()) return fileErrorResponse(imageError, res)
         return
       }
     }
@@ -417,7 +449,13 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
         promptMeta = await optimizePromptDetailed(raw, modalityOf(mode))
       } catch { /* fail-open: raw */ }
     }
-    const content = promptMeta.enhanced
+    let content = promptMeta.enhanced
+
+    // Inline extracted document text (chat attachments) into the model prompt.
+    if (documents.length) {
+      const blocks = documents.map((d) => documentInline(d.name, d.text)).join('\n\n')
+      content = content ? `${blocks}\n\n${content}` : blocks
+    }
 
     if (content && detectExtractionAttempt(content)) {
       console.warn(`[guardrails] possible prompt-extraction attempt from user ${userId}`)

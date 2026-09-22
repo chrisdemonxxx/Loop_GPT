@@ -5,6 +5,7 @@ import Composer from '../Composer'
 const base = {
   input: '',
   imagePreviews: [] as string[],
+  docNames: [] as string[],
   running: false,
   runMode: 'auto' as 'auto' | 'plan' | 'step' | 'accept',
   showSlash: false,
@@ -16,6 +17,7 @@ const base = {
   onStop: () => {},
   onImagesSelected: () => {},
   onRemoveImage: () => {},
+  onRemoveDoc: () => {},
   onTogglePlus: () => {},
   onClosePlus: () => {},
   onToggleModeMenu: () => {},

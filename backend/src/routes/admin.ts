@@ -251,4 +251,13 @@ router.post('/payments', asyncHandler(async (req, res) => {
   res.json({ ok: true, payment })
 }))
 
+/** POST /api/admin/memory-synthesis/run — trigger the nightly memory
+ * synthesis pass immediately (verification/ops tool). */
+router.post('/memory-synthesis/run', asyncHandler(async (_req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { runMemorySynthesis } = await import('../services/memorySynthesis')
+  const result = await runMemorySynthesis()
+  res.json({ ok: true, result })
+}))
+
 export default router
