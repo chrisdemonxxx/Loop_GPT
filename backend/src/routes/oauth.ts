@@ -168,7 +168,8 @@ oauthRouter.post('/reset', asyncHandler(async (req, res) => {
   const userId = await consumeToken(String(token || ''), 'reset')
   if (!userId || !prisma) return res.status(400).json({ error: 'Invalid or expired reset link.' })
   const hashed = await bcrypt.hash(String(password), 10)
-  await prisma.user.update({ where: { id: userId }, data: { password: hashed } })
+  // Stamp the invalidation instant: every JWT issued before now is rejected.
+  await prisma.user.update({ where: { id: userId }, data: { password: hashed, sessionInvalidatedAt: new Date() } })
   res.json({ ok: true })
 }))
 

@@ -35,6 +35,9 @@ model User {
   creditsResetAt   DateTime @default(now())
   // Master toggle: use memory across conversations (Settings → Memory).
   memoryEnabled    Boolean  @default(true)
+  // Password-reset session invalidation: JWTs issued before this instant are
+  // rejected by authenticateToken ("old sessions invalidated on reset").
+  sessionInvalidatedAt DateTime?
   // Consent to use interactions for product improvement / model training.
   consentTraining  Boolean  @default(false)
 

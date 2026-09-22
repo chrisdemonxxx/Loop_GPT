@@ -20,6 +20,7 @@
  */
 import express from 'express'
 import { asyncHandler } from '../middleware/errorLogger'
+import { authenticateToken } from './auth'
 import crypto from 'crypto'
 import { encryptConnectionConfig } from '../services/credentialVault'
 import { prisma } from '../services/prisma'
@@ -78,7 +79,7 @@ export function oauthRedirectUri(): string {
 // ---------------------------------------------------------------------------
 // POST /api/oauth-connector/init/:connectorType — start the OAuth flow
 // ---------------------------------------------------------------------------
-oauthConnectorRouter.post('/init/:connectorType', asyncHandler(async (req, res) => {
+oauthConnectorRouter.post('/init/:connectorType', authenticateToken, asyncHandler(async (req, res) => {
   const userId = (req as any).userId
   const workspaceId = req.body?.workspaceId
   const connectorType = req.params.connectorType

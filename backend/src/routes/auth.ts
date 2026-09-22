@@ -112,7 +112,7 @@ export const authenticateToken = (req: express.Request, res: express.Response, n
   const authHeader = req.headers.authorization
   const token = typeof authHeader === 'string' ? /^Bearer ([^\s]+)$/i.exec(authHeader)?.[1] : undefined
   const isDevMode = process.env.NODE_ENV === 'development' && process.env.ENABLE_DEV_MODE === 'true'
-  
+
   if (isDevMode && authHeader === undefined) {
     // Use a default test user ID for development
     ;(req as any).userId = 'dev-user-123'
@@ -123,14 +123,30 @@ export const authenticateToken = (req: express.Request, res: express.Response, n
     return res.status(401).json({ error: 'No token provided' })
   }
 
-  jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }, (err: any, decoded: any) => {
+  jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }, async (err: any, decoded: any) => {
     if (err || !decoded || typeof decoded === 'string' || typeof decoded.userId !== 'string' ||
         decoded.userId.trim().length === 0 || decoded.userId.length > 128) {
       return res.status(401).json({ error: 'Invalid token' })
     }
     ;(req as any).userId = decoded.userId
+    // Password-reset invalidation: reject tokens issued before the user's
+    // last reset. One indexed read; fail-open on DB errors (the signature is
+    // already verified) so a transient DB blip doesn't lock users out.
+    if (prisma && typeof decoded.iat === 'number') {
+      try {
+        const user = await prisma.user.findUnique({ where: { id: decoded.userId }, select: { sessionInvalidatedAt: true } })
+        if (user?.sessionInvalidatedAt && tokenPredatesReset(decoded.iat, user.sessionInvalidatedAt)) {
+          return res.status(401).json({ error: 'Session expired after a password reset. Please sign in again.' })
+        }
+      } catch { /* fail open */ }
+    }
     next()
   })
+}
+
+/** True when a JWT's issued-at (seconds) predates the reset instant. */
+export function tokenPredatesReset(iatSeconds: number, sessionInvalidatedAt: Date): boolean {
+  return iatSeconds * 1000 < sessionInvalidatedAt.getTime()
 }
 
 /**
