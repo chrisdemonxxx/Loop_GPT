@@ -2,35 +2,43 @@
 
 Measured against the master spec (Section 4), reuse-first. Format: GAP-ID | Title | Priority | Effort | Depends | HF resource | Acceptance | Status.
 
+Status legend: **Working** = ran and observed; **Built (unverified)** = code + tests exist, live provider not yet exercised; **Partial**; **Missing**.
+
 ## P0 — no keys needed
-- GAP-001 | Artifact auth rendering (image/video display + download) | P0 | S | none | none | images/videos render inline and download with correct name/MIME via authed fetch→blob | Broken (fixing now)
-- GAP-002 | Attach-menu consolidation + take-a-screenshot | P0 | S | none | none | exactly one photo/file entry; screenshot capture real or absent; zero duplicates | Duplicate (fixing now)
-- GAP-003 | UI design pass | P0 | L | none | none | axe-core AA, visual review, premium tokens/motion | Missing
+- GAP-001 | Artifact auth rendering (image/video display + download) | P0 | S | none | none | images/videos render inline and download with correct name/MIME via authed fetch→blob | **Working** — `MessageList.tsx` `useAuthedUrl`/`downloadArtifact`; videos now play inline via `<video controls>`; backend maps `mp4/webm → kind:'video'` (`agent/artifacts.ts`).
+- GAP-002 | Attach-menu consolidation + take-a-screenshot | P0 | S | none | none | exactly one photo/file entry; screenshot capture real or absent; zero duplicates | **Working** — one `+` menu (`Composer.tsx:196-205`), real `getDisplayMedia` capture gated on capability.
+- GAP-003 | UI design pass | P0 | L | none | none | axe-core AA, visual review, premium tokens/motion | **Partial** — tokens/motion/reduced-motion/focus rings present; automated axe pass pending.
+- GAP-026 | Extension routes re-mounted (skills/plugins/connectors/MCP/custom-tools) | P0 | M | none | none | UI config tabs no longer 410 | **Working** — `routes/agent.ts` management routes + `initAgent()` registry init; `src/routes/__tests__/agentConfig.test.ts` (8 tests) green.
 
 ## P1 — provider wiring (endpoints you provision; keys last)
-- GAP-004 | Image+text generation (unrestricted FLUX-Kontext; investigate flux-h3-chain) | P1 | M | GAP-001 | dedicated image endpoint | text→image AND reference+text→edit reflecting reference | Missing
-- GAP-005 | Video ref2lock (uncensored Wan2.x I2V; extend video schema with referenceImageId[]) | P1 | L | GAP-001, GAP-004 | dedicated/on-demand video endpoint | before/after reference-consistency documented | Missing
-- GAP-006 | Backend prompt auto-optimizer (fast-tier, per-modality, cached, toggle-reveal) | P1 | M | none | fast-tier endpoint (live) | optimizer invisible by default; raw retained; toggle shows enhanced | Missing
-- GAP-007 | Embeddings+reranker+pgvector (bge-m3 + bge-reranker-v2-m3) | P1 | M | pgvector migration | embeddings endpoint or serverless | reranked cited retrieval | Missing
-- GAP-008 | SearXNG Docker Space + search pipeline with rerank; Brave→Tavily fallback | P1 | M | GAP-007 | HF Space (create) | cited research run; blocked-engine fallback | Missing
-- GAP-009 | OCR (GOT-OCR2_0) · ASR (whisper-large-v3-turbo) · TTS (Kokoro-82M) | P1 | M | none | per-task endpoints | each tool round-trips real input→output | Missing
-- GAP-010 | Key flips: Stripe payments, email, OAuth | P1 | S | your keys | none | honest 503s → fully live | Built, gated
+- GAP-004 | Image+text generation (unrestricted FLUX-Kontext) | P1 | M | GAP-001 | dedicated image endpoint | text→image AND reference+text→edit reflecting reference | **Built (unverified)** — `generate_image` tool + Gradio-Space/endpoint/router/sidecar fallbacks; per-modality prompt optimization; live endpoint pending (`HF_IMAGE_ENDPOINT_URL`).
+- GAP-005 | Video ref2lock (uncensored Wan2.x I2V) | P1 | L | GAP-001, GAP-004 | dedicated/on-demand video endpoint | before/after reference-consistency documented | **Partial** — `generate_video` accepts a single reference plus a `reference_images[]` array (first anchors identity, extras are style refs; forwarded to the endpoint, first to the Gradio Space); consistency evidence needs a live endpoint.
+- GAP-006 | Prompt auto-optimizer (per-modality, toggle-reveal) | P1 | M | none | fast-tier endpoint | invisible by default; raw retained; toggle shows enhanced | **Working (unit)** — `services/promptOptimizer.ts` per-modality; chat stores raw + sends enhanced and returns `metadata.prompt`; UI toggle in `MessageList.tsx`; image/video tools optimize their own prompt. Tests green.
+- GAP-007 | Embeddings+reranker (+ vector retrieval) | P1 | M | migration | embeddings endpoint | reranked cited retrieval | **Built (unverified)** — `services/embeddingStore.ts` (bge-m3 + bge-reranker-v2-m3), project `search_knowledge` tool; store uses `jsonb` (no pgvector extension).
+- GAP-008 | SearXNG Docker Space + search pipeline w/ rerank; fallbacks | P1 | M | GAP-007 | HF Space (create) | cited research run; blocked-engine fallback | **Working (unit)** — `webSearch.ts` order SearXNG → Brave → Tavily → DDG → Bing; candidate rerank via bge-reranker (fail-open); `SEARXNG_URL`/`SEARXNG_TOKEN`. Space template in `deploy/space-searxng/`; deploy pending.
+- GAP-009 | OCR · ASR · TTS | P1 | M | none | per-task endpoints | each tool round-trips real input→output | **Built (unverified)** — `ocr` (GOT-OCR2_0), `transcribe` (whisper-large-v3-turbo), `speak` (Kokoro-82M), each with dedicated-endpoint override.
+- GAP-010 | Key flips: Stripe payments, email, OAuth | P1 | S | your keys | none | honest 503s → fully live | **Built, gated** (unchanged).
 
 ## P2 — the platform
-- GAP-011 | Sandbox (Docker+gVisor, caps, egress fence, no host mounts) | P2 | XL | none | none | real isolated code execution | Missing
-- GAP-012 | Agent Computer on sandbox | P2 | M | GAP-011 | none | streamed real output/files | Missing
-- GAP-013 | Connectors/MCP (workspace-scoped, vault OAuth 2.1+PKCE, approval cards pausing stream, SSRF protection, ≥3 real) | P2 | XL | vault (exists) | none | tool discovery + live approval flow | Missing
-- GAP-014 | Skills (SKILL.md, enable/disable, progressive disclosure, versioning) | P2 | M | GAP-011 | none | one skill end-to-end | Missing
-- GAP-015 | Plugins (manifest/loader/lifecycle/permissions + one real example) | P2 | L | GAP-011 | none | one plugin end-to-end | Missing
-- GAP-016 | Agentic tool loop (native function calling both tiers, parallel tools, budget guards, trace UI, write-approval gating, interrupt/resume) | P2 | XL | GAP-013/014 | both chat endpoints (live) | visible trace + approval gating | Missing
-- GAP-017 | Multi-agent fleet (fast-tier subagents, flagship synthesis, shared scratchpad, fleet dashboard; Research mode = first real use) | P2 | XL | GAP-016/018 | both chat endpoints | multi-step cited research, resumable, live subagents | Missing
-- GAP-018 | Durable task engine (steps/checkpoints/resume/deadlines beyond video) | P2 | L | none | none | resumable multi-step run | Missing
-- GAP-019 | Projects (instructions, knowledge base, retrieval threshold, sharing roles) | P2 | L | GAP-007 | none | project-scoped cited chat | Missing
-- GAP-020 | Artifacts panel (sandboxed iframe, strict CSP, separate origin, versioning/diff/restore, publish) | P2 | L | GAP-001 | none | versioned artifact preview | Missing
-- GAP-021 | Memory (explicit + nightly synthesized, scoped, editable, incognito excluded) | P2 | M | fast-tier (live) | none | remember/recall + editing works | Missing
-- GAP-022 | Styles (presets + generate-from-sample via fast tier) | P2 | M | fast-tier (live) | none | style applied in a response | Missing
+- GAP-011 | Sandbox (Docker+gVisor, caps, egress fence, no host mounts) | P2 | XL | none | none | real isolated code execution | **Working (unit)** — `agent/tools/executeCode.ts`: Docker (`--network none`, memory/cpu/pids caps, `--read-only`+tmpfs) with host-subprocess fallback; scrubbed env; wall-clock kill; file artifacts. Docker detected and used in tests.
+- GAP-012 | Agent Computer on sandbox | P2 | M | GAP-011 | none | streamed real output/files | **Built (unverified)** — `execute_code` emits `status` + artifacts; `AgentComputer.tsx` renders the live feed.
+- GAP-013 | Connectors/MCP (workspace-scoped, OAuth 2.1+PKCE, approval cards, SSRF, ≥3 real) | P2 | XL | vault | none | tool discovery + live approval flow | **Built (unit)** — GitHub + HTTP + catalog adapters, Notion/GitLab reviewed adapters, real MCP client (stdio + StreamableHTTP), OAuth 2.1+PKCE, approval card pauses the stream; per-tool permission levels (allow/approval/blocked) enforced in the loop + a bounded tool-call audit log (`GET /api/agent/audit`, Settings → Tools).
+- GAP-014 | Skills (SKILL.md, enable/disable, progressive disclosure, versioning) | P2 | M | GAP-011 | none | one skill end-to-end | **Working** — `skillLoader` (SKILL.md + YAML frontmatter, the Anthropic open standard) + config routes (list/create/**GET detail w/ raw source**/**PUT update**/toggle/delete) + enabled skills injected; Settings → Skills card UI with detail view, Edit-source editor, live preview, and the `create_skill` meta-tool for natural-language creation; versioning pending.
+- GAP-015 | Plugins (manifest/loader/lifecycle/permissions + example) | P2 | L | GAP-011 | none | one plugin end-to-end | **Built (unit)** — loader with a real `text-utils` plugin; enable/disable route; install/update lifecycle + isolation pending.
+- GAP-016 | Agentic tool loop | P2 | XL | GAP-013/014 | both chat endpoints | visible trace + approval gating | **Working** — `agentRuntime.ts`: native + inline calling, parallel calls/turn, `maxSteps`, approval gate incl. **step mode** ("Ask before each action" — `requiresInteractivePause`), trace UI.
+- GAP-017 | Multi-agent fleet (Research = first real use) | P2 | XL | GAP-016/018 | both chat endpoints | multi-step cited research, resumable, live subagents | **Partial** — `deepResearch.ts` 5-phase fleet (flagship plan/synthesis, parallel fast sub-agents) with citations; shared scratchpad table pending.
+- GAP-018 | Durable task engine | P2 | L | none | none | resumable multi-step run | **Built (unit)** — `ResearchRun` model + migration + `services/researchRuns.ts` (decoupled from the response, persists progress/report, read API). Live DB apply pending.
+- GAP-019 | Projects | P2 | L | GAP-007 | none | project-scoped cited chat | **Working (UI)** — schema + routes + `projectId` on conversations + `search_knowledge`; first-class sidebar section, Claude-style cards, dedicated creation flow, knowledge file upload (.txt/.md/.csv client-side parse).
+- GAP-020 | Artifacts panel | P2 | L | GAP-001 | none | versioned artifact preview | **Built (unit)** — `ArtifactsPanel` wired into the chat header; version grouping + line-level compare, sandboxed `<iframe srcDoc sandbox>` HTML preview, and view-only public publish/unpublish (`POST/DELETE /api/files/:id/publish`, anonymous `/api/files/public/:token/content`). Restore pending.
+- GAP-021 | Memory | P2 | M | fast-tier | none | remember/recall + editing | **Working** — Memory model (now with `source: user|agent`) + `remember` tool (agent-sourced) + context injection gated by `User.memoryEnabled` + `routes/memory.ts` (list/create/edit/delete/reset + `GET/POST /enabled`); Settings → Memory redesigned (toggle, search, per-item edit/delete, source badges, tag groups, empty state).
+- GAP-022 | Styles | P2 | M | fast-tier | none | style applied in a response | **Working** — UserStyle + `generate_style` tool + `/api/styles` incl. `POST /from-sample` + injection; Settings → **Personalization** (preset gallery, custom style flow, sample-based creation, voice preferences).
+- GAP-027 | Model selector + capability badges | P2 | S | catalog | none | pick tier per turn | **Built (unit)** — `ModelSelector.tsx` reads `/api/models/catalog`; tier sent as `model`; badges (context/tools/vision).
 
 ## P3 — deploy & harden
-- GAP-023 | Single-GPU consolidation + routing math (quantized footprint × precision + KV-cache + concurrency; small tasks to CPU/serverless; explicit if flagship+video can't share one GPU) | P3 | L | all P1 | single HF GPU endpoint | production routing documented | Missing
-- GAP-024 | Store builds (EAS signing, Play/App Store listings, Direct builds) | P3 | M | your dev accounts | none | signed AAB/APK/IPA | Missing
-- GAP-025 | Cutover (IaC, backups/restore rehearsal, monitoring, capacity/load/abuse, domain/TLS with rollback, credential rotation) | P3 | XL | GAP-023 | none | production cutover with rollback | Missing
+- GAP-023 | Single-GPU consolidation + routing math | P3 | L | all P1 | single HF GPU endpoint | production routing documented | **Missing**.
+- GAP-024 | Store builds (EAS signing, listings, Direct) | P3 | M | your dev accounts | none | signed AAB/APK/IPA | **Missing**.
+- GAP-025 | Cutover (IaC, backups/restore, monitoring, load, domain/TLS, rotation) | P3 | XL | GAP-023 | none | production cutover with rollback | **Missing**.
+- GAP-028 | pgvector extension (vs jsonb) | P3 | S | none | none | ANN index on knowledge chunks | **Built (unverified)** — migration enables `vector`, adds `embeddingVec vector(1024)` + ivfflat index; ingest mirrors the vector, search uses `<=>` with an in-app cosine fallback (`services/vectorSearch.ts`). Live DB apply pending.
+
+## New environment variables
+`SEARXNG_URL`, `SEARXNG_TOKEN`, `SEARCH_RERANK=false`, `SANDBOX_DOCKER` (true|false), `SANDBOX_NETWORK=true`, `SANDBOX_PYTHON`/`SANDBOX_NODE`, `HF_OPTIMIZER_ENDPOINT_URL`/`HF_OPTIMIZER_MODEL`, `AGENT_DATA_DIR`, `AGENT_SKILLS_DIR`.
