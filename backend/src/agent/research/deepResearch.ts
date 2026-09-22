@@ -21,6 +21,7 @@ import type { ChatMessage, ToolContext } from '../types'
 import { agentConfig } from '../config'
 import { assertRunAccess } from '../runAuthorization'
 import { resolveChatTarget, smartRouteTask } from '../../services/chatModels'
+import { loadScratchpad, saveScratchpad } from '../../services/researchScratchpad'
 import {
   CONFIDENTIALITY_PROMPT,
   sanitizeText,
@@ -387,11 +388,21 @@ export async function runDeepResearch(opts: DeepResearchOptions): Promise<DeepRe
 
   let step = 0
 
+  // Scratchpad (GAP-046): resume interrupted runs from the last completed
+  // phase instead of re-running (and re-paying for) searches and fetches.
+  const scratch = await loadScratchpad(ctx.userId, query)
+
   // ── Phase 1: Plan (flagship/DeepSeek → better reasoning for diverse angles) ──
-  ctx.emit({ type: 'warming', message: 'Planning research angles (flagship model)…' })
-  if (ctx.signal?.aborted) throw new Error('Research cancelled')
-  await opts.beforeDispatch?.()
-  const queries = await planQueries(flagshipClient, flagshipModel, query, maxQueries, ctx.signal)
+  let queries = scratch?.queries
+  if (queries?.length) {
+    ctx.emit({ type: 'warming', message: 'Resuming from saved research plan (scratchpad)…' })
+  } else {
+    ctx.emit({ type: 'warming', message: 'Planning research angles (flagship model)…' })
+    if (ctx.signal?.aborted) throw new Error('Research cancelled')
+    await opts.beforeDispatch?.()
+    queries = await planQueries(flagshipClient, flagshipModel, query, maxQueries, ctx.signal)
+    await saveScratchpad(ctx.userId, query, 'queries', queries)
+  }
 
   ctx.emit({
     type: 'tool_call',
@@ -408,21 +419,28 @@ export async function runDeepResearch(opts: DeepResearchOptions): Promise<DeepRe
   step++
 
   // ── Phase 2: Search (fast tier → multiple parallel sub‑agents) ───────────────
-  ctx.emit({ type: 'warming', message: `Deploying ${queries.length} sub‑agents across search angles…` })
-  const resultsPerQuery = Math.ceil(maxSources / queries.length) + 2
-  const hits = await runSearchPhase(queries, Math.min(resultsPerQuery, 8), step, ctx)
-  step += queries.length
+  let hits = scratch?.hits
+  if (hits?.length) {
+    ctx.emit({ type: 'warming', message: `Resuming with ${hits.length} cached search results…` })
+  } else {
+    ctx.emit({ type: 'warming', message: `Deploying ${queries.length} sub‑agents across search angles…` })
+    const resultsPerQuery = Math.ceil(maxSources / queries.length) + 2
+    hits = await runSearchPhase(queries, Math.min(resultsPerQuery, 8), step, ctx)
+    await saveScratchpad(ctx.userId, query, 'hits', hits)
+    step += queries.length
 
-  // ── Follow-up search if initial hits are thin ───────────────────────────────
-  if (hits.length < 6) {
-    ctx.emit({ type: 'warming', message: 'Initial results sparse — deploying additional parallel sub‑agents…' })
-    const followUps = [`"${query}" site:wikipedia.org OR site:britannica.com`, `${query} analysis report 2024 2025`]
-    const extras = await runSearchPhase(followUps, 5, step, ctx)
-    const seen = new Set(hits.map((h) => h.url))
-    for (const r of extras) {
-      if (!seen.has(r.url)) { seen.add(r.url); hits.push(r) }
+    // ── Follow-up search if initial hits are thin ─────────────────────────────
+    if (hits.length < 6) {
+      ctx.emit({ type: 'warming', message: 'Initial results sparse — deploying additional parallel sub‑agents…' })
+      const followUps = [`"${query}" site:wikipedia.org OR site:britannica.com`, `${query} analysis report 2024 2025`]
+      const extras = await runSearchPhase(followUps, 5, step, ctx)
+      const seen = new Set(hits.map((h) => h.url))
+      for (const r of extras) {
+        if (!seen.has(r.url)) { seen.add(r.url); hits.push(r) }
+      }
+      await saveScratchpad(ctx.userId, query, 'hits', hits)
+      step += followUps.length
     }
-    step += followUps.length
   }
 
   // ── Phase 3: Fetch sources ──────────────────────────────────────────────────
@@ -442,8 +460,14 @@ export async function runDeepResearch(opts: DeepResearchOptions): Promise<DeepRe
     return { content: msg, sources: [] }
   }
 
-  ctx.emit({ type: 'warming', message: `Reading top ${Math.min(hits.length, maxSources)} sources…` })
-  const sources = await fetchPhase(hits, maxSources, perSourceChars, step, ctx)
+  let sources = scratch?.sources
+  if (sources?.length) {
+    ctx.emit({ type: 'warming', message: `Resuming with ${sources.length} cached sources…` })
+  } else {
+    ctx.emit({ type: 'warming', message: `Reading top ${Math.min(hits.length, maxSources)} sources…` })
+    sources = await fetchPhase(hits, maxSources, perSourceChars, step, ctx)
+    await saveScratchpad(ctx.userId, query, 'sources', sources)
+  }
   step += sources.length
 
   // ── Phase 4: Claim verification (flagship model — needs strong reasoning) ──

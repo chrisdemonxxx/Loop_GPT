@@ -11,10 +11,14 @@ export type AgentMode = 'chat' | 'agent' | 'research'
 export interface StreamHandlers {
   onStatus?: (message: string) => void
   onDelta?: (text: string) => void
+  onThinking?: (text: string) => void
   onFinal?: (content: string) => void
   onError?: (message: string) => void
   onDone?: () => void
 }
+
+/** Run mode parity with the web composer (§7a). */
+export type RunMode = 'auto' | 'plan' | 'step' | 'accept'
 
 export function parseCommand(input: string): { mode: AgentMode; text: string } {
   const m = input.match(/^\/(research|chat|agent)\b[ \t]*/i)
@@ -25,7 +29,9 @@ export function parseCommand(input: string): { mode: AgentMode; text: string } {
   return { mode: 'agent', text: input }
 }
 
-export function runAgentStream(conversationId: string, body: { content: string; mode: AgentMode }, handlers: StreamHandlers): { cancel: () => void } {
+export function runAgentStream(conversationId: string, body: {
+  content: string; mode: AgentMode; runMode?: RunMode
+}, handlers: StreamHandlers): { cancel: () => void } {
   const xhr = new XMLHttpRequest()
   let consumed = 0
   let buffer = ''
@@ -33,6 +39,13 @@ export function runAgentStream(conversationId: string, body: { content: string; 
   xhr.setRequestHeader('Content-Type', 'application/json')
   const token = getToken()
   if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+  const runMode = body.runMode || 'auto'
+  const payload = {
+    content: body.content,
+    mode: body.mode,
+    ...(runMode === 'accept' ? { autoApprove: true } : {}),
+    ...(runMode === 'step' ? { stepMode: true } : {}),
+  }
   xhr.onprogress = () => {
     const chunk = xhr.responseText.slice(consumed)
     consumed = xhr.responseText.length
@@ -41,13 +54,14 @@ export function runAgentStream(conversationId: string, body: { content: string; 
     buffer = lines.pop() ?? ''
     for (const line of lines) {
       if (!line.startsWith('data:')) continue
-      const payload = line.slice(5).trim()
-      if (!payload) continue
-      if (payload === '[DONE]') { handlers.onDone?.(); return }
+      const data = line.slice(5).trim()
+      if (!data) continue
+      if (data === '[DONE]') { handlers.onDone?.(); return }
       try {
-        const ev = JSON.parse(payload)
+        const ev = JSON.parse(data)
         if (ev.type === 'status' && typeof ev.message === 'string') handlers.onStatus?.(ev.message)
         else if (ev.type === 'delta' && typeof ev.text === 'string') handlers.onDelta?.(ev.text)
+        else if (ev.type === 'thinking' && typeof ev.text === 'string') handlers.onThinking?.(ev.text)
         else if (ev.type === 'final' && typeof ev.content === 'string') handlers.onFinal?.(ev.content)
         else if (ev.type === 'error' && typeof ev.message === 'string') handlers.onError?.(ev.message)
         else if (ev.type === 'done') handlers.onDone?.()
@@ -65,6 +79,6 @@ export function runAgentStream(conversationId: string, body: { content: string; 
     handlers.onDone?.()
   }
   xhr.onerror = () => handlers.onError?.('Network error. Check your connection.')
-  xhr.send(JSON.stringify(body))
+  xhr.send(JSON.stringify(payload))
   return { cancel: () => xhr.abort() }
 }

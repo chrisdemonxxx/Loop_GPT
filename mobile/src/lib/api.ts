@@ -46,3 +46,51 @@ export const conversations = {
   messages: (id: string) => api<Message[]>(`/api/conversations/${id}/messages`),
   remove: (id: string) => api(`/api/conversations/${id}`, { method: 'DELETE' }),
 }
+
+// ── Workspaces + projects (parity with the web IA) ────────────────────────────
+export interface Workspace { id: string; personalOwnerId?: string }
+export interface Project {
+  id: string
+  name: string
+  instructions: string
+  _count?: { knowledgeChunks: number; conversations: number }
+}
+
+export const workspaces = {
+  personal: () => api<{ workspace: Workspace }>('/api/workspaces/personal', { method: 'POST', body: '{}' }),
+  list: () => api<{ workspaces: Workspace[] }>('/api/workspaces'),
+}
+
+export const projects = {
+  list: (workspaceId: string) => api<Project[]>(`/api/workspaces/${workspaceId}/projects`),
+  create: (workspaceId: string, name: string, instructions: string) =>
+    api<Project>(`/api/workspaces/${workspaceId}/projects`, { method: 'POST', body: JSON.stringify({ name, instructions }) }),
+  remove: (workspaceId: string, id: string) =>
+    api(`/api/workspaces/${workspaceId}/projects/${id}`, { method: 'DELETE' }),
+}
+
+// ── Settings surfaces (parity: memory, personalization, skills, connectors) ──
+export interface MemoryRow { id: string; content: string; source?: string; tags: string[]; updatedAt: string }
+export const memory = {
+  list: () => api<{ memories: MemoryRow[]; enabled: boolean }>('/api/memory'),
+  add: (content: string) => api('/api/memory', { method: 'POST', body: JSON.stringify({ content }) }),
+  remove: (id: string) => api(`/api/memory/${id}`, { method: 'DELETE' }),
+  setEnabled: (enabled: boolean) => api('/api/memory/enabled', { method: 'POST', body: JSON.stringify({ enabled }) }),
+}
+
+export interface StyleRow { id: string; name: string; isDefault: boolean }
+export const stylesApi = {
+  list: () => api<StyleRow[]>('/api/styles'),
+  makeDefault: (id: string) => api(`/api/styles/${id}`, { method: 'PATCH', body: JSON.stringify({ isDefault: true }) }),
+}
+
+export interface SkillRow { id: string; name: string; description: string; enabled: boolean; builtin?: boolean }
+export const skills = {
+  list: () => api<SkillRow[]>('/api/agent/skills'),
+  toggle: (id: string, enabled: boolean) => api(`/api/agent/skills/${id}`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+}
+
+export interface ConnectorRow { id: string; type: string; name: string; enabled: boolean; lastTestOk?: boolean | null }
+export const connectors = {
+  list: () => api<{ types: Array<{ type: string; name: string; oauth: boolean }>; configured: ConnectorRow[]; marketplace: Array<{ type: string; name: string }> }>('/api/agent/connectors'),
+}

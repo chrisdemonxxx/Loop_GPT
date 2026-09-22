@@ -66,6 +66,7 @@ model User {
   tokens        Token[]
   memories      Memory[]
   styles        UserStyle[]
+  researchScratchpads ResearchScratchpad[]
   researchRuns  ResearchRun[]
   mediaJobs     MediaJob[]
   apiKeys       ApiKey[]
@@ -214,6 +215,24 @@ model UserStyle {
   updatedAt   DateTime @updatedAt
 
   @@index([userId])
+}
+
+/// Research scratchpad (GAP-046): per-phase deep-research state keyed by
+/// normalized query, so interrupted runs resume from the last completed
+/// phase instead of re-running searches/fetches. Rows expire after 24h.
+model ResearchScratchpad {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  queryHash String
+  query     String
+  queries   Json?
+  hits      Json?
+  sources   Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, queryHash])
 }
 
 /// A durable deep-research run. The orchestrator persists progress and the final
