@@ -41,6 +41,7 @@
     "node-fetch": "2.7.0",
     "nodemailer": "^9.0.3",
     "openai": "^4.20.1",
+    "otplib": "^13.5.0",
     "pdf-parse": "^1.1.1",
     "pdfkit": "^0.15.0",
     "pptxgenjs": "^3.12.0",

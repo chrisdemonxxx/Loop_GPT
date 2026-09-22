@@ -55,6 +55,8 @@ export interface AccountView {
   limits: { credits: number; imageCredits: number }
   usage: { tokensIn: number; tokensOut: number; images: number; messages: number }
   hasDb: boolean
+  /** TOTP MFA state (brief P2) — surfaced to the account page. */
+  totpEnabled?: boolean
 }
 
 /**
@@ -77,6 +79,7 @@ export async function getAccount(userId: string): Promise<AccountView | null> {
     imageCredits: user.imageCredits,
     creditsResetAt: user.creditsResetAt.toISOString(),
     limits: lim,
+    totpEnabled: !!(user as any).totpEnabled,
     usage: {
       tokensIn: Number(user.tokensInTotal),
       tokensOut: Number(user.tokensOutTotal),

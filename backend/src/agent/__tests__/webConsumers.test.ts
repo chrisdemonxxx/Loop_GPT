@@ -31,6 +31,10 @@ describe('web consumers use the public-network boundary', () => {
   })
   it('sends Tavily credentials only to its fixed origin and bounds results', async () => {
     vi.stubEnv('TAVILY_API_KEY', 'fixture-tavily-key')
+    // This test exercises credential routing + bounding, not the reranker:
+    // with 13 candidates > 2 requested, refineResults would otherwise call the
+    // real rerank endpoint (network → flaky 20s timeouts under CI contention).
+    vi.stubEnv('SEARCH_RERANK', 'false')
     requests.post.mockResolvedValue({ results: [
       { url: 'http://127.0.0.1/admin', title: 'Private' },
       ...Array.from({ length: 12 }, (_, i) => ({ url: `https://public.example.com/${i}`, title: 't'.repeat(700), content: 'c'.repeat(10000) })),

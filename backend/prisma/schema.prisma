@@ -35,6 +35,9 @@ model User {
   creditsResetAt   DateTime @default(now())
   // Master toggle: use memory across conversations (Settings → Memory).
   memoryEnabled    Boolean  @default(true)
+  // TOTP MFA (brief P2): when enabled, login requires password + a 6-digit code.
+  totpEnabled     Boolean  @default(false)
+  totpSecret      String?
   // Password-reset session invalidation: JWTs issued before this instant are
   // rejected by authenticateToken ("old sessions invalidated on reset").
   sessionInvalidatedAt DateTime?

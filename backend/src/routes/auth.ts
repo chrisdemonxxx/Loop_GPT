@@ -70,7 +70,7 @@ router.post('/register', validate(validationSchemas.register), async (req, res) 
 router.post('/login', validate(validationSchemas.login), async (req, res) => {
   try {
     if (!prisma) return res.status(503).json({ error: 'Login requires a database (set DATABASE_URL).' })
-    const { email, password } = req.body
+    const { email, password, totp } = req.body
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' })
@@ -88,6 +88,17 @@ router.post('/login', validate(validationSchemas.login), async (req, res) => {
 
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid credentials' })
+    }
+
+    // TOTP MFA (brief P2): valid password alone is not enough when enabled.
+    if (user.totpEnabled && user.totpSecret) {
+      const { verifySync } = await import('otplib')
+      if (!totp || !/^\d{6}$/.test(String(totp))) {
+        return res.status(401).json({ error: 'Enter your 6-digit authenticator code.', totpRequired: true })
+      }
+      if (!verifySync({ token: String(totp), secret: user.totpSecret, epochTolerance: 30 }).valid) {
+        return res.status(401).json({ error: 'That authenticator code is not valid.', totpRequired: true })
+      }
     }
 
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' })

@@ -306,6 +306,14 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
                       {ingestMsg && <span className="text-[11px] text-slate-400">{ingestMsg}</span>}
                     </div>
                   </div>
+                ) : (p._count?.knowledgeChunks ?? 0) === 0 ? (
+                  /* Empty knowledge → surface the upload action INLINE (P2 discoverability). */
+                  <button
+                    onClick={() => { setIngestFor(p.id); setIngestMsg('') }}
+                    className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-[#c96442]/30 text-[12.5px] text-[#e79d7f] hover:bg-[#c96442]/[0.06] transition"
+                  >
+                    <Upload size={13} /> Upload knowledge — no knowledge yet
+                  </button>
                 ) : (
                   <button
                     onClick={() => { setIngestFor(ingestFor === p.id ? null : p.id); setIngestMsg('') }}

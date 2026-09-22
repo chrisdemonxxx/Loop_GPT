@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { Copy, Check, Edit2, RotateCcw, FileDown, FileText, Loader2, Sparkles, X, Maximize2, Volume2, Pause, Square, Brain } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { API_URL, authHeaders, type AgentMode } from '../../lib/api'
@@ -249,6 +250,7 @@ function EmptyState({ onStartPrompt }: { onStartPrompt?: (p: string) => void }) 
         <p className="text-slate-500 text-[14px] max-w-sm mx-auto">
           Type <span className="font-mono text-slate-400 bg-white/[0.05] px-1.5 py-0.5 rounded text-[13px]">/</span> for
           deep research. <span className="font-mono text-slate-400 bg-white/[0.05] px-1.5 py-0.5 rounded text-[13px]">⌘K</span> for commands.
+          New here? <Link href="/onboarding" className="text-[#e79d7f] hover:underline">Take the 2-minute tour →</Link>
         </p>
 
         {/* Starter prompt cards */}

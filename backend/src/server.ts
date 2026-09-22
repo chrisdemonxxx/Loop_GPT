@@ -42,6 +42,7 @@ import accountRoutes from './routes/account'
 import adminRoutes from './routes/admin'
 import { oauthRouter, mailRouter, oauthRelayRouter } from './routes/oauth'
 import billingRoutes, { stripeWebhook } from './routes/billing'
+import { ttsRouter } from './routes/tts'
 import mediaRoutes from './routes/media'
 import developerRoutes from './routes/developer'
 import v1Routes from './routes/v1'
@@ -121,6 +122,7 @@ app.use('/api/telemetry', telemetryRoutes)
 app.use('/api/account', accountRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/billing', billingRoutes)
+app.use('/api/tts', express.json({ limit: '256kb' }), rateLimiter(10 * 1000, 20), ttsRouter)
 app.use('/api/media', mediaRoutes)
 app.use('/api/developer', developerRoutes)
 // Public developer API. Deliberately NOT behind the global /api IP rate limiter —
