@@ -1,0 +1,74 @@
+name: loop-media-stack-single
+
+# Single-GPU profile: Chroma1-HD + WAN 2.2 I2V on one H200 (141 GB).
+# H3 tier is optional (H3_FP8=1 required to fit on single H200).
+# Media + H3 fit on one H200 at FP8:
+#   Chroma ~16 GB + WAN ~36 GB + H3 denoiser ~47 GB + H3 conditioner ~62 GB ≈ 161 GB peak
+#   → Exceeds 141 GB. H3 is thus LIMITED to media-worker only (no H3) on single-GPU.
+# For H3 premium video, use the dual-GPU compose.yaml above.
+
+networks:
+  loop-internal:
+    driver: bridge
+
+services:
+  # Gateway: CPU-only, always deployed
+  media-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: gateway
+    environment:
+      MEDIA_URL: http://media-worker:8001
+      # No H3 endpoints available on single-GPU
+      H3_CONDITIONER_URL: ""
+      H3_DENOISER_URL: ""
+    ports:
+      - "8000:8000"
+    networks:
+      - loop-internal
+    depends_on:
+      media-worker:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Media worker: Chroma1-HD + WAN on one GPU
+  media-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: media
+    environment:
+      HF_TOKEN: ${HF_TOKEN:?required}
+      WAN_MODEL_REPO: thornmaze/WAMU_v3_WAN2.2_I2V_LIGHTNING
+      IMAGE_MODEL_REPO: lodestones/Chroma1-HD
+      WAN_VENDOR_SPACE: observantdistressed/wan2-2-i2v-v3
+    ports:
+      - "8001:8001"
+    networks:
+      - loop-internal
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+
+volumes:
+  hf-cache:

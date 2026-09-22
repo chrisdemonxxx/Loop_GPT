@@ -1,0 +1,20 @@
+# H3 tier: MiniMax-H3 video+audio — transformers 5.x compatible
+# The pinned diffusers PR commit is required for H3 pipeline support.
+--extra-index-url https://download.pytorch.org/whl/cu130
+transformers==5.8.0
+diffusers @ git+https://github.com/observantdistressed/diffusers.git@665f5782
+accelerate==1.13.0
+torchao==0.17.0
+peft==0.20.0
+
+sentencepiece
+protobuf
+
+safetensors
+Pillow
+numpy<2
+requests
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart

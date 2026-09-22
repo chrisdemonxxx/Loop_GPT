@@ -1,0 +1,38 @@
+# Media Worker — Chroma1-HD + WAN 2.2 I2V 14B Lightning
+# Requires GPU with CUDA 13.0 + compute capability >= 9.0
+# Context: deploy/media-stack/
+FROM nvidia/cuda:13.0.1-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TOKENIZERS_PARALLELISM=true
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.10 python3.10-venv python3-pip \
+        ffmpeg wget unzip git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# CUDA 13 torch — base layer, shared
+RUN pip3 install --upgrade pip && \
+    pip3 install torch==2.11.0 torchvision==0.26.0 \
+        --extra-index-url https://download.pytorch.org/whl/cu130
+
+# Media service venv (transformers 4.x — do NOT upgrade to 5.x)
+RUN python3.10 -m venv --system-site-packages /opt/venv-media
+
+COPY requirements-media.txt ./
+RUN /opt/venv-media/bin/pip install --upgrade pip && \
+    /opt/venv-media/bin/pip install -r requirements-media.txt
+
+COPY services/media_service.py /app/services/media_service.py
+
+ENV SERVICE=media \
+    AOTI_MODE=eager \
+    CHROMA_BF16=0
+
+EXPOSE 8001
+CMD ["/opt/venv-media/bin/python", "-m", "uvicorn", "services.media_service:app", \
+     "--host", "0.0.0.0", "--port", "8001", "--app-dir", "/app"]
