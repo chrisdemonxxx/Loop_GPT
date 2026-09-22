@@ -16,7 +16,7 @@ import { authorizeRunContext } from '../agent/runAuthorization'
 import { availableTools } from '../agent'
 import { getAllSkills, createUserSkill, deleteUserSkill, getActiveSkills, getSkill, getSkillSource, updateUserSkill, listSkillVersions, revertSkill } from '../agent/skills/skillLoader'
 import { configStore } from '../agent/configStore'
-import { pluginRegistry } from '../agent/plugins/pluginLoader'
+import { pluginRegistry, installDataPlugin, uninstallDataPlugin } from '../agent/plugins/pluginLoader'
 import { connectorRegistry } from '../agent/connectors/connectorRegistry'
 import { CONNECTOR_CATALOG, probeConnector } from '../agent/connectors/catalog'
 import { isMarketplaceConnector, probeMarketplaceConnector } from '../agent/connectors/marketplaceAdapters'
@@ -157,6 +157,20 @@ router.post('/skills/:id/revert', authenticateToken, (req, res) => {
 
 router.get('/plugins', authenticateToken, (_req, res) => { noStore(res); res.json(pluginRegistry.list()) })
 
+/** Install a data plugin from a JSON manifest (brief §2.4 lifecycle).
+ * Manifest: { id, name, description, tools: [{ name, description, method,
+ * url, params?, headers? }] } — safe HTTP tools only, never executed code.
+ * Declared BEFORE /plugins/:id so "install" isn't captured as an id. */
+router.post('/plugins/install', authenticateToken, (req, res) => {
+  noStore(res)
+  const result = installDataPlugin(req.body)
+  if ('error' in result) return res.status(400).json({ error: result.error })
+  // Auto-enable on install.
+  const set = new Set(configStore.getEnabledPlugins()); set.add(result.id); configStore.setEnabledPlugins([...set])
+  pluginRegistry.enable(result.id)
+  res.status(201).json({ ok: true, id: result.id, name: result.name, tools: result.tools.map((t) => t.name) })
+})
+
 router.post('/plugins/:id', authenticateToken, (req, res) => {
   noStore(res)
   const set = new Set(configStore.getEnabledPlugins())
@@ -164,6 +178,15 @@ router.post('/plugins/:id', authenticateToken, (req, res) => {
   else { set.add(req.params.id); pluginRegistry.enable(req.params.id) }
   configStore.setEnabledPlugins([...set])
   res.json({ ok: true, enabled: set.has(req.params.id) })
+})
+
+/** Uninstall a data plugin (built-ins are refused). */
+router.delete('/plugins/:id', authenticateToken, (req, res) => {
+  noStore(res)
+  const ok = uninstallDataPlugin(req.params.id)
+  if (!ok) return res.status(400).json({ error: 'Built-in or unknown plugin; only installed data plugins can be removed.' })
+  const set = new Set(configStore.getEnabledPlugins()); set.delete(req.params.id); configStore.setEnabledPlugins([...set])
+  res.json({ ok: true })
 })
 
 router.get('/custom-tools', authenticateToken, (_req, res) => {
