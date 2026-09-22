@@ -1,8 +1,60 @@
 # PROGRESS — master-prompt build ledger
 
 Companion to `BUILD_PROGRESS.md` (the older foundation ledger, which stops at
-validation 03s). This file records the master-prompt (§4/§9) delta and the
+validation 03s). This file records the master-prompt (A4/A9) delta and the
 evidence for each claim. Every "Working" item was run.
+
+## Production-readiness pass (2026-09-22, phases 0–7) — COMPLETE
+
+Full brief executed: P0 launch blockers → P1 product depth → P2 polish →
+P3 hygiene, each with gates and (where possible) live evidence. Final state:
+backend **1077 tests / 55 files**, frontend **tsc/lint/build + 32 tests +
+Playwright 12**, mobile **tsc** — all green; **25/25 migrations applied**;
+both Railway services **deployed SUCCESS**; live probes 200 across
+`/healthz`, `/chat`, `/account`, `/onboarding`.
+
+- **P0** (see GAP_REGISTER "live evidence" section): auth live (Google+GitHub
+  sign-in 302s verified, providers endpoint live, session invalidation on
+  reset), payments Option B (free-only, honest UI + `STRIPE_LIVE_CHECKLIST.md`),
+  connector OAuth init bug found+fixed+verified (all four Google connectors
+  + Figma guidance PASS), ADMIN_INVITE_CODE E2E (register→redeem→unlimited
+  in DB→cleanup), step-mode + create_skill E2Es with the real model, all
+  recorded with evidence. Email transport wired (RESEND_API_KEY + MAIL_FROM
+  in production env) — **sending blocked by the Resend plan's domain limit**
+  until `loop-gpt.cyou` is added (needs plan upgrade or a freed slot).
+- **P1**: PDF/DOCX/XLSX ingestion (knowledge + chat attachments, server-side
+  extraction, `documentText.ts` + upload routes + Composer/ProjectsPanel UI);
+  nightly memory synthesis (03:00 cron, source:'agent', caps + dedupe +
+  memoryEnabled + incognito gating, admin trigger, 5 tests); skill versioning
+  (snapshots + revert + history UI) + plugin lifecycle (safe data-plugin
+  manifests: install/uninstall routes + installer UI + new time-utils
+  built-in); session depth — IndexedDB drafts, context meter,
+  extended-thinking (reasoning_content split → collapsible Thoughts, live +
+  persisted), message branching (`/fork` + Edit-to-branch), incognito
+  conversations (migration, sidebar/synthesis/memory/tool exclusions, Ghost
+  toggle); research scratchpad (per-query phase cache, 24h TTL, resume from
+  last completed phase, fail-open); mobile parity (4-mode chips + thinking
+  bubbles in Chat, new Settings + Projects screens, nav).
+- **P2**: TOTP MFA (otplib v13; setup/verify/disable routes, login challenge,
+  account-page QR, 4 tests); backend TTS route (`POST /api/tts` — Kokoro
+  bytes; browser-speechSynthesis fallback for read-aloud everywhere);
+  onboarding tour (`/onboarding` + empty-state link); connector CI stubs
+  (7 fixture tests); project-card inline upload affordance.
+- **P3**: Tavily flake root-caused + fixed (real rerank call in a bounds
+  test — now SEARCH_RERANK=false); neon-* classes documented as legacy
+  aliases of the terracotta palette; stale docs banners (GAP-062); stray
+  `backend/backend` migration tree caught + moved into the real migrations
+  dir; working tree fully committed (9 commits this pass).
+- **Open external items** (need operator accounts/access, precisely scoped):
+  ① Resend: add `loop-gpt.cyou` (plan upgrade or free a slot — the failed
+  `xwf-adsgoogle.com` is a candidate) → verification + reset emails go live;
+  ② Sentry DSN + PostHog key env vars (code ready, one env change);
+  ③ DB backups: PITR needs the Postgres image migrated to
+  `ghcr.io/railwayapp-templates/postgres-ssl` (planned maintenance; volume
+  backups can be toggled from the dashboard today); ④ uptime monitor account
+  (UptimeRobot/BetterStack free tier on `/healthz`); ⑤ provider consent
+  clicks: Google console callback URIs + one OAuth consent per provider, and
+  the Figma app creation (steps in `docs/CONNECTOR_SETUP.md`).
 
 ## This slice (HEAD: `release/owned-staging-20260917`)
 
