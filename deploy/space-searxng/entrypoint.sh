@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
 # The hosting platform (HF Spaces, Railway) sets PORT dynamically.
@@ -6,7 +6,7 @@ PORT="${PORT:-7860}"
 
 # Generate a random secret key if none is provided.
 if [ -z "$SEARXNG_SECRET_KEY" ]; then
-  export SEARXNG_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
+  export SEARXNG_SECRET_KEY="$(dd if=/dev/urandom bs=32 count=1 2>/dev/null | base64 2>/dev/null || openssl rand -base64 32)"
 fi
 
 # Force the runtime port into the config (idempotent; independent of build-time
