@@ -96,6 +96,8 @@ export function resolveModel(provider: AIProvider, model?: string): string {
 /** Accumulated result of one streamed model turn. */
 export interface StreamTurnResult {
   content: string
+  /** Reasoning-model chain (empty unless the model streams reasoning_content). */
+  reasoning: string
   toolCalls: Array<{ id: string; name: string; arguments: string }>
   finishReason: string | null
 }
@@ -110,6 +112,8 @@ export interface StreamTurnOptions {
   signal?: AbortSignal
   /** Called for every text delta as it streams in. */
   onDelta?: (text: string) => void
+  /** Called for every REASONING delta (reasoning models, e.g. DeepSeek R1). */
+  onReasoning?: (text: string) => void
   /** Called while waiting for a cold-starting endpoint to become ready. */
   onWarming?: (message: string) => void
 }
@@ -162,7 +166,7 @@ async function withColdStartRetry<T>(
  * Throws on API errors so the caller can decide on a fallback.
  */
 export async function streamTurn(opts: StreamTurnOptions): Promise<StreamTurnResult> {
-  const { client, model, messages, tools, onDelta, signal, onWarming } = opts
+  const { client, model, messages, tools, onDelta, onReasoning, signal, onWarming } = opts
 
   const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
     model,
@@ -189,6 +193,7 @@ export async function streamTurn(opts: StreamTurnOptions): Promise<StreamTurnRes
   )
 
   let content = ''
+  let reasoning = ''
   const toolCallsAcc: Array<{ id: string; name: string; arguments: string }> = []
   let finishReason: string | null = null
 
@@ -197,8 +202,17 @@ export async function streamTurn(opts: StreamTurnOptions): Promise<StreamTurnRes
     if (!choice) continue
     const delta = choice.delta as any
     // Reasoning models (e.g. the flagship DeepSeek tier) stream their chain in
-    // `reasoning_content` before/instead of `content`. Accept either.
-    const piece: string | undefined = delta?.content ?? delta?.reasoning_content ?? delta?.reasoning
+    // `reasoning_content`/`reasoning` SEPARATELY from `content`. Surface it as
+    // a distinct "thinking" stream (collapsible Claude-style UI) instead of
+    // concatenating it into the answer.
+    if (delta?.reasoning_content) {
+      reasoning += delta.reasoning_content
+      onReasoning?.(delta.reasoning_content)
+    } else if (delta?.reasoning) {
+      reasoning += delta.reasoning
+      onReasoning?.(delta.reasoning)
+    }
+    const piece: string | undefined = delta?.content
     if (piece) {
       content += piece
       onDelta?.(piece)
@@ -217,7 +231,7 @@ export async function streamTurn(opts: StreamTurnOptions): Promise<StreamTurnRes
     if (choice.finish_reason) finishReason = choice.finish_reason
   }
 
-  return { content, toolCalls: toolCallsAcc.filter(Boolean), finishReason }
+  return { content, reasoning, toolCalls: toolCallsAcc.filter(Boolean), finishReason }
 }
 
 /** Non-streaming single call (used for internal sub-agent steps). */

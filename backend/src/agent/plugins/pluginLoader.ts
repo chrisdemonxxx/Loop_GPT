@@ -117,7 +117,7 @@ function manifestToPlugin(m: DataPluginManifest): Plugin {
       async handler(args: any) {
         let url = t.url
         for (const p of t.params || []) {
-          if (url.includes(`{${p.name}}`)) url = url.replaceAll(`{${p.name}}`, encodeURIComponent(String(args[p.name] ?? '')))
+          if (url.includes(`{${p.name}}`)) url = url.split(`{${p.name}}`).join(encodeURIComponent(String(args[p.name] ?? '')))
         }
         const query: Record<string, string> = {}
         let body: string | undefined

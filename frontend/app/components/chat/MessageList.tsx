@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Copy, Check, Edit2, RotateCcw, FileDown, FileText, Loader2, Sparkles, X, Maximize2, Volume2, Pause, Square } from 'lucide-react'
+import { Copy, Check, Edit2, RotateCcw, FileDown, FileText, Loader2, Sparkles, X, Maximize2, Volume2, Pause, Square, Brain } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { API_URL, authHeaders, type AgentMode } from '../../lib/api'
 import { type ArtifactRef } from '../../lib/stream'
@@ -93,19 +93,21 @@ interface MessageListProps {
   liveUser: { content: string; image?: string; images?: string[]; docs?: string[] } | null
   liveSteps: LiveStep[]
   liveAnswer: string
+  /** Extended thinking (§2.5): reasoning stream for the live assistant turn. */
+  liveThinking?: string
   liveArtifacts: ArtifactRef[]
   running: boolean
   statusMsg: string
   mode: AgentMode
   computerOpen: boolean
   onOpenComputer: () => void
-  onEditMessage: (content: string) => void
+  onEditMessage: (messageId: string, content: string) => void
   onRetryBefore: (beforeIndex: number) => void
   onStartPrompt?: (prompt: string) => void
 }
 
 export default function MessageList({
-  messages, liveUser, liveSteps, liveAnswer, liveArtifacts,
+  messages, liveUser, liveSteps, liveAnswer, liveThinking, liveArtifacts,
   running, statusMsg, mode,   computerOpen,
   onOpenComputer, onEditMessage, onRetryBefore, onStartPrompt,
 }: MessageListProps) {
@@ -126,7 +128,7 @@ export default function MessageList({
             <MessageBubble
               key={m.id}
               message={m}
-              onEdit={m.role === 'user' ? () => onEditMessage(m.content) : undefined}
+              onEdit={m.role === 'user' ? () => onEditMessage(m.id, m.content) : undefined}
               onRetry={m.role === 'assistant' ? () => onRetryBefore(idx) : undefined}
             />
           ))}
@@ -176,6 +178,19 @@ export default function MessageList({
 
           {/* Live assistant response */}
               <div className="min-w-0 space-y-2">
+                {/* Extended thinking (§2.5): collapsible reasoning stream. */}
+                {liveThinking && (
+                  <details className="group rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden" open={running && !liveAnswer}>
+                    <summary className="flex items-center gap-1.5 px-3 py-2 text-[12px] text-slate-400 cursor-pointer hover:text-slate-200 select-none">
+                      <Brain size={12} className="text-slate-500" />
+                      <span>{running && !liveAnswer ? 'Thinking…' : 'Thoughts'}</span>
+                      {running && !liveAnswer && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse ml-0.5" />}
+                    </summary>
+                    <div className={`px-3.5 pb-3 text-[12.5px] leading-relaxed text-slate-500 whitespace-pre-wrap max-h-64 overflow-y-auto ${running && !liveAnswer ? 'shimmer-text' : ''}`}>
+                      {liveThinking}
+                    </div>
+                  </details>
+                )}
                 {running && (mode === 'research' || mode === 'agent') && !liveAnswer && (
                   <button
                     onClick={computerOpen ? undefined : onOpenComputer}
@@ -331,6 +346,17 @@ function MessageBubble({
       transition={{ duration: 0.18 }}
       className="group space-y-3"
     >
+      {/* Stored extended thinking (§2.5): survives reloads via message metadata. */}
+      {message.metadata?.reasoning && (
+        <details className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
+          <summary className="flex items-center gap-1.5 px-3 py-2 text-[12px] text-slate-400 cursor-pointer hover:text-slate-200 select-none">
+            <Brain size={12} className="text-slate-500" /> Thoughts
+          </summary>
+          <div className="px-3.5 pb-3 text-[12.5px] leading-relaxed text-slate-500 whitespace-pre-wrap max-h-64 overflow-y-auto">
+            {String(message.metadata.reasoning)}
+          </div>
+        </details>
+      )}
       {message.content && <Markdown content={message.content} />}
 
       {promptMeta?.optimized && (

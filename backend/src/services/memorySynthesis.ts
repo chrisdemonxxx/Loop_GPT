@@ -97,7 +97,7 @@ export async function runMemorySynthesis(signal?: AbortSignal): Promise<Synthesi
   for (const user of users) {
     try {
       const conversations = await prisma.conversation.findMany({
-        where: { userId: user.id, updatedAt: { gte: since } },
+        where: { userId: user.id, updatedAt: { gte: since }, incognito: false },
         select: { id: true },
         orderBy: { updatedAt: 'desc' },
         take: MAX_CONVERSATIONS_PER_USER,

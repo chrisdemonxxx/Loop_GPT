@@ -122,6 +122,50 @@ describe('agent extension configuration routes (previously 410)', () => {
     expect(updated.status).toBe(400)
   })
 
+  it('snapshots skill versions on edit and can revert', async () => {
+    const created = await req('POST', '/api/agent/skills', {
+      name: 'Versioned Skill', description: 'v1', instructions: 'First version of the instructions.',
+    })
+    expect(created.status).toBe(201)
+    const id = created.json.id
+
+    // Edit → snapshot of v1 must exist.
+    await req('PUT', `/api/agent/skills/${id}`, { name: 'Versioned Skill', description: 'v2', instructions: 'Second version of the instructions.' })
+    const versions = await req('GET', `/api/agent/skills/${id}/versions`)
+    expect(versions.status).toBe(200)
+    expect(versions.json.versions.length).toBe(1)
+
+    // Revert to the snapshot → instructions restored to v1.
+    const reverted = await req('POST', `/api/agent/skills/${id}/revert`, { version: versions.json.versions[0].version })
+    expect(reverted.status).toBe(200)
+    const after = await req('GET', `/api/agent/skills/${id}`)
+    expect(after.json.instructions).toBe('First version of the instructions.')
+    expect((await req('DELETE', `/api/agent/skills/${id}`)).json.ok).toBe(true)
+  })
+
+  it('installs and uninstalls a data plugin with a safe HTTP-tool manifest', async () => {
+    const installed = await req('POST', '/api/agent/plugins/install', {
+      id: 'test-api', name: 'Test API', description: 'probe plugin',
+      tools: [{ name: 'get_items', description: 'list items', method: 'GET', url: 'https://api.example.com/items', params: [{ name: 'limit', type: 'number', description: 'max' }] }],
+    })
+    expect(installed.status).toBe(201)
+    expect(installed.json.id).toBe('test-api')
+    const list = await req('GET', '/api/agent/plugins')
+    const mine = list.json.find((p: any) => p.id === 'test-api')
+    expect(mine).toBeTruthy()
+    expect(mine.enabled).toBe(true)
+    expect(mine.tools).toContain('get_items')
+
+    // Reserved/invalid manifests are rejected.
+    expect((await req('POST', '/api/agent/plugins/install', { id: 'text-utils', name: 'x', tools: [] })).status).toBe(400)
+    expect((await req('POST', '/api/agent/plugins/install', { id: 'evil<script>', name: 'x', tools: [{ name: 't', url: 'javascript:alert(1)' }] })).status).toBe(400)
+
+    // Built-ins cannot be uninstalled; the data plugin can.
+    expect((await req('DELETE', '/api/agent/plugins/text-utils')).status).toBe(400)
+    expect((await req('DELETE', '/api/agent/plugins/test-api')).json.ok).toBe(true)
+    expect((await req('GET', '/api/agent/plugins')).json.some((p: any) => p.id === 'test-api')).toBe(false)
+  })
+
   it('lists plugins and toggles one', async () => {
     const list = await req('GET', '/api/agent/plugins')
     expect(list.status).toBe(200)

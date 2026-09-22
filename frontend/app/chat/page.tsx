@@ -1,13 +1,14 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { PanelLeft, FileDown, Cpu, Sparkles, FlaskConical } from 'lucide-react'
+import { PanelLeft, FileDown, Cpu, Sparkles, FlaskConical, Ghost } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 
 import { API_URL, authHeaders, getStoredUser, getToken, getModelTier, setModelTier, type AgentMode } from '../lib/api'
 import { runAgentStream, type ArtifactRef } from '../lib/stream'
+import { getDraft, setDraft, deleteDraft } from '../lib/drafts'
 import SettingsPanel from '../components/SettingsPanel'
 import { track } from '../components/Analytics'
 import type { LiveStep } from '../components/AgentComputer'
@@ -52,6 +53,8 @@ export default function ChatPage() {
   const [showPlus, setShowPlus] = useState(false)
   const [showModeMenu, setShowModeMenu] = useState(false)
   const [runMode, setRunMode] = useState<'auto' | 'plan' | 'accept' | 'step'>('auto')
+  const [incognito, setIncognito] = useState(false)
+  const [draftReady, setDraftReady] = useState(false)
   const [modelTier, setModelTierState] = useState('')
   const [showSettings, setShowSettings] = useState(false)
   const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined)
@@ -76,6 +79,7 @@ export default function ChatPage() {
   const [liveSteps, setLiveSteps] = useState<LiveStep[]>([])
   const [pendingApproval, setPendingApproval] = useState<{ toolName: string; approve: (ok: boolean) => Promise<any> } | null>(null)
   const [liveArtifacts, setLiveArtifacts] = useState<ArtifactRef[]>([])
+  const [liveThinking, setLiveThinking] = useState('')
   const [toolCount, setToolCount] = useState(0)
 
   const autoOpenedRef = useRef(false)
@@ -184,8 +188,17 @@ export default function ChatPage() {
   const closeOverlays = () => { if (!isDesktop) { setSidebarOpen(false); setComputerOpen(false); setArtifactsOpen(false) } }
 
   function selectConversation(id: string | null) {
+    // Drafts (§2.5): stash the in-progress text for the outgoing chat, then
+    // restore whatever was in progress for the incoming one.
+    if (typeof window !== 'undefined') {
+      const prevKey = `draft:${currentConversationId || 'new'}`
+      const nextKey = `draft:${id || 'new'}`
+      if (input.trim()) setDraft(prevKey, input)
+      else deleteDraft(prevKey)
+      getDraft(nextKey).then((saved) => { if (saved && typeof saved === 'string') setInput(saved) })
+    }
     setCurrentConversationId(id)
-    setLiveUser(null); setLiveSteps([]); setLiveArtifacts([]); setStatusMsg('')
+    setLiveUser(null); setLiveSteps([]); setLiveArtifacts([]); setStatusMsg(''); setLiveThinking('')
     setArtifactsOpen(false)
   }
 
@@ -237,6 +250,24 @@ export default function ChatPage() {
     }
   }
 
+  /** Message branching (§2.5): editing an earlier user message forks the
+   * conversation at that point into a new branch and loads the text. */
+  async function forkAtMessage(messageId: string, content: string) {
+    if (!currentConversationId) { setInput(content); return }
+    try {
+      const res = await fetch(`${API_URL}/api/conversations/${currentConversationId}/fork`, {
+        method: 'POST', headers: authHeaders(), body: JSON.stringify({ messageId }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok || !d.conversationId) { setInput(content); return }
+      setCurrentConversationId(d.conversationId)
+      setLiveUser(null); setLiveSteps([]); setLiveArtifacts([]); setStatusMsg(''); setLiveThinking(''); setArtifactsOpen(false)
+      queryClient.invalidateQueries({ queryKey: ['conversations'] })
+      setInput(content)
+      requestAnimationFrame(() => document.querySelector('textarea')?.focus())
+    } catch { setInput(content) }
+  }
+
   async function handleSend(e?: React.FormEvent) {
     e?.preventDefault()
     if ((!input.trim() && !selectedImages.length && !selectedDocs.length) || running) return
@@ -252,7 +283,8 @@ export default function ChatPage() {
     const docs = selectedDocs
     const previews = imagePreviews
     setInput(''); setSelectedImages([]); setImagePreviews([]); setSelectedDocs([])
-    setRunning(true); setStatusMsg(''); setLiveSteps([]); setLiveArtifacts([])
+    if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
+    setRunning(true); setStatusMsg(''); setLiveSteps([]); setLiveArtifacts([]); setLiveThinking('')
     autoOpenedRef.current = false
     setLiveUser({ content, image: previews[0], images: previews, docs: docs.map((d) => d.name) })
     track('message_sent', { mode: sendMode })
@@ -276,6 +308,7 @@ export default function ChatPage() {
         toolNames: commandTools || (selectedTools ? Array.from(selectedTools) : undefined),
         autoApprove: runMode === 'accept',
         stepMode: runMode === 'step',
+        incognito,
         projectId: activeProjectId || undefined,
       }, {
         onStatus: (m) => { if (!m.startsWith('conversation:')) setStatusMsg(m) },
@@ -289,6 +322,9 @@ export default function ChatPage() {
             else if (next[i].kind === 'text') next[i] = { ...next[i], text: next[i].text + text }
             return next
           })
+        },
+        onThinking: (step, text) => {
+          setLiveThinking((prev) => (prev + text).slice(0, 20_000))
         },
         onToolCall: (step, name, args, source) => {
           setLiveSteps((prev) => {
@@ -443,6 +479,10 @@ export default function ChatPage() {
 
   const liveAnswer = liveSteps.filter((s) => s.kind === 'text').map((s) => s.text).join('')
   const convTitle = conversations.find((c) => c.id === currentConversationId)?.title
+  // Context meter (§2.5): honest estimate — chars/4 over the conversation,
+  // against the standard 32k window (the large tier has more headroom).
+  const contextTokens = Math.ceil((messages.reduce((n, m) => n + (m.content?.length || 0), 0) + liveAnswer.length) / 4)
+  const contextPct = Math.min(100, Math.round((contextTokens / 32_768) * 100))
 
   return (
     <div className="flex h-[100dvh] overflow-hidden text-slate-200 bg-[#111113]">
@@ -523,6 +563,24 @@ export default function ChatPage() {
           </span>
           <div className="ml-auto flex items-center gap-1">
             <ModelSelector value={modelTier} onChange={(id) => { setModelTier(id); setModelTierState(id) }} />
+            <button
+              onClick={() => {
+                const next = !incognito
+                setIncognito(next)
+                // Toggling applies to the next conversation — leave the current one.
+                if (currentConversationId) { setCurrentConversationId(null); setLiveSteps([]); setLiveArtifacts([]); setLiveUser(null); setInput('') }
+              }}
+              title={incognito ? 'Incognito on — new chats are private and use no memory. Click to turn off.' : 'Incognito — private chat, no memory, hidden from history'}
+              aria-pressed={incognito}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] border transition ${
+                incognito
+                  ? 'border-[#c96442]/40 text-[#e79d7f] bg-[#c96442]/[0.07]'
+                  : 'border-white/[0.06] text-slate-500 hover:bg-white/[0.05] hover:text-slate-300'
+              }`}
+            >
+              <Ghost size={13} />
+              <span className="hidden sm:inline">{incognito ? 'Incognito' : ''}</span>
+            </button>
             {messages.length > 0 && (
               <div className="relative">
                 <button
@@ -593,6 +651,7 @@ export default function ChatPage() {
           liveUser={liveUser}
           liveSteps={liveSteps}
           liveAnswer={liveAnswer}
+          liveThinking={liveThinking}
           liveArtifacts={liveArtifacts}
           onStartPrompt={(prompt) => { setInput(prompt); setTimeout(() => document.querySelector('textarea')?.focus(), 100) }}
           running={running}
@@ -600,7 +659,7 @@ export default function ChatPage() {
           mode={mode}
           computerOpen={computerOpen}
           onOpenComputer={openComputer}
-          onEditMessage={(content) => setInput(content)}
+          onEditMessage={forkAtMessage}
           onRetryBefore={retryBefore}
         />
 
@@ -613,6 +672,9 @@ export default function ChatPage() {
               docNames={selectedDocs.map((d) => d.name)}
               running={running}
               runMode={runMode}
+              contextPct={contextPct}
+              contextTokens={contextTokens}
+              incognito={incognito}
               showSlash={showSlash}
               showPlus={showPlus}
               showModeMenu={showModeMenu}
@@ -690,3 +752,4 @@ onToggleSidebar={() => setSidebarOpen((s) => !s)}
     </div>
   )
 }
+

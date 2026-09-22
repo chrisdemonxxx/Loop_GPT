@@ -3,7 +3,7 @@ import { ensurePersonalWorkspace, requireMembership, workspaceDb, workspaceTrans
 /** Pin legacy personal conversations once. Never move an existing conversation.
  * Optionally scope the conversation to a project (`projectId`). */
 export async function prepareRunConversation(userId: string, conversationId: string, title: string, requestedWorkspaceId?: string,
-  validateSelection?: (workspaceId: string) => Promise<void>, projectId?: string) {
+  validateSelection?: (workspaceId: string) => Promise<void>, projectId?: string, incognito?: boolean) {
   const db = workspaceDb()
   const existing = conversationId === 'new' ? null : await db.conversation.findFirst({ where: { id: conversationId, userId } })
   if (conversationId !== 'new' && !existing) throw new WorkspaceError(404, 'Conversation not found')
@@ -21,7 +21,7 @@ export async function prepareRunConversation(userId: string, conversationId: str
   return workspaceTransaction(async (tx) => {
     const member = await tx.workspaceMember.findUnique({ where: { workspaceId_userId: { workspaceId, userId } } })
     if (!member || !['owner', 'editor'].includes(member.role)) throw new WorkspaceError(403, 'Workspace execution permission required')
-    if (!existing) return tx.conversation.create({ data: { userId, workspaceId, title: title.slice(0, 50) || 'New Chat', projectId: projectId || null } })
+    if (!existing) return tx.conversation.create({ data: { userId, workspaceId, title: title.slice(0, 50) || 'New Chat', projectId: projectId || null, incognito: incognito === true } })
     if (!existing.workspaceId) {
       const assigned = await tx.conversation.updateMany({ where: { id: conversationId, userId, workspaceId: null }, data: { workspaceId } })
       if (assigned.count !== 1) throw new WorkspaceError(409, 'Conversation changed; retry the request')

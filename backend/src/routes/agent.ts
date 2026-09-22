@@ -388,6 +388,7 @@ const streamInput = z.object({
   connectionIds: selectedConnectionIds.default([]),
   autoApprove: z.boolean().optional(),
   stepMode: z.boolean().optional(),
+  incognito: z.boolean().optional(),
   projectId: z.string().min(1).max(160).optional(),
 }).refine(
   (value) => value.content || value.attachmentId || (value.attachmentIds?.length ?? 0) > 0,
@@ -415,7 +416,9 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
   const reviewed = availableTools()
   const connectionIds = input.data.connectionIds
   if (connectionIds.length && mode !== 'agent') return res.status(400).json({ error: 'Connections require agent mode' })
+  // Incognito runs never offer the remember tool (memory stays untouched).
   const selectableNames = [...reviewed.map((tool) => tool.name), ...connectionIds.map(connectionToolName)]
+    .filter((name) => !(input.data.incognito && name === 'remember'))
   const selectedNames = mode === 'chat' ? [] : input.data.toolNames ?? (mode === 'research' ? ['web_search', 'web_fetch'] : selectableNames)
   if (selectedNames.some((name) => !selectableNames.includes(name))) return res.status(400).json({ error: 'Requested tool is not available' })
   if (mode === 'research' && !['web_search', 'web_fetch'].every((name) => selectedNames.includes(name))) return res.status(400).json({ error: 'Research requires web_search and web_fetch' })
@@ -502,7 +505,7 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
         lifecycle.check()
         if (connectionIds.length) reviewed.push(...await workspaceConnectionTools(userId, workspaceId, connectionIds))
         lifecycle.check()
-      }, input.data.projectId)
+      }, input.data.projectId, input.data.incognito === true)
       lifecycle.check()
       await saveMessage(conversation.id, {
         role: 'user',
@@ -527,7 +530,15 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
       initSSE(res)
       sendEvent(res, { type: 'status', message: `conversation:${conversation.id}` })
       const streamEmit = makeEmitter(res)
-      const emit = (event: AgentEvent) => { if (!lifecycle.disconnected()) streamEmit(event) }
+      const emit = (event: AgentEvent) => {
+        // Capture reasoning deltas (extended-thinking display, §2.5) so the
+        // persisted assistant message keeps its collapsible "Thoughts" block.
+        if (event.type === 'thinking') {
+          reasoningCapture = (reasoningCapture + event.text).slice(0, 20_000)
+        }
+        if (!lifecycle.disconnected()) streamEmit(event)
+      }
+      let reasoningCapture = ''
       const ctx: ToolContext = { userId, conversationId: conversation.id, emit, signal: lifecycle.signal, scratch: {} }
       // Build message history + current turn (conversation memory window).
       const history = await getHistory(conversation.id, agentConfig.historyWindow)
@@ -615,6 +626,7 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
           style: req.body?.style || undefined,
           autoApprove: input.data.autoApprove === true,
           stepMode: input.data.stepMode === true,
+          useMemory: input.data.incognito !== true,
           ctx: authorizedCtx,
           beforeDispatch,
         })
@@ -632,7 +644,12 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
         imageUrl: artifacts.find((a) => a.kind === 'image')?.url || null,
         toolUsed: mode,
         // Redact model/provider from client-facing metadata (guardrails).
-        metadata: sanitizeMetadata({ ...finalMetadata, artifacts, provider, model, prompt: promptMeta }),
+        metadata: sanitizeMetadata({
+          ...finalMetadata, artifacts, provider, model, prompt: promptMeta,
+          // Extended-thinking (§2.5): keep the reasoning chain on the message
+          // so the collapsible "Thoughts" block survives reloads.
+          ...(reasoningCapture ? { reasoning: reasoningCapture } : {}),
+        }),
       })
 
       if (finalEvent) emit(finalEvent)

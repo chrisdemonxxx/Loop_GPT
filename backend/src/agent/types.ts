@@ -63,6 +63,7 @@ export type AgentEvent =
   | { type: 'status'; message: string }
   | { type: 'warming'; message: string }
   | { type: 'delta'; step: number; text: string }
+  | { type: 'thinking'; step: number; text: string }
   | { type: 'tool_call'; step: number; name: string; args: Record<string, any>; source?: string }
   | { type: 'tool_result'; step: number; name: string; content: string; data?: any; isError?: boolean }
   | { type: 'artifact'; artifact: ArtifactRef }
@@ -104,4 +105,6 @@ export interface RunAgentOptions {
      * autoApprove disables the gate entirely.
      */
     stepMode?: boolean
+    /** Incognito: skip memory injection and block the remember tool. */
+    useMemory?: boolean
   }

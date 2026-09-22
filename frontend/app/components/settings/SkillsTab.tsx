@@ -7,6 +7,7 @@ import { Badge, btnGhost, btnPrimary, Card, EmptyState, inputCls, SearchInput, S
 
 interface SkillSummary { id: string; name: string; description: string; enabled: boolean; builtin?: boolean }
 interface SkillDetail extends SkillSummary { instructions: string; triggers: string[]; tools: string[]; source: string | null }
+interface SkillVersion { version: string; at: string; chars: number }
 
 /** Compose the SKILL.md preview from form fields (matches the backend writer). */
 function composeSkillMd(name: string, description: string, triggers: string, tools: string, instructions: string): string {
@@ -33,6 +34,7 @@ export default function SkillsTab() {
   const [creating, setCreating] = useState(false)
   const [editSource, setEditSource] = useState(false)
   const [sourceDraft, setSourceDraft] = useState('')
+  const [versions, setVersions] = useState<SkillVersion[]>([])
   const [form, setForm] = useState({ name: '', description: '', triggers: '', tools: '', instructions: '' })
   const [query, setQuery] = useState('')
   const [error, setError] = useState('')
@@ -46,6 +48,18 @@ export default function SkillsTab() {
     const res = await fetch(`${API_URL}/api/agent/skills/${id}`, { headers: authHeaders() }).catch(() => null)
     if (!res?.ok) return
     setDetail(await res.json())
+    const vres = await fetch(`${API_URL}/api/agent/skills/${id}/versions`, { headers: authHeaders() }).catch(() => null)
+    setVersions(vres?.ok ? ((await vres.json()).versions || []) : [])
+  }
+
+  const revert = async (version: string) => {
+    if (!detail || !confirm('Restore this version? The current version is snapshotted first.')) return
+    const res = await fetch(`${API_URL}/api/agent/skills/${detail.id}/revert`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ version }),
+    }).catch(() => null)
+    if (!res?.ok) { setError('Could not revert.'); return }
+    await openDetail(detail.id)
+    load()
   }
 
   const toggle = async (id: string, enabled: boolean) => {
@@ -153,8 +167,23 @@ export default function SkillsTab() {
         )}
 
         {!detail.builtin && (
-          <div className="flex justify-end pt-1">
-            <button onClick={() => remove(detail.id)} className={btnGhost + ' text-rose-400 hover:bg-rose-500/10'}><Trash2 size={13} /> Delete skill</button>
+          <div className="space-y-2 pt-1">
+            <SectionHeader
+              title="History"
+              count={versions.length}
+              action={versions.length > 0 ? <span className="text-[11px] text-slate-600">snapshotted on every edit</span> : undefined}
+            />
+            {versions.length === 0 && <p className="text-[11px] text-slate-600 px-1">No saved versions yet — edits snapshot automatically.</p>}
+            {versions.map((v) => (
+              <div key={v.version} className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-white/[0.06] bg-white/[0.02]">
+                <span className="text-[11.5px] text-slate-400 font-mono truncate">{v.version}</span>
+                <span className="text-[11px] text-slate-600 shrink-0">{Math.round(v.chars / 1024)} KB</span>
+                <button onClick={() => revert(v.version)} className="text-[11px] text-[#e79d7f] hover:underline shrink-0">Restore</button>
+              </div>
+            ))}
+            <div className="flex justify-end pt-1">
+              <button onClick={() => remove(detail.id)} className={btnGhost + ' text-rose-400 hover:bg-rose-500/10'}><Trash2 size={13} /> Delete skill</button>
+            </div>
           </div>
         )}
       </div>

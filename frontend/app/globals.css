@@ -86,6 +86,15 @@
     background-size: 200% 100%;
     animation: shimmer 1.6s linear infinite;
   }
+
+  /* Streaming reasoning text (extended-thinking block, §2.5) */
+  .shimmer-text {
+    animation: shimmer-text-fade 1.4s ease-in-out infinite;
+  }
+  @keyframes shimmer-text-fade {
+    0%, 100% { opacity: 0.75; }
+    50% { opacity: 1; }
+  }
 }
 
 /* Hide scrollbar on horizontal tab strips while keeping scroll (used in settings). */

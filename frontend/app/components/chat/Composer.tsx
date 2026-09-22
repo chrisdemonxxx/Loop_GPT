@@ -31,6 +31,10 @@ interface ComposerProps {
   docNames: string[]
   running: boolean
   runMode: RunMode
+  /** Context meter (§2.5): 0-100 estimated window usage. */
+  contextPct?: number
+  contextTokens?: number
+  incognito?: boolean
   showSlash: boolean
   showPlus: boolean
   showModeMenu: boolean
@@ -63,7 +67,7 @@ const MODES: Array<{ id: RunMode; label: string; hint: string; icon: any }> = [
 ]
 
 export default function Composer({
-  input, imagePreviews, docNames, running, runMode,
+  input, imagePreviews, docNames, running, runMode, contextPct, contextTokens, incognito,
   showSlash, showPlus, showModeMenu,
   onInputChange, onSelectSlashCommand, onSend, onStop,
   onImagesSelected, onRemoveImage, onRemoveDoc,
@@ -366,9 +370,28 @@ export default function Composer({
         </div>
       </form>
 
-      <p className="text-[11px] text-slate-700 mt-2 text-center">
-        {t('disclaimer')}
-      </p>
+      <div className="flex items-center gap-3 mt-2">
+        {typeof contextPct === 'number' && (
+          <div
+            className="flex-1 h-1 rounded-full bg-white/[0.05] overflow-hidden"
+            title={`Context: ~${(contextTokens || 0).toLocaleString()} tokens used (~${contextPct}% of the 32k window)`}
+            role="progressbar"
+            aria-valuenow={contextPct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Context window usage"
+          >
+            <div
+              className={`h-full rounded-full transition-all ${contextPct > 85 ? 'bg-amber-400/80' : 'bg-slate-600/70'}`}
+              style={{ width: `${Math.max(contextPct, 1.5)}%` }}
+            />
+          </div>
+        )}
+        <p className="text-[11px] text-slate-700 flex-1 text-center">
+          {incognito ? <span className="text-[#e79d7f]/80">Incognito — private chat, no memory. </span> : null}
+          {t('disclaimer')}
+        </p>
+      </div>
     </div>
   )
 }

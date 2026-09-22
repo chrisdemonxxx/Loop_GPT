@@ -343,6 +343,8 @@ model Conversation {
   workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   projectId String?
   project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  /// Incognito: excluded from the sidebar, memory synthesis, and memory injection.
+  incognito Boolean   @default(false)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 

@@ -222,8 +222,9 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
     .join('\n\n')
   if (sys) working.push({ role: 'system', content: sys })
 
-  // Inject user memories before the conversation messages.
-  const memories = opts.ctx?.userId ? await getMemories(opts.ctx.userId) : []
+  // Inject user memories before the conversation messages (skipped for
+  // incognito runs — they must not read from or feed into memory).
+  const memories = opts.ctx?.userId && opts.useMemory !== false ? await getMemories(opts.ctx.userId) : []
   if (memories.length > 0) {
     working.push({ role: 'user', content: `[Memories]\n${memories.join('\n')}\n\n(Use the "remember" tool to save new information.)` })
   }
@@ -258,6 +259,7 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
         tools: useNative ? openaiTools : undefined,
         signal: ctx.signal,
         onDelta: (text) => sanitizer.push(text),
+        onReasoning: (text) => ctx.emit({ type: 'thinking', step: stepIndex, text }),
         onWarming: (message) => ctx.emit({ type: 'warming', message }),
       })
       sanitizer.flush()
