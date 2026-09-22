@@ -14,5 +14,11 @@ fi
 sed -i "s/^\([[:space:]]*port:\).*/\1 ${PORT}/" /etc/searxng/settings.yml
 export SEARXNG_BIND_ADDRESS="0.0.0.0"
 
-# The base image's entrypoint is /sbin/tini -- /usr/local/searxng/dockerfiles/docker-entrypoint.sh
-exec /sbin/tini -- /usr/local/searxng/dockerfiles/docker-entrypoint.sh "$@"
+# The base image's entrypoint. Prefer tini when available; fall back to direct exec.
+if [ -x /sbin/tini ]; then
+  exec /sbin/tini -- /usr/local/searxng/dockerfiles/docker-entrypoint.sh "$@"
+elif [ -x /usr/bin/tini ]; then
+  exec /usr/bin/tini -- /usr/local/searxng/dockerfiles/docker-entrypoint.sh "$@"
+else
+  exec /usr/local/searxng/dockerfiles/docker-entrypoint.sh "$@"
+fi
