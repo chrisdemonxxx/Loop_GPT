@@ -2,6 +2,7 @@ import type { ToolDefinition } from '../types'
 import { prisma } from '../../services/prisma'
 import { requireMembership } from '../../services/workspaces'
 import { generateEmbedding, rerank } from '../../services/embeddingStore'
+import { vectorSearch } from '../../services/vectorSearch'
 
 /** Search the user's project knowledge base. If no projectId is provided,
  * searches all projects the user has access to in the active workspace. */
@@ -21,12 +22,30 @@ export const searchKnowledgeTool: ToolDefinition = {
   async handler(args, ctx) {
     const query = String(args.q || '').trim()
     const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 20)
-    const projectId = String(args.projectId || '')
+    // Default to the conversation's project when the model doesn't specify one.
+    let projectId = String(args.projectId || '')
+    if (!projectId && ctx.conversationId) {
+      try {
+        const conv = await prisma!.conversation.findUnique({ where: { id: ctx.conversationId }, select: { projectId: true } })
+        projectId = conv?.projectId || ''
+      } catch { /* fall through to workspace-wide search */ }
+    }
 
     if (!query) return { content: 'A search query is required.', isError: true }
 
     try {
       const queryVec = await generateEmbedding(query)
+
+      // Single-project scopes use the pgvector ANN index when available.
+      if (projectId) {
+        const ann = await vectorSearch(projectId, queryVec, limit)
+        if (ann && ann.length) {
+          const result = ann.filter((r) => r.score > 0.08)
+            .map((r) => `(${(r.score * 100).toFixed(0)}% match)\n${r.content.slice(0, 2000)}`).join('\n\n---\n\n')
+          if (result) return { content: `Knowledge base results:\n\n${result}`, data: { results: ann, engine: 'pgvector' } }
+        }
+      }
+
       const memberships = await prisma!.workspaceMember.findMany({
         where: { userId: ctx.userId, role: { in: ['owner', 'editor', 'viewer'] } },
         select: { workspaceId: true },

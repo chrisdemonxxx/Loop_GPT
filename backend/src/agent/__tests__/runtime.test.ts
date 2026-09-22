@@ -1,10 +1,30 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { registerBuiltinTools } from '../index'
-import { parseInlineToolCall, parseInlineToolCalls } from '../agentRuntime'
+import { parseInlineToolCall, parseInlineToolCalls, permissionFor, requiresInteractivePause } from '../agentRuntime'
 import { toolRegistry } from '../toolRegistry'
 import type { ToolDefinition, ToolContext } from '../types'
 
 beforeAll(() => registerBuiltinTools())
+
+describe('run-mode approval gate (requiresInteractivePause)', () => {
+  it('pauses only on approval-level tools in the default mode', () => {
+    expect(requiresInteractivePause('approval', false, false)).toBe(true)
+    expect(requiresInteractivePause('allow', false, false)).toBe(false)
+  })
+  it('step mode ("Ask first") pauses for EVERY tool, whatever its level', () => {
+    expect(requiresInteractivePause('allow', true, false)).toBe(true)
+    expect(requiresInteractivePause('approval', true, false)).toBe(true)
+  })
+  it('auto-approve (Accept edits) disables the gate entirely', () => {
+    expect(requiresInteractivePause('approval', false, true)).toBe(false)
+    expect(requiresInteractivePause('allow', true, true)).toBe(false)
+  })
+  it('resolves permission defaults from needsApproval flags', () => {
+    // Unique names: other suites may have set overrides for real tools.
+    expect(permissionFor('fresh_allow_tool_xyz')).toBe('allow')
+    expect(permissionFor('fresh_approval_tool_xyz', true)).toBe('approval')
+  })
+})
 
 describe('parseInlineToolCall (ReAct fallback)', () => {
   it('parses a bare JSON tool call', () => {

@@ -32,6 +32,12 @@ export interface StreamHandlers {
 export interface StreamBody {
   content: string
   attachmentId?: string
+  attachmentIds?: string[]
+  toolNames?: string[]
+  autoApprove?: boolean
+  /** "Ask first": pause for approval before every tool call. */
+  stepMode?: boolean
+  projectId?: string
   mode?: string
   provider?: string
   model?: string
@@ -50,8 +56,22 @@ export async function runAgentStream(
 ): Promise<void> {
   // LOCAL PREVIEW ADAPTATION: the hardened backend serves the SSE stream at
   // /api/agent/:id/stream and rejects BYOK fields (provider/model/apiKey) and
-  // server file paths (imagePath). Send only the hosted contract.
-  const safeBody = { content: body.content, mode: body.mode || 'chat' }
+  // server file paths (imagePath). Send only the hosted contract, including the
+  // attachmentId so image attachments actually reach the vision path.
+  const safeBody: { content: string; mode: string; attachmentId?: string; attachmentIds?: string[]; toolNames?: string[]; autoApprove?: boolean; stepMode?: boolean; projectId?: string; model?: string } = {
+    content: body.content,
+    mode: body.mode || 'chat',
+  }
+  if (body.attachmentId) safeBody.attachmentId = body.attachmentId
+  if (body.attachmentIds?.length) safeBody.attachmentIds = body.attachmentIds
+  // Per-chat tool selection + run mode ("Accept edits" auto-approves;
+  // "Ask first" pauses before every tool call).
+  if (body.toolNames?.length) safeBody.toolNames = body.toolNames
+  if (body.autoApprove) safeBody.autoApprove = true
+  if (body.stepMode) safeBody.stepMode = true
+  if (body.projectId) safeBody.projectId = body.projectId
+  // Hosted model tier selection (the server rejects provider/apiKey/baseUrl).
+  if (body.model) safeBody.model = body.model
   const res = await fetch(`${API_URL}/api/agent/${conversationId}/stream`, {
     method: 'POST',
     headers: authHeaders(),

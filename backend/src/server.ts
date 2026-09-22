@@ -50,10 +50,11 @@ import { createCorsOriginPolicy } from './middleware/corsPolicy'
 import { asyncHandler, errorLogger } from './middleware/errorLogger'
 import { requestLog, recentRequests, metricsSummary, activeStreamCount } from './middleware/requestLog'
 import { initAgent } from './agent'
-import { filesRouter, imageUploadRouter, rejectLegacyUploads } from './routes/files'
+import { filesRouter, publicFilesRouter, imageUploadRouter, rejectLegacyUploads } from './routes/files'
 import workspaceRoutes from './routes/workspaces'
 import { projectRouter } from './routes/projects'
 import { stylesRouter } from './routes/styles'
+import { memoryRouter } from './routes/memory'
 import { oauthConnectorRouter } from './routes/oauthConnector'
 
 
@@ -84,9 +85,12 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
 
 // Credential-bearing workspace requests have their own small parser and error
 // boundary; do not send parse errors/bodies through general request logging.
+// Projects are mounted first: the workspaces router has a catch-all 404 for
+// unknown subpaths, which would otherwise swallow /api/workspaces/:id/projects.
+app.use('/api/workspaces', rateLimiter(15 * 60 * 1000, 100), express.json({ limit: '1mb' }), projectRouter)
 app.use('/api/workspaces', rateLimiter(15 * 60 * 1000, 100), workspaceRoutes)
-app.use('/api/workspaces', projectRouter)
-app.use('/api/styles', rateLimiter(10 * 1000, 50), stylesRouter)
+app.use('/api/styles', express.json({ limit: '1mb' }), rateLimiter(10 * 1000, 50), stylesRouter)
+app.use('/api/memory', express.json({ limit: '1mb' }), rateLimiter(10 * 1000, 50), memoryRouter)
 
 // 75MB so /v1/media/publish can carry base64 video payloads (≈50MB decoded cap on the route).
 app.use(express.json({ limit: '75mb' }))
@@ -95,6 +99,7 @@ app.use(express.json({ limit: '75mb' }))
 app.use('/api', rateLimiter(15 * 60 * 1000, 100))
 
 app.use('/uploads', rejectLegacyUploads)
+app.use('/api/files', publicFilesRouter) // unauthenticated; token-gated reads
 app.use('/api/files', filesRouter)
 app.use('/api/conversations', imageUploadRouter)
 

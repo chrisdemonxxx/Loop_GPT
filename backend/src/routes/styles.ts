@@ -2,8 +2,13 @@ import express from 'express'
 import { z } from 'zod'
 import { prisma } from '../services/prisma'
 import { asyncHandler } from '../middleware/errorLogger'
+import { authenticateToken } from './auth'
+import { synthesizeStylePrompt } from '../agent/tools/generateStyle'
 
 export const stylesRouter = express.Router()
+
+// Styles are per-user; every verb requires an authenticated identity.
+stylesRouter.use(authenticateToken)
 
 const styleInput = z.object({
   name: z.string().trim().min(1).max(100),
@@ -36,6 +41,18 @@ stylesRouter.post('/', asyncHandler(async (req, res) => {
     data: { userId, ...input, temperature: input.temperature ?? null },
   })
   res.status(201).json(style)
+}))
+
+/** Create a style from a writing sample: analyse the sample and return a
+ * suggested system prompt (the caller reviews it, then saves via POST /). */
+stylesRouter.post('/from-sample', asyncHandler(async (req, res) => {
+  const sample = z.string().trim().min(100).max(10000).parse(req.body?.sample)
+  try {
+    const systemPrompt = await synthesizeStylePrompt(sample)
+    res.json({ systemPrompt })
+  } catch (e: any) {
+    res.status(502).json({ error: `Style analysis failed: ${e?.message || e}` })
+  }
 }))
 
 /** Update a style. */

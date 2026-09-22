@@ -12,6 +12,9 @@ import { toolRegistry } from '../toolRegistry'
 import { configStore, type ConnectorConfig } from '../configStore'
 import type { ToolDefinition } from '../types'
 import { CONNECTOR_CATALOG, buildCatalogTools, type CatalogConnector } from './catalog'
+import { GOOGLE_CONNECTOR_ADAPTERS } from './googleAdapters'
+import { MARKETPLACE_CONNECTOR_TYPES, marketplaceConnectorTools } from './marketplaceAdapters'
+import { MARKETPLACE_LIST } from './oauthProviders'
 
 export interface ConnectorType {
   type: string
@@ -132,6 +135,24 @@ class ConnectorRegistry {
   constructor() {
     this.registerType(githubConnector)
     this.registerType(httpConnector)
+    // Google OAuth services (Drive/Gmail/Calendar/Sheets) with real tools.
+    for (const [type, adapter] of Object.entries(GOOGLE_CONNECTOR_ADAPTERS)) {
+      const def = CONNECTOR_CATALOG.find((d) => d.type === type)
+      this.registerType({
+        type, name: def?.name || type, description: def?.description || '', category: def?.category,
+        icon: def?.icon, oauth: true, fields: [],
+        createTools: adapter,
+      })
+    }
+    // Marketplace providers (user-supplied OAuth app credentials).
+    for (const type of MARKETPLACE_CONNECTOR_TYPES) {
+      const spec = MARKETPLACE_LIST.find((m) => m.type === type)!
+      this.registerType({
+        type, name: spec.name, description: `Connected with your own ${spec.name} OAuth app.`, category: 'Marketplace',
+        oauth: true, fields: [],
+        createTools: marketplaceConnectorTools,
+      })
+    }
     // Data-driven directory (Notion, Slack, Stripe, … + OAuth entries).
     for (const def of CONNECTOR_CATALOG) {
       if (!this.types.has(def.type)) this.registerType(catalogType(def))
@@ -143,15 +164,19 @@ class ConnectorRegistry {
   }
 
   listTypes() {
-    return Array.from(this.types.values()).map((t) => ({
-      type: t.type,
-      name: t.name,
-      description: t.description,
-      category: t.category || 'Other',
-      icon: t.icon || null,
-      oauth: !!t.oauth,
-      fields: t.fields,
-    }))
+    return Array.from(this.types.values())
+      // Marketplace types are served separately (they are never part of the
+      // default grid — users opt in via the marketplace section).
+      .filter((t) => !MARKETPLACE_CONNECTOR_TYPES.includes(t.type))
+      .map((t) => ({
+        type: t.type,
+        name: t.name,
+        description: t.description,
+        category: t.category || 'Other',
+        icon: t.icon || null,
+        oauth: !!t.oauth,
+        fields: t.fields,
+      }))
   }
 
   /** Activate all enabled connectors from the config store. */

@@ -3,6 +3,8 @@ import { providerRequest } from '../../services/providerHttp'
 import { checkedMedia, decodeMedia, mediaAuth, mediaFailure, mediaOperation, mediaUrl, VIDEO_RESPONSE_BYTES, type MediaOperation } from '../httpClient'
 import { recordUsage } from '../../services/billing'
 import { reserveDailyCredits, dailyDispatch, cleanupDailyReservation, DailyCreditError } from '../../services/dailyReservations'
+import { optimizePromptDetailed } from '../../services/promptOptimizer'
+import { gradioCallSpace } from './gradio'
 import type { ToolDefinition } from '../types'
 
 /** Shared by synchronous tools and durable jobs. The configured origin is the
@@ -47,16 +49,23 @@ async function pollVideoJob(endpoint: string, statusUrl: string, resultUrl: stri
   }
 }
 
-async function generateVideoFromEndpoint(prompt: string, image: string | undefined, numFrames: number,
+async function generateVideoFromEndpoint(prompt: string, images: string[], numFrames: number,
   fps: number, width: number, height: number, op: MediaOperation, beforeDispatch: () => Promise<void>): Promise<Buffer> {
   const endpoint = mediaUrl(process.env.VIDEO_API_URL || process.env.HF_VIDEO_ENDPOINT_URL || '')
   const auth = mediaAuth(endpoint)
   await beforeDispatch()
 
-  // Gradio Space detection
+  // Gradio Space detection. The Space signature takes one reference frame; the
+  // first reference (the identity anchor) is used.
   if (endpoint.includes('.hf.space')) {
+    // Modern Gradio API first (named endpoints); legacy /run/predict as fallback.
+    try {
+      const media = await gradioCallSpace(endpoint, prompt, { imageBase64: images[0], signal: op.signal, timeoutMs: op.remaining(600000) })
+      if (media.video) return media.video
+      if (media.image) return media.image
+    } catch { op.check() }
     const gradioUrl = endpoint.replace(/\/+$/, '') + '/run/predict'
-    const payload = { data: [prompt, image || null, numFrames, fps, width, height], event_data: null }
+    const payload = { data: [prompt, images[0] || null, numFrames, fps, width, height], event_data: null }
     const res = await providerRequest(gradioUrl, { ...auth, method: 'POST',
       headers: { ...auth.headers, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
       signal: op.signal, timeoutMs: op.remaining(300000), maxBytes: VIDEO_RESPONSE_BYTES,
@@ -73,7 +82,10 @@ async function generateVideoFromEndpoint(prompt: string, image: string | undefin
   const response = await providerRequest(endpoint, { ...auth, method: 'POST',
     headers: { ...auth.headers, 'Content-Type': 'application/json', Accept: 'video/mp4, application/json' },
     body: JSON.stringify({ inputs: prompt, parameters: { num_frames: numFrames, fps, width, height,
-      ...(image ? { guidance_scale: 7.5 } : {}) }, ...(image ? { image } : {}) }),
+      ...(images.length ? { guidance_scale: 7.5 } : {}) },
+      // ref2lock: the first reference anchors identity; extras are style refs.
+      ...(images.length ? { image: images[0] } : {}),
+      ...(images.length > 1 ? { reference_images: images } : {}) }),
     signal: op.signal, timeoutMs: op.remaining(), maxBytes: VIDEO_RESPONSE_BYTES })
   op.check()
   if (!(response.headers.get('content-type') || '').includes('json')) return checkedMedia(response.body)
@@ -91,7 +103,8 @@ export const generateVideoTool: ToolDefinition = {
     type: 'object',
     properties: {
       prompt: { type: 'string', description: 'Describe motion, style, lighting and atmosphere.' },
-      image_prompt: { type: 'string', description: 'Optional base64 reference image for img2video.' },
+      image_prompt: { type: 'string', description: 'Optional base64 reference image for img2video (identity anchor).' },
+      reference_images: { type: 'array', items: { type: 'string' }, description: 'Optional base64 reference frames for ref2lock. The first anchors subject identity; extra frames are style/composition references.' },
       duration_seconds: { type: 'number', description: 'Video duration (2-10 seconds).', default: 4 },
       fps: { type: 'number', description: 'Frames per second (12-30).', default: 24 },
       aspect_ratio: { type: 'string', enum: ['landscape', 'portrait', 'square', 'wide'], default: 'landscape' },
@@ -99,12 +112,15 @@ export const generateVideoTool: ToolDefinition = {
     required: ['prompt'],
   },
   async handler(args, ctx) {
-    const op = mediaOperation(300000, ctx.signal)
+    const op = mediaOperation(Number(process.env.HF_VIDEO_MAX_WAIT_MS) || 900000, ctx.signal)
     let reservation: Awaited<ReturnType<typeof reserveDailyCredits>> | undefined
     try {
       op.check()
-      const prompt = String(args.prompt || '').trim()
-      if (!prompt) return { content: 'Error: prompt is required for video generation.', isError: true }
+      const rawPrompt = String(args.prompt || '').trim()
+      if (!rawPrompt) return { content: 'Error: prompt is required for video generation.', isError: true }
+      // Per-modality prompt optimization (GAP-006), invisible by default.
+      const promptMeta = await optimizePromptDetailed(rawPrompt, 'video').catch(() => ({ raw: rawPrompt, enhanced: rawPrompt, optimized: false }))
+      const prompt = promptMeta.enhanced
       reservation = await reserveDailyCredits(ctx.userId, 'video', 'skyreels-v2')
       op.check()
       const dispatch = dailyDispatch(reservation.id, op.signal)
@@ -116,8 +132,13 @@ export const generateVideoTool: ToolDefinition = {
         landscape: [960, 544], portrait: [544, 960], square: [768, 768], wide: [1280, 720],
       }
       const [width, height] = sizes[String(args.aspect_ratio || 'landscape')] || sizes.landscape
-      ctx.emit({ type: 'status', message: `Generating ${duration}s video at ${fps}fps (${width}x${height})...` })
-      const buffer = await generateVideoFromEndpoint(prompt, args.image_prompt ? String(args.image_prompt) : undefined,
+      // ref2lock references: an explicit array, plus the single image_prompt.
+      const refs: string[] = Array.isArray(args.reference_images)
+        ? args.reference_images.map(String).filter(Boolean).slice(0, 4)
+        : []
+      if (args.image_prompt && !refs.includes(String(args.image_prompt))) refs.unshift(String(args.image_prompt))
+      ctx.emit({ type: 'status', message: `Generating ${duration}s video at ${fps}fps (${width}x${height})${refs.length ? ` from ${refs.length} reference frame(s)` : ''}...` })
+      const buffer = await generateVideoFromEndpoint(prompt, refs,
         numFrames, fps, width, height, op, beforeDispatch)
       op.check()
       await recordUsage(ctx.userId, 'video', { reservationId: reservation.id, model: 'skyreels-v2' })
@@ -129,7 +150,7 @@ export const generateVideoTool: ToolDefinition = {
       ctx.scratch.artifacts.push(artifact)
       ctx.emit({ type: 'artifact', artifact })
       return { content: `Generated a ${duration}-second video (${fps}fps, ${width}x${height}). Video is ready to view.`,
-        data: { artifact, duration, fps, frames: numFrames, model: 'skyreels-v2' } }
+        data: { artifact, duration, fps, frames: numFrames, model: 'skyreels-v2', prompt: promptMeta, referenceFrames: refs.length } }
     } catch (error) { return { content: error instanceof DailyCreditError ? error.message : mediaFailure(op, 'Video'), isError: true } }
     finally { await cleanupDailyReservation(reservation?.id); op.dispose() }
   },

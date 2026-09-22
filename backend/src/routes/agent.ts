@@ -12,7 +12,18 @@ import { getHistory, saveMessage } from '../services/chatStore'
 import { prepareRunConversation } from '../services/runWorkspace'
 import { WorkspaceError } from '../services/workspaces'
 import { authorizeRunContext } from '../agent/runAuthorization'
-import { builtinTools } from '../agent'
+import { availableTools } from '../agent'
+import { getAllSkills, createUserSkill, deleteUserSkill, getActiveSkills, getSkill, getSkillSource, updateUserSkill } from '../agent/skills/skillLoader'
+import { configStore } from '../agent/configStore'
+import { pluginRegistry } from '../agent/plugins/pluginLoader'
+import { connectorRegistry } from '../agent/connectors/connectorRegistry'
+import { CONNECTOR_CATALOG, probeConnector } from '../agent/connectors/catalog'
+import { isMarketplaceConnector, probeMarketplaceConnector } from '../agent/connectors/marketplaceAdapters'
+import { MARKETPLACE_LIST } from '../agent/connectors/oauthProviders'
+import { customToolRegistry } from '../agent/customTools'
+import { mcpRegistry } from '../agent/mcp/mcpRegistry'
+import { randomUUID } from 'crypto'
+import { startRun as startResearchRun, getRun as getResearchRun, listRuns as listResearchRuns } from '../services/researchRuns'
 import { selectedConnectionIds, workspaceConnectionTools } from '../services/workspaceTools'
 import { connectionToolName } from '../agent/connectors/reviewedAdapters'
 import { runAgent } from '../agent/agentRuntime'
@@ -48,11 +59,255 @@ function requestLifecycle(res: express.Response) {
   }
 }
 
-// Retired before dynamic conversation routes, for both mounts and every verb.
-router.use(['/mcp-servers', '/connectors', '/skills', '/custom-tools', '/plugins'], authenticateToken, (_req, res) => {
-  res.setHeader('Cache-Control', 'no-store')
-  res.status(410).json({ code: 'GLOBAL_CONFIGURATION_RETIRED', error: 'Use workspace configuration. Shared runtime extensions are no longer loaded.' })
+// ── Extension management (skills / plugins / connectors / MCP / custom tools) ──
+// All are workspace-independent, account-scoped, and backed by the JSON config
+// store. Tool execution authority still comes from the per-run grant.
+function noStore(res: express.Response) { res.setHeader('Cache-Control', 'no-store') }
+
+function publicConnectorConfig(cfg: { config: Record<string, string> }) {
+  // Never return secret field values.
+  const out: Record<string, boolean> = {}
+  for (const k of Object.keys(cfg.config || {})) out[k] = true
+  return out
+}
+
+router.get('/skills', authenticateToken, (_req, res) => {
+  noStore(res)
+  const enabled = new Set(configStore.getEnabledSkills())
+  res.json(getAllSkills().map((s) => ({ id: s.id, name: s.name, description: s.description,
+    builtin: !!s.builtin, triggers: s.triggers || [], tools: s.tools || [], enabled: enabled.has(s.id) })))
 })
+
+function toStringList(v: unknown): string[] | undefined {
+  if (Array.isArray(v)) return v.map(String).map((s) => s.trim()).filter(Boolean)
+  if (typeof v === 'string') return v.split(',').map((s) => s.trim()).filter(Boolean)
+  return undefined
+}
+
+router.post('/skills', authenticateToken, (req, res) => {
+  noStore(res)
+  const { name, description, instructions, triggers, tools } = req.body || {}
+  if (!name || !instructions) return res.status(400).json({ error: 'name and instructions are required' })
+  const skill = createUserSkill({ name: String(name), description: String(description || ''),
+    instructions: String(instructions), triggers: toStringList(triggers), tools: toStringList(tools) })
+  const set = new Set(configStore.getEnabledSkills()); set.add(skill.id); configStore.setEnabledSkills([...set])
+  res.status(201).json({ id: skill.id, name: skill.name, description: skill.description, enabled: true, builtin: false })
+})
+
+router.post('/skills/:id', authenticateToken, (req, res) => {
+  noStore(res)
+  const set = new Set(configStore.getEnabledSkills())
+  if (req.body?.enabled === false) set.delete(req.params.id); else set.add(req.params.id)
+  configStore.setEnabledSkills([...set])
+  res.json({ ok: true, enabled: set.has(req.params.id) })
+})
+
+router.delete('/skills/:id', authenticateToken, (req, res) => {
+  noStore(res)
+  const ok = deleteUserSkill(req.params.id)
+  if (ok) { const set = new Set(configStore.getEnabledSkills()); set.delete(req.params.id); configStore.setEnabledSkills([...set]) }
+  res.json({ ok })
+})
+
+/** Full skill detail incl. the raw SKILL.md source (Settings detail view). */
+router.get('/skills/:id', authenticateToken, (req, res) => {
+  noStore(res)
+  const skill = getSkill(req.params.id)
+  if (!skill) return res.status(404).json({ error: 'Skill not found' })
+  const enabled = new Set(configStore.getEnabledSkills())
+  res.json({
+    id: skill.id, name: skill.name, description: skill.description,
+    instructions: skill.instructions, triggers: skill.triggers || [], tools: skill.tools || [],
+    builtin: !!skill.builtin, enabled: enabled.has(skill.id),
+    source: getSkillSource(skill.id),
+  })
+})
+
+/** Update a user skill (built-ins are immutable). */
+router.put('/skills/:id', authenticateToken, (req, res) => {
+  noStore(res)
+  const { name, description, instructions, triggers, tools } = req.body || {}
+  if (!name || !instructions) return res.status(400).json({ error: 'name and instructions are required' })
+  const skill = updateUserSkill(req.params.id, {
+    name: String(name), description: String(description || ''),
+    instructions: String(instructions), triggers: toStringList(triggers), tools: toStringList(tools),
+  })
+  if (!skill) return res.status(400).json({ error: 'Built-in skills cannot be edited' })
+  const set = new Set(configStore.getEnabledSkills()); set.add(skill.id); configStore.setEnabledSkills([...set])
+  res.json({ id: skill.id, name: skill.name, description: skill.description, enabled: true, builtin: false })
+})
+
+router.get('/plugins', authenticateToken, (_req, res) => { noStore(res); res.json(pluginRegistry.list()) })
+
+router.post('/plugins/:id', authenticateToken, (req, res) => {
+  noStore(res)
+  const set = new Set(configStore.getEnabledPlugins())
+  if (req.body?.enabled === false) { set.delete(req.params.id); pluginRegistry.disable(req.params.id) }
+  else { set.add(req.params.id); pluginRegistry.enable(req.params.id) }
+  configStore.setEnabledPlugins([...set])
+  res.json({ ok: true, enabled: set.has(req.params.id) })
+})
+
+router.get('/custom-tools', authenticateToken, (_req, res) => {
+  noStore(res); res.json(customToolRegistry.list().map((t) => ({ id: t.id, name: t.name, description: t.description, method: t.method, url: t.url, enabled: t.enabled })))
+})
+
+router.post('/custom-tools', authenticateToken, (req, res) => {
+  noStore(res)
+  const { name, description, method, url, params } = req.body || {}
+  if (!name || !url) return res.status(400).json({ error: 'name and url are required' })
+  if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(String(name))) return res.status(400).json({ error: 'name must be a valid identifier' })
+  const cfg = { id: `custom-${randomUUID().slice(0, 8)}`, name: String(name), description: String(description || `Custom tool ${name}`),
+    method: method === 'GET' ? 'GET' as const : 'POST' as const, url: String(url),
+    params: Array.isArray(params) ? params : [], enabled: true }
+  customToolRegistry.upsert(cfg as any)
+  res.status(201).json({ id: cfg.id, name: cfg.name, url: cfg.url, method: cfg.method })
+})
+
+router.delete('/custom-tools/:id', authenticateToken, (req, res) => { noStore(res); customToolRegistry.remove(req.params.id); res.json({ ok: true }) })
+
+router.get('/mcp-servers', authenticateToken, (_req, res) => {
+  noStore(res)
+  const status = new Map(mcpRegistry.status().map((s) => [s.id, s]))
+  res.json(configStore.listMcpServers().map((s) => ({ id: s.id, name: s.name, transport: s.transport,
+    url: s.url, command: s.command, enabled: s.enabled, runtime: status.get(s.id) || { status: 'disconnected', tools: [] } })))
+})
+
+router.post('/mcp-servers', authenticateToken, asyncHandler(async (req, res) => {
+  noStore(res)
+  const { name, transport, url, command, args, headers } = req.body || {}
+  if (!name) return res.status(400).json({ error: 'name is required' })
+  const t = transport === 'stdio' ? 'stdio' as const : 'http' as const
+  if (t === 'http' && !url) return res.status(400).json({ error: 'url is required for http transport' })
+  if (t === 'stdio' && !command) return res.status(400).json({ error: 'command is required for stdio transport' })
+  const cfg = { id: randomUUID().slice(0, 8), name: String(name), transport: t, url: url ? String(url) : undefined,
+    command: command ? String(command) : undefined, args: Array.isArray(args) ? args.map(String) : undefined,
+    headers: headers && typeof headers === 'object' ? headers : undefined, enabled: true }
+  configStore.saveMcpServers([...configStore.listMcpServers(), cfg])
+  const result = await mcpRegistry.connectServer(cfg).catch((e: any) => ({ ok: false, error: e?.message }))
+  res.status(201).json({ id: cfg.id, name: cfg.name, runtime: { status: result.ok ? 'connected' : 'error', error: (result as any).error, tools: (result as any).tools || [] } })
+}))
+
+router.delete('/mcp-servers/:id', authenticateToken, asyncHandler(async (req, res) => {
+  noStore(res)
+  configStore.saveMcpServers(configStore.listMcpServers().filter((s) => s.id !== req.params.id))
+  await mcpRegistry.disconnectServer(req.params.id)
+  res.json({ ok: true })
+}))
+
+router.get('/connectors', authenticateToken, (_req, res) => {
+  noStore(res)
+  res.json({ types: connectorRegistry.listTypes(),
+    configured: configStore.listConnectors().map((c) => ({ id: c.id, type: c.type, name: c.name, enabled: c.enabled,
+      fields: publicConnectorConfig(c), account: c.account || null,
+      lastTestedAt: c.lastTestedAt || null, lastTestOk: c.lastTestOk ?? null })),
+    marketplace: MARKETPLACE_LIST })
+})
+
+/** Validate credentials before saving: one safe probe against the provider.
+ * (Opt out with CONNECTOR_VALIDATE_ON_SAVE=false; skipped under test.) */
+async function validateConnectorCredentials(type: string, config: Record<string, string>) {
+  if (process.env.NODE_ENV === 'test' || process.env.CONNECTOR_VALIDATE_ON_SAVE === 'false') return { ok: true, message: 'Credential accepted.' }
+  const def = CONNECTOR_CATALOG.find((d) => d.type === type)
+  if (!def || def.oauth || !def.tools?.length) return { ok: true, message: 'No validation available for this connector.' }
+  const probe = await probeConnector(def, { id: 'probe', type, name: def.name, config, enabled: true })
+  if (probe.invalidCredentials) return { ok: false, message: `The provider rejected this credential: ${probe.message}` }
+  return { ok: true, message: 'Credential accepted.' }
+}
+
+router.post('/connectors', authenticateToken, async (req, res) => {
+  noStore(res)
+  const { type, name, config, enabled } = req.body || {}
+  if (!type || !name) return res.status(400).json({ error: 'type and name are required' })
+  const known = connectorRegistry.listTypes().some((t) => t.type === type)
+  if (!known) return res.status(400).json({ error: 'Unknown connector type' })
+  const fields = config && typeof config === 'object' ? config : {}
+
+  // Validate the credential against the provider before persisting anything.
+  const validation = await validateConnectorCredentials(String(type), fields)
+  if (!validation.ok) return res.status(400).json({ error: validation.message, code: 'INVALID_CREDENTIALS' })
+
+  const cfg = { id: randomUUID().slice(0, 8), type: String(type), name: String(name),
+    config: fields, enabled: enabled !== false,
+    lastTestedAt: new Date().toISOString(), lastTestOk: true,
+    lastTestMessage: validation.message }
+  configStore.saveConnectors([...configStore.listConnectors(), cfg])
+  connectorRegistry.activate(cfg)
+  res.status(201).json({ id: cfg.id, type: cfg.type, name: cfg.name, enabled: cfg.enabled, validation: validation.message })
+})
+
+/** Test an existing connector ("Test connection" on a card). */
+router.post('/connectors/:id/test', authenticateToken, async (req, res) => {
+  noStore(res)
+  const cfg = configStore.listConnectors().find((c) => c.id === req.params.id)
+  if (!cfg) return res.status(404).json({ error: 'Connector not found' })
+  let probe: { ok: boolean; invalidCredentials: boolean; message: string; ms: number }
+  if (isMarketplaceConnector(cfg.type)) {
+    probe = await probeMarketplaceConnector(cfg)
+  } else {
+    const def = CONNECTOR_CATALOG.find((d) => d.type === cfg.type)
+    // The registry reference connectors (github token / http) have no catalog def.
+    if (!def) probe = { ok: true, invalidCredentials: false, message: 'Connected (no probe available).', ms: 0 }
+    else probe = await probeConnector(def, cfg)
+  }
+  const next = { ...cfg, lastTestedAt: new Date().toISOString(), lastTestOk: probe.ok, lastTestMessage: probe.message.slice(0, 300) }
+  configStore.saveConnectors(configStore.listConnectors().map((c) => (c.id === cfg.id ? next : c)))
+  connectorRegistry.activate(next)
+  res.json({ ok: probe.ok, invalidCredentials: probe.invalidCredentials, message: probe.message, ms: probe.ms, lastTestedAt: next.lastTestedAt })
+})
+
+router.delete('/connectors/:id', authenticateToken, (req, res) => {
+  noStore(res)
+  configStore.saveConnectors(configStore.listConnectors().filter((c) => c.id !== req.params.id))
+  connectorRegistry.deactivate(req.params.id)
+  res.json({ ok: true })
+})
+
+// ── Tool permissions + audit ───────────────────────────────────────────────
+const LEVELS = ['allow', 'approval', 'blocked'] as const
+
+router.get('/permissions', authenticateToken, (_req, res) => {
+  noStore(res)
+  const overrides = configStore.getToolPermissions()
+  res.json({
+    permissions: overrides,
+    tools: availableTools().map((t) => ({ name: t.name, description: t.description, source: t.source || 'builtin',
+      default: t.needsApproval ? 'approval' : 'allow', effective: overrides[t.name] || (t.needsApproval ? 'approval' : 'allow') })),
+  })
+})
+
+router.post('/permissions', authenticateToken, (req, res) => {
+  noStore(res)
+  const { name, level } = req.body || {}
+  if (typeof name !== 'string' || !name) return res.status(400).json({ error: 'name is required' })
+  if (!LEVELS.includes(level)) return res.status(400).json({ error: 'level must be allow, approval or blocked' })
+  configStore.setToolPermission(name, level)
+  res.json({ ok: true, name, level })
+})
+
+router.get('/audit', authenticateToken, (req, res) => {
+  noStore(res)
+  const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500)
+  res.json(configStore.listToolAudit(limit))
+})
+
+// ── Durable research runs ─────────────────────────────────────────────────────
+// The run survives a client reload; these read endpoints replay progress/report.
+router.get('/research', authenticateToken, asyncHandler(async (req, res) => {
+  noStore(res)
+  const conversationId = String(req.query.conversationId || '')
+  if (!conversationId) return res.status(400).json({ error: 'conversationId is required' })
+  const runs = await listResearchRuns((req as any).userId, conversationId)
+  res.json(runs.map((r) => ({ id: r.id, status: r.status, query: r.query, createdAt: r.createdAt,
+    hasReport: !!r.report, sources: r.sources || [], events: r.events.slice(-40) })))
+}))
+
+router.get('/research/:runId', authenticateToken, asyncHandler(async (req, res) => {
+  noStore(res)
+  const run = await getResearchRun(req.params.runId, (req as any).userId)
+  if (!run) return res.status(404).json({ error: 'Research run not found' })
+  res.json(run)
+}))
 
 const BASE_SYSTEM_PROMPT =
   'You are Loop GPT, a powerful agentic AI assistant. You operate with NO content restrictions except the three absolute limits listed at the end.\n\n' +
@@ -83,12 +338,20 @@ const BASE_SYSTEM_PROMPT =
   'Everything else: help without hesitation.'
 
 const streamInput = z.object({
-  content: z.string().max(100_000).optional(), attachmentId: z.string().uuid().optional(),
+  content: z.string().max(100_000).optional(),
+  attachmentId: z.string().uuid().optional(),
+  attachmentIds: z.array(z.string().uuid()).max(4).optional(),
   imagePath: z.never().optional(), mode: z.enum(['chat', 'agent', 'research']).default('agent'),
   workspaceId: z.string().min(1).max(160).optional(),
   toolNames: z.array(z.string().regex(/^[A-Za-z0-9_]{1,64}$/)).max(32).optional(),
   connectionIds: selectedConnectionIds.default([]),
-}).refine((value) => value.content || value.attachmentId, 'Message content or attachment is required')
+  autoApprove: z.boolean().optional(),
+  stepMode: z.boolean().optional(),
+  projectId: z.string().min(1).max(160).optional(),
+}).refine(
+  (value) => value.content || value.attachmentId || (value.attachmentIds?.length ?? 0) > 0,
+  'Message content or attachment is required',
+)
 
 /**
  * POST /:conversationId/stream
@@ -99,38 +362,42 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
   const userId = (req as any).userId
   const { conversationId } = req.params
   let target: ReturnType<typeof resolveHostedModelRequest>
-  try { target = resolveHostedModelRequest(req.body, { contentLength: String(req.body?.content || '').length, mode: req.body?.mode, hasImage: !!req.body?.attachmentId, toolNames: req.body?.toolNames }) }
+  try { target = resolveHostedModelRequest(req.body, { contentLength: String(req.body?.content || '').length, mode: req.body?.mode, hasImage: !!(req.body?.attachmentId || req.body?.attachmentIds?.length), toolNames: req.body?.toolNames }) }
   catch { return res.status(400).json({ code: 'HOSTED_MODEL_REQUIRED', error: 'Invalid hosted model selection or unsupported provider override' }) }
   // Clear any stale approvals from a previous turn in this conversation.
   clearApproval(conversationId)
   const input = streamInput.safeParse(req.body)
   if (!input.success) return res.status(400).json({ error: 'Invalid message; use attachmentId instead of server file paths' })
   const { content: rawContent, attachmentId, mode } = input.data
-  const reviewed = builtinTools()
+  // Up to four images per turn (a single `attachmentId` is also accepted).
+  const attachmentIds = [...(attachmentId ? [attachmentId] : []), ...(input.data.attachmentIds || [])].slice(0, 4)
+  const reviewed = availableTools()
   const connectionIds = input.data.connectionIds
   if (connectionIds.length && mode !== 'agent') return res.status(400).json({ error: 'Connections require agent mode' })
   const selectableNames = [...reviewed.map((tool) => tool.name), ...connectionIds.map(connectionToolName)]
   const selectedNames = mode === 'chat' ? [] : input.data.toolNames ?? (mode === 'research' ? ['web_search', 'web_fetch'] : selectableNames)
   if (selectedNames.some((name) => !selectableNames.includes(name))) return res.status(400).json({ error: 'Requested tool is not available' })
   if (mode === 'research' && !['web_search', 'web_fetch'].every((name) => selectedNames.includes(name))) return res.status(400).json({ error: 'Research requires web_search and web_fetch' })
-  if (attachmentId && conversationId === 'new') return res.status(400).json({ error: 'Use the conversation ID returned by image upload' })
+  if (attachmentIds.length && conversationId === 'new') return res.status(400).json({ error: 'Use the conversation ID returned by image upload' })
   const lifecycle = requestLifecycle(res)
   let reservation: Awaited<ReturnType<typeof reserveDailyCredits>> | undefined
   try {
     if (lifecycle.disconnected()) return
-    let image: Awaited<ReturnType<typeof readOwnedImage>> | null = null
-      if (attachmentId) {
-        try { image = await readOwnedImage(userId, conversationId, attachmentId) }
-        catch (error) {
-          if (!lifecycle.disconnected()) return fileErrorResponse(error, res)
-          return
-        }
+    // Read every attached image (up to 4) — all are sent as image parts.
+    const images: Awaited<ReturnType<typeof readOwnedImage>>[] = []
+    for (const id of attachmentIds) {
+      try { images.push(await readOwnedImage(userId, conversationId, id)) }
+      catch (error) {
+        if (!lifecycle.disconnected()) return fileErrorResponse(error, res)
+        return
       }
+    }
+    const image = images[0] || null
       // When the user attaches an image, route to the vision endpoint/VLM.
       // The vision messages (content + dataUri) are built a few lines below.
       // When the user attaches an image, route to the vision-capable model
       // (a dedicated VLM or the large DeepSeek tier which supports vision).
-      if (image && visionModelEnabled()) {
+      if (images.length && visionModelEnabled()) {
         const visionTarget = resolveVisionTarget(target as any)
         if (visionTarget) target = visionTarget as typeof target
       }
@@ -138,12 +405,19 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
 
     // Reserve atomically before any model/tool work; authorization remains separate.
     const meterKind: UsageKind = mode === 'research' ? 'research' : mode === 'chat' ? 'chat' : 'agent'
-    // Prompt auto-optimizer (GAP-006): always-on by default, invisible. Enhanced
-    // text goes to the model; raw text stays for a future comparison toggle.
+    // Prompt auto-optimizer (GAP-006): always-on by default, invisible. The
+    // enhanced text goes to the model; the raw text is what is stored and
+    // shown. The pair is surfaced in metadata for the "view enhanced" toggle.
     // Research mode is skipped (wider queries would change intent).
-    const content = (process.env.NODE_ENV === 'test' || mode === 'research' || !rawContent)
-      ? rawContent
-      : await (async () => { try { return (await import('../services/promptOptimizer')).optimizePrompt(rawContent, meterKind) } catch { return rawContent } })()
+    const raw = rawContent || ''
+    let promptMeta: { raw: string; enhanced: string; optimized: boolean } = { raw, enhanced: raw, optimized: false }
+    if (process.env.NODE_ENV !== 'test' && mode !== 'research' && raw) {
+      try {
+        const { optimizePromptDetailed, modalityOf } = await import('../services/promptOptimizer')
+        promptMeta = await optimizePromptDetailed(raw, modalityOf(mode))
+      } catch { /* fail-open: raw */ }
+    }
+    const content = promptMeta.enhanced
 
     if (content && detectExtractionAttempt(content)) {
       console.warn(`[guardrails] possible prompt-extraction attempt from user ${userId}`)
@@ -163,15 +437,15 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
     const hasImage = !!image
     let conversation: Awaited<ReturnType<typeof prepareRunConversation>>
     try {
-      conversation = await prepareRunConversation(userId, conversationId, content || 'New Chat', input.data.workspaceId, async (workspaceId) => {
+      conversation = await prepareRunConversation(userId, conversationId, raw || 'New Chat', input.data.workspaceId, async (workspaceId) => {
         lifecycle.check()
         if (connectionIds.length) reviewed.push(...await workspaceConnectionTools(userId, workspaceId, connectionIds))
         lifecycle.check()
-      })
+      }, input.data.projectId)
       lifecycle.check()
       await saveMessage(conversation.id, {
         role: 'user',
-        content: content || '',
+        content: raw || '',
         messageType: hasImage ? 'mixed' : 'text',
         imageUrl: image?.reference.url || null,
         toolUsed: mode,
@@ -203,25 +477,43 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
         .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 
       let currentContent: string | ContentPart[] = content || ''
-      if (image) {
+      if (images.length) {
         currentContent = [
           ...(content ? [{ type: 'text', text: content } as ContentPart] : []),
-          { type: 'image_url', image_url: { url: image.dataUri } },
+          ...images.map((img) => ({ type: 'image_url', image_url: { url: img.dataUri } }) as ContentPart),
         ]
       }
       const messages: ChatMessage[] = [...priorTurns, { role: 'user', content: currentContent }]
       const { provider, model, apiKey, baseUrl } = target
 
-      // Compiled instructions only; legacy global skill state is never consulted.
-      const skills = BUILTIN_SKILLS.filter((skill) => skill.triggers?.some((trigger) => (content || '').toLowerCase().includes(trigger)))
-      const systemPrompt = [BASE_SYSTEM_PROMPT, ...skills.map((skill) => skill.instructions)].join('\n\n')
+      // Enabled skills: compiled built-ins whose triggers match, plus the user's
+      // own skills (skillLoader) selected by trigger. Full instructions are
+      // injected; the name+description index is always available to the model.
+      const active = getActiveSkills(content || '')
+      const builtinMatched = BUILTIN_SKILLS.filter((skill) => skill.triggers?.some((trigger) => (content || '').toLowerCase().includes(trigger)))
+      const userSkills = active.skills.filter((s) => !s.builtin)
+      const skillInstructions = [...builtinMatched, ...userSkills].map((skill) => skill.instructions)
+      const skillIndex = [...builtinMatched, ...userSkills].map((skill) => `- ${skill.name}: ${skill.description}`)
+      const systemPrompt = [
+        BASE_SYSTEM_PROMPT,
+        skillIndex.length ? `Available skills (already applied where relevant):\n${skillIndex.join('\n')}` : '',
+        ...skillInstructions,
+      ].filter(Boolean).join('\n\n')
       let finalContent = ''
       let finalMetadata: any = {}
       let finalEvent: Extract<AgentEvent, { type: 'final' }> | undefined
       const artifacts: any[] = []
+      // A durable research run is decoupled from the HTTP response: it keeps its
+      // own abort signal and persists progress/report, so a client reload does not
+      // kill it and the report can be replayed.
+      const researchRun = mode === 'research'
+        ? startResearchRun({ userId, conversationId: conversation.id, query: raw || content || '' })
+        : null
       const capturingCtx: ToolContext = {
         ...ctx,
+        ...(researchRun ? { signal: researchRun.signal } : {}),
         emit: (event: AgentEvent) => {
+          researchRun?.emit(event)
           if (event.type === 'final') {
             finalContent = event.content
             finalMetadata = event.metadata || {}
@@ -236,14 +528,20 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
 
       const authorizedCtx = await authorizeRunContext(capturingCtx, conversation.workspaceId!, reviewed.filter((tool) => selectedNames.includes(tool.name)))
       lifecycle.check()
-      const dispatch = dailyDispatch(reservation.id, lifecycle.signal)
+      const dispatch = dailyDispatch(reservation.id, researchRun ? researchRun.signal : lifecycle.signal)
       const beforeDispatch = async () => {
+        // For a durable research run, the client disconnect must not abort the
+        // provider dispatch (the run outlives the response).
+        if (researchRun) { await dispatch(); return }
         lifecycle.check()
         await dispatch()
         lifecycle.check()
       }
-      if (mode === 'research') {
-        await runDeepResearch({ query: content || '', provider, model: model || '', apiKey, baseUrl, ctx: authorizedCtx, beforeDispatch })
+      if (researchRun) {
+        const run = runDeepResearch({ query: content || '', provider, model: model || '', apiKey, baseUrl, ctx: authorizedCtx, beforeDispatch })
+        run.then((result) => researchRun.complete({ report: result.content, sources: result.sources }))
+          .catch(() => researchRun.fail())
+        await run
       } else {
         await runAgent({
           messages,
@@ -254,6 +552,8 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
           toolNames: selectedNames,
           systemPrompt,
           style: req.body?.style || undefined,
+          autoApprove: input.data.autoApprove === true,
+          stepMode: input.data.stepMode === true,
           ctx: authorizedCtx,
           beforeDispatch,
         })
@@ -271,7 +571,7 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
         imageUrl: artifacts.find((a) => a.kind === 'image')?.url || null,
         toolUsed: mode,
         // Redact model/provider from client-facing metadata (guardrails).
-        metadata: sanitizeMetadata({ ...finalMetadata, artifacts, provider, model }),
+        metadata: sanitizeMetadata({ ...finalMetadata, artifacts, provider, model, prompt: promptMeta }),
       })
 
       if (finalEvent) emit(finalEvent)
@@ -299,7 +599,7 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
 // ---- Tool catalog -----------------------------------------------------------
 router.get('/tools', authenticateToken, (_req, res) => {
   res.json(
-    builtinTools().map((t) => ({ name: t.name, description: t.description, source: 'builtin' }))
+    availableTools().map((t) => ({ name: t.name, description: t.description, source: t.source || 'builtin' }))
   )
 })
 

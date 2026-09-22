@@ -47,7 +47,7 @@ router.post('/register', validate(validationSchemas.register), async (req, res) 
     welcomeEmail(user.email, user.name).catch(() => {})
     createToken(user.id, 'verify')
       .then((t) => {
-        if (t) return verifyEmail(user.email, user.name, `${(process.env.FRONTEND_URL || 'http://localhost:3000').split(',')[0].trim().replace(/\/+$/, '')}/verify?token=${t}`)
+        if (t) return verifyEmail(user.email, user.name, `${(process.env.FRONTEND_URL || 'http://localhost:3000').split(',')[0].trim().replace(/\/+$/, '')}/verify/?token=${t}`)
       })
       .catch(() => {})
 

@@ -14,9 +14,10 @@ interface ActivityPanelProps {
   onApprove?: () => void
   onDeny?: () => void
   onClose: () => void
+  onOpenTools?: () => void
 }
 
-export default function ActivityPanel({ running, status, steps, artifacts, toolCount, pendingApproval, onApprove, onDeny, onClose }: ActivityPanelProps) {
+export default function ActivityPanel({ running, status, steps, artifacts, toolCount, pendingApproval, onApprove, onDeny, onClose, onOpenTools }: ActivityPanelProps) {
   return (
     <motion.aside
       initial={{ x: 400, opacity: 0 }}
@@ -35,6 +36,7 @@ export default function ActivityPanel({ running, status, steps, artifacts, toolC
         onApprove={onApprove}
         onDeny={onDeny}
         onClose={onClose}
+        onOpenTools={onOpenTools}
       />
     </motion.aside>
   )

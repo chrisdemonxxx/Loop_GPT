@@ -26,6 +26,7 @@ export const rememberTool: ToolDefinition = {
         data: {
           userId: ctx.userId,
           kind: 'explicit',
+          source: 'agent',
           content,
           tags,
           projectId: ctx.workspaceId || undefined,
@@ -38,9 +39,12 @@ export const rememberTool: ToolDefinition = {
   },
 }
 
-/** Retrieve memories relevant to the current context. Used internally. */
+/** Retrieve memories relevant to the current context. Used internally.
+ * Respects the user's global "use memory across conversations" toggle. */
 export async function getMemories(userId: string, limit = 30): Promise<string[]> {
   if (!prisma) return []
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { memoryEnabled: true } })
+  if (user && !user.memoryEnabled) return []
   const rows = await prisma.memory.findMany({
     where: { userId },
     orderBy: { updatedAt: 'desc' },

@@ -24,6 +24,7 @@ const EXT_MIME: Record<string, string> = {
 
 const EXT_KIND: Record<string, ArtifactRef['kind']> = {
   png: 'image', jpg: 'image', jpeg: 'image', webp: 'image',
+  mp4: 'video', webm: 'video',
   pdf: 'pdf', docx: 'docx', xlsx: 'xlsx', pptx: 'pptx', csv: 'csv',
 }
 

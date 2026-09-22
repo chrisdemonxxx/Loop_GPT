@@ -3,6 +3,17 @@ import { createClient, completeOnce } from '../llmClient'
 import { resolveChatTarget } from '../../services/chatModels'
 import { prisma } from '../../services/prisma'
 
+/** Analyse a writing sample and synthesise the system prompt that reproduces
+ * its style. Shared by the generate_style tool and the Settings "create from
+ * sample" route. */
+export async function synthesizeStylePrompt(sample: string, signal?: AbortSignal): Promise<string> {
+  const target = resolveChatTarget('standard')
+  const client = createClient('huggingface', undefined, target.baseUrl)
+  const prompt = `Analyse the following writing sample and generate a concise system prompt (max 300 characters, one paragraph) that would make an LLM reproduce this STYLE: tone, sentence length, vocabulary level, use of examples, formatting preferences, and any distinctive patterns.\n\nOUTPUT ONLY the system prompt — no labels, no explanation.\n\nSample:\n"""\n${sample.slice(0, 5000)}\n"""`
+  const result = await completeOnce(client, target.model, [{ role: 'user', content: prompt }], 0.3, 600, signal)
+  return result.trim().slice(0, 5000)
+}
+
 /** Analyse a writing sample and create a named style preset. */
 export const generateStyleTool: ToolDefinition = {
   name: 'generate_style',
@@ -23,12 +34,7 @@ export const generateStyleTool: ToolDefinition = {
     if (!sample || sample.length < 100) return { content: 'Sample must be at least 100 characters.', isError: true }
 
     try {
-      // Use the fast tier to analyse the sample.
-      const target = resolveChatTarget('standard')
-      const client = createClient('huggingface', undefined, target.baseUrl)
-      const prompt = `Analyse the following writing sample and generate a concise system prompt (max 300 characters, one paragraph) that would make an LLM reproduce this STYLE: tone, sentence length, vocabulary level, use of examples, formatting preferences, and any distinctive patterns.\n\nOUTPUT ONLY the system prompt — no labels, no explanation.\n\nSample:\n"""\n${sample.slice(0, 5000)}\n"""`
-      const result = await completeOnce(client, target.model, [{ role: 'user', content: prompt }], 0.3, 600, ctx.signal)
-      const systemPrompt = result.trim().slice(0, 5000)
+      const systemPrompt = await synthesizeStylePrompt(sample, ctx.signal)
 
       // Save the style.
       if (prisma) {

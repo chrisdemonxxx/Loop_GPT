@@ -44,6 +44,12 @@ export const copy = {
   connectors: 'Connectors', copyAction: 'Copy', editAction: 'Edit', retryAction: 'Retry',
   copied: 'Copied', sources: 'Sources', working: 'working', viewActivity: 'view activity',
   loadingPreview: 'Loading preview…', offline: 'You are offline. Sign-in and conversations need a connection.',
+  mic: 'Dictate', listening: 'Listening…', recordingHint: 'Speak — transcript appears as you talk.',
+  cancelRecording: 'Cancel recording', readAloud: 'Read aloud', stopReading: 'Stop reading',
+  askFirst: 'Ask first', askFirstHint: 'Confirm before every action',
+  createImage: 'Create image', manageTools: 'Manage tools…',
+  exportChat: 'Export chat', exportMarkdown: 'Markdown file', exportPdf: 'PDF (print)',
+  marketplace: 'Marketplace', step: 'Ask first',
 } as const
 export type CopyKey = keyof typeof copy
 type Dict = Record<CopyKey, string>
@@ -64,6 +70,12 @@ const french: Dict = {
   connectors: 'Connecteurs', copyAction: 'Copier', editAction: 'Modifier', retryAction: 'Réessayer',
   copied: 'Copié', sources: 'Sources', working: 'en cours', viewActivity: 'voir l’activité',
   loadingPreview: 'Chargement de l’aperçu…', offline: 'Vous êtes hors ligne. La connexion et les conversations nécessitent Internet.',
+  mic: 'Dicter', listening: 'Écoute…', recordingHint: 'Parlez — la transcription apparaît en direct.',
+  cancelRecording: 'Annuler l’enregistrement', readAloud: 'Lire à voix haute', stopReading: 'Arrêter la lecture',
+  askFirst: 'Demander d’abord', askFirstHint: 'Confirmer avant chaque action',
+  createImage: 'Créer une image', manageTools: 'Gérer les outils…',
+  exportChat: 'Exporter la conversation', exportMarkdown: 'Fichier Markdown', exportPdf: 'PDF (impression)',
+  marketplace: 'Marché', step: 'Demander d’abord',
 }
 const english: Dict = { ...copy }
 export const translations: Record<Locale, Dict> = {

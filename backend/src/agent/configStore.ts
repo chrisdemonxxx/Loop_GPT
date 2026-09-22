@@ -7,7 +7,7 @@
 import fs from 'fs'
 import path from 'path'
 
-const DATA_DIR = path.join(__dirname, '../../data')
+const DATA_DIR = process.env.AGENT_DATA_DIR || path.join(__dirname, '../../data')
 
 function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -47,6 +47,12 @@ export interface ConnectorConfig {
   // Secrets are stored server-side only and never returned to the client.
   config: Record<string, string>
   enabled: boolean
+  /** Connection health metadata (from the "Test connection" action). */
+  lastTestedAt?: string
+  lastTestOk?: boolean
+  lastTestMessage?: string
+  /** Display label for the connected account/workspace (no secrets). */
+  account?: string
 }
 
 export interface CustomToolParam {
@@ -67,6 +73,21 @@ export interface CustomToolConfig {
   params: CustomToolParam[]
   enabled: boolean
 }
+
+export type ToolPermission = 'allow' | 'approval' | 'blocked'
+
+/** One tool-call audit record (append-only, bounded). */
+export interface ToolAuditEntry {
+  at: string
+  userId: string
+  conversationId: string
+  tool: string
+  args: string
+  outcome: 'ok' | 'error' | 'denied' | 'blocked' | 'approved'
+  ms: number
+}
+
+const AUDIT_CAP = 1000
 
 export const configStore = {
   listMcpServers(): McpServerConfig[] {
@@ -98,5 +119,25 @@ export const configStore = {
   },
   saveCustomTools(tools: CustomToolConfig[]) {
     write('custom-tools', tools)
+  },
+  /** Per-tool permission overrides: allow | approval | blocked. */
+  getToolPermissions(): Record<string, ToolPermission> {
+    return read<Record<string, ToolPermission>>('tool-permissions', {})
+  },
+  setToolPermission(name: string, level: ToolPermission) {
+    const map = read<Record<string, ToolPermission>>('tool-permissions', {})
+    if (level === 'allow' && !map[name]) return
+    map[name] = level
+    write('tool-permissions', map)
+  },
+  /** Append a tool-call audit record; the log is bounded (most recent kept). */
+  appendToolAudit(entry: ToolAuditEntry) {
+    const log = read<ToolAuditEntry[]>('tool-audit', [])
+    log.push(entry)
+    write('tool-audit', log.slice(-AUDIT_CAP))
+  },
+  listToolAudit(limit = 100): ToolAuditEntry[] {
+    const log = read<ToolAuditEntry[]>('tool-audit', [])
+    return log.slice(-Math.min(Math.max(limit, 1), AUDIT_CAP)).reverse()
   },
 }

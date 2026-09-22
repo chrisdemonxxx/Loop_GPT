@@ -356,25 +356,58 @@ const WORKING: CatalogConnector[] = [
 ]
 
 // ---------------------------------------------------------------------------
-// Directory entries requiring OAuth (shown, but need OAuth wiring to activate)
+// Platform-managed OAuth connectors (Loop GPT's registered OAuth apps)
 // ---------------------------------------------------------------------------
 
-const OAUTH_DIRECTORY: CatalogConnector[] = [
+const PLATFORM_OAUTH: CatalogConnector[] = [
   { type: 'google_drive', name: 'Google Drive', description: 'Search and read files from Google Drive.', category: 'Productivity', icon: '📁', oauth: true },
   { type: 'gmail', name: 'Gmail', description: 'Read and send email from Gmail.', category: 'Communication', icon: '📧', oauth: true },
   { type: 'google_calendar', name: 'Google Calendar', description: 'Read and create calendar events.', category: 'Productivity', icon: '📅', oauth: true },
   { type: 'google_sheets', name: 'Google Sheets', description: 'Read and write spreadsheet data.', category: 'Data', icon: '📊', oauth: true },
-  { type: 'outlook', name: 'Microsoft Outlook', description: 'Email and calendar via Microsoft 365.', category: 'Communication', icon: '📨', oauth: true },
-  { type: 'onedrive', name: 'OneDrive', description: 'Files from Microsoft OneDrive.', category: 'Productivity', icon: '☁️', oauth: true },
-  { type: 'dropbox', name: 'Dropbox', description: 'Search and read files from Dropbox.', category: 'Productivity', icon: '📦', oauth: true },
-  { type: 'linear', name: 'Linear', description: 'Issues and projects from Linear.', category: 'Developer', icon: '📐', oauth: true },
-  { type: 'asana', name: 'Asana', description: 'Tasks and projects from Asana.', category: 'Productivity', icon: '🎯', oauth: true },
-  { type: 'salesforce', name: 'Salesforce', description: 'CRM records from Salesforce.', category: 'Marketing', icon: '⚡', oauth: true },
-  { type: 'figma', name: 'Figma', description: 'Read design files and comments.', category: 'Developer', icon: '🎨', oauth: true },
-  { type: 'zoom', name: 'Zoom', description: 'Meetings and recordings from Zoom.', category: 'Communication', icon: '🎥', oauth: true },
 ]
 
-export const CONNECTOR_CATALOG: CatalogConnector[] = [...WORKING, ...OAUTH_DIRECTORY]
+export const CONNECTOR_CATALOG: CatalogConnector[] = [...WORKING, ...PLATFORM_OAUTH]
+
+// ---------------------------------------------------------------------------
+// Connection probing / credential validation
+// ---------------------------------------------------------------------------
+
+export interface ProbeResult {
+  ok: boolean
+  /** 401/403 from the provider → the credential is definitely invalid. */
+  invalidCredentials: boolean
+  message: string
+  ms: number
+}
+
+/** Probe a stored connector credential by making one safe request with the
+ * connector's first tool (e.g. "list recent items"). A 401/403 marks the key
+ * invalid; other outcomes (400/404/network) may still be a working key. */
+export async function probeConnector(def: CatalogConnector, cfg: ConnectorConfig): Promise<ProbeResult> {
+  const started = Date.now()
+  if (def.oauth || !def.tools?.length) {
+    return { ok: true, invalidCredentials: false, message: 'Authorized via provider sign-in.', ms: 0 }
+  }
+  const tools = buildCatalogTools(def, cfg)
+  if (!tools.length) return { ok: true, invalidCredentials: false, message: 'No probe available.', ms: 0 }
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 15000)
+    const ctx = { signal: ctrl.signal } as any
+    const result = await tools[0].handler({}, ctx).finally(() => clearTimeout(timer))
+    const content = String(result?.content || '')
+    const ms = Date.now() - started
+    if (result?.isError && /HTTP 40[13]/.test(content)) {
+      return { ok: false, invalidCredentials: true, message: content.slice(0, 300), ms }
+    }
+    if (result?.isError) {
+      return { ok: false, invalidCredentials: false, message: content.slice(0, 300), ms }
+    }
+    return { ok: true, invalidCredentials: false, message: 'Credential accepted.', ms }
+  } catch (e: any) {
+    return { ok: false, invalidCredentials: false, message: `Probe failed: ${e?.message || e}`, ms: Date.now() - started }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Factory: build working tools from a stored config + catalog definition

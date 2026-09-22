@@ -58,15 +58,38 @@ describe('web consumers use the public-network boundary', () => {
     expect(await searchWeb('fixture')).toHaveLength(1)
     expect(requests.text.mock.calls[0][1]).toMatchObject({ allowedOrigins: ['https://www.bing.com'], maxBytes: 1024 * 1024 })
   })
+
+  it('decodes Bing /ck/a redirects to the real destination', async () => {
+    const target = 'https://public.example.com/real-article'
+    const encoded = Buffer.from(target, 'utf-8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    requests.form.mockRejectedValue(new Error('Unavailable'))
+    requests.text.mockResolvedValue(`<li class="b_algo"><h2><a href="https://www.bing.com/ck/a?!&&u=a1${encoded}&ntb=1">Title</a></h2><div class="b_caption"><p>Snippet</p></div></li>`)
+    const results = await searchWeb('fixture')
+    expect(results).toHaveLength(1)
+    expect(results[0].url).toBe(target)
+  })
   it('does not start another provider after cancellation', async () => {
+    // Provider order is SearXNG -> Brave -> Tavily -> DDG -> Bing. With no
+    // SEARXNG_URL configured, Brave is the first provider and cancelling it
+    // must stop the chain before Tavily (post) or DuckDuckGo (form).
     const control = new AbortController()
-    vi.stubEnv('TAVILY_API_KEY', 'fixture-tavily-key')
     vi.stubEnv('BRAVE_API_KEY', 'fixture-brave-key')
-    requests.post.mockImplementation(async () => { control.abort(); throw new Error('cancelled') })
+    vi.stubEnv('TAVILY_API_KEY', 'fixture-tavily-key')
+    requests.json.mockImplementation(async () => { control.abort(); throw new Error('cancelled') })
     await expect(searchWeb('fixture', 6, control.signal)).rejects.toMatchObject({ code: 'aborted' })
-    expect(requests.json).not.toHaveBeenCalled()
+    expect(requests.post).not.toHaveBeenCalled()
     expect(requests.form).not.toHaveBeenCalled()
   })
+  it('drops lexically irrelevant results and keeps the on-topic one first', async () => {
+    requests.form.mockResolvedValue([
+      '<div class="result"><a class="result__a" href="https://noise.example/chair">Office chair height</a><div class="result__snippet">desk ergonomics</div></div>',
+      '<div class="result"><a class="result__a" href="https://hf.example/pricing">Hugging Face Inference Endpoints pricing</a><div class="result__snippet">inference endpoints pricing plans</div></div>',
+    ].join(''))
+    const results = await searchWeb('Hugging Face Inference Endpoints pricing')
+    expect(results).toHaveLength(1)
+    expect(results[0].url).toBe('https://hf.example/pricing')
+  })
+
   it('rejects oversized queries and invalid limits without contacting a provider', async () => {
     await expect(searchWeb('x'.repeat(2001))).rejects.toThrow('Invalid search request')
     await expect(searchWeb('query', Infinity)).rejects.toThrow('Invalid search request')

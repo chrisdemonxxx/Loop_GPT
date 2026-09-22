@@ -56,6 +56,37 @@ router.get('/:conversationId/messages', authenticateToken, validate(validationSc
   }
 })
 
+// Rewind a conversation to a message: delete everything AFTER it (keeping the
+// target, so the client can re-send). Used by the chat "retry/rewind" action
+// so a re-answer replaces the old branch instead of appending below it.
+router.post('/:conversationId/rewind', authenticateToken, async (req, res) => {
+  try {
+    const userId = (req as any).userId
+    const { conversationId } = req.params
+    const messageId = String(req.body?.messageId || '')
+    if (!messageId) return res.status(400).json({ error: 'messageId is required' })
+    if (USE_MEMORY_STORE) {
+      const conversation = memoryStore.getConversation(conversationId)
+      if (!conversation || conversation.userId !== userId) return res.status(404).json({ error: 'Conversation not found' })
+      const msgs = memoryStore.getMessages(conversationId)
+      const target = msgs.find((m: any) => m.id === messageId)
+      if (!target) return res.status(404).json({ error: 'Message not found' })
+      const after = msgs.filter((m: any) => m.createdAt > target.createdAt)
+      for (const m of after) (memoryStore as any).deleteMessage?.(m.id)
+      return res.json({ ok: true, deleted: after.length })
+    }
+    const conversation = await prisma!.conversation.findFirst({ where: { id: conversationId, userId } })
+    if (!conversation) return res.status(404).json({ error: 'Conversation not found' })
+    const target = await prisma!.message.findFirst({ where: { id: messageId, conversationId } })
+    if (!target) return res.status(404).json({ error: 'Message not found' })
+    const result = await prisma!.message.deleteMany({ where: { conversationId, createdAt: { gt: target.createdAt } } })
+    await prisma!.conversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } })
+    res.json({ ok: true, deleted: result.count })
+  } catch {
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
 // Inspect raw JSON BEFORE validation strips unknown fields such as baseUrl.
 router.post('/:conversationId/messages', authenticateToken, (req, res, next) => {
   try { res.locals.hostedTarget = resolveHostedModelRequest(req.body) }

@@ -42,30 +42,40 @@ export interface ChatTarget {
 const STANDARD_CONTEXT = Number(process.env.HF_CONTEXT_TOKENS) || 32_768
 const LARGE_CONTEXT = Number(process.env.HF_LARGE_CONTEXT_TOKENS) || 262_144
 
+/**
+ * The two user-facing models. "Looper" is the product name for a tier; the
+ * upstream model is never disclosed (see guardrails).
+ *
+ *   loop-large (Large Looper)  — the flagship, vision-capable tier.
+ *   loop-small (Small Looper)  — the fast tier.
+ *
+ * A dedicated VLM tier still resolves internally (see `vision` below) but is not
+ * listed in the picker; image turns route to the large tier by default.
+ */
 export const CHAT_MODELS: Record<ChatTier, ChatModelSpec> = {
   standard: {
-    id: 'loop-chat',
+    id: 'loop-small',
     tier: 'standard',
-    label: 'Loop GPT Standard',
-    description: 'Fast everyday model. Best for chat, drafting and tool use.',
+    label: 'Small Looper',
+    description: 'Fast and light. Great for everyday chat, drafting and quick tools.',
     contextTokens: STANDARD_CONTEXT,
-    aliases: ['standard', 'loop-chat-standard', 'default', 'small', 'fast', 'qwen-vl-loop', 'loop-chat-vision'],
+    aliases: ['standard', 'small', 'small-looper', 'fast', 'default', 'loop-chat', 'loop-chat-standard'],
   },
   large: {
-    id: 'loop-chat-large',
+    id: 'loop-large',
     tier: 'large',
-    label: 'Loop GPT Large',
-    description: 'Flagship model with a 256K context window. Best for deep reasoning, long documents and complex code.',
+    label: 'Large Looper',
+    description: 'The flagship. Sees images, reasons deeply, and handles long documents and complex code.',
     contextTokens: LARGE_CONTEXT,
-    aliases: ['large', 'loop-large', 'loop-chat-xl', 'xl', 'pro', 'max', 'qwen-vl-loop-large', 'loop-chat-large-vision'],
+    aliases: ['large', 'large-looper', 'loop-chat-large', 'loop-chat-xl', 'xl', 'pro', 'max', 'vision', 'vl'],
   },
   vision: {
     id: 'loop-vision',
     tier: 'vision',
-    label: 'Loop GPT Vision',
-    description: 'Unrestricted vision-language model. Understands images, diagrams, documents and screenshots.',
-    contextTokens: 32_768,
-    aliases: ['vision', 'loop-vision', 'vl', 'qwen-vl'],
+    label: 'Large Looper (Vision)',
+    description: 'Vision-language model for images, diagrams and screenshots.',
+    contextTokens: STANDARD_CONTEXT,
+    aliases: ['loop-vision', 'qwen-vl'],
   },
 }
 
@@ -124,11 +134,9 @@ export function smartRouteTask(
   return resolveChatTarget('standard')
 }
 
+/** The picker lists exactly the two Loopers (vision resolves internally). */
 export function availableChatModels(): ChatModelSpec[] {
-  const out = [CHAT_MODELS.standard]
-  if (largeModelEnabled()) out.push(CHAT_MODELS.large)
-  if (visionModelEnabled()) out.push(CHAT_MODELS.vision)
-  return out
+  return [CHAT_MODELS.large, CHAT_MODELS.standard]
 }
 
 /** Normalise a base URL to the OpenAI-compatible `/v1` root. */

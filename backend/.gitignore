@@ -9,4 +9,5 @@ dist/
 uploads/
 data/
 
-skills/
+# Runtime user skills live at backend/skills/ (NOT src/agent/skills/).
+/skills/

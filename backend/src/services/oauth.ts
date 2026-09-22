@@ -7,7 +7,12 @@
  *   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
  *   GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET
  *   APPLE_CLIENT_ID (service id) / APPLE_TEAM_ID / APPLE_KEY_ID / APPLE_PRIVATE_KEY (PEM)
- *   OAUTH_CALLBACK_BASE  (public backend URL, e.g. https://api.loop-gpt.cyou) — optional; derived from the request otherwise
+ *   OAUTH_CALLBACK_BASE  (public backend URL, e.g. https://api.loop-gpt.cyou)
+ *   PUBLIC_API_URL        (same idea; accepted as an alias)
+ *   — if neither is set, the URL is derived from the request. Behind a
+ *   reverse proxy that rewrites Host (our `web` service), the derived URL is
+ *   the PRIVATE service host, which providers cannot reach, so a public base
+ *   is required in that topology.
  */
 import jwt from 'jsonwebtoken'
 
@@ -31,8 +36,16 @@ export function enabledProviders(): OAuthProvider[] {
   return (['google', 'github', 'apple'] as OAuthProvider[]).filter(providerEnabled)
 }
 
+/** The public base for provider callbacks: an explicit public URL wins; the
+ * request-derived base is only a fallback (wrong behind a Host-rewriting proxy). */
+export function publicCallbackBase(fallback: string): string {
+  const configured = (process.env.OAUTH_CALLBACK_BASE || process.env.PUBLIC_API_URL || '')
+    .split(',')[0].trim().replace(/\/+$/, '')
+  return configured || fallback
+}
+
 export function callbackUrl(base: string, provider: OAuthProvider): string {
-  const root = (process.env.OAUTH_CALLBACK_BASE || base).replace(/\/+$/, '')
+  const root = publicCallbackBase(base)
   return `${root}/api/auth/oauth/${provider}/callback`
 }
 

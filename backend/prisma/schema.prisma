@@ -33,6 +33,8 @@ model User {
   credits          Int      @default(30)     // remaining daily message credits
   imageCredits     Int      @default(5)      // remaining daily image credits
   creditsResetAt   DateTime @default(now())
+  // Master toggle: use memory across conversations (Settings → Memory).
+  memoryEnabled    Boolean  @default(true)
   // Consent to use interactions for product improvement / model training.
   consentTraining  Boolean  @default(false)
 
@@ -61,6 +63,7 @@ model User {
   tokens        Token[]
   memories      Memory[]
   styles        UserStyle[]
+  researchRuns  ResearchRun[]
   mediaJobs     MediaJob[]
   apiKeys       ApiKey[]
   apiUsage      ApiUsage[]
@@ -143,6 +146,8 @@ model KnowledgeChunk {
   project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   content        String
   embedding      Json?
+  /// pgvector column (1024-d, bge-m3). Present when the extension is enabled.
+  embeddingVec   Unsupported("vector(1024)")?
   createdAt      DateTime  @default(now())
 
   @@index([projectId])
@@ -172,6 +177,8 @@ enum ProjectRole {
 }
 
 /// User memory: explicit ("remember that...") and nightly-synthesized facts.
+/// source: 'user' = added from the Memory settings UI; 'agent' = saved by the
+/// assistant itself during a conversation (the `remember` tool).
 model Memory {
   id        String   @id @default(cuid())
   userId    String
@@ -179,6 +186,7 @@ model Memory {
   projectId String?
   project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
   kind      String   @default("explicit") // explicit | synthesized
+  source    String   @default("user") // user | agent
   content   String
   tags      String[] @default([])
   createdAt DateTime @default(now())
@@ -203,6 +211,24 @@ model UserStyle {
   updatedAt   DateTime @updatedAt
 
   @@index([userId])
+}
+
+/// A durable deep-research run. The orchestrator persists progress and the final
+/// cited report so a run survives a client reload and can be resumed/replayed.
+model ResearchRun {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String
+  query          String
+  status         String   @default("running") // running | completed | failed
+  events         Json
+  report         String?
+  sources        Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId, conversationId])
 }
 
 /// Prepaid balance top-ups (Stripe payment-mode checkout, voucher, or admin grant).
@@ -624,6 +650,9 @@ model PrivateFile {
   size           Int
   sha256         String
   purpose        String   // upload | artifact
+  /// Set when the owner publishes a view-only public link (GAP-020).
+  publishToken   String?  @unique
+  publishedAt    DateTime?
   createdAt      DateTime @default(now())
   deletedAt      DateTime?
 

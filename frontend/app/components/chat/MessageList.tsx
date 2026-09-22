@@ -1,12 +1,13 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Copy, Check, Edit2, RotateCcw, FileDown, Loader2, Sparkles, X, Maximize2 } from 'lucide-react'
+import { Copy, Check, Edit2, RotateCcw, FileDown, Loader2, Sparkles, X, Maximize2, Volume2, Pause, Square } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { API_URL, authHeaders, type AgentMode } from '../../lib/api'
 import { type ArtifactRef } from '../../lib/stream'
 import Markdown from './Markdown'
 import type { LiveStep } from '../AgentComputer'
+import { useSpeech } from '../../lib/voice'
 
 /** Resolve a private attachment to a local object URL via the authenticated
  * content endpoint. The retired public /uploads path is never used. */
@@ -89,7 +90,7 @@ interface Message {
 
 interface MessageListProps {
   messages: Message[]
-  liveUser: { content: string; image?: string } | null
+  liveUser: { content: string; image?: string; images?: string[] } | null
   liveSteps: LiveStep[]
   liveAnswer: string
   liveArtifacts: ArtifactRef[]
@@ -139,12 +140,17 @@ export default function MessageList({
                 className="flex justify-end"
               >
                 <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-[#1e1e21] border border-white/[0.07] px-4 py-3">
-                  {liveUser.image && (
-                    <img
-                      src={liveUser.image}
-                      alt="upload"
-                      className="max-w-[240px] max-h-52 rounded-xl border border-white/10 mb-2.5"
-                    />
+                  {(liveUser.images?.length || liveUser.image) && (
+                    <div className="flex flex-wrap gap-2 mb-2.5">
+                      {(liveUser.images?.length ? liveUser.images : liveUser.image ? [liveUser.image] : []).map((src, i) => (
+                        <img
+                          key={i}
+                          src={src}
+                          alt={`upload ${i + 1}`}
+                          className="max-w-[180px] max-h-40 rounded-xl border border-white/10"
+                        />
+                      ))}
+                    </div>
                   )}
                   <div className="whitespace-pre-wrap text-slate-100 text-[15px] leading-relaxed">
                     {liveUser.content}
@@ -262,9 +268,12 @@ function MessageBubble({
 }) {
   const [copied, setCopied] = useState(false)
   const [viewer, setViewer] = useState<ArtifactRef | null>(null)
+  const [showPrompt, setShowPrompt] = useState(false)
   const artifacts: ArtifactRef[] = message.metadata?.artifacts || []
   const sources = message.metadata?.sources as { index: number; title: string; url: string }[] | undefined
+  const promptMeta = message.metadata?.prompt as { raw: string; enhanced: string; optimized: boolean } | undefined
   const attachedImage = useAttachmentUrl(message.attachmentId)
+  const speech = useSpeech()
 
   const copy = () => {
     navigator.clipboard?.writeText(message.content || '').then(() => {
@@ -315,6 +324,31 @@ function MessageBubble({
     >
       {message.content && <Markdown content={message.content} />}
 
+      {promptMeta?.optimized && (
+        <div className="text-[12px]">
+          <button
+            type="button"
+            onClick={() => setShowPrompt((v) => !v)}
+            className="inline-flex items-center gap-1 text-slate-500 hover:text-slate-300 transition"
+            aria-expanded={showPrompt}
+          >
+            <Sparkles size={11} /> {showPrompt ? 'Hide' : 'View'} enhanced prompt
+          </button>
+          {showPrompt && (
+            <div className="mt-1.5 rounded-xl border border-white/[0.07] bg-white/[0.03] p-3 space-y-2">
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">Original</div>
+                <div className="text-slate-400 whitespace-pre-wrap">{promptMeta.raw}</div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">Enhanced (sent to the model)</div>
+                <div className="text-slate-200 whitespace-pre-wrap">{promptMeta.enhanced}</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {artifacts.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {artifacts.map((a) => <ArtifactCard key={a.id} a={a} onOpen={() => setViewer(a)} />)}
@@ -340,6 +374,22 @@ function MessageBubble({
 
       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity -ml-1">
         <ActionBtn onClick={copy} title="Copy" ariaLabel="Copy message" icon={copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />} />
+        {speech.supported && message.content && (
+          <>
+            <ActionBtn
+              onClick={() => speech.speak(message.id, message.content)}
+              title={speech.speakingId === message.id ? (speech.paused ? 'Resume reading' : 'Pause reading') : 'Read aloud'}
+              ariaLabel="Read aloud"
+              icon={<Volume2 size={14} className={speech.speakingId === message.id ? 'text-[#c96442]' : undefined} />}
+            />
+            {speech.speakingId === message.id && (
+              <>
+                <ActionBtn onClick={speech.pauseOrResume} title={speech.paused ? 'Resume' : 'Pause'} ariaLabel={speech.paused ? 'Resume' : 'Pause'} icon={<Pause size={14} />} />
+                <ActionBtn onClick={speech.stop} title="Stop reading" ariaLabel="Stop reading" icon={<Square size={13} />} />
+              </>
+            )}
+          </>
+        )}
         {onRetry && <ActionBtn onClick={onRetry} title="Retry" ariaLabel="Retry response" icon={<RotateCcw size={14} />} />}
       </div>
     </motion.div>
@@ -359,9 +409,38 @@ function ActionBtn({ onClick, title, ariaLabel, icon }: { onClick: () => void; t
   )
 }
 
+function isVideoArtifact(a: ArtifactRef) {
+  return a.kind === 'video' || (a.mimeType || '').startsWith('video/') || /\.(mp4|webm|mov)$/i.test(a.name)
+}
+
 function ArtifactCard({ a, onOpen }: { a: ArtifactRef; onOpen?: () => void }) {
   const href = a.url ? (a.url.startsWith('http') ? a.url : `${API_URL}${a.url}`) : undefined
   const imageSrc = useAuthedUrl(a.kind === 'image' ? href : undefined)
+  const videoSrc = useAuthedUrl(isVideoArtifact(a) ? href : undefined)
+  if (isVideoArtifact(a) && videoSrc) {
+    return (
+      <div className="group relative inline-flex max-w-md">
+        <video
+          src={videoSrc}
+          controls
+          playsInline
+          preload="metadata"
+          className="w-full max-h-96 rounded-2xl border border-white/10 bg-black"
+        >
+          <track kind="captions" />
+        </video>
+        <button
+          type="button"
+          onClick={() => downloadArtifact(a, href)}
+          title="Download"
+          aria-label={`Download ${a.name}`}
+          className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 text-slate-200 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition"
+        >
+          <FileDown size={14} />
+        </button>
+      </div>
+    )
+  }
   if (a.kind === 'image' && imageSrc) {
     return (
       <div className="group relative inline-flex">
@@ -402,11 +481,13 @@ function ArtifactCard({ a, onOpen }: { a: ArtifactRef; onOpen?: () => void }) {
 function ArtifactViewer({ a, onClose }: { a: ArtifactRef; onClose: () => void }) {
   const href = a.url ? (a.url.startsWith('http') ? a.url : `${API_URL}${a.url}`) : undefined
   const viewerImage = useAuthedUrl(a.kind === 'image' ? href : undefined)
+  const viewerVideo = useAuthedUrl(isVideoArtifact(a) ? href : undefined)
   const isImage = a.kind === 'image'
+  const isVideo = isVideoArtifact(a)
   const isMarkdown = /\.(md|txt)$/i.test(a.name) || a.kind === 'document'
   const [textContent, setTextContent] = useState<string | null>(null)
   useEffect(() => {
-    if (isImage || !href) return
+    if (isImage || isVideo || !href) return
     let revoked = false
     ;(async () => {
       try {
@@ -417,7 +498,7 @@ function ArtifactViewer({ a, onClose }: { a: ArtifactRef; onClose: () => void })
       } catch { /* leave the download affordance */ }
     })()
     return () => { revoked = true }
-  }, [href, isImage])
+  }, [href, isImage, isVideo])
   return (
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -453,11 +534,17 @@ function ArtifactViewer({ a, onClose }: { a: ArtifactRef; onClose: () => void })
           </div>
         </div>
         <div className="flex-1 overflow-auto p-4">
+          {isVideo && viewerVideo && (
+            <video src={viewerVideo} controls playsInline preload="metadata"
+              className="max-w-full rounded-xl border border-white/10 bg-black">
+              <track kind="captions" />
+            </video>
+          )}
           {isImage && viewerImage && <img src={viewerImage} alt={a.name} className="max-w-full rounded-xl border border-white/10" />}
-          {!isImage && textContent !== null && (isMarkdown
+          {!isImage && !isVideo && textContent !== null && (isMarkdown
             ? <Markdown content={textContent} />
             : <pre className="text-[13px] leading-relaxed text-slate-200 whitespace-pre-wrap font-mono">{textContent}</pre>)}
-          {!isImage && textContent === null && (
+          {!isImage && !isVideo && textContent === null && (
             <div className="flex items-center gap-2 text-slate-500 text-[13px] py-8 justify-center">
               <Loader2 size={14} className="animate-spin" /> Loading preview…
             </div>

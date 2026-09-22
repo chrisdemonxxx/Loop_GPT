@@ -1,3 +1,4 @@
 *
 !Dockerfile
 !config.yml
+!entrypoint.sh

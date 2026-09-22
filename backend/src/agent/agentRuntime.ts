@@ -30,6 +30,40 @@ import { assertRunAccess, grantedTools, restrictRunContext } from './runAuthoriz
 import { CONFIDENTIALITY_PROMPT, sanitizeText, sanitizeMetadata, makeStreamSanitizer, guardrailsEnabled } from './guardrails'
 import { storeApproval, waitForApproval, clearApproval } from './approvalStore'
 import { getMemories } from './tools/remember'
+import { configStore, type ToolPermission } from './configStore'
+
+/** Resolve the effective permission: an explicit override wins; otherwise a
+ * tool's own needsApproval flag applies. */
+export function permissionFor(name: string, needsApproval?: boolean): ToolPermission {
+  const override = configStore.getToolPermissions()[name]
+  if (override) return override
+  return needsApproval ? 'approval' : 'allow'
+}
+
+/**
+ * The interactive approval gate ("Ask before each action" mode).
+ *  - blocked always wins (handled before this) and never pauses.
+ *  - autoApprove (Accept edits) disables the interactive gate entirely.
+ *  - stepMode forces a pause for every tool, whatever its permission level.
+ */
+export function requiresInteractivePause(permission: ToolPermission, stepMode: boolean, autoApprove: boolean): boolean {
+  if (autoApprove) return false
+  return permission === 'approval' || stepMode
+}
+
+function audit(entry: { userId?: string; conversationId: string; tool: string; args: any; outcome: any; ms: number }) {
+  try {
+    configStore.appendToolAudit({
+      at: new Date().toISOString(),
+      userId: entry.userId || 'unknown',
+      conversationId: entry.conversationId,
+      tool: entry.tool,
+      args: JSON.stringify(entry.args ?? {}).slice(0, 500),
+      outcome: entry.outcome,
+      ms: Math.round(entry.ms),
+    })
+  } catch { /* audit is best-effort */ }
+}
 
 /** Per-baseURL memo of whether native tool-calling works. */
 const nativeToolSupport = new Map<string, boolean>()
@@ -139,6 +173,8 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
     systemPrompt,
     toolNames,
   } = opts
+  const autoApprove = opts.autoApprove === true
+  const stepMode = opts.stepMode === true
 
   const ctx = restrictRunContext(opts.ctx, toolNames)
   await assertRunAccess(ctx)
@@ -222,6 +258,7 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
         tools: useNative ? openaiTools : undefined,
         signal: ctx.signal,
         onDelta: (text) => sanitizer.push(text),
+        onWarming: (message) => ctx.emit({ type: 'warming', message }),
       })
       sanitizer.flush()
     } catch (err: any) {
@@ -285,7 +322,23 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
       // pre-approved, emit a pending_approval event and wait for the user
       // to respond via POST /api/agent/:conversationId/approve.
       const toolDef = toolRegistry.get(call.name)
-      if (toolDef?.needsApproval) {
+      const permission = permissionFor(call.name, toolDef?.needsApproval)
+
+      // Blocked: never execute; tell the model and record it.
+      if (permission === 'blocked') {
+        const blocked = { content: `Tool "${call.name}" is blocked by user settings.`, isError: true }
+        ctx.emit({ type: 'tool_result', step: stepIndex, name: call.name, content: blocked.content, isError: true })
+        steps.push({ tool: call.name, args: call.args, result: blocked.content })
+        audit({ userId: ctx.userId, conversationId: ctx.conversationId, tool: call.name, args: call.args, outcome: 'blocked', ms: 0 })
+        if (native) working.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: blocked.content })
+        else inlineResults.push(`TOOL_RESULT (${call.name}):\n${blocked.content}`)
+        stepIndex++
+        continue
+      }
+
+      // "Ask before each action": every tool pauses for approval (except when
+      // auto-approve is on, which disables the interactive gate entirely).
+      if (requiresInteractivePause(permission, stepMode, autoApprove)) {
         storeApproval(ctx.conversationId, call.name, call.args)
         ctx.emit({ type: 'pending_approval', tool_name: call.name, args: call.args, prompt: `Approve "${call.name}" with the provided arguments?` })
         const approved = await waitForApproval(ctx.conversationId, call.name)
@@ -293,6 +346,7 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
           const denialResult = { content: `Tool "${call.name}" was not approved by the user.`, isError: true }
           ctx.emit({ type: 'tool_result', step: stepIndex, name: call.name, content: denialResult.content, isError: true })
           steps.push({ tool: call.name, args: call.args, result: denialResult.content })
+          audit({ userId: ctx.userId, conversationId: ctx.conversationId, tool: call.name, args: call.args, outcome: 'denied', ms: 0 })
           if (native) {
             working.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: denialResult.content })
           } else {
@@ -301,9 +355,13 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
           stepIndex++
           continue
         }
+        audit({ userId: ctx.userId, conversationId: ctx.conversationId, tool: call.name, args: call.args, outcome: 'approved', ms: 0 })
       }
 
+      const startedAt = Date.now()
       const result = await toolRegistry.execute(call.name, call.args, ctx)
+      audit({ userId: ctx.userId, conversationId: ctx.conversationId, tool: call.name, args: call.args,
+        outcome: result.isError ? 'error' : 'ok', ms: Date.now() - startedAt })
       if (!result.isError) toolsUsed.add(call.name)
       ctx.emit({ type: 'tool_result', step: stepIndex, name: call.name, content: truncate(result.content, 4000), data: result.data, isError: result.isError })
       steps.push({ tool: call.name, args: call.args, result: truncate(result.content, 2000) })

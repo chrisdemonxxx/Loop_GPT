@@ -73,7 +73,7 @@ export type AgentEvent =
 
 export interface ArtifactRef {
   id: string
-  kind: 'image' | 'pdf' | 'docx' | 'xlsx' | 'pptx' | 'csv' | 'file'
+  kind: 'image' | 'video' | 'pdf' | 'docx' | 'xlsx' | 'pptx' | 'csv' | 'file'
   name: string
   url?: string
   mimeType?: string
@@ -85,11 +85,23 @@ export interface RunAgentOptions {
   model: string
   apiKey?: string
   baseUrl?: string
-  /** Tool names to enable for this run. Empty/omitted = plain chat, no tools. */
-  toolNames?: string[]
-  systemPrompt?: string
-  maxSteps?: number
-  ctx: ToolContext
-  /** Optional style preset (system prompt snippet from UserStyle). */
-  style?: string
-}
+    /** Tool names to enable for this run. Empty/omitted = plain chat, no tools. */
+    toolNames?: string[]
+    systemPrompt?: string
+    maxSteps?: number
+    ctx: ToolContext
+    /** Optional style preset (system prompt snippet from UserStyle). */
+    style?: string
+    /**
+     * When true (the "Accept edits" run mode), tools that would normally pause
+     * for approval run without pausing. The per-tool 'blocked' permission still
+     * applies; this only auto-approves the interactive gate.
+     */
+    autoApprove?: boolean
+    /**
+     * "Ask before each action" run mode: every tool call pauses for approval,
+     * regardless of its configured permission level. 'blocked' still wins;
+     * autoApprove disables the gate entirely.
+     */
+    stepMode?: boolean
+  }

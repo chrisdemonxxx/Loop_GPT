@@ -1,16 +1,17 @@
 #!/bin/bash
 set -e
 
-# HF Spaces sets PORT dynamically.
+# The hosting platform (HF Spaces, Railway) sets PORT dynamically.
 PORT="${PORT:-7860}"
 
-# Generate a random secret key if none is provided in Secrets.
+# Generate a random secret key if none is provided.
 if [ -z "$SEARXNG_SECRET_KEY" ]; then
   export SEARXNG_SECRET_KEY="$(head -c 32 /dev/urandom | base64)"
 fi
 
-# Override the SearXNG port to match HF Spaces routing.
-export SEARXNG_PORT="${PORT}"
+# Force the runtime port into the config (idempotent; independent of build-time
+# templating) so the app binds the port the platform routes to.
+sed -i "s/^\([[:space:]]*port:\).*/\1 ${PORT}/" /etc/searxng/settings.yml
 export SEARXNG_BIND_ADDRESS="0.0.0.0"
 
 # The base image's entrypoint is /sbin/tini -- /usr/local/searxng/dockerfiles/docker-entrypoint.sh

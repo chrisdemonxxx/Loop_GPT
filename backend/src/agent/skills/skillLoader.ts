@@ -27,7 +27,11 @@ export interface Skill {
   builtin?: boolean
 }
 
-const USER_SKILL_DIR = path.join(process.cwd(), 'skills')
+// User skills live in the writable data dir (alongside the config store), so
+// they work in containers where the app cwd is read-only. Override with
+// AGENT_SKILLS_DIR.
+const DATA_DIR = process.env.AGENT_DATA_DIR || path.join(__dirname, '../../../data')
+const USER_SKILL_DIR = process.env.AGENT_SKILLS_DIR || path.join(DATA_DIR, 'skills')
 
 function parseSkillMd(dir: string, id: string): Skill | null {
   try {
@@ -120,6 +124,46 @@ export function deleteUserSkill(id: string): boolean {
 
 export function getSkill(id: string): Skill | undefined {
   return getAllSkills().find((s) => s.id === id)
+}
+
+/** Raw SKILL.md source for a user skill (frontmatter + instructions), for the
+ * Settings "Edit source" view. Built-ins return their composed equivalent. */
+export function getSkillSource(id: string): string | null {
+  const skill = getSkill(id)
+  if (!skill) return null
+  if (!skill.builtin) {
+    try {
+      const file = path.join(USER_SKILL_DIR, id, 'SKILL.md')
+      if (fs.existsSync(file)) return fs.readFileSync(file, 'utf-8')
+    } catch { /* fall through to composed */ }
+  }
+  const fm = [
+    '---',
+    `name: ${skill.name}`,
+    `description: ${skill.description}`,
+    skill.triggers?.length ? `triggers: ${skill.triggers.join(', ')}` : '',
+    skill.tools?.length ? `tools: ${skill.tools.join(', ')}` : '',
+    '---',
+    '',
+    skill.instructions,
+    '',
+  ].filter((l) => l !== '').join('\n')
+  return fm
+}
+
+/** Update (or create) a user skill by id, writing SKILL.md. */
+export function updateUserSkill(id: string, input: {
+  name: string
+  description: string
+  instructions: string
+  triggers?: string[]
+  tools?: string[]
+}): Skill | null {
+  if (BUILTIN_SKILLS.some((s) => s.id === id)) return null
+  const safeId = id.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 48)
+  if (!safeId) return null
+  const skill = createUserSkill({ id: safeId, ...input })
+  return skill
 }
 
 /**

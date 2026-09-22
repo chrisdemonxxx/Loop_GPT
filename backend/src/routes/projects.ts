@@ -2,10 +2,13 @@ import express from 'express'
 import { z } from 'zod'
 import { prisma } from '../services/prisma'
 import { requireMembership } from '../services/workspaces'
+import { authenticateToken } from './auth'
 import { asyncHandler } from '../middleware/errorLogger'
 import { generateEmbedding } from '../services/embeddingStore'
+import { indexEmbedding, vectorSearch } from '../services/vectorSearch'
 
 export const projectRouter = express.Router()
+projectRouter.use(authenticateToken)
 
 const projectInput = z.object({
   name: z.string().trim().min(1).max(200),
@@ -98,9 +101,11 @@ projectRouter.post('/:workspaceId/projects/:projectId/ingest', asyncHandler(asyn
   for (const chunk of chunks) {
     try {
       const embedding = await generateEmbedding(chunk)
-      await prisma!.knowledgeChunk.create({
+      const row = await prisma!.knowledgeChunk.create({
         data: { projectId, content: chunk, embedding },
       })
+      // Mirror into the pgvector column when the extension is present.
+      await indexEmbedding(row.id, embedding)
       inserted++
     } catch {
       // Skip chunks that fail embedding (individual failures leave the
@@ -123,6 +128,12 @@ projectRouter.get('/:workspaceId/projects/:projectId/search', asyncHandler(async
 
   // Embed the query using the same embedding service.
   const queryEmbedding = await generateEmbedding(query)
+
+  // Prefer the pgvector ANN index; fall back to in-app cosine when absent.
+  const ann = await vectorSearch(projectId, queryEmbedding, topK)
+  if (ann) {
+    return res.json({ results: ann.filter((r) => r.score > 0.1), engine: 'pgvector' })
+  }
 
   // Fetch all chunks for the project and compute cosine similarity in memory.
   // For production with pgvector, this would be a SQL ORDER BY with <=>
@@ -151,5 +162,5 @@ projectRouter.get('/:workspaceId/projects/:projectId/search', asyncHandler(async
     .sort((a, b) => b.score - a.score)
     .slice(0, topK)
 
-  res.json({ results: scored })
+  res.json({ results: scored, engine: 'jsonb' })
 }))

@@ -1,18 +1,26 @@
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+// Empty string => same-origin (relative) requests, served by the platform proxy.
+// Set NEXT_PUBLIC_API_URL to an absolute origin only for cross-origin API hosts.
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
-// Memory-only auth token: never persisted to localStorage (XSS-hardening).
-// Cleared on pagehide; auto-expires; sessions do not survive refresh by design.
+// Session token: kept in memory AND persisted to localStorage so a refresh does
+// not sign the user out (chat history + memory then survive reloads). Auto-expires
+// from the JWT `exp`.
+const TOKEN_KEY = 'authToken'
 let memoryToken: string | null = null
-let expireTimer: ReturnType<typeof setTimeout> | null = null
-if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', () => {
-    memoryToken = null
-    if (expireTimer) clearTimeout(expireTimer)
-  })
+
+function readStoredToken(): string | null {
+  try {
+    const t = localStorage.getItem(TOKEN_KEY)
+    if (!t) return null
+    const payload = JSON.parse(atob((t.split('.')[1] || '').replace(/-/g, '+').replace(/_/g, '/')))
+    if (payload?.exp && payload.exp * 1000 <= Date.now()) { localStorage.removeItem(TOKEN_KEY); return null }
+    return t
+  } catch { return null }
 }
+
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null
-  return memoryToken
+  return memoryToken || readStoredToken()
 }
 
 export function authHeaders(json = true): Record<string, string> {
@@ -25,19 +33,16 @@ export function authHeaders(json = true): Record<string, string> {
 
 export type AgentMode = 'chat' | 'agent' | 'research'
 
-export interface ProviderSettings {
-  provider: string
-  model: string
-  apiKey: string
+/** Hosted model tier id ('loop-chat', 'loop-chat-large', 'loop-vision') or ''
+ * to let the server's smart router decide. */
+export function getModelTier(): string {
+  if (typeof window === 'undefined') return ''
+  return localStorage.getItem('aiModelTier') || ''
 }
-
-export function getProviderSettings(): ProviderSettings {
-  if (typeof window === 'undefined') return { provider: 'huggingface', model: '', apiKey: '' }
-  return {
-    provider: localStorage.getItem('aiProvider') || 'huggingface',
-    model: localStorage.getItem('aiModel') || '',
-    apiKey: localStorage.getItem('aiApiKey') || '',
-  }
+export function setModelTier(id: string) {
+  if (typeof window === 'undefined') return
+  if (id) localStorage.setItem('aiModelTier', id)
+  else localStorage.removeItem('aiModelTier')
 }
 
 // ---- Auth / account helpers -------------------------------------------------
@@ -63,14 +68,13 @@ export function getStoredUser(): StoredUser | null {
 export function setAuth(token: string, user?: StoredUser) {
   if (typeof window === 'undefined') return
   memoryToken = token || null
+  if (token) localStorage.setItem(TOKEN_KEY, token)
   if (user) localStorage.setItem('user', JSON.stringify(user))
-  if (expireTimer) clearTimeout(expireTimer)
-  if (token) expireTimer = setTimeout(() => { memoryToken = null }, 7 * 24 * 60 * 60 * 1000)
 }
 
 export function clearAuth() {
   memoryToken = null
-  if (expireTimer) clearTimeout(expireTimer)
+  localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem('user')
 }
 

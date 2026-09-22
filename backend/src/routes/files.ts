@@ -7,6 +7,7 @@ import { getOrCreateConversation } from '../services/chatStore'
 import {
   MAX_IMAGE_BYTES, FileAccessError, detectImageMime, requireOwnedConversation,
   storePrivateFile, readOwnedFile, findOwnedFile, deleteOwnedFile, fileReference,
+  publishOwnedFile, unpublishOwnedFile, readPublishedFile,
 } from '../services/privateFiles'
 
 export function fileErrorResponse(error: unknown, res: express.Response) {
@@ -50,6 +51,31 @@ filesRouter.get('/:id/content', async (req, res) => {
 filesRouter.delete('/:id', async (req, res) => {
   try { await deleteOwnedFile((req as any).userId, req.params.id); res.status(204).end() }
   catch (error) { fileErrorResponse(error, res) }
+})
+/** Publish a view-only public link. */
+filesRouter.post('/:id/publish', async (req, res) => {
+  try {
+    const { token } = await publishOwnedFile((req as any).userId, req.params.id)
+    res.json({ token, url: `/api/files/public/${token}/content` })
+  } catch (error) { fileErrorResponse(error, res) }
+})
+filesRouter.delete('/:id/publish', async (req, res) => {
+  try { await unpublishOwnedFile((req as any).userId, req.params.id); res.status(204).end() }
+  catch (error) { fileErrorResponse(error, res) }
+})
+
+/** Anonymous read-only download of a published file. */
+export const publicFilesRouter = express.Router()
+publicFilesRouter.get('/public/:token/content', async (req, res) => {
+  try {
+    const { file, buffer } = await readPublishedFile(req.params.token)
+    res.setHeader('Cache-Control', 'public, max-age=300')
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'")
+    res.setHeader('Content-Disposition', `inline; filename="${file.name}"`)
+    res.setHeader('Content-Type', file.mimeType)
+    res.send(buffer)
+  } catch (error) { fileErrorResponse(error, res) }
 })
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 0, parts: 1 } })

@@ -2,8 +2,10 @@ import { saveArtifact } from '../artifacts'
 import { imageApiService } from '../../services/imageApi'
 import { providerRequest } from '../../services/providerHttp'
 import { checkedMedia, decodeMedia, IMAGE_RESPONSE_BYTES, mediaAuth, mediaFailure, mediaOperation, mediaUrl, type MediaOperation } from '../httpClient'
+import { gradioCallSpace } from './gradio'
 import { recordUsage } from '../../services/billing'
 import { reserveDailyCredits, dailyDispatch, cleanupDailyReservation, DailyCreditError } from '../../services/dailyReservations'
+import { optimizePromptDetailed } from '../../services/promptOptimizer'
 import type { ToolDefinition } from '../types'
 
 async function imageResponse(response: Awaited<ReturnType<typeof providerRequest>>, op: MediaOperation): Promise<Buffer> {
@@ -30,10 +32,16 @@ async function hfImageEndpoint(prompt: string, op: MediaOperation, beforeDispatc
 
   // Gradio Space detection — the endpoint URL ends with .hf.space
   if (endpoint.includes('.hf.space')) {
+    await beforeDispatch()
+    // Modern Gradio API first (named endpoints); legacy /run/predict as fallback.
+    try {
+      const media = await gradioCallSpace(endpoint, prompt, { imageBase64, signal: op.signal, timeoutMs: op.remaining(600000) })
+      if (media.image) return media.image
+      if (media.video) return media.video
+    } catch { op.check() }
     const gradioUrl = endpoint.replace(/\/+$/, '') + '/run/predict'
     const payload = { data: [prompt, imageBase64 || null], event_data: null }
     const auth = mediaAuth(endpoint)
-    await beforeDispatch()
     const res = await providerRequest(gradioUrl, { ...auth, method: 'POST',
       headers: { ...auth.headers, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
       signal: op.signal, timeoutMs: op.remaining(180000), maxBytes: IMAGE_RESPONSE_BYTES,
@@ -104,12 +112,15 @@ export const generateImageTool: ToolDefinition = {
     required: ['prompt'],
   },
   async handler(args, ctx) {
-    const op = mediaOperation(300000, ctx.signal)
+    const op = mediaOperation(Number(process.env.HF_IMAGE_MAX_WAIT_MS) || 900000, ctx.signal)
     let reservation: Awaited<ReturnType<typeof reserveDailyCredits>> | undefined
     try {
       op.check()
-      const prompt = String(args.prompt || '').trim()
+      const rawPrompt = String(args.prompt || '').trim()
       const imagePrompt = args.image_prompt ? String(args.image_prompt) : undefined
+      // Per-modality prompt optimization (GAP-006), invisible by default.
+      const promptMeta = await optimizePromptDetailed(rawPrompt, 'image').catch(() => ({ raw: rawPrompt, enhanced: rawPrompt, optimized: false }))
+      const prompt = promptMeta.enhanced
       const parsedStrength = args.strength == null ? 0.75 : Number(args.strength)
       const strength = Number.isFinite(parsedStrength) ? Math.max(0, Math.min(1, parsedStrength)) : 0.75
       if (!prompt) return { content: 'Error: prompt is required.', isError: true }
@@ -149,7 +160,7 @@ export const generateImageTool: ToolDefinition = {
       ctx.scratch.artifacts = ctx.scratch.artifacts || []
       ctx.scratch.artifacts.push(artifact)
       ctx.emit({ type: 'artifact', artifact })
-      return { content: `Generated image (${mode} mode) for "${prompt.slice(0, 80)}...".`, data: { artifact, mode } }
+      return { content: `Generated image (${mode} mode) for "${prompt.slice(0, 80)}...".`, data: { artifact, mode, prompt: promptMeta } }
     } catch (error) { return { content: error instanceof DailyCreditError ? error.message : mediaFailure(op, 'Image'), isError: true } }
     finally { await cleanupDailyReservation(reservation?.id); op.dispose() }
   },
