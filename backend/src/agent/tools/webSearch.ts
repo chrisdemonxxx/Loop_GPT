@@ -3,10 +3,11 @@
  *
  * Priority order (per the platform spec):
  *  1. SearXNG    — the org's self-hosted metasearch Space (SEARXNG_URL)
- *  2. Brave      — when BRAVE_API_KEY is set (reliable fallback)
- *  3. Tavily     — when TAVILY_API_KEY is set (structured fallback)
- *  4. DuckDuckGo HTML — no key, best-effort scrape
- *  5. Bing HTML  — no key fallback (scrapes bing.com)
+ *  2. HF Search  — HF Inference Endpoint (HF_SEARCH_ENDPOINT_URL, structured JSON)
+ *  3. Brave      — when BRAVE_API_KEY is set (reliable fallback)
+ *  4. Tavily     — when TAVILY_API_KEY is set (structured fallback)
+ *  5. DuckDuckGo HTML — no key, best-effort scrape
+ *  6. Bing HTML  — no key fallback (scrapes bing.com)
  *
  * Candidate passages are reranked with bge-reranker-v2-m3 when available
  * (fail-open), matching the spec's search pipeline.
@@ -125,6 +126,27 @@ async function searxngSearch(query: string, maxResults: number, signal: AbortSig
     .filter((r: SearchResult) => r.url.startsWith('http'))
 }
 
+/**
+ * HF Inference Endpoint search provider — structured results via a dedicated
+ * search endpoint. Returns title/url/snippet triples from a managed pipeline.
+ */
+async function hfSearch(query: string, maxResults: number, signal: AbortSignal): Promise<SearchResult[]> {
+  const endpoint = process.env.HF_SEARCH_ENDPOINT_URL || ''
+  const token = process.env.HF_TOKEN || ''
+  if (!endpoint) return []
+  const data = await postJson<any>(
+    endpoint,
+    { inputs: query, parameters: {} },
+    { signal, maxBytes: 512 * 1024, allowedOrigins: [new URL(endpoint).origin],
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) } }
+  )
+  const rows = Array.isArray(data?.results) ? data.results : []
+  return rows
+    .map((r: any) => ({ title: String(r.title || r.url || ''), url: String(r.url || ''), snippet: String(r.snippet || '') }))
+    .filter((r: SearchResult) => r.url.startsWith('http'))
+    .slice(0, maxResults)
+}
+
 async function searchWithProviders(query: string, maxResults: number, signal: AbortSignal): Promise<SearchResult[]> {
   // 1. SearXNG (self-hosted HF Space) — primary.
   checkCancelled(signal)
@@ -135,7 +157,16 @@ async function searchWithProviders(query: string, maxResults: number, signal: Ab
     } catch { /* fall through */ }
   }
 
-  // 2. Brave — reliable keyed fallback.
+  // 2. HF Search endpoint — dedicated structured search pipeline.
+  checkCancelled(signal)
+  if (process.env.HF_SEARCH_ENDPOINT_URL) {
+    try {
+      const res = await hfSearch(query, maxResults, signal)
+      if (res.length > 0) return res
+    } catch { /* fall through */ }
+  }
+
+  // 3. Brave — reliable keyed fallback.
   checkCancelled(signal)
   const braveKey = process.env.BRAVE_API_KEY
   if (braveKey) {
