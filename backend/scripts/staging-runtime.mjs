@@ -132,8 +132,11 @@ async function main() {
   const video = flag('ACCOUNTED_VIDEO_JOBS_ENABLED')
   const dailyVideo = flag('ACCOUNTED_DAILY_VIDEO_JOBS_ENABLED')
   if (dailyVideo && !video) throw new Error('Daily video requires accounted video')
-  // Legacy direct-video tools must remain off in this candidate.
-  for (const key of ['VIDEO_API_URL', 'HF_VIDEO_ENDPOINT_URL']) delete env[key]
+  // Legacy direct-video provider (VIDEO_API_URL, the old raw HF Inference API)
+  // stays off in this candidate. NOTE: HF_VIDEO_ENDPOINT_URL (the Gradio media
+  // studio Space, the current image→video path) is NOT legacy — stripping it
+  // broke all video generation ("Invalid media URL"). Keep it.
+  delete env.VIDEO_API_URL
   if (!video) delete env.HF_VIDEO_ENDPOINT
   if (env.PRIVATE_FILES_STORAGE_MODE !== 'shared-filesystem' || env.PRIVATE_FILES_DIR !== '/private-store/files') {
     throw new Error('Mount the dedicated PVC at /private-store; PRIVATE_FILES_DIR must be /private-store/files')

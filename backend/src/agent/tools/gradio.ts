@@ -27,7 +27,7 @@ export interface GradioMedia {
 
 const NON_ENTRYPOINTS = /^\/(lambda|refresh_status|frame_info)/
 
-export function pickApi(info: any, mode: 'image' | 'video' = 'video'): { api: string; params: GradioParam[] } | null {
+export function pickApi(info: any, mode: 'image' | 'video' = 'video', hasImage = false): { api: string; params: GradioParam[] } | null {
   const named = info?.named_endpoints || {}
   const candidates: Array<{ api: string; params: GradioParam[]; score: number }> = []
   for (const [api, def] of Object.entries<any>(named)) {
@@ -43,7 +43,11 @@ export function pickApi(info: any, mode: 'image' | 'video' = 'video'): { api: st
     const imageReturn = Array.isArray(def?.returns) && def.returns.some((r: any) => /Image/i.test(String(r?.component)))
     const modeScore = mode === 'image' ? (imageReturn ? 10 : 0) + (videoReturn ? -5 : 0)
       : (videoReturn ? 10 : 0) + (imageReturn ? -2 : 0)
-    candidates.push({ api, params, score: score + modeScore })
+    // Video mode without a start frame: an endpoint that REQUIRES an Image
+    // parameter would receive null and fail — route to the chained
+    // text-to-video endpoint instead (e.g. /image_to_video over /generate_video).
+    const missingImagePenalty = mode === 'video' && imageParams > 0 && !hasImage ? -100 : 0
+    candidates.push({ api, params, score: score + modeScore + missingImagePenalty })
   }
   if (!candidates.length) return null
   candidates.sort((a, b) => b.score - a.score)
@@ -55,7 +59,13 @@ export function buildArgs(params: GradioParam[], prompt: string, imageBase64?: s
   return params.map((p) => {
     const comp = String(p?.component || '')
     const label = String(p?.label || p?.parameter_name || '')
-    if (/Image/i.test(comp)) return imageBase64 || null
+    if (/Image/i.test(comp)) {
+      // Gradio Image components accept a FileData-shaped object whose `url`
+      // carries a base64 data URI — a bare base64 string errors server-side.
+      if (!imageBase64) return null
+      const uri = imageBase64.startsWith('data:') ? imageBase64 : `data:image/png;base64,${imageBase64}`
+      return { url: uri, orig_name: 'reference.png', meta: { _type: 'gradio.FileData' } }
+    }
     if (/Textbox/i.test(comp)) {
       if (/neg/i.test(label)) return ''
       if (!promptUsed) { promptUsed = true; return prompt }
@@ -77,11 +87,12 @@ export async function gradioCallSpace(
 ): Promise<GradioMedia> {
   const root = mediaUrl(base).replace(/\/+$/, '')
   const auth = mediaAuth(root)
+  console.error('[gradio] fetching info from', root)
   const infoRes = await providerRequest(`${root}/gradio_api/info`, {
     ...auth, signal: opts.signal, timeoutMs: 30000, maxBytes: 2 * 1024 * 1024,
   })
   const info = await infoRes.json()
-  const chosen = pickApi(info, opts.mode)
+  const chosen = pickApi(info, opts.mode, !!opts.imageBase64)
   if (!chosen) throw new Error('No usable Gradio endpoint')
 
   const data = buildArgs(chosen.params, prompt, opts.imageBase64)
@@ -93,18 +104,40 @@ export async function gradioCallSpace(
   })
   const { event_id: eventId } = await callRes.json()
   if (!eventId) throw new Error('Gradio returned no event id')
+  console.error('[gradio] submitted', chosen.api, 'event:', eventId)
 
   const op = mediaOperation(opts.timeoutMs ?? 600000, opts.signal)
   try {
     const stream = await providerRequest(`${root}/gradio_api/call${chosen.api}/${eventId}`, {
       ...auth, signal: opts.signal, timeoutMs: op.remaining(), maxBytes: 4 * 1024 * 1024,
     })
-    const text = (await stream.text()).split('\n')
-      .filter((l) => l.startsWith('data: '))
-      .map((l) => l.slice(6).trim())
-      .join('\n')
-    if (!text || text === 'null') return {}
-    const payload = JSON.parse(text)
+    // SSE event stream: `event: heartbeat` frames repeat for minutes during
+    // generation (data: null), then `event: complete` (or `event: error`)
+    // carries the payload. Pair event/data lines and keep ONLY the terminal
+    // event — joining every data line (heartbeats included) breaks JSON.parse.
+    const raw = await stream.text()
+    let currentEvent = ''
+    let resultJson: string | null = null
+    let errorJson: string | null = null
+    for (const line of raw.split('\n')) {
+      if (line.startsWith('event:')) currentEvent = line.slice(6).trim()
+      else if (line.startsWith('data:')) {
+        const data = line.slice(5).trim()
+        if (!data || data === 'null') continue
+        if (currentEvent === 'complete') resultJson = data
+        else if (currentEvent === 'error') errorJson = data
+      }
+    }
+    if (resultJson === null && errorJson !== null) throw new Error(`Gradio event error: ${errorJson.slice(0, 200)}`)
+    if (resultJson === null) {
+      // Log the actual SSE tail so we can see what the Space actually sent
+      // (heartbeat-only means the queue dropped it; an error event means the
+      // generation failed server-side).
+      const tail = raw.slice(-400).replace(/\n/g, ' | ')
+      console.error(`[gradio] ${chosen.api}: no complete event. SSE tail: ${tail}`)
+      throw new Error('Gradio stream ended without a complete event')
+    }
+    const payload = JSON.parse(resultJson)
     const out = Array.isArray(payload) ? payload : payload?.data
     const result: GradioMedia = {}
     const urls: Array<{ url: string; kind: 'image' | 'video' }> = []
@@ -120,6 +153,7 @@ export async function gradioCallSpace(
     }
     for (const u of urls) {
       const res = await providerRequest(mediaUrl(new URL(u.url, root).href), {
+        ...auth, // private Spaces require the token on file downloads too
         signal: opts.signal, timeoutMs: op.remaining(120000), maxBytes: 64 * 1024 * 1024,
       })
       const buf = checkedMedia(res.body)

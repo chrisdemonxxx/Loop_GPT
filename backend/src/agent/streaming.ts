@@ -29,3 +29,14 @@ export function endSSE(res: Response) {
 export function makeEmitter(res: Response) {
   return (event: AgentEvent) => sendEvent(res, event)
 }
+
+/** SSE comment keepalive. Long tool calls (image/video generation) run for
+ * minutes with no events; edge proxies (Cloudflare ~100s) idle-kill silent
+ * streams. Comments (lines starting with ':') are ignored by every SSE
+ * parser, so they keep the connection warm without polluting the event feed. */
+export function startKeepalive(res: Response, intervalMs = 15_000): () => void {
+  const timer = setInterval(() => {
+    if (!res.writableEnded) res.write(': hb\n\n')
+  }, intervalMs)
+  return () => clearInterval(timer)
+}

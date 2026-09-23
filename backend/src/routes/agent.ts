@@ -29,7 +29,7 @@ import { selectedConnectionIds, workspaceConnectionTools } from '../services/wor
 import { connectionToolName } from '../agent/connectors/reviewedAdapters'
 import { runAgent } from '../agent/agentRuntime'
 import { runDeepResearch } from '../agent/research/deepResearch'
-import { initSSE, sendEvent, endSSE, makeEmitter } from '../agent/streaming'
+import { initSSE, sendEvent, endSSE, makeEmitter, startKeepalive } from '../agent/streaming'
 import type { AgentEvent, ChatMessage, ContentPart, ToolContext } from '../agent/types'
 import { resolveHostedModelRequest } from '../services/hostedModelRequest'
 import { resolveVisionTarget, visionModelEnabled } from '../services/chatModels'
@@ -425,6 +425,7 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
   if (attachmentIds.length && conversationId === 'new') return res.status(400).json({ error: 'Use the conversation ID returned by image upload' })
   const lifecycle = requestLifecycle(res)
   let reservation: Awaited<ReturnType<typeof reserveDailyCredits>> | undefined
+  let stopKeepalive: (() => void) | undefined
   try {
     if (lifecycle.disconnected()) return
     // Read every attached image (up to 4) — all are sent as image parts.
@@ -528,6 +529,9 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
     try {
       lifecycle.check()
       initSSE(res)
+      // Media tools (image/video generation) stream nothing for minutes; edge
+      // proxies idle-kill silent SSE connections. Comments keep the wire warm.
+      stopKeepalive = startKeepalive(res)
       sendEvent(res, { type: 'status', message: `conversation:${conversation.id}` })
       const streamEmit = makeEmitter(res)
       const emit = (event: AgentEvent) => {
@@ -539,7 +543,11 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
         if (!lifecycle.disconnected()) streamEmit(event)
       }
       let reasoningCapture = ''
-      const ctx: ToolContext = { userId, conversationId: conversation.id, emit, signal: lifecycle.signal, scratch: {} }
+      const ctx: ToolContext = { userId, conversationId: conversation.id, emit, signal: lifecycle.signal,
+        // Reference images (GAP: reference-image video/image editing). Attached
+        // images are resolved to data URIs; media tools read them from scratch
+        // when no explicit reference args are given.
+        scratch: images.length ? { referenceImages: images.map((img) => img.dataUri) } : {} }
       // Build message history + current turn (conversation memory window).
       const history = await getHistory(conversation.id, agentConfig.historyWindow)
       lifecycle.check()
@@ -668,6 +676,7 @@ router.post('/:conversationId/stream', authenticateToken, asyncHandler(async (re
   } finally {
     try { await cleanupDailyReservation(reservation?.id) }
     finally {
+      try { stopKeepalive?.() } catch { /* timer already gone */ }
       try { if (!lifecycle.disconnected() && res.headersSent) endSSE(res) }
       finally { lifecycle.dispose() }
     }

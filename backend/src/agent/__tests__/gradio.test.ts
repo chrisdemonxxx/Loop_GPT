@@ -36,6 +36,49 @@ describe('gradio endpoint selection', () => {
   })
 })
 
+// Shape mirrors the live red-kit/nsfw-media-studio Space: /generate_video is a
+// pure image-to-video (start frame required); /image_to_video is the chained
+// text→image→video endpoint. Routing must respect whether we HAVE an image.
+const studioInfo = {
+  named_endpoints: {
+    '/generate_image': {
+      parameters: [{ label: 'Prompt', component: 'Textbox', type: { type: 'string' } }],
+      returns: [{ component: 'Image' }],
+    },
+    '/image_to_video': {
+      parameters: [
+        { label: 'Image prompt', component: 'Textbox', type: { type: 'string' } },
+        { label: 'Video prompt', component: 'Textbox', type: { type: 'string' } },
+      ],
+      returns: [{ component: 'Image' }, { component: 'Video' }],
+    },
+    '/generate_video': {
+      parameters: [
+        { label: 'Start frame', component: 'Image' },
+        { label: 'Motion prompt', component: 'Textbox', type: { type: 'string' } },
+      ],
+      returns: [{ component: 'Video' }],
+    },
+  },
+}
+
+describe('gradio video routing with/without a start frame', () => {
+  it('text-only video routes to the chained /image_to_video endpoint', () => {
+    const chosen = pickApi(studioInfo, 'video', false)!
+    expect(chosen.api).toBe('/image_to_video')
+  })
+
+  it('video with a reference image routes to the direct /generate_video endpoint', () => {
+    const chosen = pickApi(studioInfo, 'video', true)!
+    expect(chosen.api).toBe('/generate_video')
+  })
+
+  it('image mode still prefers the image-returning endpoint', () => {
+    const chosen = pickApi(studioInfo, 'image', false)!
+    expect(chosen.api).toBe('/generate_image')
+  })
+})
+
 describe('gradio argument mapping', () => {
   it('maps the prompt to the first text box, blanks negatives, and passes the reference image', () => {
     const { params } = pickApi(chainInfo)!
@@ -44,7 +87,7 @@ describe('gradio argument mapping', () => {
     expect(args[1]).toBe('')                     // negative
     expect(args[2]).toBe('a red fox in snow')    // motion prompt
     expect(args[3]).toBe('fl2va')               // radio default
-    expect(args[4]).toBe('BASE64')              // reference image
+    expect(args[4]).toEqual({ url: 'data:image/png;base64,BASE64', orig_name: 'reference.png', meta: { _type: 'gradio.FileData' } }) // reference image as FileData
     expect(args[7]).toBe(42)                     // seed default
   })
 

@@ -99,7 +99,7 @@ async function hfTextToImage(prompt: string, model: string, width: number, heigh
 export const generateImageTool: ToolDefinition = {
   name: 'generate_image',
   source: 'builtin',
-  needsApproval: true,
+  needsApproval: false, // Media generation is a core feature; metering bounds cost.
   description: 'Generate images from text prompts using FLUX.1-dev. Supports img2img with a reference image.',
   parameters: {
     type: 'object',
@@ -117,7 +117,13 @@ export const generateImageTool: ToolDefinition = {
     try {
       op.check()
       const rawPrompt = String(args.prompt || '').trim()
-      const imagePrompt = args.image_prompt ? String(args.image_prompt) : undefined
+      // img2img: an explicit base64 reference wins; otherwise an attached image
+      // on this message is the reference (wired from the conversation).
+      let imagePrompt = args.image_prompt ? String(args.image_prompt) : undefined
+      if (!imagePrompt) {
+        const attached = ctx.scratch?.referenceImages as string[] | undefined
+        if (attached?.length) imagePrompt = attached[0]
+      }
       // Per-modality prompt optimization (GAP-006), invisible by default.
       const promptMeta = await optimizePromptDetailed(rawPrompt, 'image').catch(() => ({ raw: rawPrompt, enhanced: rawPrompt, optimized: false }))
       const prompt = promptMeta.enhanced
@@ -138,7 +144,7 @@ export const generateImageTool: ToolDefinition = {
       let buffer: Buffer | undefined
       if (process.env.HF_IMAGE_ENDPOINT_URL) {
         try { buffer = await hfImageEndpoint(prompt, op, beforeDispatch, imagePrompt, strength) }
-        catch { op.check(); ctx.emit({ type: 'status', message: 'Endpoint failed, trying providers...' }) }
+        catch (err: any) { console.error('[image:gradio] failed:', err?.message || err); op.check(); ctx.emit({ type: 'status', message: 'Endpoint failed, trying providers...' }) }
       }
       if (!buffer && process.env.HF_TOKEN) {
         try { buffer = await hfTextToImage(prompt, model, width, height, op, beforeDispatch, imagePrompt, strength) }

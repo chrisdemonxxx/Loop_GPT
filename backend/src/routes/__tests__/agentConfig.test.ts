@@ -255,9 +255,11 @@ describe('agent extension configuration routes (previously 410)', () => {
   it('exposes per-tool permissions with defaults and applies an override', async () => {
     const before = await req('GET', '/api/agent/permissions')
     expect(before.status).toBe(200)
+    // Media generation is a core product feature: 'allow' by default (daily
+    // credit metering bounds cost). Users can gate any tool in Settings → Tools.
     const gen = before.json.tools.find((t: any) => t.name === 'generate_image')
-    expect(gen.default).toBe('approval')
-    expect(gen.effective).toBe('approval')
+    expect(gen.default).toBe('allow')
+    expect(gen.effective).toBe('allow')
     const web = before.json.tools.find((t: any) => t.name === 'web_search')
     expect(web.default).toBe('allow')
 

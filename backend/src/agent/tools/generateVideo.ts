@@ -63,7 +63,10 @@ async function generateVideoFromEndpoint(prompt: string, images: string[], numFr
       const media = await gradioCallSpace(endpoint, prompt, { imageBase64: images[0], signal: op.signal, timeoutMs: op.remaining(600000), mode: 'video' })
       if (media.video) return media.video
       if (media.image) return media.image
-    } catch { op.check() }
+    } catch (err: any) {
+      console.error('[video:gradio] failed:', err?.message || err, err?.code ? `code=${err.code}` : '')
+      op.check()
+    }
     const gradioUrl = endpoint.replace(/\/+$/, '') + '/run/predict'
     const payload = { data: [prompt, images[0] || null, numFrames, fps, width, height], event_data: null }
     const res = await providerRequest(gradioUrl, { ...auth, method: 'POST',
@@ -97,8 +100,8 @@ async function generateVideoFromEndpoint(prompt: string, images: string[], numFr
 export const generateVideoTool: ToolDefinition = {
   name: 'generate_video',
   source: 'builtin',
-  needsApproval: true,
-  description: 'Generate a short video clip from a text prompt or image+prompt. Videos are typically 4-8 seconds at 24fps.',
+  needsApproval: false, // Media generation is a core feature; metering bounds cost.
+  description: 'Generate a short video clip from a text prompt or image+prompt. When the user attached an image to this message, it is used automatically as the start frame (image-to-video). Videos are typically 4-8 seconds at 24fps.',
   parameters: {
     type: 'object',
     properties: {
@@ -137,6 +140,13 @@ export const generateVideoTool: ToolDefinition = {
         ? args.reference_images.map(String).filter(Boolean).slice(0, 4)
         : []
       if (args.image_prompt && !refs.includes(String(args.image_prompt))) refs.unshift(String(args.image_prompt))
+      // Reference frames from the current conversation: images the user
+      // attached with this message act as the start frame (ref2lock) when the
+      // model didn't pass explicit base64 references.
+      if (!refs.length) {
+        const attached = ctx.scratch?.referenceImages as string[] | undefined
+        if (attached?.length) refs.push(...attached.slice(0, 4))
+      }
       ctx.emit({ type: 'status', message: `Generating ${duration}s video at ${fps}fps (${width}x${height})${refs.length ? ` from ${refs.length} reference frame(s)` : ''}...` })
       const buffer = await generateVideoFromEndpoint(prompt, refs,
         numFrames, fps, width, height, op, beforeDispatch)
@@ -151,7 +161,12 @@ export const generateVideoTool: ToolDefinition = {
       ctx.emit({ type: 'artifact', artifact })
       return { content: `Generated a ${duration}-second video (${fps}fps, ${width}x${height}). Video is ready to view.`,
         data: { artifact, duration, fps, frames: numFrames, model: 'skyreels-v2', prompt: promptMeta, referenceFrames: refs.length } }
-    } catch (error) { return { content: error instanceof DailyCreditError ? error.message : mediaFailure(op, 'Video'), isError: true } }
+    } catch (error) {
+      // Server-side diagnostics only: never leak provider/internal details
+      // into the user-facing tool result (media transport security contract).
+      console.error('[video] generation failed:', error instanceof Error ? error.message : error)
+      return { content: error instanceof DailyCreditError ? error.message : mediaFailure(op, 'Video'), isError: true }
+    }
     finally { await cleanupDailyReservation(reservation?.id); op.dispose() }
   },
 }
