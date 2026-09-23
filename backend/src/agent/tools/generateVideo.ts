@@ -60,7 +60,7 @@ async function generateVideoFromEndpoint(prompt: string, images: string[], numFr
   if (endpoint.includes('.hf.space')) {
     // Modern Gradio API first (named endpoints); legacy /run/predict as fallback.
     try {
-      const media = await gradioCallSpace(endpoint, prompt, { imageBase64: images[0], signal: op.signal, timeoutMs: op.remaining(600000) })
+      const media = await gradioCallSpace(endpoint, prompt, { imageBase64: images[0], signal: op.signal, timeoutMs: op.remaining(600000), mode: 'video' })
       if (media.video) return media.video
       if (media.image) return media.image
     } catch { op.check() }

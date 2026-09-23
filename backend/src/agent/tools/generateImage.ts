@@ -35,7 +35,7 @@ async function hfImageEndpoint(prompt: string, op: MediaOperation, beforeDispatc
     await beforeDispatch()
     // Modern Gradio API first (named endpoints); legacy /run/predict as fallback.
     try {
-      const media = await gradioCallSpace(endpoint, prompt, { imageBase64, signal: op.signal, timeoutMs: op.remaining(600000) })
+      const media = await gradioCallSpace(endpoint, prompt, { imageBase64, signal: op.signal, timeoutMs: op.remaining(600000), mode: 'image' })
       if (media.image) return media.image
       if (media.video) return media.video
     } catch { op.check() }

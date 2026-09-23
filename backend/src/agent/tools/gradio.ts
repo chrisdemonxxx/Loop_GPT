@@ -27,7 +27,7 @@ export interface GradioMedia {
 
 const NON_ENTRYPOINTS = /^\/(lambda|refresh_status|frame_info)/
 
-export function pickApi(info: any): { api: string; params: GradioParam[] } | null {
+export function pickApi(info: any, mode: 'image' | 'video' = 'video'): { api: string; params: GradioParam[] } | null {
   const named = info?.named_endpoints || {}
   const candidates: Array<{ api: string; params: GradioParam[]; score: number }> = []
   for (const [api, def] of Object.entries<any>(named)) {
@@ -38,7 +38,12 @@ export function pickApi(info: any): { api: string; params: GradioParam[] } | nul
     const videoReturn = Array.isArray(def?.returns) && def.returns.some((r: any) => /Video/i.test(String(r?.component)))
     // Prefer a full chain (text + image in, image/video out) and penalise trivial ones.
     const score = textParams * 2 + imageParams + (videoReturn ? 3 : 0)
-    candidates.push({ api, params, score })
+    // Mode-aware boosting: image mode prefers endpoints returning images
+    // (Image component in returns), video mode prefers video-returning endpoints.
+    const imageReturn = Array.isArray(def?.returns) && def.returns.some((r: any) => /Image/i.test(String(r?.component)))
+    const modeScore = mode === 'image' ? (imageReturn ? 10 : 0) + (videoReturn ? -5 : 0)
+      : (videoReturn ? 10 : 0) + (imageReturn ? -2 : 0)
+    candidates.push({ api, params, score: score + modeScore })
   }
   if (!candidates.length) return null
   candidates.sort((a, b) => b.score - a.score)
@@ -68,7 +73,7 @@ export function buildArgs(params: GradioParam[], prompt: string, imageBase64?: s
 export async function gradioCallSpace(
   base: string,
   prompt: string,
-  opts: { imageBase64?: string; signal?: AbortSignal; timeoutMs?: number },
+  opts: { imageBase64?: string; signal?: AbortSignal; timeoutMs?: number; mode?: 'image' | 'video' },
 ): Promise<GradioMedia> {
   const root = mediaUrl(base).replace(/\/+$/, '')
   const auth = mediaAuth(root)
@@ -76,7 +81,7 @@ export async function gradioCallSpace(
     ...auth, signal: opts.signal, timeoutMs: 30000, maxBytes: 2 * 1024 * 1024,
   })
   const info = await infoRes.json()
-  const chosen = pickApi(info)
+  const chosen = pickApi(info, opts.mode)
   if (!chosen) throw new Error('No usable Gradio endpoint')
 
   const data = buildArgs(chosen.params, prompt, opts.imageBase64)
