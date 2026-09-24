@@ -27,18 +27,27 @@ async function imageResponse(response: Awaited<ReturnType<typeof providerRequest
   throw new Error('Missing image data')
 }
 
-async function hfImageEndpoint(prompt: string, op: MediaOperation, beforeDispatch: () => Promise<void>, imageBase64?: string, strength = 0.75): Promise<Buffer> {
+async function hfImageEndpoint(prompt: string, op: MediaOperation, beforeDispatch: () => Promise<void>, imageBase64?: string, strength = 0.6): Promise<Buffer> {
   const endpoint = mediaUrl(process.env.HF_IMAGE_ENDPOINT_URL || '')
 
   // Gradio Space detection — the endpoint URL ends with .hf.space
   if (endpoint.includes('.hf.space')) {
     await beforeDispatch()
     // Modern Gradio API first (named endpoints); legacy /run/predict as fallback.
+    // A reference image routes to the ref2lock EDIT endpoint (image in, image
+    // out) so the subject's identity is preserved; without one it is plain
+    // text-to-image.
     try {
-      const media = await gradioCallSpace(endpoint, prompt, { imageBase64, signal: op.signal, timeoutMs: op.remaining(600000), mode: 'image' })
+      const media = await gradioCallSpace(endpoint, prompt, {
+        imageBase64, signal: op.signal, timeoutMs: op.remaining(600000),
+        mode: imageBase64 ? 'edit' : 'image', strength: imageBase64 ? strength : undefined,
+      })
       if (media.image) return media.image
       if (media.video) return media.video
-    } catch { op.check() }
+    } catch (err: any) {
+      console.error('[image:gradio] failed:', err?.message || err)
+      op.check()
+    }
     const gradioUrl = endpoint.replace(/\/+$/, '') + '/run/predict'
     const payload = { data: [prompt, imageBase64 || null], event_data: null }
     const auth = mediaAuth(endpoint)
@@ -71,7 +80,7 @@ async function hfImageEndpoint(prompt: string, op: MediaOperation, beforeDispatc
 }
 
 async function hfTextToImage(prompt: string, model: string, width: number, height: number,
-  op: MediaOperation, beforeDispatch: () => Promise<void>, imageBase64?: string, strength = 0.75): Promise<Buffer> {
+  op: MediaOperation, beforeDispatch: () => Promise<void>, imageBase64?: string, strength = 0.6): Promise<Buffer> {
   const allowed = ['fal-ai', 'together', 'nscale']
   const configured = process.env.HF_IMAGE_PROVIDER
   if (configured && !allowed.includes(configured)) throw new Error('Invalid image provider')
@@ -100,14 +109,14 @@ export const generateImageTool: ToolDefinition = {
   name: 'generate_image',
   source: 'builtin',
   needsApproval: false, // Media generation is a core feature; metering bounds cost.
-  description: 'Generate images from text prompts using FLUX.1-dev. Supports img2img with a reference image.',
+  description: 'Generate images from text prompts. When the user attached an image (or passes image_prompt), the reference anchors the subject identity (ref2lock img2img) so the SAME person is rendered in the new scene/outfit.',
   parameters: {
     type: 'object',
     properties: {
       prompt: { type: 'string', description: 'Detailed description of the image to generate.' },
-      image_prompt: { type: 'string', description: 'Optional base64 reference image for img2img.' },
+      image_prompt: { type: 'string', description: 'Optional base64 reference image for ref2lock img2img (identity anchor).' },
       aspect_ratio: { type: 'string', enum: ['square', 'landscape', 'portrait', 'wide'] },
-      strength: { type: 'number', description: 'Reference transformation strength (0-1).', default: 0.75 },
+      strength: { type: 'number', description: 'Identity-lock strength for a reference image (0-1): 0.45-0.7 keeps the subject recognisable, higher departs further.', default: 0.6 },
     },
     required: ['prompt'],
   },
@@ -127,7 +136,7 @@ export const generateImageTool: ToolDefinition = {
       // Per-modality prompt optimization (GAP-006), invisible by default.
       const promptMeta = await optimizePromptDetailed(rawPrompt, 'image').catch(() => ({ raw: rawPrompt, enhanced: rawPrompt, optimized: false }))
       const prompt = promptMeta.enhanced
-      const parsedStrength = args.strength == null ? 0.75 : Number(args.strength)
+      const parsedStrength = args.strength == null ? 0.6 : Number(args.strength)
       const strength = Number.isFinite(parsedStrength) ? Math.max(0, Math.min(1, parsedStrength)) : 0.75
       if (!prompt) return { content: 'Error: prompt is required.', isError: true }
       const model = process.env.HF_IMAGE_MODEL || 'black-forest-labs/FLUX.1-dev'

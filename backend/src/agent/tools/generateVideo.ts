@@ -111,6 +111,7 @@ export const generateVideoTool: ToolDefinition = {
       duration_seconds: { type: 'number', description: 'Video duration (2-10 seconds).', default: 4 },
       fps: { type: 'number', description: 'Frames per second (12-30).', default: 24 },
       aspect_ratio: { type: 'string', enum: ['landscape', 'portrait', 'square', 'wide'], default: 'landscape' },
+      lock_strength: { type: 'number', description: 'ref2lock: when a reference image is supplied and the person should appear in a NEW state (e.g. undressed), re-render the reference at this strength (0.45-0.7 keeps the face) before animating. Omit to animate the exact reference frame.' },
     },
     required: ['prompt'],
   },
@@ -146,6 +147,27 @@ export const generateVideoTool: ToolDefinition = {
       if (!refs.length) {
         const attached = ctx.scratch?.referenceImages as string[] | undefined
         if (attached?.length) refs.push(...attached.slice(0, 4))
+      }
+      // ref2lock edit-then-animate: when the user asks for the reference
+      // person IN a new state (e.g. "make her NSFW"), first re-render the
+      // reference at lock_strength with the prompt, then animate that frame —
+      // the identity carries into the video instead of being re-invented.
+      if (refs.length && args.lock_strength != null) {
+        const lock = Math.max(0.2, Math.min(0.95, Number(args.lock_strength)))
+        ctx.emit({ type: 'status', message: `Locking the reference identity (strength ${lock.toFixed(2)})…` })
+        try {
+          const editEndpoint = mediaUrl(process.env.HF_IMAGE_ENDPOINT_URL || process.env.HF_VIDEO_ENDPOINT_URL || '')
+          const edited = await gradioCallSpace(editEndpoint, prompt, {
+            imageBase64: refs[0], mode: 'edit', strength: lock,
+            signal: op.signal, timeoutMs: op.remaining(300000),
+          })
+          if (edited.image) {
+            refs[0] = `data:image/png;base64,${edited.image.toString('base64')}`
+            ctx.emit({ type: 'status', message: 'Identity locked — animating the locked frame…' })
+          }
+        } catch (err: any) {
+          console.error('[video:reflock] edit failed:', err?.message || err)
+        }
       }
       ctx.emit({ type: 'status', message: `Generating ${duration}s video at ${fps}fps (${width}x${height})${refs.length ? ` from ${refs.length} reference frame(s)` : ''}...` })
       const buffer = await generateVideoFromEndpoint(prompt, refs,

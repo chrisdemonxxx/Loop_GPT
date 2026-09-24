@@ -77,6 +77,53 @@ describe('gradio video routing with/without a start frame', () => {
     const chosen = pickApi(studioInfo, 'image', false)!
     expect(chosen.api).toBe('/generate_image')
   })
+
+  it('edit (ref2lock) mode prefers the endpoint that takes AND returns an image', () => {
+    const chosen = pickApi(studioEditInfo, 'edit', true)!
+    expect(chosen.api).toBe('/edit_image')
+  })
+})
+
+// The live media studio shape after the ref2lock endpoint landed.
+const studioEditInfo = {
+  named_endpoints: {
+    '/generate_image': {
+      parameters: [{ label: 'Prompt', component: 'Textbox', type: { type: 'string' } }],
+      returns: [{ component: 'Image' }],
+    },
+    '/edit_image': {
+      parameters: [
+        { label: 'Reference', component: 'Image' },
+        { label: 'Edit prompt', component: 'Textbox', type: { type: 'string' } },
+        { label: 'Strength (identity lock)', component: 'Slider', parameter_has_default: true, parameter_default: 0.6 },
+        { label: 'Steps', component: 'Slider', parameter_has_default: true, parameter_default: 28 },
+      ],
+      returns: [{ component: 'Image' }],
+    },
+    '/generate_video': {
+      parameters: [
+        { label: 'Start frame', component: 'Image' },
+        { label: 'Motion prompt', component: 'Textbox', type: { type: 'string' } },
+      ],
+      returns: [{ component: 'Video' }],
+    },
+  },
+}
+
+describe('ref2lock strength mapping', () => {
+  it('honours the caller strength on the identity-lock slider', () => {
+    const { params } = pickApi(studioEditInfo, 'edit', true)!
+    const args = buildArgs(params, 'the same woman, topless on a beach', 'BASE64', { strength: 0.55 })
+    expect(args[0]).toEqual({ url: 'data:image/png;base64,BASE64', orig_name: 'reference.png', meta: { _type: 'gradio.FileData' } })
+    expect(args[1]).toBe('the same woman, topless on a beach')
+    expect(args[2]).toBe(0.55)   // identity-lock strength
+    expect(args[3]).toBe(28)     // steps default
+  })
+
+  it('falls back to the endpoint default when no strength is given', () => {
+    const { params } = pickApi(studioEditInfo, 'edit', true)!
+    expect(buildArgs(params, 'p', 'BASE64')[2]).toBe(0.6)
+  })
 })
 
 describe('gradio argument mapping', () => {

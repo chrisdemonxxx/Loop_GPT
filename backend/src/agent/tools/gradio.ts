@@ -27,7 +27,7 @@ export interface GradioMedia {
 
 const NON_ENTRYPOINTS = /^\/(lambda|refresh_status|frame_info)/
 
-export function pickApi(info: any, mode: 'image' | 'video' = 'video', hasImage = false): { api: string; params: GradioParam[] } | null {
+export function pickApi(info: any, mode: 'image' | 'video' | 'edit' = 'video', hasImage = false): { api: string; params: GradioParam[] } | null {
   const named = info?.named_endpoints || {}
   const candidates: Array<{ api: string; params: GradioParam[]; score: number }> = []
   for (const [api, def] of Object.entries<any>(named)) {
@@ -41,8 +41,16 @@ export function pickApi(info: any, mode: 'image' | 'video' = 'video', hasImage =
     // Mode-aware boosting: image mode prefers endpoints returning images
     // (Image component in returns), video mode prefers video-returning endpoints.
     const imageReturn = Array.isArray(def?.returns) && def.returns.some((r: any) => /Image/i.test(String(r?.component)))
-    const modeScore = mode === 'image' ? (imageReturn ? 10 : 0) + (videoReturn ? -5 : 0)
-      : (videoReturn ? 10 : 0) + (imageReturn ? -2 : 0)
+    let modeScore: number
+    if (mode === 'edit') {
+      // ref2lock: an endpoint that TAKES an image and RETURNS an image
+      // (img2img edit) is what anchors identity.
+      modeScore = (imageReturn ? 10 : 0) + (imageParams > 0 ? 6 : -20) + (videoReturn ? -5 : 0)
+    } else if (mode === 'image') {
+      modeScore = (imageReturn ? 10 : 0) + (videoReturn ? -5 : 0)
+    } else {
+      modeScore = (videoReturn ? 10 : 0) + (imageReturn ? -2 : 0)
+    }
     // Video mode without a start frame: an endpoint that REQUIRES an Image
     // parameter would receive null and fail — route to the chained
     // text-to-video endpoint instead (e.g. /image_to_video over /generate_video).
@@ -54,7 +62,8 @@ export function pickApi(info: any, mode: 'image' | 'video' = 'video', hasImage =
   return { api: candidates[0].api, params: candidates[0].params }
 }
 
-export function buildArgs(params: GradioParam[], prompt: string, imageBase64?: string): any[] {
+export function buildArgs(params: GradioParam[], prompt: string, imageBase64?: string,
+  opts: { strength?: number } = {}): any[] {
   let promptUsed = false
   return params.map((p) => {
     const comp = String(p?.component || '')
@@ -71,6 +80,10 @@ export function buildArgs(params: GradioParam[], prompt: string, imageBase64?: s
       if (!promptUsed) { promptUsed = true; return prompt }
       return /prompt|motion|video/i.test(label) ? prompt : ''
     }
+    // Identity-lock strength slider (ref2lock) honours the caller's value.
+    if (opts.strength !== undefined && /Slider|Number/i.test(comp) && /strength|denoise|lock/i.test(label)) {
+      return opts.strength
+    }
     if (p?.parameter_has_default) return p.parameter_default
     if (p?.type?.enum?.length) return p.type.enum[0]
     if (/Checkbox/i.test(comp)) return false
@@ -83,7 +96,7 @@ export function buildArgs(params: GradioParam[], prompt: string, imageBase64?: s
 export async function gradioCallSpace(
   base: string,
   prompt: string,
-  opts: { imageBase64?: string; signal?: AbortSignal; timeoutMs?: number; mode?: 'image' | 'video' },
+  opts: { imageBase64?: string; signal?: AbortSignal; timeoutMs?: number; mode?: 'image' | 'video' | 'edit'; strength?: number },
 ): Promise<GradioMedia> {
   const root = mediaUrl(base).replace(/\/+$/, '')
   const auth = mediaAuth(root)
@@ -95,7 +108,7 @@ export async function gradioCallSpace(
   const chosen = pickApi(info, opts.mode, !!opts.imageBase64)
   if (!chosen) throw new Error('No usable Gradio endpoint')
 
-  const data = buildArgs(chosen.params, prompt, opts.imageBase64)
+  const data = buildArgs(chosen.params, prompt, opts.imageBase64, { strength: opts.strength })
   const callRes = await providerRequest(`${root}/gradio_api/call${chosen.api}`, {
     ...auth, method: 'POST',
     headers: { ...auth.headers, 'Content-Type': 'application/json' },
