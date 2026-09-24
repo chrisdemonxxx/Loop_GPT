@@ -36,6 +36,37 @@ authenticates with `HF_TOKEN` on every call, including file downloads.
 more prompt influence (more change). ~0.5 is a good default for "same person,
 different scene".
 
+## Face lock — near-exact identity transplant
+
+`ref2lock` above anchors the subject; **face lock** transplants the exact face.
+The Space adds:
+
+| Space endpoint | What it does |
+|---|---|
+| `edit_image(..., face_swap=True)` | img2img ref2lock **then** an inswapper transplant of the reference face |
+| `swap_face(target, source)` | standalone transplant of the source face onto a target image |
+| `face_metrics(a, b)` | ArcFace cosine similarity (JSON) — the identity score |
+
+Stack: **SCRFD-10G** (detect) + **ArcFace-R50** (recognise) + **inswapper_128**
+(swap), on **CPU onnxruntime** (no GPU needed). The model's own 512×512
+ArcFace→latent `emap` ships as base64 text (`emap.b64`), so the Space repo stays
+binary-free. `face_swap` logs `cosine_before`/`cosine_after` on every call.
+
+**Measured (2026-09-24, ArcFace cosine vs the reference):**
+
+| Stage | cosine |
+|---|---|
+| img2img only (`strength` 0.6) | 0.62–0.65 |
+| after the face transplant (Space) | **0.85–0.87** |
+| app artifact — image (attach + "make her NSFW") | **0.84** |
+| app artifact — video first frame (attach + `lock_strength` 0.6) | **0.862** |
+
+For reference: ArcFace cosine ≳ 0.4–0.5 is "same person"; 0.85+ is a close
+identity match. The backend exposes `face_lock` on `generate_image` (default
+**on** when a reference exists; set `false` for a softer img2img-only match) and
+uses the same transplant in `generate_video`'s `lock_strength` step.
+
+
 ### Verified
 
 - Space `/edit_image` on a copper-red-haired, green-eyed, freckled portrait →
@@ -46,6 +77,7 @@ different scene".
 
 ## Operational notes
 
+- **`preload_from_hub` and the HF cache.** Do NOT add `preload_from_hub` to the Space: it downloads as root, making the HF/Xet cache root-owned, so *runtime* model downloads (e.g. Chroma on the first image call after a rebuild) fail with `Permission denied (EACCES)`. Let the app download on first use.
 - **`HF_VIDEO_ENDPOINT_URL` must survive the deploy supervisor.** The backend
   start command (`scripts/staging-runtime.mjs`) used to delete
   `HF_VIDEO_ENDPOINT_URL` (a legacy guard) — that made every video call fail
