@@ -158,7 +158,7 @@ export const generateVideoTool: ToolDefinition = {
         try {
           const editEndpoint = mediaUrl(process.env.HF_IMAGE_ENDPOINT_URL || process.env.HF_VIDEO_ENDPOINT_URL || '')
           const edited = await gradioCallSpace(editEndpoint, prompt, {
-            imageBase64: refs[0], mode: 'edit', strength: lock,
+            imageBase64: refs[0], mode: 'edit', strength: lock, faceSwap: true,
             signal: op.signal, timeoutMs: op.remaining(300000),
           })
           if (edited.image) {

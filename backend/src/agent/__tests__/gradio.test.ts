@@ -97,6 +97,14 @@ const studioEditInfo = {
         { label: 'Edit prompt', component: 'Textbox', type: { type: 'string' } },
         { label: 'Strength (identity lock)', component: 'Slider', parameter_has_default: true, parameter_default: 0.6 },
         { label: 'Steps', component: 'Slider', parameter_has_default: true, parameter_default: 28 },
+        { label: 'Face lock (transplant the exact reference face)', component: 'Checkbox', parameter_has_default: true, parameter_default: true },
+      ],
+      returns: [{ component: 'Image' }],
+    },
+    '/swap_face': {
+      parameters: [
+        { label: 'Target', component: 'Image' },
+        { label: 'Reference face', component: 'Image' },
       ],
       returns: [{ component: 'Image' }],
     },
@@ -110,19 +118,25 @@ const studioEditInfo = {
   },
 }
 
-describe('ref2lock strength mapping', () => {
-  it('honours the caller strength on the identity-lock slider', () => {
+describe('ref2lock strength + face lock mapping', () => {
+  it('honours the caller strength and face-lock toggle on the edit endpoint', () => {
     const { params } = pickApi(studioEditInfo, 'edit', true)!
-    const args = buildArgs(params, 'the same woman, topless on a beach', 'BASE64', { strength: 0.55 })
+    expect(pickApi(studioEditInfo, 'edit', true)!.api).toBe('/edit_image') // prompt-bearing edit beats a bare swap
+    const args = buildArgs(params, 'the same woman, topless on a beach', 'BASE64', { strength: 0.55, faceSwap: false })
     expect(args[0]).toEqual({ url: 'data:image/png;base64,BASE64', orig_name: 'reference.png', meta: { _type: 'gradio.FileData' } })
     expect(args[1]).toBe('the same woman, topless on a beach')
     expect(args[2]).toBe(0.55)   // identity-lock strength
     expect(args[3]).toBe(28)     // steps default
+    expect(args[4]).toBe(false)  // face transplant off
   })
 
-  it('falls back to the endpoint default when no strength is given', () => {
+  it('defaults to the face-lock checkbox ON (exact transplant)', () => {
     const { params } = pickApi(studioEditInfo, 'edit', true)!
-    expect(buildArgs(params, 'p', 'BASE64')[2]).toBe(0.6)
+    expect(buildArgs(params, 'p', 'BASE64')[4]).toBe(true)
+  })
+
+  it('text-only image generation avoids the image-requiring edit/swap endpoints', () => {
+    expect(pickApi(studioEditInfo, 'image', false)!.api).toBe('/generate_image')
   })
 })
 

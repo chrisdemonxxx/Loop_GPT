@@ -27,7 +27,7 @@ async function imageResponse(response: Awaited<ReturnType<typeof providerRequest
   throw new Error('Missing image data')
 }
 
-async function hfImageEndpoint(prompt: string, op: MediaOperation, beforeDispatch: () => Promise<void>, imageBase64?: string, strength = 0.6): Promise<Buffer> {
+async function hfImageEndpoint(prompt: string, op: MediaOperation, beforeDispatch: () => Promise<void>, imageBase64?: string, strength = 0.6, faceLock = true): Promise<Buffer> {
   const endpoint = mediaUrl(process.env.HF_IMAGE_ENDPOINT_URL || '')
 
   // Gradio Space detection — the endpoint URL ends with .hf.space
@@ -41,6 +41,7 @@ async function hfImageEndpoint(prompt: string, op: MediaOperation, beforeDispatc
       const media = await gradioCallSpace(endpoint, prompt, {
         imageBase64, signal: op.signal, timeoutMs: op.remaining(600000),
         mode: imageBase64 ? 'edit' : 'image', strength: imageBase64 ? strength : undefined,
+        faceSwap: imageBase64 ? faceLock : undefined,
       })
       if (media.image) return media.image
       if (media.video) return media.video
@@ -109,12 +110,13 @@ export const generateImageTool: ToolDefinition = {
   name: 'generate_image',
   source: 'builtin',
   needsApproval: false, // Media generation is a core feature; metering bounds cost.
-  description: 'Generate images from text prompts. When the user attached an image (or passes image_prompt), the reference anchors the subject identity (ref2lock img2img) so the SAME person is rendered in the new scene/outfit.',
+  description: 'Generate images from text prompts. When the user attached an image (or passes image_prompt), the reference anchors the subject identity: a ref2lock img2img pass, then an exact face transplant (SCRFD+ArcFace+inswapper) so the SAME person appears in the new scene/outfit. Keep face_lock on for a near-exact face.',
   parameters: {
     type: 'object',
     properties: {
       prompt: { type: 'string', description: 'Detailed description of the image to generate.' },
       image_prompt: { type: 'string', description: 'Optional base64 reference image for ref2lock img2img (identity anchor).' },
+      face_lock: { type: 'boolean', description: 'ref2lock: transplant the EXACT reference face onto the result (default true). Set false for a softer img2img-only match.', default: true },
       aspect_ratio: { type: 'string', enum: ['square', 'landscape', 'portrait', 'wide'] },
       strength: { type: 'number', description: 'Identity-lock strength for a reference image (0-1): 0.45-0.7 keeps the subject recognisable, higher departs further.', default: 0.6 },
     },
@@ -137,6 +139,8 @@ export const generateImageTool: ToolDefinition = {
       const promptMeta = await optimizePromptDetailed(rawPrompt, 'image').catch(() => ({ raw: rawPrompt, enhanced: rawPrompt, optimized: false }))
       const prompt = promptMeta.enhanced
       const parsedStrength = args.strength == null ? 0.6 : Number(args.strength)
+      // ref2lock exact-face transplant (on by default when a reference exists).
+      const faceLock = args.face_lock !== false
       const strength = Number.isFinite(parsedStrength) ? Math.max(0, Math.min(1, parsedStrength)) : 0.75
       if (!prompt) return { content: 'Error: prompt is required.', isError: true }
       const model = process.env.HF_IMAGE_MODEL || 'black-forest-labs/FLUX.1-dev'
@@ -152,7 +156,7 @@ export const generateImageTool: ToolDefinition = {
       ctx.emit({ type: 'status', message: `Generating image (${mode} mode)...` })
       let buffer: Buffer | undefined
       if (process.env.HF_IMAGE_ENDPOINT_URL) {
-        try { buffer = await hfImageEndpoint(prompt, op, beforeDispatch, imagePrompt, strength) }
+        try { buffer = await hfImageEndpoint(prompt, op, beforeDispatch, imagePrompt, strength, faceLock) }
         catch (err: any) { console.error('[image:gradio] failed:', err?.message || err); op.check(); ctx.emit({ type: 'status', message: 'Endpoint failed, trying providers...' }) }
       }
       if (!buffer && process.env.HF_TOKEN) {
