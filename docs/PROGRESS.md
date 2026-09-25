@@ -395,6 +395,38 @@ paste-image support, upload progress + visible errors).
 UI/UX rebuild (audit §6 P1–P6 + 2.7) is live; next per plan: Phase 3
 (audit §8 "Important" 13–34).
 
+## Phase 3 — Sidebar group (audit §8-13..16) — SHIPPED (2026-09-26, commit `a98ca2e`)
+
+- **Date-grouped history (§8-13)**: Pinned / Today / Yesterday / Previous 7
+  days / Older buckets rendered client-side; the API now orders pinned-first.
+- **Star/pin (§8-14)**: additive `Conversation.pinned` column + migration
+  (data-model change flagged per working rules; user approved). PATCH accepts
+  `pinned` and carries the existing `updatedAt` forward explicitly — Prisma's
+  `@updatedAt` would otherwise reshuffle date groups on pin. Row action with
+  an always-visible pinned star.
+- **Per-chat Share (§8-15)**: additive `Conversation.shareToken` (nullable,
+  unique) + `POST /:id/share` (idempotent 32-hex token, owner-only) +
+  `DELETE /:id/share` + token-gated public `GET /api/share/:token` serving a
+  **sanitized transcript** (role/content/createdAt — never user ids or
+  private file paths). Frontend `/share?token=...` viewer (query-string route
+  keeps the static export intact); the sidebar action copies the link with a
+  visual check-confirm.
+- **Message-body search (§8-16)**: `GET /api/conversations/search?q=`
+  (registered before `/:id` to avoid shadowing) returns the newest match per
+  conversation with a snippet; incognito excluded; the sidebar merges server
+  hits under "Matching messages" alongside local title matches (250ms
+  debounce, min 2 chars).
+- **Deploy note**: the backend deploy failed once on the new migration with
+  Railway swallowing stderr (same pattern as the reconciliation incident);
+  applying it through a temporary TCP proxy worked first try and the redeploy
+  came up healthy — the in-container failure did not reproduce and was likely
+  a restart-race transient. Live E2Es verified: pin floats first, share
+  mint → public anonymous read → revoke, message search.
+- **Tests**: 3 integration E2Es + 5 sidebar component tests. Gates:
+  backend unit **1142/5**, integration **462/3**, lint 0; frontend **69/69**,
+  Playwright **12/12**, build green. All four CI workflows green on
+  `a98ca2e`.
+
 ## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
 
 - **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
