@@ -21,13 +21,15 @@ const USER_TRUNCATE = 420
  * thumbs feedback wired to POST /api/telemetry/feedback — audit §8-21).
  * Artifact cards open the right-hand artifacts panel. */
 export function MessageBubble({
-  message, conversationId, onEdit, onRetry, onOpenArtifact,
+  message, conversationId, onEdit, onRetry, onOpenArtifact, onOpenArtifactByName,
 }: {
   message: Message
   conversationId?: string | null
   onEdit?: () => void
   onRetry?: () => void
   onOpenArtifact?: (artifact: ArtifactRef) => void
+  /** §8-28: per-step "View in panel" links resolve artifact names here. */
+  onOpenArtifactByName?: (name: string) => void
 }) {
   const [copied, setCopied] = useState(false)
   const [showPrompt, setShowPrompt] = useState(false)
@@ -135,7 +137,7 @@ export function MessageBubble({
       {/* Inline agent activity (audit P1): the persisted tool timeline for
           this turn as a collapsed one-line summary ("Ran N steps"). */}
       {storedSteps.length > 0 && (
-        <TurnActivity storedSteps={storedSteps} onRetry={onRetry} />
+        <TurnActivity storedSteps={storedSteps} onRetry={onRetry} onOpenArtifactByName={onOpenArtifactByName} />
       )}
 
       {promptMeta?.optimized && (

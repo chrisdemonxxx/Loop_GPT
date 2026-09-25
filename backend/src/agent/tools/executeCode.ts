@@ -52,15 +52,47 @@ async function chooseContainer(): Promise<boolean> {
 
 interface RunResult { stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }
 
-function run(command: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; signal?: AbortSignal }): Promise<RunResult> {
+/**
+ * Coalesce child-process chunks into bounded flushes (audit §8-28): live
+ * output streams to the client without per-line SSE spam. A flush fires on
+ * the size cap (enough text to be worth an event) or a short timer (enough
+ * freshness while a slow program trickles), whichever comes first; the
+ * caller always flushes once more at completion.
+ */
+export function makeOutputBatcher(
+  emit: (chunk: string, stream: 'stdout' | 'stderr') => void,
+  opts: { maxChars?: number; maxMs?: number } = {},
+) {
+  const maxChars = opts.maxChars ?? 400
+  const maxMs = opts.maxMs ?? 150
+  let out = ''
+  let err = ''
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const flush = () => {
+    if (timer) { clearTimeout(timer); timer = undefined }
+    if (out) { emit(out, 'stdout'); out = '' }
+    if (err) { emit(err, 'stderr'); err = '' }
+  }
+  return {
+    push(chunk: string, stream: 'stdout' | 'stderr') {
+      if (stream === 'stderr') err += chunk
+      else out += chunk
+      if (out.length >= maxChars || err.length >= maxChars) flush()
+      else if (!timer) timer = setTimeout(flush, maxMs)
+    },
+    flush,
+  }
+}
+
+function run(command: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; signal?: AbortSignal; onChunk?: (chunk: string, stream: 'stdout' | 'stderr') => void }): Promise<RunResult> {
   return new Promise((resolve) => {
     const child = spawn(command, args, { cwd: opts.cwd, env: opts.env, windowsHide: true })
     let stdout = ''
     let stderr = ''
     let timedOut = false
     const cap = (s: string, chunk: Buffer) => (s.length >= MAX_OUTPUT ? s : (s + chunk.toString()).slice(0, MAX_OUTPUT))
-    child.stdout.on('data', (c: Buffer) => { stdout = cap(stdout, c) })
-    child.stderr.on('data', (c: Buffer) => { stderr = cap(stderr, c) })
+    child.stdout.on('data', (c: Buffer) => { stdout = cap(stdout, c); opts.onChunk?.(c.toString(), 'stdout') })
+    child.stderr.on('data', (c: Buffer) => { stderr = cap(stderr, c); opts.onChunk?.(c.toString(), 'stderr') })
     const kill = () => { try { child.kill('SIGKILL') } catch { /* already gone */ } }
     const timer = setTimeout(() => { timedOut = true; kill() }, opts.timeoutMs)
     const onAbort = () => { timedOut = true; kill() }
@@ -104,6 +136,10 @@ export const executeCodeTool: ToolDefinition = {
       PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin', PYTHONUNBUFFERED: '1' }
 
     const container = await chooseContainer()
+    // Live output (audit §8-28): chunks stream to the client as they are
+    // produced; the runtime stamps the executing step on each event.
+    const batcher = makeOutputBatcher((chunk, stream) => ctx.emit({ type: 'tool_output', chunk, stream }))
+    const onChunk = (chunk: string, stream: 'stdout' | 'stderr') => batcher.push(chunk, stream)
     let result: RunResult
     try {
       if (container) {
@@ -113,15 +149,17 @@ export const executeCodeTool: ToolDefinition = {
           '--pids-limit', '256', '--read-only', '--tmpfs', '/tmp:rw,size=256m',
           '-v', `${workdir}:/work:rw`, '-w', '/work', DOCKER_IMAGES[language],
           ...(language === 'bash' ? ['sh', filename] : [...INTERPRETERS[language], filename])],
-          { cwd: workdir, env: { PATH: process.env.PATH || '' }, timeoutMs, signal: ctx.signal })
+          { cwd: workdir, env: { PATH: process.env.PATH || '' }, timeoutMs, signal: ctx.signal, onChunk })
       } else {
         ctx.emit({ type: 'status', message: `Running ${language} in a sandboxed subprocess…` })
-        result = await run(INTERPRETERS[language][0], [filename], { cwd: workdir, env, timeoutMs, signal: ctx.signal })
+        result = await run(INTERPRETERS[language][0], [filename], { cwd: workdir, env, timeoutMs, signal: ctx.signal, onChunk })
       }
     } catch (e: any) {
+      batcher.flush()
       fs.rmSync(workdir, { recursive: true, force: true })
       return { content: `Sandbox error: ${e?.message || e}`, isError: true }
     }
+    batcher.flush()
 
     // Collect files the snippet produced (excluding the source file).
     const artifacts: any[] = []

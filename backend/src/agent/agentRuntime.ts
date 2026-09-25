@@ -21,6 +21,7 @@ import {
 } from './llmClient'
 import { aiProviderService } from '../services/aiProviders'
 import type {
+  AgentEvent,
   ChatMessage,
   RunAgentOptions,
   ToolDefinition,
@@ -367,12 +368,35 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
       }
 
       const startedAt = Date.now()
-      const result = await toolRegistry.execute(call.name, call.args, ctx)
+      // Step-scoped emit (audit §8-28/29): temporarily wrap emit on the SAME
+      // context object — the run grant is keyed to ctx identity in a WeakMap
+      // (spreading would orphan it, failing assertRunAccess) — so
+      // tool_output/progress events emitted by the tool get stamped with the
+      // executing step. Tool execution is sequential in this loop; the
+      // finally restores the original emit before the loop continues.
+      const scopedEmit = ctx.emit
+      ctx.emit = (event: AgentEvent) => {
+        if (event.type === 'tool_output' || event.type === 'progress') {
+          scopedEmit({ ...event, step: stepIndex } as AgentEvent)
+        } else {
+          scopedEmit(event)
+        }
+      }
+      let result: Awaited<ReturnType<typeof toolRegistry.execute>>
+      try {
+        result = await toolRegistry.execute(call.name, call.args, ctx)
+      } finally {
+        ctx.emit = scopedEmit
+      }
       audit({ userId: ctx.userId, conversationId: ctx.conversationId, tool: call.name, args: call.args,
         outcome: result.isError ? 'error' : 'ok', ms: Date.now() - startedAt })
       if (!result.isError) toolsUsed.add(call.name)
       ctx.emit({ type: 'tool_result', step: stepIndex, name: call.name, content: truncate(result.content, 4000), data: result.data, isError: result.isError })
-      steps.push({ tool: call.name, args: call.args, result: truncate(result.content, 2000) })
+      // Per-step artifact attribution (audit §8-28): names only — the full
+      // refs already live in metadata.artifacts; this lets a stored step
+      // card link "View in panel" to the artifact it produced.
+      const stepArtifacts = Array.isArray(result.data?.artifacts) ? result.data.artifacts.map((a: any) => a.name) : undefined
+      steps.push({ tool: call.name, args: call.args, result: truncate(result.content, 2000), ...(stepArtifacts ? { artifacts: stepArtifacts } : {}) })
 
       if (native) {
         working.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: result.content })

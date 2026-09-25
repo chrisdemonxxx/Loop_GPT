@@ -388,6 +388,47 @@ describe('workspace runtime authorization', () => {
     await reader.cancel().catch(() => {})
   })
 
+  it('streams live tool output + progress stamped with the executing step (audit §8-28/29)', async () => {
+    const f = await fixture()
+    // A multi-phase fixture tool: emits live stdout/stderr + a checklist while
+    // running (WITHOUT step — the runtime must stamp the executing step), and
+    // returns artifacts for the per-step attribution check.
+    const handler = vi.fn(async (_args: any, ctx: ToolContext) => {
+      ctx.emit({ type: 'tool_output', chunk: 'line one\n', stream: 'stdout' })
+      ctx.emit({ type: 'progress', items: [{ id: 'phase', label: 'Do the thing', status: 'done' }] })
+      ctx.emit({ type: 'tool_output', chunk: 'boom\n', stream: 'stderr' })
+      return { content: 'fixture done', data: { artifacts: [{ id: 'fa1', kind: 'file', name: 'out.txt' }] } }
+    })
+    // custom: source puts the fixture in availableTools() so the route's
+    // selectable set admits it.
+    toolRegistry.register({ name: 'fixture_stream_tool', source: 'custom:fixture', description: 'Streams live output', parameters: { type: 'object' }, handler })
+    try {
+      remote.turn.mockResolvedValueOnce({ content: '', toolCalls: [nativeCall('fixture_stream_tool')] })
+      const response = await request(`/api/agent/${f.conversationId}/stream`, alice, 'POST', { content: 'Hi', mode: 'agent', workspaceId: f.workspaceId, toolNames: ['fixture_stream_tool'] })
+      expect(response.status).toBe(200)
+      const body = await response.text()
+      // Parse the SSE stream (order-independent assertions).
+      const parsed: any[] = []
+      for (const m of body.matchAll(/data: (\{.*\})\n/g)) { try { parsed.push(JSON.parse(m[1])) } catch { /* keepalive */ } }
+      const outputs = parsed.filter((e) => e.type === 'tool_output')
+      expect(outputs).toHaveLength(2)
+      expect(outputs[0]).toMatchObject({ step: 0, chunk: 'line one\n', stream: 'stdout' })
+      expect(outputs[1]).toMatchObject({ step: 0, chunk: 'boom\n', stream: 'stderr' })
+      const progressEvent = parsed.find((e) => e.type === 'progress')
+      expect(progressEvent).toMatchObject({ step: 0, items: [{ id: 'phase', label: 'Do the thing', status: 'done' }] })
+      // Live output precedes the result event in the stream.
+      expect(body.indexOf('"type":"tool_output"')).toBeLessThan(body.indexOf('"type":"tool_result"'))
+      // The persisted assistant turn records the step's artifact names (§8-28).
+      const saved = await db.message.findFirstOrThrow({ where: { conversationId: f.conversationId, role: 'assistant' } })
+      const meta = saved.metadata as any
+      expect(Array.isArray(meta.steps)).toBe(true)
+      expect(meta.steps[0].tool).toBe('fixture_stream_tool')
+      expect(meta.steps[0].artifacts).toEqual(['out.txt'])
+    } finally {
+      toolRegistry.unregisterSource('custom:fixture')
+    }
+  })
+
   it('rejects unavailable tool requests and credit-check failures before starting a run', async () => {
     const before = await db.conversation.count({ where: { userId: alice } })
     expect((await request('/api/agent/new/stream', alice, 'POST', { content: 'Hi', toolNames: ['fixture_not_a_tool'] })).status).toBe(400)

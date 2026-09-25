@@ -301,6 +301,12 @@ export default function ChatPage() {
     setFocusedArtifactId(a.id)
     panels.setArtifactsOpen(true)
   }
+  /** §8-28: per-step "View in panel" links resolve artifact names to refs
+   *  (live-run artifacts first, then the stored conversation's). */
+  const openArtifactByName = (name: string) => {
+    const found = allArtifacts.find((a) => a.name === name)
+    if (found) openArtifact(found)
+  }
   /** "Fix error" from the sandboxed preview: pre-fill the composer with the
    * error + artifact source so the agent regenerates a corrected artifact. */
   const handleFixError = (prompt: string) => {
@@ -433,6 +439,7 @@ export default function ChatPage() {
           toolCount={toolCount}
           onOpenTools={() => { setSettingsTab('tools'); setShowSettings(true) }}
           onOpenArtifact={openArtifact}
+          onOpenArtifactByName={openArtifactByName}
           onEditMessage={forkAtMessage}
           onRetryBefore={retryBefore}
         />

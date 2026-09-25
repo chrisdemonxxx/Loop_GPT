@@ -88,6 +88,15 @@ export const createDocumentTool: ToolDefinition = {
     const base = String(args.filename || title || 'document').replace(/\.[a-z0-9]+$/i, '')
     const content = String(args.content || '')
 
+    // General progress checklist (audit §8-29): a reusable to-do type any
+    // multi-phase tool (or future sub-agent orchestrator) can emit; the
+    // runtime stamps the executing step. The client renders the live list.
+    const checklist: Array<{ id: string; label: string; status: 'pending' | 'active' | 'done' | 'error' }> = [
+      { id: 'build', label: `Build ${format.toUpperCase()} file`, status: 'active' },
+      { id: 'save', label: 'Save artifact', status: 'pending' },
+    ]
+    ctx.emit({ type: 'progress', items: checklist })
+
     let buffer: Buffer
     let ext = format
     try {
@@ -148,10 +157,16 @@ export const createDocumentTool: ToolDefinition = {
       return { content: `Document generation failed: ${error?.message || error}`, isError: true }
     }
 
+    checklist[0].status = 'done'
+    checklist[1].status = 'active'
+    ctx.emit({ type: 'progress', items: checklist })
+
     const artifact: ArtifactRef = await saveArtifact(`${base}.${ext}`, buffer, { userId: ctx.userId, conversationId: ctx.conversationId })
     ctx.scratch.artifacts = ctx.scratch.artifacts || []
     ctx.scratch.artifacts.push(artifact)
     ctx.emit({ type: 'artifact', artifact })
+    checklist[1].status = 'done'
+    ctx.emit({ type: 'progress', items: checklist })
     return { content: `Created ${format.toUpperCase()} document "${artifact.name}". It is available for download.`, data: { artifact } }
   },
 }

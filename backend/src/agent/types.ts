@@ -66,6 +66,15 @@ export type AgentEvent =
   | { type: 'delta'; step: number; text: string }
   | { type: 'thinking'; step: number; text: string }
   | { type: 'tool_call'; step: number; name: string; args: Record<string, any>; source?: string }
+  /** Live tool output while a tool runs (audit §8-28): e.g. execute_code
+   *  stdout/stderr streamed as it is produced instead of at completion.
+   *  Tools emit WITHOUT step; the runtime stamps the executing step, so
+   *  everything the client receives carries one. */
+  | { type: 'tool_output'; step?: number; chunk: string; stream?: 'stdout' | 'stderr' }
+  /** General to-do/progress checklist for a running step (audit §8-29):
+   *  sub-agent tasks, multi-phase tools. The latest event per step wins.
+   *  Tools emit WITHOUT step; the runtime stamps the executing step. */
+  | { type: 'progress'; step?: number; items: Array<{ id: string; label: string; status: 'pending' | 'active' | 'done' | 'error' }> }
   | { type: 'tool_result'; step: number; name: string; content: string; data?: any; isError?: boolean }
   | { type: 'artifact'; artifact: ArtifactRef }
   | { type: 'pending_approval'; tool_name: string; args: Record<string, any>; prompt: string }

@@ -34,6 +34,12 @@ export interface LiveStep {
     isError?: boolean
     /** Wall time from call start to result (set when the result lands). */
     durationMs?: number
+    /** Live stdout/stderr while the tool runs (§8-28) — bounded display buffer. */
+    liveOutput?: { stdout: string; stderr: string }
+    /** Progress checklist while the tool runs (§8-29); latest wins. */
+    progress?: Array<{ id: string; label: string; status: 'pending' | 'active' | 'done' | 'error' }>
+    /** Names of artifacts this step produced (§8-28 "View in panel"). */
+    artifacts?: string[]
   }
 }
 
@@ -42,6 +48,8 @@ export interface StoredStep {
   tool: string
   args?: Record<string, any>
   result?: string
+  /** Names of artifacts this step produced, if any (§8-28). */
+  artifacts?: string[]
 }
 
 /** Pending tool-approval handshake for the live turn. */

@@ -16,6 +16,12 @@ export interface AgentStep {
   tool?: { name: string; args: any; source?: string; result?: string; isError?: boolean; data?: any }
 }
 
+export interface ProgressItem {
+  id: string
+  label: string
+  status: 'pending' | 'active' | 'done' | 'error'
+}
+
 export interface StreamHandlers {
   onStatus?: (message: string) => void
   onWarming?: (message: string) => void
@@ -24,6 +30,10 @@ export interface StreamHandlers {
   onDelta?: (step: number, text: string) => void
   onThinking?: (step: number, text: string) => void
   onToolCall?: (step: number, name: string, args: any, source?: string) => void
+  /** Live tool output while it runs (§8-28): e.g. execute_code stdout/stderr. */
+  onToolOutput?: (step: number, chunk: string, stream?: 'stdout' | 'stderr') => void
+  /** Step progress checklist (§8-29); the latest event per step wins. */
+  onProgress?: (step: number, items: ProgressItem[]) => void
   onToolResult?: (step: number, name: string, content: string, data: any, isError?: boolean) => void
   onArtifact?: (artifact: ArtifactRef) => void
   onPendingApproval?: (tool_name: string, args: any, prompt: string) => void
@@ -227,6 +237,13 @@ function dispatch(event: any, h: StreamHandlers) {
       break
     case 'tool_call':
       h.onToolCall?.(event.step, event.name, event.args, event.source)
+      break
+    case 'tool_output':
+      // Unstamped output (outside a tool execution) has no card to attach to.
+      if (typeof event.step === 'number') h.onToolOutput?.(event.step, event.chunk, event.stream)
+      break
+    case 'progress':
+      if (typeof event.step === 'number') h.onProgress?.(event.step, event.items)
       break
     case 'pending_approval':
       h.onPendingApproval?.(event.tool_name, event.args, event.prompt)

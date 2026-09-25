@@ -502,12 +502,29 @@ export function useChatStream() {
             return next
           })
         },
-        onToolResult: (step, name, resultContent, _d, isError) => {
+        // Live stdout/stderr (§8-28): append to the step's bounded display buffer.
+        onToolOutput: (step, chunk, stream) => {
+          setLiveSteps((prev) => prev.map((s) => {
+            if (s.index !== step || !s.tool) return s
+            const live = s.tool.liveOutput || { stdout: '', stderr: '' }
+            const key = stream === 'stderr' ? 'stderr' : 'stdout'
+            live[key] = (live[key] + chunk).slice(-8_000) // bounded: keep the tail
+            return { ...s, tool: { ...s.tool, liveOutput: live } }
+          }))
+        },
+        // Progress checklist (§8-29): the latest event for the step wins.
+        onProgress: (step, items) => {
+          setLiveSteps((prev) => prev.map((s) =>
+            s.index === step && s.tool ? { ...s, tool: { ...s.tool, progress: items } } : s))
+        },
+        onToolResult: (step, name, resultContent, data, isError) => {
           setLiveSteps((prev) =>
             prev.map((s) => {
               if (s.index !== step || !s.tool) return s
               const startedAt = s.ts || Date.now()
-              return { ...s, tool: { ...s.tool, result: resultContent, isError, durationMs: Date.now() - startedAt } }
+              // Per-step artifact attribution (§8-28): names from the result data.
+              const artifactNames = Array.isArray(data?.artifacts) ? data.artifacts.map((a: any) => a.name) : s.tool.artifacts
+              return { ...s, tool: { ...s.tool, result: resultContent, isError, durationMs: Date.now() - startedAt, artifacts: artifactNames } }
             })
           )
         },

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ChevronDown, Loader2, Wrench, CheckCircle2, XCircle, Clock,
-  MousePointerClick, AlertCircle, RotateCcw, ListChecks,
+  MousePointerClick, AlertCircle, RotateCcw, ListChecks, Circle, ExternalLink,
 } from 'lucide-react'
 import { API_URL, authHeaders } from '../../lib/api'
 import type { LiveStep, StoredStep, PendingApproval } from './types'
@@ -51,18 +51,21 @@ interface TurnActivityProps {
   /** Available-tool count (live turn header popover). */
   toolCount?: number
   onOpenTools?: () => void
+  /** §8-28: opens the artifacts panel focused on the named artifact. */
+  onOpenArtifactByName?: (name: string) => void
 }
 
 /**
  * Inline agent activity for one assistant turn — the Claude-web pattern:
  * a one-line summary ("Ran 4 steps") with a status icon that expands into the
  * full tool-call timeline. Auto-expands while the run streams, auto-collapses
- * when it finishes; each step carries its wall-clock duration, and a failed
- * turn surfaces a Retry button.
+ * when it finishes; each step carries its wall-clock duration, live
+ * stdout/stderr while running (§8-28), a progress checklist (§8-29), and
+ * per-step "View in panel" artifact links; a failed turn surfaces Retry.
  */
 export default function TurnActivity({
   running = false, status = '', liveSteps = [], storedSteps = [], pendingApproval,
-  onApprove, onDeny, onRetry, toolCount, onOpenTools,
+  onApprove, onDeny, onRetry, toolCount, onOpenTools, onOpenArtifactByName,
 }: TurnActivityProps) {
   const isLive = liveSteps.length > 0 || running || !!pendingApproval
   const liveTools = liveSteps.filter((s) => s.kind === 'tool' && s.tool)
@@ -178,10 +181,14 @@ export default function TurnActivity({
                       result={s.tool!.result}
                       isError={s.tool!.isError}
                       durationMs={s.tool!.durationMs}
+                      liveOutput={s.tool!.liveOutput}
+                      progress={s.tool!.progress}
+                      artifacts={s.tool!.artifacts}
                       ts={s.ts}
                       running={running}
                       isOpen={expanded.has(s.index)}
                       onToggle={() => toggleExpand(s.index)}
+                      onOpenArtifactByName={onOpenArtifactByName}
                     />
                   ))}
                 </AnimatePresence>
@@ -195,10 +202,14 @@ export default function TurnActivity({
                     result={s.result}
                     isError={false}
                     durationMs={undefined}
+                    liveOutput={undefined}
+                    progress={undefined}
+                    artifacts={s.artifacts}
                     ts={undefined}
                     running={false}
                     isOpen={expanded.has(i)}
                     onToggle={() => toggleExpand(i)}
+                    onOpenArtifactByName={onOpenArtifactByName}
                   />
                 ))
               )}
@@ -221,9 +232,11 @@ export default function TurnActivity({
   )
 }
 
-/** One collapsible tool-call card: status icon, name, arg summary, duration. */
+/** One collapsible tool-call card: status icon, name, arg summary, duration,
+ *  live stdout/stderr while running (§8-28), progress checklist (§8-29), and
+ *  per-step "View in panel" artifact links (§8-28). */
 function StepCard({
-  index, name, args, result, isError, durationMs, ts, running, isOpen, onToggle,
+  index, name, args, result, isError, durationMs, liveOutput, progress, artifacts, ts, running, isOpen, onToggle, onOpenArtifactByName,
 }: {
   index: number
   name: string
@@ -231,12 +244,19 @@ function StepCard({
   result?: string
   isError?: boolean
   durationMs?: number
+  liveOutput?: { stdout: string; stderr: string }
+  progress?: Array<{ id: string; label: string; status: 'pending' | 'active' | 'done' | 'error' }>
+  artifacts?: string[]
   ts?: number
   running: boolean
   isOpen: boolean
   onToggle: () => void
+  onOpenArtifactByName?: (name: string) => void
 }) {
   const resultText = result || ''
+  const live = !result && running
+  const liveTail = liveOutput && (liveOutput.stderr || liveOutput.stdout)
+  const progressRows = progress && progress.length > 0 ? progress : undefined
   return (
     <motion.div
       initial={{ opacity: 0, y: 6, scale: 0.98 }}
@@ -244,11 +264,13 @@ function StepCard({
       transition={{ duration: 0.15 }}
       className={`rounded-xl border overflow-hidden ${isError ? 'border-rose-500/20 bg-rose-500/[0.04]' : 'border-white/[0.06] bg-white/[0.02]'}`}
     >
-      <button
-        type="button"
+      <div
+        className="w-full flex items-center gap-2 px-2.5 py-2 text-left hover:bg-white/[0.03] transition cursor-pointer"
         onClick={onToggle}
-        className="w-full flex items-center gap-2 px-2.5 py-2 text-left hover:bg-white/[0.03] transition"
         aria-expanded={isOpen}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onToggle() }}
         aria-label={`Toggle step details for ${name}`}
       >
         {!result && running ? (
@@ -262,8 +284,48 @@ function StepCard({
         <span className="text-[11px] text-slate-400 truncate flex-1">{argSummary(args)}</span>
         {durationMs !== undefined && <span className="text-[10px] text-slate-400 shrink-0">{fmtDuration(durationMs)}</span>}
         {ts && <span className="text-[10px] text-slate-500 shrink-0 flex items-center gap-0.5"><Clock size={9} /> {fmtTime(ts)}</span>}
+        {/* §8-28: jump straight to this step's artifact without expanding. */}
+        {onOpenArtifactByName && artifacts && artifacts.length > 0 && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onOpenArtifactByName(artifacts[0]) }}
+            title={artifacts.length > 1 ? `View in panel (${artifacts.length} files)` : `View ${artifacts[0]} in panel`}
+            aria-label={`View ${artifacts[0]} in panel`}
+            className="p-1 rounded text-slate-400 hover:text-[#e79d7f] hover:bg-white/[0.05] transition shrink-0"
+          >
+            <ExternalLink size={11} />
+          </button>
+        )}
         <ChevronDown size={12} className={`text-slate-500 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
+      </div>
+
+      {/* Live progress checklist (§8-29) — latest event wins. */}
+      {live && progressRows && (
+        <div className="px-2.5 pb-2 space-y-1">
+          {progressRows.map((item) => (
+            <div key={item.id} className="flex items-center gap-1.5 text-[11.5px]">
+              {item.status === 'done' && <CheckCircle2 size={11} className="text-emerald-400 shrink-0" />}
+              {item.status === 'active' && <Loader2 size={11} className="text-amber-400 animate-spin shrink-0" />}
+              {item.status === 'pending' && <Circle size={11} className="text-slate-600 shrink-0" />}
+              {item.status === 'error' && <XCircle size={11} className="text-rose-400 shrink-0" />}
+              <span className={item.status === 'active' ? 'text-slate-200' : item.status === 'done' ? 'text-slate-400' : 'text-slate-500'}>{item.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Live stdout/stderr while the tool runs (§8-28) — tail of the buffer. */}
+      {live && liveTail && (
+        <div className="border-t border-white/[0.05] px-2.5 py-2">
+          <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Live output</div>
+          <pre className="text-[10.5px] font-mono whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+            {liveOutput!.stderr && <span className="text-rose-300">{liveOutput!.stderr.split('\n').slice(-10).join('\n')}</span>}
+            {liveOutput!.stderr && liveOutput!.stdout && '\n'}
+            {liveOutput!.stdout && <span className="text-slate-300">{liveOutput!.stdout.split('\n').slice(-10).join('\n')}</span>}
+          </pre>
+        </div>
+      )}
+
       {isOpen && (
         <div className="border-t border-white/[0.05] px-2.5 py-2">
           <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Input</div>
@@ -274,9 +336,24 @@ function StepCard({
               <pre className={`text-[10.5px] font-mono whitespace-pre-wrap break-all ${isError ? 'text-rose-300' : 'text-slate-300'}`}>{resultText.slice(0, 2000)}{(resultText.length > 2000 ? '\n…' : '')}</pre>
             </>
           )}
+          {/* §8-28: named "View in panel" links for every artifact this step produced. */}
+          {onOpenArtifactByName && artifacts && artifacts.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+              {artifacts.map((a) => (
+                <button
+                  key={a}
+                  type="button"
+                  onClick={() => onOpenArtifactByName(a)}
+                  className="inline-flex items-center gap-1 text-[11.5px] text-[#e79d7f] hover:underline"
+                >
+                  <ExternalLink size={10} /> {a}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
-      {!isOpen && !result && running && (
+      {!isOpen && !result && running && !liveTail && !progressRows && (
         <div className="px-2.5 pb-2 text-[11px] text-slate-400">running…</div>
       )}
     </motion.div>

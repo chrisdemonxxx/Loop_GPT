@@ -41,6 +41,8 @@ interface MessageListProps {
   onOpenTools?: () => void
   /** Artifact cards open the right-hand panel focused on the artifact (P2). */
   onOpenArtifact?: (artifact: ArtifactRef) => void
+  /** §8-28: per-step "View in panel" links resolve artifact names here. */
+  onOpenArtifactByName?: (name: string) => void
   onEditMessage: (messageId: string, content: string) => void
   onRetryBefore: (beforeIndex: number) => void
   onStartPrompt?: (prompt: string) => void
@@ -53,7 +55,7 @@ interface MessageListProps {
 export default function MessageList({
   messages, conversationId, liveUser, liveSteps, liveAnswer, liveThinking, liveArtifacts,
   running, statusMsg, mode, pendingApproval, onApprove, onDeny, toolCount, onOpenTools,
-  onOpenArtifact, onEditMessage, onRetryBefore, onStartPrompt,
+  onOpenArtifact, onOpenArtifactByName, onEditMessage, onRetryBefore, onStartPrompt,
 }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -121,6 +123,7 @@ export default function MessageList({
                       message={m}
                       conversationId={conversationId}
                       onOpenArtifact={onOpenArtifact}
+                      onOpenArtifactByName={onOpenArtifactByName}
                       onEdit={m.role === 'user' ? () => onEditMessage(m.id, m.content) : undefined}
                       onRetry={m.role === 'assistant' ? () => onRetryBefore(vi.index) : undefined}
                     />
@@ -135,6 +138,7 @@ export default function MessageList({
                 message={m}
                 conversationId={conversationId}
                 onOpenArtifact={onOpenArtifact}
+                onOpenArtifactByName={onOpenArtifactByName}
                 onEdit={m.role === 'user' ? () => onEditMessage(m.id, m.content) : undefined}
                 onRetry={m.role === 'assistant' ? () => onRetryBefore(idx) : undefined}
               />
@@ -228,6 +232,7 @@ export default function MessageList({
                   onRetry={() => onRetryBefore(messages.length - 1)}
                   toolCount={toolCount}
                   onOpenTools={onOpenTools}
+                  onOpenArtifactByName={onOpenArtifactByName}
                 />
                 {!liveAnswer && !statusMsg && liveSteps.length === 0 && running && <ThinkingDots />}
               </div>
