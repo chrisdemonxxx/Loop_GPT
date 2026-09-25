@@ -12,6 +12,7 @@ import Markdown from './Markdown'
 import { artifactHref, artifactFileId, downloadArtifact, openArtifactInNewTab, useAuthedText, useAuthedUrl, isVideoArtifact } from './artifactUrl'
 import { PdfView, SheetView, MermaidView, withErrorBridge, DEVICE_WIDTH, type ArtifactDevice } from './ArtifactViewers'
 import VideoPlayer from './VideoPlayer'
+import Lightbox from './Lightbox'
 
 interface Props {
   artifacts: ArtifactRef[]
@@ -98,6 +99,7 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
   const [published, setPublished] = useState<Record<string, string>>({})
   const [sandboxError, setSandboxError] = useState<string | null>(null)
   const [diff, setDiff] = useState<{ from: string; to: string; lines: { sign: string; text: string }[] } | null>(null)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
 
   useEffect(() => { setTab('preview'); setSandboxError(null) }, [focusId])
 
@@ -240,9 +242,19 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
             {/* Content */}
             <div className="flex-1 min-h-0 overflow-auto p-3">
               {tab === 'preview' && focused.kind === 'image' && (
-                focusImage
-                  ? <img src={focusImage} alt={focused.name} className="w-full rounded-xl border border-white/10" />
-                  : <LoadingShim />
+                <div className="relative">
+                  {focusImage ? (
+                    <button type="button" onClick={() => setLightboxOpen(true)} className="block w-full group" aria-label={`Open ${focused.name} fullscreen`}>
+                      <img src={focusImage} alt={focused.name} loading="lazy" decoding="async"
+                        className="w-full rounded-xl border border-white/10 transition group-hover:border-white/20" />
+                      <span className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 text-slate-200 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition" title="Open fullscreen">
+                        <Maximize2 size={14} />
+                      </span>
+                    </button>
+                  ) : (
+                    <div className="w-full aspect-[4/3] rounded-xl border border-white/10 shimmer" aria-hidden="true" />
+                  )}
+                </div>
               )}
               {tab === 'preview' && isVideoArtifact(focused) && <VideoPlayer a={focused} className="w-full" />}
               {tab === 'preview' && isPdf && <PdfView a={focused} />}
@@ -291,6 +303,13 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
 
             {/* Footer actions */}
             <div className="px-3 py-2.5 border-t border-white/5 space-y-2 shrink-0">
+              {focused.kind === 'image' && lightboxOpen && (
+                <Lightbox
+                  images={artifacts.filter((a) => a.kind === 'image')}
+                  startIndex={Math.max(0, artifacts.filter((a) => a.kind === 'image').findIndex((a) => a.id === focused.id))}
+                  onClose={() => setLightboxOpen(false)}
+                />
+              )}
               <div className="flex gap-2">
                 <button onClick={() => downloadArtifact(focused, artifactHref(focused.url))}
                   className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-xl glass hover:bg-white/5 text-[12px] text-slate-200 transition">

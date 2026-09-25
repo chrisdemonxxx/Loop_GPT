@@ -28,6 +28,10 @@ export function MessageBubble({
   const storedSteps: StoredStep[] = Array.isArray(message.metadata?.steps) ? message.metadata.steps : []
   const sources = message.metadata?.sources as { index: number; title: string; url: string }[] | undefined
   const promptMeta = message.metadata?.prompt as { raw: string; enhanced: string; optimized: boolean } | undefined
+  /** Intrinsic dimensions persisted by the vision pipeline (audit P4):
+   *  explicit width/height eliminates layout shift before the blob loads. */
+  const imgW = typeof message.metadata?.imageWidth === 'number' ? message.metadata.imageWidth : undefined
+  const imgH = typeof message.metadata?.imageHeight === 'number' ? message.metadata.imageHeight : undefined
   const attachedImage = useAttachmentUrl(message.attachmentId)
   const speech = useSpeech()
 
@@ -51,6 +55,10 @@ export function MessageBubble({
             <img
               src={attachedImage || message.imageUrl}
               alt="Uploaded"
+              width={imgW}
+              height={imgH}
+              loading="lazy"
+              decoding="async"
               className="max-w-[280px] max-h-64 rounded-xl border border-white/10 mb-2.5"
             />
           )}

@@ -91,7 +91,8 @@ export function AttachmentChips({
         <div className="mb-2 flex flex-wrap gap-2">
           {imagePreviews.map((src, i) => (
             <div key={i} className="relative inline-block">
-              <img src={src} alt={`preview ${i + 1}`} className="h-20 w-20 object-cover rounded-xl border border-white/10" />
+              <img src={src} alt={`preview ${i + 1}`} width={80} height={80} loading="lazy" decoding="async"
+                className="h-20 w-20 object-cover rounded-xl border border-white/10" />
               <button
                 type="button"
                 onClick={() => onRemoveImage(i)}

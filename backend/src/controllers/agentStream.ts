@@ -32,6 +32,7 @@ import { agentConfig } from '../agent/config'
 import { recordUsage, estimateTokens, type UsageKind } from '../services/billing'
 import { reserveDailyCredits, dailyDispatch, cleanupDailyReservation, DailyCreditError } from '../services/dailyReservations'
 import { startRun as startResearchRun } from '../services/researchRuns'
+import { dataUriDimensions } from '../services/imageDimensions'
 
 // Install before asynchronous setup: close may fire while a DB lock is held.
 // (Shared with the completions route in routes/agent.ts.)
@@ -202,6 +203,9 @@ export async function streamAgentRun(req: Request, res: Response) {
     // the SSE stream. Wrap in try/catch so a DB error returns a clean 500 instead
     // of an unhandled rejection that crashes the process.
     const hasImage = !!image
+    // Pin the first uploaded image's intrinsic size in message metadata so the
+    // client can set <img width/height> and avoid layout shift (audit P4).
+    const dims = hasImage ? dataUriDimensions(image.dataUri) : null
     let conversation: Awaited<ReturnType<typeof prepareRunConversation>>
     try {
       conversation = await prepareRunConversation(userId, conversationId, raw || 'New Chat', input.data.workspaceId, async (workspaceId) => {
@@ -216,6 +220,7 @@ export async function streamAgentRun(req: Request, res: Response) {
         messageType: hasImage ? 'mixed' : 'text',
         imageUrl: image?.reference.url || null,
         toolUsed: mode,
+        ...(dims ? { metadata: { imageWidth: dims.width, imageHeight: dims.height } } : {}),
       })
     } catch (err: any) {
       if (lifecycle.disconnected()) return
