@@ -312,6 +312,25 @@ gated by the full suites.
 - Note: generated-image artifacts don't carry dimensions server-side yet
   (upload path only); their CLS is covered by the shimmer skeleton.
 
+## Phase 2.5 — Transitions (audit P5) — SHIPPED (2026-09-26, commit `3eb2f74`)
+
+- **Thinking pulse**: `ThinkingDots` upgraded from anonymous dots to a
+  labeled "Thinking…" pulse (status role, terracotta dots, shimmer-text
+  label) — it owns the dead gap between send and the first token/tool
+  event; the status line takes over once the run reports progress.
+- **Crossfade, not pop**: individual step cards already crossfade
+  (150ms scale+fade, from 2.1); the TurnActivity block itself now eases
+  in with a 150ms fade (no scale pop).
+- **prefers-reduced-motion — verified inherited end-to-end**:
+  `MotionConfig reducedMotion="user"` (providers) covers all framer
+  transitions in the new components; the global CSS media-query
+  kill-switch covers shimmer/bounce/pulse keyframes. No new animation
+  escapes either.
+- 2 new tests (status-region + label + dots; EmptyState starter-prompt
+  dispatch). Gates: frontend **56/56**, Playwright **12/12**, tsc +
+  build green. Deployed on `3eb2f74`; CI green; live bundle carries the
+  pulse; healthz 200.
+
 ## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
 
 - **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
