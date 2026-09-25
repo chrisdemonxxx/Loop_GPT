@@ -488,6 +488,47 @@ UI/UX rebuild (audit §6 P1–P6 + 2.7) is live; next per plan: Phase 3
   `141a601`; all four CI workflows green; live bundle carries all three
   signatures; live stream accepts both flags (200); healthz 200.
 
+## Phase 3 — Stream auto-resume on disconnect (audit §8-30) — SHIPPED (2026-09-26, commit `7a93f92`)
+
+- **Durable runs**: a dropped SSE connection mid-turn no longer loses the
+  run. New `services/runReplay.ts` sequences + buffers every emitted event
+  per run (bounded: 5k events / 2 MB per run, 200-run LRU, TTL sweeper;
+  overflow degrades resumability, never the run). `requestLifecycle` gains a
+  durable mode the controller activates **at the replay-run boundary** —
+  disconnects before it (validation/reservation/prep) still abort+refund
+  exactly as before; from it on, a disconnect DETACHES (resumable) and only
+  an explicit cancel aborts.
+- **New routes**: `GET /:cid/runs/:runId/events?after=<seq>` replays the
+  buffered tail after the client's last received seq, then attaches live
+  until the run finishes (ownership: keyed to user+cid, foreign 404s);
+  `POST /:cid/runs/:runId/cancel` is the explicit stop.
+- **Client**: `runAgentStream` tracks runId + lastSeq; a stream that ends
+  without a terminal event and without a user abort reconnects with backoff
+  (1s→30s, ~61s window) and **resumes the same run** — no manual re-send, no
+  double charge. 404 → run gone (error + delayed refresh picks up whatever
+  persisted). The stop button now cancels server-side (durable runs
+  outlive the old client-abort path).
+- **Billing integrity preserved**: the dailyDisconnect suite's pre-dispatch
+  disconnect contracts are unchanged (18 tests untouched — disconnect before
+  dispatch still refunds); the post-dispatch contract split — legacy
+  completions keep old semantics, the durable-stream test pins that a
+  disconnect LEAVES the hold dispatched (survivable for resume) and explicit
+  cancel settles it to unknown.
+- **Live E2E (production)**: opened an agent stream, dropped the socket at
+  seq 3 (thinking phase), resumed via `?after=3` → HTTP 200 replaying seqs
+  4–123 (thinking, delta, calculator tool_call/tool_result, final **" 391"**
+  — the correct 17×23 — and done). The run survived the disconnect
+  server-side and completed.
+- **Tests**: 6 store unit, 3 integration E2Es, 4 stream-client tests.
+  Gates: backend unit **1148/5**, integration **468/3**, lint 0; frontend
+  **87/87**, Playwright **12/12**, tsc + build green. Deploy note: the
+  first push attempt hit a GitHub credential 403 (the local gh session had
+  switched accounts mid-day); re-authed and pushed cleanly. All four CI
+  workflows green on `7a93f92`.
+- Deploy caveat: Railway's log stream swallowed content for this deploy
+  (empty info lines), so verification ran through the http surface + the
+  live resume E2E instead of log inspection.
+
 ## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
 
 - **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
