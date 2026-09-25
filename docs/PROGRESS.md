@@ -251,6 +251,37 @@ gated by the full suites.
 - Gates: backend unit **1132/5**, integration **457/3** (incl. signed-link
   E2E), lint 0 errors, tsc clean; frontend 45/45 + 12/12 Playwright + build.
 
+## Phase 2.3 — Real HTTP byte-range video streaming (audit P3) — SHIPPED (2026-09-26, commit `c670a8c`)
+
+- **Backend** (`privateFiles.ts`): `parseRange` + `sendFileResponse` — the
+  FIRST content response now advertises `Accept-Ranges: bytes` (the missing
+  piece that kept native players from even attempting range requests);
+  `Range` requests return `206 Partial Content` with `Content-Range`
+  (bounded `bytes=a-b`, open-ended `bytes=a-`, suffix `bytes=-n` forms),
+  unsatisfiable ranges return `416` + `bytes */total`. Serves the
+  header-auth path, the signed-link path, and the published-token route.
+- **Frontend**: the blob-download video flow is gone. New
+  `VideoPlayer.tsx` streams from a short-lived signed URL
+  (`useSignedArtifactUrl`) so the native element issues real byte-range
+  HTTP — instant playback start and streaming seeks. Adds the buffering
+  indicator (waiting/stalled → spinner; playing/canplay clears), the
+  first-frame poster via `preload="metadata"`, a **Picture-in-Picture
+  control** where the engine supports it, and a one-shot re-mint when a
+  session outlives the link TTL. Wired into the chat `ArtifactCard` and
+  the focused panel view. No HLS/DASH — direct-URL ranges are the fix,
+  per the plan.
+- **Test-harness alignment fix**: the files integration app now mounts
+  `publicFilesRouter` before `filesRouter` exactly like `server.ts` — the
+  router-wide auth `use()` previously swallowed the anonymous public path
+  (a real mounting-order dependency the stale suite never caught).
+- **Tests**: 6 `parseRange` unit tests; 2 integration E2Es (first-response
+  headers + all 206 forms + 416; ranges over signed links AND published
+  tokens); 4 `VideoPlayer` component tests (signed src, buffering overlay,
+  once-only re-mint). Gates: backend unit **1138/5**, integration
+  **459/3**, lint 0, tsc clean; frontend **49/49**, Playwright **12/12**,
+  build green. Deployed on `c670a8c`; live bundle carries the stream
+  placeholder, signed-link minting, and PiP signatures; healthz 200.
+
 ## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
 
 - **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
