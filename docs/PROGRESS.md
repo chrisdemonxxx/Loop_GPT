@@ -331,6 +331,40 @@ gated by the full suites.
   build green. Deployed on `3eb2f74`; CI green; live bundle carries the
   pulse; healthz 200.
 
+## Phase 2.6 — Mobile + responsive (audit P6) — SHIPPED (2026-09-26, commit `78e5e83`)
+
+- **Real `md` breakpoint**: `usePanels` tracks tablet (≥768px) and desktop
+  (≥1024px) separately — the sidebar is a persistent column from tablet up
+  (`md:relative`/`md:z-20`), distinct from the phone drawer; the mobile
+  backdrop renders only below 768px. The right panel still docks at lg.
+- **iOS keyboard**: `useKeyboardSafeBottom` listens to `visualViewport`
+  resize/scroll and writes the intrusion distance to `--kb-offset`; the
+  composer's bottom padding is now
+  `max(0.75rem, calc(env(safe-area-inset-bottom) + var(--kb-offset)))` so it
+  lifts above the keyboard instead of being covered.
+- **Sidebar width**: spec formula `w-[min(20rem,calc(100vw-2rem))]` — no
+  overflow at 320px viewports (was a hardcoded 260px + 82vw).
+- **44px touch targets**: `.tap-target` utility (pseudo-element pad, keeps
+  the 28–32px visuals) on the composer `+`, mic, run-mode picker, and
+  send/stop controls.
+- **Bottom sheets on mobile**: the artifacts panel renders as a true bottom
+  sheet below lg (slides up, 85dvh, rounded top, drag handle) instead of
+  sliding in from the right; docked desktop panel and fullscreen overlay
+  unchanged. (The ActivityPanel half of this item was already satisfied by
+  2.1 — activity is inline per turn, no side panel.)
+- **WCAG AA contrast pass** over the whole chat surface (16 files):
+  `text-slate-500→400`, `600→500`, `700→500`, `placeholder-600→500`.
+- **Tests**: 4 new (keyboard-offset math + no-viewport fallback, sheet-mode
+  class assertions, tap-target presence); Playwright's mobile-chromium
+  (Pixel 5) project exercises the responsive layout in the a11y gate.
+  Gates: frontend **60/60**, Playwright **12/12** (desktop + mobile),
+  tsc + build green. Deployed on `78e5e83`; CI green; live bundle carries
+  keyboard-offset, tap-target, and bottom-sheet signatures; healthz 200.
+
+**Phase 2 status: 2.1–2.6 all shipped.** Remaining from the Phase 2 brief:
+2.7 composer gaps (drag-and-drop uploads with drop-zone overlay,
+paste-image support, upload progress + visible errors).
+
 ## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
 
 - **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
