@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 
@@ -9,7 +9,6 @@ import { runAgentStream, type ArtifactRef } from '../lib/stream'
 import { track } from '../components/Analytics'
 import type { Project } from '../components/ProjectsPanel'
 import type { Conversation, Message, LiveStep, PendingApproval } from '../components/chat/types'
-
 // ---------------------------------------------------------------------------
 // Panels: sidebar / activity / artifacts + responsive desktop detection
 // ---------------------------------------------------------------------------
@@ -173,6 +172,136 @@ export function useConversationsData(
 }
 
 // ---------------------------------------------------------------------------
+// Attachments: upload at attach-time with progress, errors, and retry
+// ---------------------------------------------------------------------------
+
+export interface PendingAttachment {
+  /** Local record id. */
+  id: string
+  kind: 'image' | 'doc'
+  name: string
+  file: File
+  /** Local data-URL preview (images only). */
+  previewUrl?: string
+  /** 0–100 while uploading. */
+  progress: number
+  status: 'uploading' | 'done' | 'error'
+  error?: string
+  /** Server attachment id once uploaded (what the stream inlines). */
+  attachmentId?: string
+}
+
+/** Max four attachments per turn (matching the stream contract). */
+const MAX_ATTACHMENTS = 4
+
+let attachmentSeq = 0
+
+/**
+ * Attach-time uploads (audit P2.7): files upload as they are attached, with
+ * per-chip progress and visible errors (image failures were previously
+ * silent at send time). The first upload to a fresh chat creates the
+ * conversation (the upload routes accept 'new' and return its id); later
+ * uploads and the eventual send reuse it.
+ */
+export function useAttachments(currentConversationId: string | null) {
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+  /** Conversation created by a 'new' upload (before the first send) — kept
+   *  in a ref so concurrent uploads in one batch share the target. */
+  const uploadConvRef = useRef<string | null>(null)
+  const [uploadConversationId, setUploadConversationId] = useState<string | null>(null)
+
+  const patch = useCallback((id: string, fields: Partial<PendingAttachment>) =>
+    setAttachments((prev) => prev.map((a) => (a.id === id ? { ...a, ...fields } : a))), [])
+
+  const upload = useCallback(async (record: PendingAttachment, retryOf?: string) => {
+    const id = retryOf || record.id
+    const target = uploadConvRef.current || currentConversationId || 'new'
+    const endpoint = record.kind === 'image' ? 'upload-image' : 'upload-document'
+    const field = record.kind === 'image' ? 'image' : 'document'
+    const fd = new FormData()
+    fd.append(field, record.file)
+    try {
+      const res = await axios.post(`${API_URL}/api/conversations/${target}/${endpoint}`, fd, {
+        headers: authHeaders(false),
+        onUploadProgress: (e) => {
+          if (e.total) patch(id, { progress: Math.min(99, Math.round((e.loaded / e.total) * 100)) })
+        },
+      })
+      const { attachmentId, conversationId } = res.data as { attachmentId: string; conversationId: string }
+      uploadConvRef.current = uploadConvRef.current || conversationId
+      setUploadConversationId(uploadConvRef.current)
+      patch(id, { progress: 100, status: 'done', attachmentId, error: undefined })
+    } catch (e: any) {
+      patch(id, { status: 'error', error: e?.response?.data?.error || 'Upload failed' })
+    }
+  }, [currentConversationId, patch])
+
+  /** Attach files (drag-drop, paste, picker, screenshot). Caps at four
+   *  total per turn; images get a local data-URL preview. */
+  const addFiles = useCallback((files: File[]) => {
+    const created: PendingAttachment[] = []
+    setAttachments((prev) => {
+      const slots = Math.max(0, MAX_ATTACHMENTS - prev.length)
+      if (slots === 0) return prev
+      const accepted = files
+        .filter((f) => f.type.startsWith('image/') || /\.(pdf|docx|xlsx|csv|txt|md|markdown)$/i.test(f.name))
+        .slice(0, slots)
+      for (const file of accepted) {
+        created.push({
+          id: `att-${Date.now()}-${attachmentSeq++}`,
+          kind: file.type.startsWith('image/') ? 'image' : 'doc',
+          name: file.name,
+          file,
+          progress: 0,
+          status: 'uploading',
+        })
+      }
+      return [...prev, ...created]
+    })
+    for (const record of created) {
+      void upload(record)
+      if (record.kind === 'image') {
+        const r = new FileReader()
+        r.onloadend = () => patch(record.id, { previewUrl: r.result as string })
+        r.readAsDataURL(record.file)
+      }
+    }
+  }, [upload, patch])
+
+  const remove = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id))
+  }, [])
+
+  /** Re-run a failed upload (audit P2.7: errors are actionable, not dead ends). */
+  const retry = useCallback((id: string) => {
+    setAttachments((prev) => {
+      const record = prev.find((a) => a.id === id)
+      if (record) void upload(record, id)
+      return prev.map((a) => (a.id === id ? { ...a, status: 'uploading', progress: 0, error: undefined } : a))
+    })
+  }, [upload])
+
+  const reset = useCallback(() => {
+    setAttachments([])
+    uploadConvRef.current = null
+    setUploadConversationId(null)
+  }, [])
+
+  const readyIds = attachments.filter((a) => a.status === 'done' && a.attachmentId).map((a) => a.attachmentId!)
+  const uploading = attachments.some((a) => a.status === 'uploading')
+
+  return {
+    attachments, addFiles, remove, retry, reset,
+    /** Conversation the uploads landed in (null until one completes). */
+    uploadConversationId,
+    /** Uploaded server ids, ready for the stream. */
+    readyIds,
+    /** True while any upload is in flight (send waits for it). */
+    uploading,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The live agent run: streaming state machine + send pipeline
 // ---------------------------------------------------------------------------
 
@@ -181,10 +310,12 @@ export interface ChatStreamSendOptions {
   content: string
   sendMode: AgentMode
   commandTools?: string[]
-  /** Attachments grabbed before clearing the composer. */
-  images: File[]
-  docs: File[]
+  /** Pre-uploaded attachments (attach-time upload via useAttachments): the
+   *  server ids the stream inlines, plus previews/doc names for the live
+   *  user bubble. */
+  attachmentIds: string[]
   previews: string[]
+  docNames: string[]
   /** Run configuration. */
   runMode: 'auto' | 'plan' | 'accept' | 'step'
   modelTier: string
@@ -197,10 +328,10 @@ export interface ChatStreamSendOptions {
 
 /** Owns everything live about an agent run: running/status, the streamed
  * steps/thinking/answer, in-run artifacts, the pending-approval handshake,
- * and the abort controller. `send()` is the full pipeline (uploads → stream
- * → invalidation) with the exact semantics the page used inline. The activity
- * timeline renders inline per turn (TurnActivity) — there is no side panel
- * to auto-open. */
+ * and the abort controller. `send()` runs the stream against attachments
+ * that were uploaded at attach time (useAttachments) — no silent send-time
+ * uploads remain. The activity timeline renders inline per turn
+ * (TurnActivity) — there is no side panel to auto-open. */
 export function useChatStream() {
   const [running, setRunning] = useState(false)
   const [statusMsg, setStatusMsg] = useState('')
@@ -227,40 +358,15 @@ export function useChatStream() {
     setLiveSteps([]); setLiveArtifacts([]); setLiveUser(null)
   }
 
-  async function uploadImage(convId: string, file: File): Promise<string | undefined> {
-    const fd = new FormData()
-    fd.append('image', file)
-    try {
-      return (await axios.post(`${API_URL}/api/conversations/${convId}/upload-image`, fd, { headers: authHeaders(false) })).data.attachmentId
-    } catch { return undefined }
-  }
-
-  /** Documents (PDF/DOCX/XLSX/CSV/TXT/MD) — extracted server-side; the
-   * returned attachment id inlines the text into the prompt. */
-  async function uploadDocument(convId: string, file: File): Promise<string | undefined> {
-    const fd = new FormData()
-    fd.append('document', file)
-    try {
-      const res = await axios.post(`${API_URL}/api/conversations/${convId}/upload-document`, fd, { headers: authHeaders(false) })
-      return res.data.attachmentId
-    } catch (e: any) {
-      setStatusMsg(`⚠️ ${file.name}: ${e?.response?.data?.error || 'could not read this document'}`)
-      return undefined
-    }
-  }
-
   async function send(opts: ChatStreamSendOptions) {
-    const { content, sendMode, commandTools, images, docs, previews, runMode, modelTier, selectedTools, incognito, projectId, ensureConversation } = opts
+    const { content, sendMode, commandTools, attachmentIds, previews, docNames, runMode, modelTier, selectedTools, incognito, projectId, ensureConversation } = opts
     setRunning(true); setStatusMsg(''); setLiveSteps([]); setLiveArtifacts([]); setLiveThinking('')
-    setLiveUser({ content, image: previews[0], images: previews, docs: docs.map((d) => d.name) })
+    setLiveUser({ content, image: previews[0], images: previews, docs: docNames })
     track('message_sent', { mode: sendMode })
 
     let convId: string | null = null
     try {
       convId = await ensureConversation(content)
-      const imageIds = (await Promise.all(images.map((f) => uploadImage(convId!, f)))).filter(Boolean) as string[]
-      const docIds = (await Promise.all(docs.map((f) => uploadDocument(convId!, f)))).filter(Boolean) as string[]
-      const attachmentIds = [...imageIds, ...docIds]
       const abort = new AbortController()
       abortRef.current = abort
 

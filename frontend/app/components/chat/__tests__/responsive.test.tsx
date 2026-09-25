@@ -62,8 +62,9 @@ describe('44px tap targets', () => {
     render(
       <Composer
         input=""
-        imagePreviews={[]}
-        docNames={[]}
+        attachments={[]}
+        onRemoveAttachment={vi.fn()}
+        onRetryAttachment={vi.fn()}
         running={false}
         runMode="auto"
         showSlash={false}
@@ -74,8 +75,6 @@ describe('44px tap targets', () => {
         onSend={vi.fn()}
         onStop={vi.fn()}
         onImagesSelected={vi.fn()}
-        onRemoveImage={vi.fn()}
-        onRemoveDoc={vi.fn()}
         onTogglePlus={vi.fn()}
         onClosePlus={vi.fn()}
         onToggleModeMenu={vi.fn()}

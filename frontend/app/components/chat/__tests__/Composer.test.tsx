@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import Composer from '../Composer'
+import type { PendingAttachment } from '../../../chat/hooks'
+
+const attach = (over: Partial<PendingAttachment>): PendingAttachment => ({
+  id: 'a1', kind: 'image', name: 'pic.png', file: new File([], 'pic.png'), progress: 0, status: 'uploading', ...over,
+})
 
 const base = {
   input: '',
-  imagePreviews: [] as string[],
-  docNames: [] as string[],
+  attachments: [] as PendingAttachment[],
+  onRemoveAttachment: () => {},
+  onRetryAttachment: () => {},
   running: false,
   runMode: 'auto' as 'auto' | 'plan' | 'step' | 'accept',
   showSlash: false,
@@ -16,8 +22,6 @@ const base = {
   onSend: () => {},
   onStop: () => {},
   onImagesSelected: () => {},
-  onRemoveImage: () => {},
-  onRemoveDoc: () => {},
   onTogglePlus: () => {},
   onClosePlus: () => {},
   onToggleModeMenu: () => {},
@@ -46,15 +50,54 @@ describe('Composer', () => {
     expect(screen.getByLabelText('Send message')).toBeDisabled()
   })
 
+  it('enables Send when an attachment is uploaded (even without text)', () => {
+    renderComposer({ attachments: [attach({ status: 'done' })] })
+    expect(screen.getByLabelText('Send message')).toBeEnabled()
+  })
+
   it('renders one attachment entry point (the + menu trigger)', () => {
     renderComposer()
     expect(document.querySelectorAll('button[aria-label*="file"], button[title*="file"]').length).toBe(0)
   })
 
-  it('shows a multi-image preview row when previews are present', () => {
-    renderComposer({ imagePreviews: ['data:image/png;base64,AA==', 'data:image/png;base64,BB=='] })
+  it('shows a multi-image preview row with upload progress', () => {
+    renderComposer({
+      attachments: [
+        attach({ id: 'a1', previewUrl: 'data:image/png;base64,AA==', progress: 40 }),
+        attach({ id: 'a2', previewUrl: 'data:image/png;base64,BB==', progress: 90 }),
+      ],
+    })
     expect(screen.getByAltText('preview 1')).toBeInTheDocument()
     expect(screen.getByAltText('preview 2')).toBeInTheDocument()
+    // Live progress bars ride the chips.
+    expect(document.querySelectorAll('span[aria-hidden] span.block, span.h-1.rounded-full.bg-black\\/50').length).toBeGreaterThan(0)
+  })
+
+  it('shows a visible error with Retry on a failed image upload (was silent)', () => {
+    const onRetryAttachment = vi.fn()
+    renderComposer({ attachments: [attach({ status: 'error', error: 'Upload failed' })], onRetryAttachment })
+    fireEvent.click(screen.getByRole('button', { name: /retry upload of pic\.png/i }))
+    expect(onRetryAttachment).toHaveBeenCalledWith('a1')
+  })
+
+  it('dispatches drag-dropped files to the attach handler with the drop zone visible', () => {
+    const onImagesSelected = vi.fn()
+    const { container } = renderComposer({ onImagesSelected })
+    const zone = container.firstChild as HTMLElement
+    const file = new File(['x'], 'drop.png', { type: 'image/png' })
+    fireEvent.dragEnter(zone, { dataTransfer: { types: ['Files'] } })
+    expect(screen.getByText('Drop files to attach')).toBeInTheDocument()
+    fireEvent.drop(zone, { dataTransfer: { files: [file] } })
+    expect(onImagesSelected).toHaveBeenCalledWith([file])
+    expect(screen.queryByText('Drop files to attach')).not.toBeInTheDocument()
+  })
+
+  it('attaches pasted clipboard images via onPaste', () => {
+    const onImagesSelected = vi.fn()
+    renderComposer({ input: 'x', onImagesSelected })
+    const file = new File(['x'], 'pasted.png', { type: 'image/png' })
+    fireEvent.paste(screen.getByRole('textbox'), { clipboardData: { files: [file] } })
+    expect(onImagesSelected).toHaveBeenCalledWith([file])
   })
 
   it('shows all four run modes in the mode menu', () => {

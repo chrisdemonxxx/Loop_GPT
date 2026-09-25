@@ -19,7 +19,7 @@ import type { Conversation, Message } from '../components/chat/types'
 import { parseCommand, SLASH_COMMANDS } from '../lib/commands'
 import ProjectsPanel, { type Project } from '../components/ProjectsPanel'
 import ResearchPanel from '../components/ResearchPanel'
-import { usePanels, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom } from './hooks'
+import { usePanels, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom, useAttachments } from './hooks'
 
 // slash commands live in ../lib/commands (registry + parseCommand)
 
@@ -52,10 +52,10 @@ export default function ChatPage() {
    * focused and "Back to list" clears it while staying open. */
   const [focusedArtifactId, setFocusedArtifactId] = useState<string | null>(null)
 
-  // ── Attachments (null = all tools, the server default) ─────────────────────
-  const [selectedImages, setSelectedImages] = useState<File[]>([])
-  const [imagePreviews, setImagePreviews] = useState<string[]>([])
-  const [selectedDocs, setSelectedDocs] = useState<File[]>([])
+  // ── Attachments: uploaded at attach-time with progress + visible errors
+  //    (audit P2.7); the send consumes the ready server ids.
+  const uploads = useAttachments(currentConversationId)
+  /** Per-chat tool selection (null = all tools, the server default). */
   const [selectedTools, setSelectedTools] = useState<Set<string> | null>(null)
 
   // ── Data ──────────────────────────────────────────────────────────────────
@@ -103,18 +103,6 @@ export default function ChatPage() {
     panels.setArtifactsOpen(false)
   }
 
-  async function ensureConversation(firstMessage: string): Promise<string> {
-    if (currentConversationId) return currentConversationId
-    const res = await axios.post(
-      `${API_URL}/api/conversations`,
-      { title: firstMessage.slice(0, 50) || 'New Chat' },
-      { headers: authHeaders() }
-    )
-    setCurrentConversationId(res.data.id)
-    invalidateConversations()
-    return res.data.id
-  }
-
   /** Message branching (§2.5): editing an earlier user message forks the
    * conversation at that point into a new branch and loads the text. */
   async function forkAtMessage(messageId: string, content: string) {
@@ -157,27 +145,10 @@ export default function ChatPage() {
   }
 
   // ── Composer / send ────────────────────────────────────────────────────────
-  /** Add up to four attachments at once. Images preview locally; documents
-   * (PDF/DOCX/XLSX/CSV/TXT/MD) show as chips and are extracted server-side. */
+  /** Attach files (picker, screenshot, drag-drop, paste): the useAttachments
+   *  hook uploads immediately with per-chip progress and visible errors. */
   function handleImagesSelected(files: File[]) {
-    const images = files.filter((f) => f.type.startsWith('image/'))
-    const docs = files.filter((f) => !f.type.startsWith('image/') && /\.(pdf|docx|xlsx|csv|txt|md|markdown)$/i.test(f.name))
-    const slots = Math.max(0, 4 - selectedImages.length - selectedDocs.length)
-    if (images.length) {
-      setSelectedImages((prev) => [...prev, ...images].slice(0, 4))
-      for (const file of images.slice(0, slots)) {
-        const r = new FileReader()
-        r.onloadend = () => setImagePreviews((prev) => (prev.length >= 4 ? prev : [...prev, r.result as string]))
-        r.readAsDataURL(file)
-      }
-    }
-    if (docs.length) {
-      setSelectedDocs((prev) => [...prev, ...docs.slice(0, Math.max(0, 4 - prev.length))].slice(0, 4))
-    }
-  }
-
-  function removeDoc(index: number) {
-    setSelectedDocs((prev) => prev.filter((_, i) => i !== index))
+    uploads.addFiles(files)
   }
 
   function handleInputChange(value: string) {
@@ -185,26 +156,56 @@ export default function ChatPage() {
     setShowSlash(value.startsWith('/') && !/\s/.test(value))
   }
 
+  /** The conversation this send targets: an explicit selection, else the one
+   *  attach-time uploads created ('new' uploads mint it before the first
+   *  message), else a fresh one. */
+  function conversationForSend(): string | null {
+    return currentConversationId || uploads.uploadConversationId || null
+  }
+
+  async function ensureConversation(firstMessage: string): Promise<string> {
+    const existing = conversationForSend()
+    if (existing) {
+      if (!currentConversationId && existing === uploads.uploadConversationId) setCurrentConversationId(existing)
+      return existing
+    }
+    const res = await axios.post(
+      `${API_URL}/api/conversations`,
+      { title: firstMessage.slice(0, 50) || 'New Chat' },
+      { headers: authHeaders() }
+    )
+    setCurrentConversationId(res.data.id)
+    invalidateConversations()
+    return res.data.id
+  }
+
   async function handleSend(e?: React.FormEvent) {
     e?.preventDefault()
-    if ((!input.trim() && !selectedImages.length && !selectedDocs.length) || chat.running) return
+    const hasAttachments = uploads.attachments.length > 0
+    if ((!input.trim() && !hasAttachments) || chat.running) return
+    // While a chip is still uploading, wait — its id is what the stream
+    // inlines; sending early would silently drop the attachment.
+    if (uploads.uploading) return
     const { mode: sendMode, text: content, tools: commandTools } = parseCommand(input.trim())
-    if (!content && !selectedImages.length && !selectedDocs.length) return
+    if (!content && !hasAttachments) return
+    // Only fully-uploaded attachments ride the send; failed ones stay as
+    // visible error chips the user can retry or remove.
+    const readyIds = uploads.readyIds
+    const previews = uploads.attachments.filter((a) => a.kind === 'image' && a.previewUrl).map((a) => a.previewUrl!)
+    const docNames = uploads.attachments.filter((a) => a.kind === 'doc' && a.status === 'done').map((a) => a.name)
 
     setMode(sendMode)
     setShowSlash(false); setShowPlus(false); setShowModeMenu(false)
     // Surface deep-research runs in the side panel so the user can watch
     // progress and read the cited report instead of it living only in chat.
     if (sendMode === 'research') setResearchOpen(true)
-    const images = selectedImages
-    const docs = selectedDocs
-    const previews = imagePreviews
-    setInput(''); setSelectedImages([]); setImagePreviews([]); setSelectedDocs([])
+    setInput('')
+    uploads.reset()
     if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
 
     await chat.send({
       content, sendMode, commandTools,
-      images, docs, previews,
+      attachmentIds: readyIds, previews, docNames,
       runMode, modelTier,
       selectedTools, incognito,
       projectId: activeProjectId || undefined,
@@ -416,8 +417,9 @@ export default function ChatPage() {
           <div className="max-w-[48rem] mx-auto">
             <Composer
               input={input}
-              imagePreviews={imagePreviews}
-              docNames={selectedDocs.map((d) => d.name)}
+              attachments={uploads.attachments}
+              onRemoveAttachment={uploads.remove}
+              onRetryAttachment={uploads.retry}
               running={chat.running}
               runMode={runMode}
               contextPct={contextPct}
@@ -431,11 +433,6 @@ export default function ChatPage() {
               onSend={handleSend}
               onStop={chat.stopRun}
               onImagesSelected={handleImagesSelected}
-              onRemoveImage={(i) => {
-                setSelectedImages((prev) => prev.filter((_, idx) => idx !== i))
-                setImagePreviews((prev) => prev.filter((_, idx) => idx !== i))
-              }}
-              onRemoveDoc={removeDoc}
               onTogglePlus={() => setShowPlus((v) => !v)}
               onClosePlus={() => setShowPlus(false)}
               onToggleModeMenu={() => setShowModeMenu((v) => !v)}

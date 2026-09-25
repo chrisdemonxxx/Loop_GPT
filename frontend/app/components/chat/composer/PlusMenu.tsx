@@ -1,7 +1,8 @@
 'use client'
 
-import { Plus, Image as ImageIcon, Camera, Plug, ListChecks, X, FileText, Mic, Square } from 'lucide-react'
+import { Plus, Image as ImageIcon, Camera, Plug, ListChecks, X, FileText, Mic, Square, AlertCircle, RotateCcw } from 'lucide-react'
 import { useI18n } from '../../../lib/i18n'
+import type { PendingAttachment } from '../../../chat/hooks'
 
 /** The + attach menu: files, screenshot, connectors, create-image, tools.
  * `onClose` closes this menu (after a pick); `onCloseOther` closes the run
@@ -75,28 +76,52 @@ function PlusItem({ icon: Icon, label, onClick }: { icon: any; label: string; on
   )
 }
 
-/** Attachment preview rows: image thumbnails + document chips (up to four
- * total per turn). */
+/** Attachment chips with upload progress and error states (audit P2.7):
+ * image thumbnails and document chips (up to four per turn) show a live
+ * progress bar while uploading, a visible error with Retry on failure, and
+ * the remove affordance. */
 export function AttachmentChips({
-  imagePreviews, docNames, onRemoveImage, onRemoveDoc,
+  attachments, onRemove, onRetry,
 }: {
-  imagePreviews: string[]
-  docNames: string[]
-  onRemoveImage: (index: number) => void
-  onRemoveDoc: (index: number) => void
+  attachments: PendingAttachment[]
+  onRemove: (id: string) => void
+  onRetry: (id: string) => void
 }) {
+  const { t } = useI18n()
+  const images = attachments.filter((a) => a.kind === 'image')
+  const docs = attachments.filter((a) => a.kind === 'doc')
   return (
     <>
-      {imagePreviews.length > 0 && (
+      {images.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
-          {imagePreviews.map((src, i) => (
-            <div key={i} className="relative inline-block">
-              <img src={src} alt={`preview ${i + 1}`} width={80} height={80} loading="lazy" decoding="async"
-                className="h-20 w-20 object-cover rounded-xl border border-white/10" />
+          {images.map((a) => (
+            <div key={a.id} className="relative inline-block">
+              {a.previewUrl ? (
+                <img src={a.previewUrl} alt={`preview ${images.indexOf(a) + 1}`} width={80} height={80} loading="lazy" decoding="async"
+                  className={`h-20 w-20 object-cover rounded-xl border ${a.status === 'error' ? 'border-rose-400/40' : 'border-white/10'} ${a.status === 'uploading' ? 'opacity-60' : ''}`} />
+              ) : (
+                <div className="h-20 w-20 rounded-xl border border-white/10 shimmer" aria-label={`Loading ${a.name}`} />
+              )}
+              {/* Upload progress (audit P2.7) */}
+              {a.status === 'uploading' && (
+                <span className="absolute bottom-1 left-1 right-1 h-1 rounded-full bg-black/50 overflow-hidden" aria-hidden="true">
+                  <span className="block h-full rounded-full bg-[#c96442] transition-all" style={{ width: `${Math.max(a.progress, 4)}%` }} />
+                </span>
+              )}
+              {/* Visible error state + retry (was silent for images) */}
+              {a.status === 'error' && (
+                <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 rounded-b-xl bg-rose-500/20 px-1 py-0.5 text-[9px] text-rose-200">
+                  <AlertCircle size={9} /> failed
+                  <button type="button" onClick={() => onRetry(a.id)} aria-label={`Retry upload of ${a.name}`}
+                    className="p-0.5 rounded text-rose-200 hover:text-white transition" title="Retry upload">
+                    <RotateCcw size={9} />
+                  </button>
+                </span>
+              )}
               <button
                 type="button"
-                onClick={() => onRemoveImage(i)}
-                aria-label={`Remove image ${i + 1}`}
+                onClick={() => onRemove(a.id)}
+                aria-label={`Remove image ${images.indexOf(a) + 1}`}
                 className="absolute -top-1.5 -right-1.5 p-1 bg-[#1a1a1d] rounded-full text-slate-300 border border-white/10 hover:bg-[#222226]"
               >
                 <X size={12} />
@@ -105,13 +130,27 @@ export function AttachmentChips({
           ))}
         </div>
       )}
-      {docNames.length > 0 && (
+      {docs.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
-          {docNames.map((name, i) => (
-            <div key={name + i} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-white/10 bg-white/[0.03]">
-              <FileText size={13} className="text-slate-400 shrink-0" />
-              <span className="text-[12px] text-slate-200 truncate max-w-[180px]">{name}</span>
-              <button type="button" onClick={() => onRemoveDoc(i)} aria-label={`Remove ${name}`} className="p-0.5 text-slate-400 hover:text-rose-400">
+          {docs.map((a) => (
+            <div key={a.id} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border ${a.status === 'error' ? 'border-rose-400/40 bg-rose-500/[0.06]' : 'border-white/10 bg-white/[0.03]'}`}>
+              <FileText size={13} className={`shrink-0 ${a.status === 'error' ? 'text-rose-300' : 'text-slate-500'}`} />
+              <span className="text-[12px] text-slate-200 truncate max-w-[180px]">{a.name}</span>
+              {a.status === 'uploading' && (
+                <span className="w-14 h-1 rounded-full bg-white/10 overflow-hidden shrink-0" aria-label={`Uploading ${a.name}`}>
+                  <span className="block h-full rounded-full bg-[#c96442] transition-all" style={{ width: `${Math.max(a.progress, 4)}%` }} />
+                </span>
+              )}
+              {a.status === 'error' && (
+                <span className="flex items-center gap-1 text-[10px] text-rose-300 shrink-0">
+                  <AlertCircle size={10} /> {a.error || 'failed'}
+                  <button type="button" onClick={() => onRetry(a.id)} aria-label={`Retry upload of ${a.name}`}
+                    className="p-0.5 rounded hover:text-white transition" title="Retry upload">
+                    <RotateCcw size={10} />
+                  </button>
+                </span>
+              )}
+              <button type="button" onClick={() => onRemove(a.id)} aria-label={`Remove ${a.name}`} className="p-0.5 text-slate-500 hover:text-rose-400">
                 <X size={12} />
               </button>
             </div>

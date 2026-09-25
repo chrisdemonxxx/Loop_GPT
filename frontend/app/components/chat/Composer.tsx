@@ -1,11 +1,12 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Send, X, Mic } from 'lucide-react'
+import { Send, X, Mic, UploadCloud } from 'lucide-react'
 import type { AgentMode } from '../../lib/api'
 import { SLASH_SECTIONS, filterCommands } from '../../lib/commands'
 import { useI18n } from '../../lib/i18n'
 import { useDictation } from '../../lib/voice'
+import type { PendingAttachment } from '../../chat/hooks'
 import { SlashPalette, RunModePicker } from './composer/SlashPalette'
 import { PlusMenu, AttachmentChips, DictationBar } from './composer/PlusMenu'
 
@@ -13,8 +14,10 @@ export type RunMode = 'auto' | 'plan' | 'step' | 'accept'
 
 interface ComposerProps {
   input: string
-  imagePreviews: string[]
-  docNames: string[]
+  /** Attachments (upload at attach-time, audit P2.7). */
+  attachments: PendingAttachment[]
+  onRemoveAttachment: (id: string) => void
+  onRetryAttachment: (id: string) => void
   running: boolean
   runMode: RunMode
   /** Context meter (§2.5): 0-100 estimated window usage. */
@@ -29,8 +32,6 @@ interface ComposerProps {
   onSend: (e?: React.FormEvent) => void
   onStop: () => void
   onImagesSelected: (files: File[]) => void
-  onRemoveImage: (index: number) => void
-  onRemoveDoc: (index: number) => void
   onTogglePlus: () => void
   onClosePlus: () => void
   onToggleModeMenu: () => void
@@ -46,18 +47,22 @@ interface ComposerProps {
 const MAX_IMAGES = 4
 
 /** Chat composer: autogrowing textarea, slash palette (keyboard-navigable),
- * + attach menu, run-mode picker, mic dictation, send/stop, context meter. */
+ * + attach menu, run-mode picker, mic dictation, send/stop, context meter —
+ * plus drag-and-drop uploads with a visible drop zone and paste-to-attach
+ * (audit P2.7). Attachments upload at attach time with per-chip progress. */
 export default function Composer({
-  input, imagePreviews, docNames, running, runMode, contextPct, contextTokens, incognito,
+  input, attachments, onRemoveAttachment, onRetryAttachment, running, runMode, contextPct, contextTokens, incognito,
   showSlash, showPlus, showModeMenu,
   onInputChange, onSelectSlashCommand, onSend, onStop,
-  onImagesSelected, onRemoveImage, onRemoveDoc,
+  onImagesSelected,
   onTogglePlus, onClosePlus, onToggleModeMenu, onCloseModeMenu,
   onRunModeChange, onOpenConnectors, onOpenSettingsTab, toolSelectionCount,
 }: ComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const [slashIndex, setSlashIndex] = useState(0)
+  const [dragActive, setDragActive] = useState(false)
+  const dragDepth = useRef(0)
   const { t } = useI18n()
   const canScreenshot = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia
 
@@ -111,10 +116,55 @@ export default function Composer({
     onSelectSlashCommand(cmd + ' ')
   }
 
-  const canSend = !!(input.trim() || imagePreviews.length)
+  const canSend = !!(input.trim() || attachments.some((a) => a.status === 'done'))
+
+  // ── Drag-and-drop uploads (audit P2.7) ────────────────────────────────────
+  const onDragEnter = (e: React.DragEvent) => {
+    e.preventDefault()
+    if (!e.dataTransfer.types.includes('Files')) return
+    dragDepth.current += 1
+    setDragActive(true)
+  }
+  const onDragOver = (e: React.DragEvent) => e.preventDefault()
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) setDragActive(false)
+  }
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    dragDepth.current = 0
+    setDragActive(false)
+    const files = Array.from(e.dataTransfer.files || [])
+    if (files.length) onImagesSelected(files)
+  }
+
+  // ── Paste-to-attach (audit P2.7): clipboard images land in the composer. ──
+  const onPaste = (e: React.ClipboardEvent) => {
+    const files = Array.from(e.clipboardData?.files || []).filter((f) =>
+      f.type.startsWith('image/') || /\.(pdf|docx|xlsx|csv|txt|md|markdown)$/i.test(f.name))
+    if (files.length) {
+      e.preventDefault()
+      onImagesSelected(files)
+    }
+  }
 
   return (
-    <div className="relative">
+    <div
+      className="relative"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {/* Visible drop zone overlay (audit P2.7: onDrop was entirely absent). */}
+      {dragActive && (
+        <div className="absolute inset-0 z-30 rounded-2xl border-2 border-dashed border-[#c96442] bg-[#c96442]/10 backdrop-blur-sm flex flex-col items-center justify-center gap-2 pointer-events-none">
+          <UploadCloud size={26} className="text-[#e79d7f]" />
+          <span className="text-[13px] font-medium text-[#e79d7f]">Drop files to attach</span>
+          <span className="text-[11px] text-slate-400">up to 4 · images & documents</span>
+        </div>
+      )}
       {/* ── Slash command palette (light, compact) ─────────────────────────── */}
       {showSlash && (
         <SlashPalette
@@ -127,12 +177,12 @@ export default function Composer({
         />
       )}
 
-      {/* Attachment previews: images + document chips (up to four total) */}
+      {/* Attachment previews: image thumbnails + document chips with upload
+          progress and visible error/ retry states (up to four per turn). */}
       <AttachmentChips
-        imagePreviews={imagePreviews}
-        docNames={docNames}
-        onRemoveImage={onRemoveImage}
-        onRemoveDoc={onRemoveDoc}
+        attachments={attachments}
+        onRemove={onRemoveAttachment}
+        onRetry={onRetryAttachment}
       />
 
       {/* Recording state */}
@@ -152,6 +202,7 @@ export default function Composer({
         <textarea
           value={input}
           onChange={(e) => onInputChange(e.target.value)}
+          onPaste={onPaste}
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown' && showSlash && slashFilter.length > 0) {
               e.preventDefault()
