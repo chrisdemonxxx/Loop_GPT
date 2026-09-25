@@ -427,6 +427,33 @@ UI/UX rebuild (audit §6 P1–P6 + 2.7) is live; next per plan: Phase 3
   Playwright **12/12**, build green. All four CI workflows green on
   `a98ca2e`.
 
+## Phase 3 — Message-list group (audit §8-18..21) — SHIPPED (2026-09-26, commit `31e09b0`)
+
+- **Toast system (§8-19)**: `ToastProvider` + `useToast` (`app/lib/toast.tsx`)
+  — success/error/info pills in a bottom-center portal viewport, manual
+  dismiss + 3.4s auto-dismiss, safe no-op outside the provider; mounted in
+  providers.
+- **Scroll-fight protection (§8-18)**: MessageList auto-scrolls only while
+  the reader is within 160px of the bottom; scrolling into history shows a
+  floating "Latest" jump-to-bottom button (fade in/out) instead of yanking
+  the viewport on every streamed chunk.
+- **Long-user truncation (§8-20)**: user bubbles over 420 chars render
+  behind a Show more / Show less expander.
+- **Feedback (§8-21)**: thumbs up/down on assistant messages open a rating
+  modal (rating + optional comment) wired to `POST /api/telemetry/feedback`
+  with conversationId + messageId — previously thumbs never reached the
+  endpoint. Success/error via toasts. Live-verified: valid rating →
+  `{ok:true}`, invalid rating → 400.
+- **Tests**: 9 new (toast push/dismiss/stack/auto-dismiss/no-op; scroll
+  button visibility + jump; truncation both ways; feedback POST body +
+  success toast + close; cancel path). Gates: frontend **78/78**,
+  Playwright **12/12**, tsc + build green; CI green on `31e09b0`; deployed
+  bundle carries all four signatures; healthz 200.
+- **Deferred**: `< 1/3 >` branch-version arrows (§8-22) — needs a
+  message-branch data model (sibling groups / parentId) that does not exist;
+  forks are separate conversations today. Schema design + confirmation
+  required before implementation (flagged NEEDS CONFIRMATION).
+
 ## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
 
 - **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
