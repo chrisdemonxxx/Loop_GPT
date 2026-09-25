@@ -529,6 +529,39 @@ UI/UX rebuild (audit §6 P1–P6 + 2.7) is live; next per plan: Phase 3
   (empty info lines), so verification ran through the http surface + the
   live resume E2E instead of log inspection.
 
+## Phase 3 — Performance: virtualization + streamed-text batching (audit §8-33) — SHIPPED (2026-09-26, commit `c35acff`)
+
+- **Transcript virtualization**: histories above 100 messages render
+  through TanStack Virtual with dynamic row measurement
+  (ResizeObserver-backed `measureElement`) and overscan 10 — the DOM is
+  bounded to the visible window instead of growing unboundedly. Below the
+  threshold the plain path is unchanged (zero overhead, zero behavior
+  change); the live streaming turn + end sentinel always stay in normal
+  flow so measurement never jitters mid-stream; scroll-fight/auto-scroll
+  logic untouched.
+- **Per-frame streamed-text batching**: `useChatStream`'s per-token
+  `onDelta`/`onThinking` callbacks buffer and flush once per animation
+  frame — the live answer (and its Markdown parse) re-renders per frame,
+  not per token. A 250ms hard timer guards background tabs where rAF
+  stalls; terminal events and the `send()` finally flush synchronously so
+  no buffered text is ever lost.
+- **Tests**: 6 new — plain-path integrity below the threshold; virtualized
+  window bounds (window+overscan mounted, deep rows absent, sentinel
+  intact); delta batching (50 tokens buffer → one frame render); thinking
+  batching; rAF-less terminal flush loses nothing; flush dedup/idle
+  stability. jsdom caveat solved in-test: TanStack reads the scroller via
+  `offsetHeight/offsetWidth` (patched to a real 600px viewport) and rows
+  via `getBoundingClientRect`.
+- **Gates**: frontend **93/93**, Playwright **12/12**, tsc + build green.
+  Deployed on `c35acff`; `healthz` 200; live bundle carries the
+  virtualization-window, tanstack-virtual, and rAF-batching signatures;
+  CI green (frontend-only commit — backend untouched).
+
+**Phase 3 remaining**: §8-28/29 agent-activity upgrades (live
+`execute_code` stdout, per-step "View in panel", general progress lists);
+§8-34 enforce `detectExtractionAttempt` (enforcement shape to be proposed
+first); §8-22 branch-version arrows (awaiting schema sign-off).
+
 ## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
 
 - **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
