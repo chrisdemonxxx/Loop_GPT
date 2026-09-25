@@ -378,6 +378,49 @@ export function useChatStream() {
   const activeConvRef = useRef<string | null>(null)
   const queryClient = useQueryClient()
 
+  // ── Streamed-text batching (§8-33): accumulate per-token delta/thinking
+  // callbacks and flush on animation frames — the transcript re-renders (and
+  // Markdown re-parses) once per frame instead of once per token. A hard
+  // 250ms timeout guards background tabs where rAF stalls; terminal events
+  // and the send() finally flush synchronously so nothing is ever lost.
+  const pendingDeltasRef = useRef<Array<{ step: number; text: string }>>([])
+  const pendingThinkingRef = useRef('')
+  const flushScheduledRef = useRef(false)
+  const flushLive = () => {
+    flushScheduledRef.current = false
+    const deltas = pendingDeltasRef.current
+    const thinking = pendingThinkingRef.current
+    pendingDeltasRef.current = []
+    pendingThinkingRef.current = ''
+    if (deltas.length === 0 && !thinking) return
+    if (deltas.length) setStatusMsg('')
+    if (thinking) setLiveThinking((prev) => (prev + thinking).slice(0, 20_000))
+    for (const { step, text } of deltas) {
+      setLiveSteps((prev) => {
+        const next = [...prev]
+        const i = next.findIndex((s) => s.index === step)
+        if (i === -1) next.push({ index: step, kind: 'text', text, ts: Date.now() })
+        else if (next[i].kind === 'text') next[i] = { ...next[i], text: next[i].text + text }
+        return next
+      })
+    }
+  }
+  const scheduleFlush = () => {
+    if (flushScheduledRef.current) return
+    flushScheduledRef.current = true
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        flushScheduledRef.current = false
+        flushLive()
+      })
+    }
+    // Safety net: in hidden tabs rAF never fires — a hard timer bounds the
+    // longest possible stall (it no-ops when rAF already flushed).
+    setTimeout(() => {
+      if (flushScheduledRef.current) flushLive()
+    }, 250)
+  }
+
   const liveAnswer = liveSteps.filter((s) => s.kind === 'text').map((s) => s.text).join('')
 
   const stopRun = () => {
@@ -440,18 +483,15 @@ export function useChatStream() {
         onWarming: (m) => setStatusMsg(m),
         // The durable run id — the stop button's cancel target (§8-30).
         onRun: (id) => { runIdRef.current = id },
+        // Batched per frame (§8-33): per-token callbacks only buffer; the
+        // flush applies them in one state update (see flushLive/scheduleFlush).
         onDelta: (step, text) => {
-          setStatusMsg('')
-          setLiveSteps((prev) => {
-            const next = [...prev]
-            const i = next.findIndex((s) => s.index === step)
-            if (i === -1) next.push({ index: step, kind: 'text', text, ts: Date.now() })
-            else if (next[i].kind === 'text') next[i] = { ...next[i], text: next[i].text + text }
-            return next
-          })
+          pendingDeltasRef.current.push({ step, text })
+          scheduleFlush()
         },
-        onThinking: (step, text) => {
-          setLiveThinking((prev) => (prev + text).slice(0, 20_000))
+        onThinking: (_step, text) => {
+          pendingThinkingRef.current = (pendingThinkingRef.current + text).slice(0, 20_000)
+          scheduleFlush()
         },
         onToolCall: (step, name, args, source) => {
           setLiveSteps((prev) => {
@@ -502,6 +542,9 @@ export function useChatStream() {
     } catch (err: any) {
       setStatusMsg(`⚠️ ${err?.message || 'Run failed'}`)
     } finally {
+      // Drain any buffered streamed text synchronously (§8-33) — nothing
+      // buffered is ever lost, even if rAF never fired (background tab).
+      flushLive()
       setRunning(false)
       abortRef.current = null
       if (convId) await queryClient.invalidateQueries({ queryKey: ['messages', convId] })

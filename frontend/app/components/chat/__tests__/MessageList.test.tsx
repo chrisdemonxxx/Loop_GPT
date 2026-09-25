@@ -101,3 +101,54 @@ describe('feedback modal (§8-21)', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
+
+describe('history virtualization (§8-33)', () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) =>
+    msg({ id: `m${i}`, role: i % 2 ? 'assistant' : 'user', content: `msg-${i}` }))
+  const liveProps = {
+    liveUser: null, liveSteps: [] as any[], liveAnswer: '', liveArtifacts: [] as any[],
+    running: false, statusMsg: '', mode: 'agent' as const,
+    onEditMessage: () => {}, onRetryBefore: () => {},
+  }
+
+  // jsdom lays out nothing: TanStack reads the scroller's offsetHeight and
+  // row rects via getBoundingClientRect — give both real dimensions so the
+  // window math has a 600px viewport and measurable rows to work with.
+  const realRect = Element.prototype.getBoundingClientRect
+  const offsetHeightDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')
+  const offsetWidthDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')
+  beforeEach(() => {
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      const real = realRect.call(this)
+      return { ...real, width: 800, height: 600, top: 0, bottom: 600, left: 0, right: 800, x: 0, y: 0 }
+    }
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get() { return 600 } })
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get() { return 800 } })
+  })
+  afterEach(() => {
+    Element.prototype.getBoundingClientRect = realRect
+    if (offsetHeightDesc) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', offsetHeightDesc)
+    if (offsetWidthDesc) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', offsetWidthDesc)
+  })
+
+  it('renders every row in plain flow below the threshold', () => {
+    const { container } = render(<MessageList messages={many(50)} {...liveProps} />)
+    expect(container.querySelector('[data-testid="virtual-window"]')).toBeNull()
+    expect(screen.getByText('msg-0')).toBeInTheDocument()
+    expect(screen.getByText('msg-49')).toBeInTheDocument()
+    expect(container.querySelectorAll('[data-index]')).toHaveLength(0)
+  })
+
+  it('virtualizes long histories: only the visible window is in the DOM', () => {
+    const { container } = render(<MessageList messages={many(150)} {...liveProps} />)
+    expect(container.querySelector('[data-testid="virtual-window"]')).not.toBeNull()
+    // Visible window + overscan — far fewer than 150 rows mounted.
+    const rendered = container.querySelectorAll('[data-index]')
+    expect(rendered.length).toBeGreaterThan(0)
+    expect(rendered.length).toBeLessThanOrEqual(20)
+    // Deep-history rows are NOT mounted at all.
+    expect(screen.queryByText('msg-140')).not.toBeInTheDocument()
+    // Window rows are present, and the live-turn sentinel still exists.
+    expect(container.querySelector('[data-index="0"]')).not.toBeNull()
+  })
+})

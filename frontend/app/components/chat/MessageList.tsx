@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Loader2, Brain, FileText, ArrowDown } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { type AgentMode } from '../../lib/api'
 import { type ArtifactRef } from '../../lib/stream'
 import Markdown from './Markdown'
@@ -11,6 +12,13 @@ import { MessageBubble } from './MessageBubble'
 import { EmptyState, ThinkingDots } from './EmptyState'
 import { ArtifactCard } from './ArtifactCard'
 import TurnActivity from './TurnActivity'
+
+/** Stored-history virtualization threshold (audit §8-33): below it the
+ * transcript renders normally (no measurement overhead, zero behavior
+ * change); above it, TanStack Virtual bounds the DOM to the visible window
+ * so long conversations stop growing it unboundedly. The live streaming
+ * turn always renders in normal flow — no measurement jitter mid-stream. */
+const VIRTUALIZE_ABOVE = 100
 
 interface MessageListProps {
   messages: Message[]
@@ -51,6 +59,18 @@ export default function MessageList({
   const scrollRef = useRef<HTMLDivElement>(null)
   const [atBottom, setAtBottom] = useState(true)
   const showEmpty = messages.length === 0 && !liveUser
+  const virtualize = messages.length > VIRTUALIZE_ABOVE
+
+  // Virtualized window over the stored history (§8-33): dynamic row
+  // measurement (ResizeObserver via measureElement), overscan keeps scroll-up
+  // smooth. The live turn + the end sentinel stay OUTSIDE the window.
+  const virtualizer = useVirtualizer({
+    count: virtualize ? messages.length : 0,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 220,
+    overscan: 10,
+    enabled: virtualize,
+  })
 
   /** True when the reader is within ~160px of the bottom. */
   const measureBottom = () => {
@@ -80,16 +100,46 @@ export default function MessageList({
         <EmptyState onStartPrompt={onStartPrompt} />
       ) : (
         <div className="max-w-[48rem] mx-auto space-y-6">
-          {messages.map((m, idx) => (
-            <MessageBubble
-              key={m.id}
-              message={m}
-              conversationId={conversationId}
-              onOpenArtifact={onOpenArtifact}
-              onEdit={m.role === 'user' ? () => onEditMessage(m.id, m.content) : undefined}
-              onRetry={m.role === 'assistant' ? () => onRetryBefore(idx) : undefined}
-            />
-          ))}
+          {virtualize ? (
+            /* Virtualized history window (§8-33): absolutely positioned,
+               dynamically measured rows inside a total-size container. */
+            <div
+              data-testid="virtual-window"
+              style={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}
+            >
+              {virtualizer.getVirtualItems().map((vi) => {
+                const m = messages[vi.index]
+                return (
+                  <div
+                    key={m.id}
+                    data-index={vi.index}
+                    ref={virtualizer.measureElement}
+                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vi.start}px)` }}
+                    className="pb-6"
+                  >
+                    <MessageBubble
+                      message={m}
+                      conversationId={conversationId}
+                      onOpenArtifact={onOpenArtifact}
+                      onEdit={m.role === 'user' ? () => onEditMessage(m.id, m.content) : undefined}
+                      onRetry={m.role === 'assistant' ? () => onRetryBefore(vi.index) : undefined}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            messages.map((m, idx) => (
+              <MessageBubble
+                key={m.id}
+                message={m}
+                conversationId={conversationId}
+                onOpenArtifact={onOpenArtifact}
+                onEdit={m.role === 'user' ? () => onEditMessage(m.id, m.content) : undefined}
+                onRetry={m.role === 'assistant' ? () => onRetryBefore(idx) : undefined}
+              />
+            ))
+          )}
 
           {/* Live user message */}
           {liveUser && (
