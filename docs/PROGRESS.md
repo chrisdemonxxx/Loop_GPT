@@ -189,6 +189,32 @@ gated by the full suites.
   backend `tsc` + 1128 tests + lint 0 errors. Both commits pushed and
   deployed via the branch (`db08c53`, `22a7443`).
 
+## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
+
+- **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
+  below each assistant response: one-line summary ("Ran N steps" + state
+  icon) expanding into the full tool-call timeline. Auto-expands while the
+  run streams, **auto-collapses on completion** (the audit's missing
+  behavior), per-step wall durations (`durationMs` stamped in
+  `onToolResult`, formatted `480ms/1.2s/2m 05s`), a visible **Retry button
+  on the error state**, and the approval card + available-tools popover in
+  flow. Detail mode = the focused step's expanded card on demand.
+- Stored turns summarize from `message.metadata.steps` (the runtime's final
+  event persists `{tool, args, result}[]` — verified in
+  `agentRuntime.ts`); live turns stream the full timeline.
+- **Mutex dead**: `ActivityPanel.tsx` + `AgentComputer.tsx` deleted;
+  `computerOpen`/`openComputer` removed from `usePanels`, header, and page;
+  the right edge is now exclusively the `ArtifactsPanel` (the P2
+  prerequisite). The once-per-run auto-open wiring is gone (nothing to
+  open — activity is in-flow).
+- 8 new component tests in
+  `app/components/chat/__tests__/TurnActivity.test.tsx` (summary,
+  expand, auto-collapse on completion, error retry, duration formatting,
+  approval dispatch, empty-state). Gates: suite **40/40**, Playwright
+  **12/12**, `next build` green. Deployed on `687abb4` and verified live
+  (summary/durationMs/approval/error-state signatures present in the
+  served chat chunk; healthz 200).
+
 
 ## Production-readiness pass (2026-09-22, phases 0–7) — COMPLETE
 
