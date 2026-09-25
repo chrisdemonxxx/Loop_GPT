@@ -22,7 +22,9 @@ import { selectedConnectionIds, workspaceConnectionTools } from '../services/wor
 import { connectionToolName } from '../agent/connectors/reviewedAdapters'
 import { runAgent } from '../agent/agentRuntime'
 import { runDeepResearch } from '../agent/research/deepResearch'
-import { initSSE, sendEvent, endSSE, makeEmitter, startKeepalive } from '../agent/streaming'
+import { initSSE, sendEvent, endSSE, startKeepalive } from '../agent/streaming'
+import { createRun, appendEvent, finishRun } from '../services/runReplay'
+import { randomUUID } from 'crypto'
 import type { AgentEvent, ChatMessage, ContentPart, ToolContext } from '../agent/types'
 import { resolveHostedModelRequest } from '../services/hostedModelRequest'
 import { resolveVisionTarget, visionModelEnabled } from '../services/chatModels'
@@ -36,18 +38,39 @@ import { dataUriDimensions } from '../services/imageDimensions'
 
 // Install before asynchronous setup: close may fire while a DB lock is held.
 // (Shared with the completions route in routes/agent.ts.)
-export function requestLifecycle(res: Response) {
+//
+// Durable mode (audit §8-30, stream auto-resume): starts DISABLED. While a
+// request is still in setup (validation, reservation, conversation prep) a
+// client disconnect aborts exactly as before — nothing expensive has
+// happened, the reservation refunds, the client retries cheaply. The
+// controller flips the lifecycle durable at the replay-run boundary (SSE
+// open, run buffered): from then on a disconnect DETACHES (the run can be
+// resumed via GET /runs/:runId/events) and only an explicit cancel aborts.
+export function requestLifecycle(res: Response, opts: { onDetach?: () => void } = {}) {
   const abort = new AbortController()
-  const onClose = () => abort.abort()
+  let durable = false
+  let detached = false
+  const onClose = () => {
+    if (durable) {
+      if (!detached) { detached = true; opts.onDetach?.() }
+    } else {
+      abort.abort()
+    }
+  }
   res.on('close', onClose)
   const disconnected = () => {
+    if (durable) return abort.signal.aborted
     if (res.destroyed) abort.abort()
     return abort.signal.aborted
   }
   disconnected()
   return {
     signal: abort.signal,
+    controller: abort,
     disconnected,
+    detached: () => detached,
+    /** Flip to durable: from here on, disconnects detach instead of aborting. */
+    makeDurable: () => { durable = true },
     check: () => { if (disconnected()) throw new Error('Request cancelled before dispatch') },
     dispose: () => { res.off('close', onClose); abort.abort() },
   }
@@ -142,9 +165,13 @@ export async function streamAgentRun(req: Request, res: Response) {
   }
   if (mode === 'research' && !['web_search', 'web_fetch'].every((name) => selectedNames.includes(name))) return res.status(400).json({ error: 'Research requires web_search and web_fetch' })
   if (attachmentIds.length && conversationId === 'new') return res.status(400).json({ error: 'Use the conversation ID returned by image upload' })
-  const lifecycle = requestLifecycle(res)
-  let reservation: Awaited<ReturnType<typeof reserveDailyCredits>> | undefined
+  // The run outlives its HTTP response (§8-30): a dropped connection detaches
+  // instead of aborting, and the run replay store buffers sequenced events so
+  // the client can resume. Keepalive stops on detach (the res is dead).
   let stopKeepalive: (() => void) | undefined
+  const lifecycle = requestLifecycle(res, { onDetach: () => stopKeepalive?.() })
+  let replayRun: ReturnType<typeof createRun> | undefined
+  let reservation: Awaited<ReturnType<typeof reserveDailyCredits>> | undefined
   try {
     if (lifecycle.disconnected()) return
     // Read every attached image (up to 4) — all are sent as image parts.
@@ -255,15 +282,31 @@ export async function streamAgentRun(req: Request, res: Response) {
       // Media tools (image/video generation) stream nothing for minutes; edge
       // proxies idle-kill silent SSE connections. Comments keep the wire warm.
       stopKeepalive = startKeepalive(res)
-      sendEvent(res, { type: 'status', message: `conversation:${conversation.id}` })
-      const streamEmit = makeEmitter(res)
+      // Durable replay run (§8-30): every event is sequenced + buffered so a
+      // disconnected client can resume instead of re-sending. The run shares
+      // the lifecycle's abort controller: explicit cancel keeps user-stop
+      // semantics (no error message persisted; reservation refunded).
+      // Flipping the lifecycle durable HERE means pre-dispatch disconnects
+      // (validation/reservation/prep) still abort+refund exactly as before.
+      replayRun = createRun({ runId: randomUUID(), userId, conversationId: conversation.id, controller: lifecycle.controller })
+      lifecycle.makeDurable()
+      const publish = (event: AgentEvent) => {
+        const sequenced = appendEvent(replayRun!, event)
+        if (!lifecycle.detached() && !res.destroyed) sendEvent(res, sequenced)
+        return sequenced
+      }
+      // The run id is the first event — the client needs it before anything
+      // else to have a resume handle. The conversation status rides the same
+      // sequenced buffer so a resumed client still learns the conversation.
+      publish({ type: 'run', runId: replayRun.runId } as AgentEvent)
+      publish({ type: 'status', message: `conversation:${conversation.id}` } as AgentEvent)
       const emit = (event: AgentEvent) => {
         // Capture reasoning deltas (extended-thinking display, §2.5) so the
         // persisted assistant message keeps its collapsible "Thoughts" block.
         if (event.type === 'thinking') {
           reasoningCapture = (reasoningCapture + event.text).slice(0, 20_000)
         }
-        if (!lifecycle.disconnected()) streamEmit(event)
+        publish(event)
       }
       let reasoningCapture = ''
       const ctx: ToolContext = { userId, conversationId: conversation.id, emit, signal: lifecycle.signal,
@@ -387,10 +430,14 @@ export async function streamAgentRun(req: Request, res: Response) {
 
       if (finalEvent) emit(finalEvent)
     } catch (error: any) {
+      // Cancelled runs (explicit stop) never persist an error turn — same
+      // semantics as the old client-abort path. A DETACHED run that fails
+      // server-side still saves the message: the resumed/refreshed client
+      // needs the persisted outcome.
       if (lifecycle.disconnected()) return
       const message = error instanceof WorkspaceError ? error.message : 'Agent run failed'
       if (!res.headersSent) return res.status(500).json({ error: message })
-      sendEvent(res, { type: 'error', message })
+      if (!res.destroyed) sendEvent(res, { type: 'error', message })
       await saveMessage(conversation.id, {
         role: 'assistant',
         content: `⚠️ ${message}`,
@@ -402,7 +449,20 @@ export async function streamAgentRun(req: Request, res: Response) {
     try { await cleanupDailyReservation(reservation?.id) }
     finally {
       try { stopKeepalive?.() } catch { /* timer already gone */ }
-      try { if (!lifecycle.disconnected() && res.headersSent) endSSE(res) }
+      try {
+        if (replayRun) {
+          // Terminal marker flows through the replay buffer so attached
+          // (resumed) clients end cleanly, and out to the live response.
+          const done = appendEvent(replayRun, { type: 'done' })
+          finishRun(replayRun)
+          if (!lifecycle.detached() && res.headersSent && !res.destroyed) {
+            sendEvent(res, done)
+            res.end()
+          }
+        } else if (!lifecycle.disconnected() && res.headersSent && !res.destroyed) {
+          endSSE(res)
+        }
+      } catch { /* response already gone */ }
       finally { lifecycle.dispose() }
     }
   }

@@ -61,6 +61,7 @@ export interface ToolResult {
 /** Events streamed to the client over SSE. */
 export type AgentEvent =
   | { type: 'status'; message: string }
+  | { type: 'run'; runId: string }
   | { type: 'warming'; message: string }
   | { type: 'delta'; step: number; text: string }
   | { type: 'thinking'; step: number; text: string }

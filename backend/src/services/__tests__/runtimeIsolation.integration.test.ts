@@ -288,6 +288,106 @@ describe('workspace runtime authorization', () => {
     } finally { vi.unstubAllEnvs() }
   })
 
+  // ── Durable runs + auto-resume (audit §8-30) ─────────────────────────────
+
+  /** Open a stream and read (sequenced) events until the run id arrives. */
+  async function openRunUntilId(path: string, userId: string, body: unknown): Promise<{ runId: string; seq: number; reader: any; res: Response }> {
+    const res = await fetch(`${base}${path}`, { method: 'POST', headers: {
+      Authorization: `Bearer ${jwt.sign({ userId }, process.env.JWT_SECRET!)}`,
+      'Content-Type': 'application/json',
+    }, body: JSON.stringify(body) })
+    if (!res.ok || !res.body) throw new Error(`stream failed to open (${res.status})`)
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let runId = ''
+    let seq = -1
+    while (!runId) {
+      const { value, done } = await reader.read()
+      if (done) throw new Error('stream ended before the run event')
+      buffer += decoder.decode(value, { stream: true })
+      for (const part of buffer.split('\n\n')) {
+        const line = part.split('\n').find((l: string) => l.startsWith('data:'))
+        if (!line) continue
+        const payload = line.slice(5).trim()
+        if (!payload || payload.startsWith(':')) continue
+        try {
+          const event = JSON.parse(payload)
+          if (typeof event.seq === 'number') seq = event.seq
+          if (event.type === 'run' && typeof event.runId === 'string') runId = event.runId
+        } catch { /* keepalive/partial */ }
+      }
+    }
+    return { runId, seq, reader, res }
+  }
+
+  it('resumes a dropped stream from the replay buffer instead of losing the run (§8-30)', async () => {
+    const f = await fixture()
+    remote.turn.mockResolvedValueOnce({ content: '', toolCalls: [nativeCall('calculator', { expression: '6*7' })] })
+    const { runId, seq, reader } = await openRunUntilId(`/api/agent/${f.conversationId}/stream`, alice, { content: 'Calculate', mode: 'agent', workspaceId: f.workspaceId, toolNames: ['calculator'] })
+    // Client drop (network blip): the durable run KEEPS RUNNING server-side.
+    await reader.cancel()
+    // The replay endpoint serves everything the dropped client missed.
+    const replay = await fetch(`${base}/api/agent/${f.conversationId}/runs/${runId}/events?after=${seq}`, { headers: { Authorization: `Bearer ${jwt.sign({ userId: alice }, process.env.JWT_SECRET!)}` } })
+    expect(replay.status).toBe(200)
+    const tail = await replay.text()
+    expect(tail).toContain('"type":"tool_result"')
+    expect(tail).toContain('"type":"final"')
+    expect(tail).toContain('Completed')
+    expect(tail).toContain('"type":"done"')
+    // The run completed server-side: the assistant turn persisted.
+    const saved = await db.message.findFirstOrThrow({ where: { conversationId: f.conversationId, role: 'assistant' } })
+    expect(saved.content).toBe('Completed')
+  })
+
+  /** Drain a reader-locked stream to its end, returning the raw text. */
+  async function drainReader(reader: any): Promise<string> {
+    const decoder = new TextDecoder()
+    let out = ''
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      out += decoder.decode(value, { stream: true })
+    }
+    return out
+  }
+
+  it('explicit cancel aborts a durable run without persisting an error turn (§8-30)', async () => {
+    const f = await fixture()
+    // The model hangs until the run's abort signal fires (the stop button).
+    remote.turn.mockImplementation((params: any) => new Promise((_resolve, reject) => {
+      if (params?.signal?.aborted) return reject(new Error('The operation was aborted'))
+      params?.signal?.addEventListener('abort', () => reject(new Error('The operation was aborted')))
+    }))
+    const { runId, res, reader } = await openRunUntilId(`/api/agent/${f.conversationId}/stream`, alice, { content: 'Hi', mode: 'agent', workspaceId: f.workspaceId, toolNames: ['calculator'] })
+    const cancel = await fetch(`${base}/api/agent/${f.conversationId}/runs/${runId}/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${jwt.sign({ userId: alice }, process.env.JWT_SECRET!)}` } })
+    expect(await cancel.json()).toEqual({ ok: true, alreadyDone: false })
+    // The still-open original stream terminates with the done marker.
+    const live = await drainReader(reader)
+    expect(live).toContain('"type":"done"')
+    void res
+    // Cancelled runs never persist an assistant turn (stop semantics kept).
+    expect(await db.message.count({ where: { conversationId: f.conversationId, role: 'assistant' } })).toBe(0)
+  })
+
+  it('gates replay and cancel on ownership (§8-30)', async () => {
+    const f = await fixture()
+    remote.turn.mockImplementation((params: any) => new Promise((_resolve, reject) => {
+      if (params?.signal?.aborted) return reject(new Error('aborted'))
+      params?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+    }))
+    const { runId, reader } = await openRunUntilId(`/api/agent/${f.conversationId}/stream`, alice, { content: 'Hi', mode: 'agent', workspaceId: f.workspaceId, toolNames: ['calculator'] })
+    const bobToken = { Authorization: `Bearer ${jwt.sign({ userId: bob }, process.env.JWT_SECRET!)}` }
+    // A foreign session cannot resume or cancel even with both ids.
+    expect((await fetch(`${base}/api/agent/${f.conversationId}/runs/${runId}/events`, { headers: bobToken })).status).toBe(404)
+    expect((await fetch(`${base}/api/agent/${f.conversationId}/runs/${runId}/cancel`, { method: 'POST', headers: bobToken })).status).toBe(404)
+    // Unknown run ids 404 rather than revealing existence.
+    expect((await fetch(`${base}/api/agent/${f.conversationId}/runs/${'0'.repeat(32)}/events`, { headers: { Authorization: `Bearer ${jwt.sign({ userId: alice }, process.env.JWT_SECRET!)}` } })).status).toBe(404)
+    // Cleanup: alice cancels her own run and closes the reader.
+    await fetch(`${base}/api/agent/${f.conversationId}/runs/${runId}/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${jwt.sign({ userId: alice }, process.env.JWT_SECRET!)}` } })
+    await reader.cancel().catch(() => {})
+  })
+
   it('rejects unavailable tool requests and credit-check failures before starting a run', async () => {
     const before = await db.conversation.count({ where: { userId: alice } })
     expect((await request('/api/agent/new/stream', alice, 'POST', { content: 'Hi', toolNames: ['fixture_not_a_tool'] })).status).toBe(400)

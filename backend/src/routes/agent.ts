@@ -24,6 +24,8 @@ import { resolveApproval } from '../agent/approvalStore'
 import { recordUsage, estimateTokens } from '../services/billing'
 import { reserveDailyCredits, dailyDispatch, cleanupDailyReservation, DailyCreditError } from '../services/dailyReservations'
 import { streamAgentRun, requestLifecycle } from '../controllers/agentStream'
+import { findRun, attach, cancelRun } from '../services/runReplay'
+import { initSSE, sendEvent, endSSE, startKeepalive } from '../agent/streaming'
 
 const router = express.Router()
 
@@ -318,11 +320,64 @@ router.get('/research/:runId', authenticateToken, asyncHandler(async (req, res) 
 }))
 
 /**
- * POST /:conversationId/stream � full pipeline in controllers/agentStream.ts.
+ * POST /:conversationId/stream � full pipeline in controllers/agentStream.ts.
  * Body: { content, attachmentId?, mode?: 'chat'|'agent'|'research', model? }
  * Streams Server-Sent Events describing the run; persists both messages.
  */
 router.post('/:conversationId/stream', authenticateToken, asyncHandler(streamAgentRun))
+
+/**
+ * GET /:conversationId/runs/:runId/events?after=<seq> — resume a run whose
+ * SSE connection dropped (audit §8-30). Replays the buffered events after
+ * `after`, then attaches live until the run finishes. Ownership: the run is
+ * keyed to (userId, conversationId) — a foreign session gets 404 even with
+ * both ids.
+ */
+router.get('/:conversationId/runs/:runId/events', authenticateToken, asyncHandler(async (req, res) => {
+  const run = findRun(req.params.runId, (req as any).userId, req.params.conversationId)
+  if (!run) return res.status(404).json({ error: 'This run is no longer available to resume', code: 'RUN_GONE' })
+  const afterRaw = Number(req.query.after)
+  // Absent/negative = full replay; otherwise `after` is the last seq the
+  // client received (events with seq > after are replayed).
+  const after = Number.isSafeInteger(afterRaw) && afterRaw >= 0 ? afterRaw : -1
+  initSSE(res)
+  const stopKeepalive = startKeepalive(res)
+  let ended = false
+  const end = () => {
+    if (ended) return
+    ended = true
+    stopKeepalive()
+    // endSSE appends the done marker for replay-only ends; a live listener
+    // that just received the broadcast done ends with a bare res.end().
+    if (res.writableEnded || res.destroyed) return
+    res.end()
+  }
+  const { replay, live, detach } = attach(run, after, (event) => {
+    sendEvent(res, event)
+    if (event.type === 'done') { detach(); end() }
+  })
+  for (const event of replay) sendEvent(res, event)
+  if (!live) {
+    // Finished (or non-resumable) run: replay then end with the done marker.
+    if (replay.length === 0 || replay[replay.length - 1].type !== 'done') {
+      stopKeepalive()
+      endSSE(res)
+    } else {
+      end()
+    }
+    return
+  }
+  res.on('close', () => { detach(); end() })
+}))
+
+/** POST /:conversationId/runs/:runId/cancel — the explicit stop button.
+ *  Aborts a still-running durable run (a dropped connection does NOT). */
+router.post('/:conversationId/runs/:runId/cancel', authenticateToken, asyncHandler(async (req, res) => {
+  const run = findRun(req.params.runId, (req as any).userId, req.params.conversationId)
+  if (!run) return res.status(404).json({ error: 'Run not found' })
+  const cancelled = cancelRun(run)
+  res.json({ ok: cancelled, alreadyDone: !cancelled })
+}))
 
 // ---- Tool catalog -----------------------------------------------------------
 router.get('/tools', authenticateToken, (_req, res) => {

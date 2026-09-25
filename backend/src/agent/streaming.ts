@@ -15,7 +15,7 @@ export function initSSE(res: Response) {
 }
 
 export function sendEvent(res: Response, event: AgentEvent) {
-  if (res.writableEnded) return
+  if (res.writableEnded || res.destroyed) return
   res.write(`data: ${JSON.stringify(event)}\n\n`)
 }
 

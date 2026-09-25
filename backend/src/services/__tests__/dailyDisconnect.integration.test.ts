@@ -260,7 +260,7 @@ describe('JWT disconnects before daily dispatch', () => {
     await expectReleased()
   })
 
-  it.each(successPaths)('retains uncertain work on disconnect after dispatch: $path $label', async ({ path, body }) => {
+  it.each(successPaths.filter(target => !target.path.endsWith('/stream')))('retains uncertain work on disconnect after dispatch: $path $label', async ({ path, body }) => {
     const started = deferred<void>()
     const waitForAbort = async (signal: AbortSignal) => {
       started.resolve()
@@ -282,6 +282,58 @@ describe('JWT disconnects before daily dispatch', () => {
     expect(await user()).toMatchObject({ credits: 6, imageCredits: 3, messagesTotal: 0 })
     expect(await db.usageEvent.count({ where: { userId } })).toBe(0)
     expect(remote.complete.mock.calls.length + remote.turn.mock.calls.length).toBe(1)
+    expect(remote.network).not.toHaveBeenCalled()
+    expectNoSuccess(observed.frames.join(''))
+  })
+
+  it.each(mounts)('durable streams keep dispatched work on disconnect and settle it on explicit cancel: %s', async mount => {
+    const started = deferred<void>()
+    const waitForAbort = async (signal: AbortSignal) => {
+      started.resolve()
+      await new Promise<void>((_, reject) => {
+        const cancel = () => reject(new Error('Fixture provider cancelled'))
+        if (signal.aborted) cancel()
+        else signal.addEventListener('abort', cancel, { once: true })
+      })
+    }
+    remote.turn.mockImplementation(async (options: { signal: AbortSignal }) => waitForAbort(options.signal))
+    const pending = start(`${mount}/new/stream`, { content: 'hello', mode: 'chat' })
+    const observed = await bounded(pending.ready)
+    await bounded(started.promise)
+    expect((await holds()).map(row => row.state)).toEqual(['dispatched'])
+    // The durable run id is advertised to the client before anything else.
+    const runFrame = observed.frames.find(frame => frame.includes('"type":"run"'))
+    expect(runFrame).toBeTruthy()
+    const runId = /"runId":"([0-9a-f-]+)"/.exec(runFrame!)![1]
+    pending.client.destroy()
+    await bounded(observed.closed.promise)
+    // §8-30: the disconnect does NOT abandon dispatched work — the run
+    // (and its hold) survives for the client to resume.
+    expect((await holds()).map(row => row.state)).toEqual(['dispatched'])
+    expect((await user()).credits).toBe(6)
+    // The explicit stop button is what cancels it now.
+    const conversationFrame = observed.frames.find(frame => frame.includes('"conversation:'))
+    expect(conversationFrame).toBeTruthy()
+    const conversationId = /"conversation:([a-z0-9]+)"/.exec(conversationFrame!)![1]
+    const cancelResponse = await new Promise<{ status: number; text: string }>((resolve, reject) => {
+      const req = httpRequest(`${base}${mount}/${conversationId}/runs/${runId}/cancel`, { method: 'POST', agent: false, headers: {
+        Authorization: `Bearer ${jwt.sign({ userId }, process.env.JWT_SECRET!)}`,
+      } }, res => {
+        let text = ''
+        res.setEncoding('utf8')
+        res.on('data', chunk => { text += chunk })
+        res.on('close', () => resolve({ status: res.statusCode || 0, text }))
+      })
+      req.on('error', reject)
+      req.end()
+    })
+    expect(cancelResponse.status).toBe(200)
+    expect(JSON.parse(cancelResponse.text)).toEqual({ ok: true, alreadyDone: false })
+    // The cancel aborts the hanging provider call → uncertain work settles.
+    await vi.waitFor(async () => expect((await holds()).map(row => row.state)).toEqual(['unknown']), { timeout: 3000 })
+    expect(await user()).toMatchObject({ credits: 6, imageCredits: 3, messagesTotal: 0 })
+    expect(await db.usageEvent.count({ where: { userId } })).toBe(0)
+    expect(remote.turn).toHaveBeenCalledTimes(1)
     expect(remote.network).not.toHaveBeenCalled()
     expectNoSuccess(observed.frames.join(''))
   })

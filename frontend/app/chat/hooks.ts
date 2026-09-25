@@ -372,11 +372,28 @@ export function useChatStream() {
   const [liveArtifacts, setLiveArtifacts] = useState<ArtifactRef[]>([])
   const [liveThinking, setLiveThinking] = useState('')
   const abortRef = useRef<AbortController | null>(null)
+  /** The active durable run's id (§8-30) — the stop button cancels it. */
+  const runIdRef = useRef<string | null>(null)
+  /** The conversation the active run belongs to (for the cancel POST). */
+  const activeConvRef = useRef<string | null>(null)
   const queryClient = useQueryClient()
 
   const liveAnswer = liveSteps.filter((s) => s.kind === 'text').map((s) => s.text).join('')
 
-  const stopRun = () => { abortRef.current?.abort(); setRunning(false) }
+  const stopRun = () => {
+    // Explicit stop cancels the durable run server-side (§8-30): a dropped
+    // connection never aborts it anymore, so the stop button must.
+    const runId = runIdRef.current
+    abortRef.current?.abort()
+    setRunning(false)
+    if (runId) {
+      fetch(`${API_URL}/api/agent/${activeConvRef.current || ''}/runs/${runId}/cancel`, {
+        method: 'POST',
+        headers: authHeaders(),
+        keepalive: true,
+      }).catch(() => { /* fire-and-forget: the sweeper reaps the run regardless */ })
+    }
+  }
 
   /** Clear all live-turn state (conversation switch / fork). */
   const resetLive = () => {
@@ -392,12 +409,14 @@ export function useChatStream() {
   async function send(opts: ChatStreamSendOptions) {
     const { content, sendMode, commandTools, attachmentIds, previews, docNames, runMode, modelTier, selectedTools, incognito, projectId, webSearch, thinking, ensureConversation } = opts
     setRunning(true); setStatusMsg(''); setLiveSteps([]); setLiveArtifacts([]); setLiveThinking('')
+    runIdRef.current = null
     setLiveUser({ content, image: previews[0], images: previews, docs: docNames })
     track('message_sent', { mode: sendMode })
 
     let convId: string | null = null
     try {
       convId = await ensureConversation(content)
+      activeConvRef.current = convId
       const abort = new AbortController()
       abortRef.current = abort
 
@@ -419,6 +438,8 @@ export function useChatStream() {
       }, {
         onStatus: (m) => { if (!m.startsWith('conversation:')) setStatusMsg(m) },
         onWarming: (m) => setStatusMsg(m),
+        // The durable run id — the stop button's cancel target (§8-30).
+        onRun: (id) => { runIdRef.current = id },
         onDelta: (step, text) => {
           setStatusMsg('')
           setLiveSteps((prev) => {
@@ -464,7 +485,17 @@ export function useChatStream() {
           // Store the resolve function for the approval UI to call.
           setPendingApproval({ toolName, approve })
         },
-        onError: (m) => setStatusMsg(`⚠️ ${m}`),
+        onError: (m) => {
+          setStatusMsg(`⚠️ ${m}`)
+          // A lost connection (§8-30) means the run may still complete in the
+          // background — one delayed refresh picks up the persisted result.
+          if (/Connection lost/i.test(m) && convId) {
+            setTimeout(() => {
+              queryClient.invalidateQueries({ queryKey: ['messages', convId] })
+              queryClient.invalidateQueries({ queryKey: ['conversations'] })
+            }, 45_000)
+          }
+        },
         onFinal: () => {},
         onDone: () => {},
       }, abort.signal)
