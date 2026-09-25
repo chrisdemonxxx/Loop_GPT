@@ -66,7 +66,7 @@ export function pickApi(info: any, mode: 'image' | 'video' | 'edit' = 'video', h
 }
 
 export function buildArgs(params: GradioParam[], prompt: string, imageBase64?: string,
-  opts: { strength?: number; faceSwap?: boolean; negativePrompt?: string } = {}): any[] {
+  opts: { strength?: number; faceSwap?: boolean; sceneLock?: boolean; negativePrompt?: string } = {}): any[] {
   let promptUsed = false
   return params.map((p) => {
     const comp = String(p?.component || '')
@@ -86,12 +86,16 @@ export function buildArgs(params: GradioParam[], prompt: string, imageBase64?: s
       return /prompt|motion|video/i.test(label) ? prompt : ''
     }
     // Identity-lock strength slider (ref2lock) honours the caller's value.
-    if (opts.strength !== undefined && /Slider|Number/i.test(comp) && /strength|denoise|lock/i.test(label)) {
+    if (opts.strength !== undefined && /Slider|Number/i.test(comp) && /strength|denoise/i.test(label)) {
       return opts.strength
     }
     // Face-lock toggle (exact transplant) honours the caller's value.
     if (opts.faceSwap !== undefined && /Checkbox/i.test(comp) && /face|swap|lock/i.test(label)) {
       return opts.faceSwap
+    }
+    // Scene-lock toggle (keep the reference composition) honours the caller.
+    if (opts.sceneLock !== undefined && /Checkbox/i.test(comp) && /scene/i.test(label)) {
+      return opts.sceneLock
     }
     if (p?.parameter_has_default) return p.parameter_default
     if (p?.type?.enum?.length) return p.type.enum[0]
@@ -105,7 +109,7 @@ export function buildArgs(params: GradioParam[], prompt: string, imageBase64?: s
 export async function gradioCallSpace(
   base: string,
   prompt: string,
-  opts: { imageBase64?: string; signal?: AbortSignal; timeoutMs?: number; mode?: 'image' | 'video' | 'edit'; strength?: number; faceSwap?: boolean; negativePrompt?: string },
+  opts: { imageBase64?: string; signal?: AbortSignal; timeoutMs?: number; mode?: 'image' | 'video' | 'edit'; strength?: number; faceSwap?: boolean; sceneLock?: boolean; negativePrompt?: string },
 ): Promise<GradioMedia> {
   const root = mediaUrl(base).replace(/\/+$/, '')
   const auth = mediaAuth(root)
@@ -117,7 +121,7 @@ export async function gradioCallSpace(
   const chosen = pickApi(info, opts.mode, !!opts.imageBase64)
   if (!chosen) throw new Error('No usable Gradio endpoint')
 
-  const data = buildArgs(chosen.params, prompt, opts.imageBase64, { strength: opts.strength, faceSwap: opts.faceSwap, negativePrompt: opts.negativePrompt })
+  const data = buildArgs(chosen.params, prompt, opts.imageBase64, { strength: opts.strength, faceSwap: opts.faceSwap, sceneLock: opts.sceneLock, negativePrompt: opts.negativePrompt })
   const callRes = await providerRequest(`${root}/gradio_api/call${chosen.api}`, {
     ...auth, method: 'POST',
     headers: { ...auth.headers, 'Content-Type': 'application/json' },
