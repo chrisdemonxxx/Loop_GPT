@@ -54,6 +54,57 @@ Resolved against live Railway + Resend state (not guesses). Audit = `AUDIT_REPOR
   in the 2026-09-22 pass above). §10 Q9/Q11/Q12 remain NEEDS CONFIRMATION
   (product decisions).
 
+## Production-readiness Phase 1 — P0 blockers executed (2026-09-26)
+
+- **1.2 DB — EXECUTED + VALIDATED.** Staged patch committed via MCP
+  (`accept-deploy`, deployment `510bed66`): postgres image swapped in-place to
+  `ghcr.io/railwayapp-templates/postgres-ssl:16` (same service/volume/
+  `DATABASE_URL`). Startup logs: glibc 2.36→2.41 collation version mismatch
+  auto-resolved by the template ("rebuilt 80 collation-dependent index(es);
+  collation version stamps refreshed") — data dir reused, no re-init.
+  Post-swap validation: all 5 services SUCCESS; `GET /healthz` → 200 through
+  the web proxy; a real `POST /api/auth/register` (DB-backed) succeeded —
+  proves backend → new Postgres end-to-end. Dashboard Daily volume backups:
+  operator asserts ON. Scratch-restore rehearsal still pending the
+  `DATABASE_URL` value (steps: `docs/RUNBOOK.md` §3a).
+- **1.1 Email — WIRED + DELIVERY CONFIRMED.** Prod backend `RESEND_API_KEY`
+  swapped to the account that owns the verified `loop-gpt.cyou` domain;
+  `MAIL_FROM` = `Loop GPT <noreply@loop-gpt.cyou>`. Backend redeployed
+  (deployment `7c3fc83e`). Evidence (Resend API `last_event`):
+  direct smoke → `delivered`; real signup → welcome + verify emails
+  `delivered` to chrisdemonxxx+loopgpt-e2e@gmail.com;
+  `POST /api/auth/forgot` → reset email `delivered`.
+  **NEEDS CONFIRMATION (operator click):** the `/verify` link (flips
+  `emailVerified`) and the `/reset` link (flips password + sets
+  `sessionInvalidatedAt`). SMTP fallback remains code-ready but unarmed
+  (no `SMTP_*` in prod env; single env change when credentials exist).
+  Resend free plan cap: 100 emails/day — fine for verification/reset volume.
+- **1.4 Connector stub CI — SHIPPED.** New
+  `backend/src/agent/connectors/__tests__/marketplaceProviders.test.ts`:
+  44 tests, all 8 marketplace providers (registry contract incl. the
+  Salesforce `{instanceUrl}` special case, PKCE init route per provider,
+  adapter Bearer calls against each provider apiBase, probe 401/403
+  semantics, missing-token handling). Full backend suite green:
+  **1128 passed / 5 skipped across 56 files**. Live OAuth round-trips
+  (Figma first) still open — need real provider OAuth apps
+  (steps in `docs/CONNECTOR_SETUP.md`).
+- **1.5 Payments — Option B re-verified.** No Stripe keys exist in prod;
+  landing shows "Free during launch"; `/account` hides Upgrade when Stripe
+  disabled. Copy fix shipped: landing free tier now says "5 images/day"
+  (matches PLAN_LIMITS free imageCredits=5; was "3").
+- **1.6 Archive sweep — SHIPPED.** `attic/{gateway, loop-code,
+  web-vite-client}`; `web/` keeps only the live deployment files (Dockerfile,
+  nginx.template.conf, Dockerfile.dockerignore, .dockerignore, railway.json).
+  `web-validation.yml`: dead `web-harness` job removed, replaced with a
+  deployment-file presence check. Frontend suite green (32 tests) +
+  `next build` green.
+- **1.3 Observability — code-ready, keys pending.** `SENTRY_DSN` (backend),
+  `NEXT_PUBLIC_SENTRY_DSN` + `NEXT_PUBLIC_POSTHOG_KEY` (web service — baked
+  at build in `web/Dockerfile`) will be set the moment keys are supplied;
+  then an intentional test error verifies the Sentry pipeline. Uptime
+  monitor on `https://loop-gpt.cyou/healthz` (UptimeRobot/BetterStack free
+  tier) needs an operator account. Both NEEDS CONFIRMATION until then.
+
 
 ## Production-readiness pass (2026-09-22, phases 0–7) — COMPLETE
 
