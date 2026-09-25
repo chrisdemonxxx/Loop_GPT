@@ -4,6 +4,57 @@ Companion to `BUILD_PROGRESS.md` (the older foundation ledger, which stops at
 validation 03s). This file records the master-prompt (A4/A9) delta and the
 evidence for each claim. Every "Working" item was run.
 
+## Production-readiness Phase 0 — audit §10 open questions resolved (2026-09-26, live-infra verified)
+
+Resolved against live Railway + Resend state (not guesses). Audit = `AUDIT_REPORT.md` §10.
+
+- **Q1/P10 Resend — RESOLVED DIFFERENTLY THAN ASSUMED.** The 11-domain Resend
+  account never had `loop-gpt.cyou`. A **second Resend account** (free plan)
+  already has exactly one domain: `loop-gpt.cyou`, status **verified** — no DNS
+  work needed. The production backend's `RESEND_API_KEY` pointed at the old
+  account, so the actual fix was swapping the prod key to the new account's
+  key + setting `MAIL_FROM`. Email sending now live; E2E evidence below.
+- **Q2/P11 backups — RESOLVED.** Prod Postgres was a raw
+  `postgres:16.10-bookworm` image + volume (no PITR). Operator enabled Daily
+  dashboard volume backups on `candidate-postgres-data`, then executed the
+  **in-place image swap** to `ghcr.io/railwayapp-templates/postgres-ssl:16`
+  (same service/volume/`DATABASE_URL`, ~2 min restart, no data cutover).
+  Procedures + restore steps: `docs/RUNBOOK.md`. Scratch-restore rehearsal
+  **pending** the `DATABASE_URL` value.
+- **Q3/P8 marketplace OAuth — CONFIRMED NOT LIVE-TESTED.** Zero live
+  round-trips for the 8 marketplace providers. Existing CI = generic
+  marketplace-adapter stub only. Per-provider stub tests now added (below);
+  live smoke runs (Figma first) still need real provider OAuth apps —
+  NEEDS CONFIRMATION.
+- **Q4 observability — CONFIRMED ABSENT, then wired.** `SENTRY_DSN`,
+  `NEXT_PUBLIC_SENTRY_DSN`, `NEXT_PUBLIC_POSTHOG_KEY` were absent from
+  production (backend 59 vars / web 16 vars). Keys supplied by operator and
+  set; see "Observability wiring" below. Architectural note: `NEXT_PUBLIC_*`
+  must be set on the **web** Railway service (baked at build inside
+  `web/Dockerfile`).
+- **Q5 web/ — SPLIT VERDICT.** `web/src` (Vite React-19 client) is dead code,
+  never deployed — archived to `attic/web-client/`. BUT `web/Dockerfile` +
+  `web/nginx.template.conf` (+ `.dockerignore`, `Dockerfile.dockerignore`,
+  `railway.json`) ARE the live production deployment path (they build the
+  Next.js `frontend/` static export and proxy `/api` + `/v1`). Kept in place.
+- **Q6 loop-code/ — CONFIRMED DORMANT** (single initial commit, no live
+  references; backend `POST /api/agent/completions` relay is its companion).
+  Archived to `attic/loop-code/`.
+- **Q7 gateway/ — EFFECTIVELY DEAD.** The legacy Railway project (`loop-gpt`,
+  c4381399 — LibreChat + Mongo + rag + cf-tunnel) is fully **FAILED** since
+  2026-09-05/06; the live product is served from the owned-staging project.
+  Archived to `attic/gateway/`. (No DNS hostname known to still point at the
+  dead project.)
+- **Q8 pricing values — CONFIRMED.** `services/billing.ts`: PLAN_LIMITS
+  free/pro/gold = 30/1000/5000 credits + 5/100/500 imageCredits per day;
+  CREDIT_COST chat 1, agent 1, research 3, image 2, video 10. Copy mismatch
+  found + fixed: landing free tier said "3 images/day" (actual 5) —
+  `frontend/app/page.tsx` updated. `/account` Pro copy already matched.
+- **§10 Q5 create_skill — RESOLVED SHIPPED** (E2E with real model, evidence
+  in the 2026-09-22 pass above). §10 Q9/Q11/Q12 remain NEEDS CONFIRMATION
+  (product decisions).
+
+
 ## Production-readiness pass (2026-09-22, phases 0–7) — COMPLETE
 
 Full brief executed: P0 launch blockers → P1 product depth → P2 polish →

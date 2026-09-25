@@ -75,6 +75,32 @@ uses the same transplant in `generate_video`'s `lock_strength` step.
 - App-level reference video with `lock_strength=0.6` → mp4 whose **first
   frame** is the same woman.
 
+## Image quality (2026-09-25)
+
+Four fixes took Chroma1-HD from "soft and occasionally glitched" to sharp:
+
+1. **fp32 VAE decode.** The Chroma pipeline ignores `vae.config.force_upcast` and
+   decodes in bf16 — visibly soft. The Space upcasts the VAE and wraps
+   `encode`/`decode` to run in fp32, handing bf16 latents back to the transformer
+   (and casting `DiagonalGaussianDistribution`'s cached `mean`/`std` too).
+2. **The model card's recipe.** `num_inference_steps=40`, `guidance_scale=3.0`,
+   and the card's quality negative prompt. The backend no longer overrides a
+   negative-prompt textbox with an empty string.
+3. **A glitch guard.** Chroma1-HD diverges for a fraction of random seeds into a
+   high-frequency "neon noise" frame (edge energy ≈ 3× a normal photo). The Space
+   detects it (mean |Δ| on luma > 0.035) and retries with a fresh seed.
+4. **Framing + prompt sanitizing (the reference path).** The transplant crops a
+   128 px face, so the text-to-image pass must frame the subject close.
+   `scene_prompt()` strips reference-laden phrasing ("the same woman", "keep her
+   exact face" — which glitches a t2i into multi-figure neon chaos) and appends
+   `close-up portrait, sharp focus, natural skin texture` unless the user named a
+   framing.
+
+| | before | after |
+|---|---|---|
+| plain t2i | 7/10 sharp, "acceptable" | **9/10 sharp, 9/10 artifacts → "great"** |
+| reference path (attach + "make her NSFW") | 6/10, glitched ~1/3 of seeds | **clean (edge 0.011), 0.81 ArcFace identity** |
+
 ## Operational notes
 
 - **`preload_from_hub` and the HF cache.** Do NOT add `preload_from_hub` to the Space: it downloads as root, making the HF/Xet cache root-owned, so *runtime* model downloads (e.g. Chroma on the first image call after a rebuild) fail with `Permission denied (EACCES)`. Let the app download on first use.

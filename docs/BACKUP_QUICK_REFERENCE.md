@@ -1,82 +1,23 @@
 # Backup Quick Reference
 
-## Current Status (2026-09-25)
+## Current Status (2026-09-26)
 
-| Item | Status | Action |
-|------|--------|--------|
-| **Dashboard Backups** | ⏳ Pending | Toggle ON in Railway dashboard (postgres volume) |
-| **postgres-ssl Migration** | 📋 Planned | Execute per RUNBOOK.md in maintenance window |
-| **Data Safety** | ✅ Secure | Current postgres service will remain for 24–48 hours post-migration |
+| Item | Status | Notes |
+|------|--------|-------|
+| **Dashboard backups** | ✅ ON (Daily) | Operator-enabled on `candidate-postgres-data`; visually confirmed in dashboard. Backup state is not API-visible — re-verify in dashboard after any volume change. |
+| **postgres-ssl:16 image swap** | ✅ Executed | In-place swap (same service/volume/`DATABASE_URL`), not the separate-service cutover originally planned. See `docs/RUNBOOK.md` §2. |
+| **Scratch-restore rehearsal** | ⏳ Pending | Needs the production `DATABASE_URL` value; exact steps in `docs/RUNBOOK.md` §3a. |
+| **Optional: `candidate-private-store` backups** | ⏳ Operator choice | backend service volume (chat/artifact bytes). Enable in dashboard if desired. |
 
----
+## Where things live
 
-## Immediate Actions (Today)
+- Runbook (swap + backup + restore + validation): `docs/RUNBOOK.md`
+- Project: `loop-gpt-owned-staging-20260917` → env `production` → service `postgres`
+- Volume: `candidate-postgres-data` (50 GB, `/var/lib/postgresql/data`)
+- Backups toggle: dashboard → postgres service → Volumes → volume → Backups
 
-### 1. Enable Dashboard Backups
-**Location:** Railway Dashboard → Production → postgres service → Volumes → candidate-postgres-data
+## Fast paths
 
-```
-1. Click volume "candidate-postgres-data"
-2. Find "Backups" section
-3. Toggle to ON
-4. Select schedule: Daily (recommended)
-5. Save
-```
-
-**Repeat for:** backend service → `candidate-private-store` (if needed)
-
----
-
-## Migration Timeline (This Week)
-
-| Phase | Duration | Owner | Status |
-|-------|----------|-------|--------|
-| **Pre-migration** | 30 min | DevOps | Dump DB, prep configs |
-| **Maintenance Window** | 15–30 min | DevOps | Deploy, restore, cutover |
-| **Validation** | 24–48 hours | All | Monitor, verify, cleanup |
-
----
-
-## Key Variables (For Reference)
-
-**Current postgres service:**
-- Image: `postgres:16.10-bookworm`
-- Volume: `candidate-postgres-data` (50 GB)
-- Mount path: `/var/lib/postgresql/data`
-- Region: `sfo`
-- Replicas: 1
-
-**Services connecting to postgres:**
-- `backend` (via `DATABASE_URL`)
-- Other services: [check RUNBOOK.md Step 4]
-
----
-
-## Backup Retention (After Migration)
-
-**postgres-ssl template defaults:**
-- Daily backups: 7 days
-- Weekly backups: 4 weeks
-- Monthly backups: 12 months
-
-*(Adjust in Railway dashboard as needed)*
-
----
-
-## Support Contacts
-
-- **Runbook:** `docs/RUNBOOK.md` (detailed steps)
-- **Migration PR:** [Link to PR with full context](https://github.com/chrisdemonxxx/Loop_GPT/pull/3)
-- **Railway Docs:** https://docs.railway.com/
-
----
-
-## Checklist Before Migration
-
-- [ ] Database dump taken and stored safely
-- [ ] Team notified of maintenance window
-- [ ] postgres-ssl service deployed and tested (scratch DB)
-- [ ] All service variables captured
-- [ ] Rollback plan reviewed with team
-- [ ] 24–48 hour post-migration monitoring plan in place
-
+- **Restore from volume snapshot (disaster):** dashboard → volume → Backups → Restore; then run the `docs/RUNBOOK.md` §4 validation checklist.
+- **Manual dump/restore (tested steps):** `docs/RUNBOOK.md` §3a.
+- **Something broke after the swap:** rollback by restaging `postgres:16.10-bookworm` (same volume, data intact).
