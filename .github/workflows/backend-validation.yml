@@ -21,7 +21,10 @@ jobs:
       TEST_DATABASE_URL: postgresql://loop_test:local-test-only@127.0.0.1:5432/loop_foundation_test
     services:
       postgres:
-        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+        # pgvector-enabled postgres: the 20260923020000_pgvector migration is
+        # conditional (skips the vector column without the extension), so a
+        # plain image both skips vector coverage and guarantees diff drift.
+        image: pgvector/pgvector:pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
         env:
           POSTGRES_USER: loop_test
           POSTGRES_PASSWORD: local-test-only
@@ -47,7 +50,16 @@ jobs:
           npm run migrate:deploy
           npm run migrate:deploy
       - name: Verify migration matches schema
-        run: npx --no-install prisma migrate diff --from-url "$TEST_DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+        run: |
+          drift=$(npx --no-install prisma migrate diff --from-url "$TEST_DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --script)
+          # The pgvector migration is intentionally conditional, and the
+          # ivfflat index it creates exceeds Prisma's schema model: the only
+          # expected artifacts mention embeddingVec. Anything else is real
+          # drift and fails the gate.
+          unexplained=$(printf '%s' "$drift" | grep -v -e 'embeddingVec' -e '^--' -e '^[[:space:]]*$' || true)
+          if [ -n "$unexplained" ]; then
+            echo "Unexplained schema drift:"; printf '%s\n' "$unexplained"; exit 1
+          fi
       - run: npm run test:integration
       - name: Build production container
         run: docker build -t loop-gpt-backend:ci .

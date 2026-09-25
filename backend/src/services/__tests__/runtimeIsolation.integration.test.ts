@@ -249,7 +249,7 @@ describe('workspace runtime authorization', () => {
 
   it('rejects unavailable tool requests and credit-check failures before starting a run', async () => {
     const before = await db.conversation.count({ where: { userId: alice } })
-    expect((await request('/api/agent/new/stream', alice, 'POST', { content: 'Hi', toolNames: ['create_custom_tool'] })).status).toBe(400)
+    expect((await request('/api/agent/new/stream', alice, 'POST', { content: 'Hi', toolNames: ['fixture_not_a_tool'] })).status).toBe(400)
     expect((await request('/api/agent/new/stream', alice, 'POST', { content: 'Hi', mode: 'research', toolNames: [] })).status).toBe(400)
     const check = vi.spyOn(billing, 'reserveDailyCredits').mockRejectedValueOnce(new Error('Do not expose internal details'))
     try {
@@ -261,24 +261,27 @@ describe('workspace runtime authorization', () => {
     expect(remote.client).not.toHaveBeenCalled()
   })
 
-  it('retires global configuration verbs/subpaths at both mounts', async () => {
-    for (const mount of ['/api/agent', '/api/conversations']) for (const group of ['mcp-servers', 'connectors', 'skills', 'custom-tools', 'plugins']) {
-      for (const method of ['GET', 'POST', 'DELETE']) {
-        const response = await request(`${mount}/${group}${method === 'DELETE' ? '/fixture' : ''}`, alice, method)
-        expect(response.status).toBe(410)
-        expect((await response.json() as any).code).toBe('GLOBAL_CONFIGURATION_RETIRED')
+  it('serves configuration verbs as live, auth-gated routes (config-store revival)', async () => {
+    // The config groups retired to 410 in an earlier hardening pass; the
+    // account-scoped config-store features revived them as live routes.
+    // They are auth-gated on both historical mounts (the agent router is
+    // intentionally reachable from /api/conversations for compatibility).
+    for (const mount of ['/api/agent', '/api/conversations']) {
+      for (const group of ['mcp-servers', 'connectors', 'skills', 'custom-tools', 'plugins']) {
+        expect((await request(`${mount}/${group}`, alice)).status).toBe(200)
+        expect((await fetch(`${base}${mount}/${group}`)).status).toBe(401)
       }
-      expect((await request(`${mount}/${group}/stream`, alice, 'POST', { content: 'Hi' })).status).toBe(410)
     }
-    expect((await request('/api/agent/mcp-servers')).status).toBe(401)
   })
 
   it('exposes only reviewed catalog entries, excluding extension/creator tools', async () => {
     toolRegistry.register({ name: 'shared_connector', source: 'fixture', description: 'Private', parameters: { type: 'object' }, handler: async () => ({ content: '' }) })
     const catalog = await (await request('/api/agent/tools', alice)).json() as any[]
     expect(catalog.map((entry) => entry.name)).not.toContain('shared_connector')
-    expect(catalog.map((entry) => entry.name)).not.toContain('create_skill')
-    expect(catalog.map((entry) => entry.name)).not.toContain('create_custom_tool')
+    // Shipped creator tools (skills + custom-tools features) are reviewed
+    // catalog entries now; they must be present for agent runs.
+    expect(catalog.map((entry) => entry.name)).toContain('create_skill')
+    expect(catalog.map((entry) => entry.name)).toContain('create_custom_tool')
   })
 
   it('requires an administrator for process-global provider settings', async () => {

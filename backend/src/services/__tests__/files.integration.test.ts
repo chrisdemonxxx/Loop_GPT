@@ -184,6 +184,40 @@ describe('private file and account isolation over HTTP/PostgreSQL', () => {
     expect((await fetch(`${base}/api/files/${file.id}/content`, { headers })).status).toBe(401)
   })
 
+  it('mints short-lived signed links that render inline without a session (open in new tab)', async () => {
+    const file = await ownedImage()
+    // Only the owner may mint; a foreign session gets the ownership 404.
+    expect((await fetch(`${base}/api/files/${file.id}/signed-link`, { method: 'POST', headers: bearer(bob.id) })).status).toBe(404)
+    const mint = await fetch(`${base}/api/files/${file.id}/signed-link`, { method: 'POST', headers: bearer(alice.id) })
+    expect(mint.status).toBe(200)
+    const { url, expiresIn } = await mint.json()
+    expect(url).toContain(`/api/files/${file.id}/content?p=`)
+    expect(expiresIn).toBeGreaterThan(0)
+    // The new tab has no Authorization header — the signature is the credential.
+    const open = await fetch(`${base}${url}`)
+    expect(open.status).toBe(200)
+    expect(open.headers.get('content-disposition')).toContain('inline;')
+    expect(open.headers.get('content-security-policy')).toContain('sandbox')
+    expect(Buffer.from(await open.arrayBuffer())).toEqual(png)
+    // The in-app (header-auth) path still downloads rather than renders.
+    const attached = await fetch(`${base}/api/files/${file.id}/content`, { headers: bearer(alice.id) })
+    expect(attached.headers.get('content-disposition')).toContain('attachment;')
+  })
+
+  it('rejects tampered and cross-file signed links without a session', async () => {
+    const file = await ownedImage()
+    const other = await storePrivateFile({ userId: alice.id, conversationId: conversation.id, name: 'other.png', mimeType: 'image/png', purpose: 'artifact', buffer: png })
+    const mint = await fetch(`${base}/api/files/${file.id}/signed-link`, { method: 'POST', headers: bearer(alice.id) })
+    const { url } = await mint.json()
+    // Tampered signature falls back to header auth → 401 (no session).
+    expect((await fetch(`${base}${url.replace(/([?&]s=.{4}).*/, '$1AAAAAAA')}`)).status).toBe(401)
+    // A link minted for one file cannot be replayed against another file id.
+    const crossFile = url.replace(`/api/files/${file.id}/content`, `/api/files/${other.id}/content`)
+    expect((await fetch(`${base}${crossFile}`)).status).toBe(401)
+    // Query-string garbage never bypasses the auth guard.
+    expect((await fetch(`${base}/api/files/${other.id}/content?p=AAAA&s=BBBB`)).status).toBe(401)
+  })
+
   it('prevents attaching a file to another conversation even for the same user', async () => {
     const file = await ownedImage()
     await expect(readOwnedImage(alice.id, secondConversation.id, file.id)).rejects.toMatchObject({ status: 404 })

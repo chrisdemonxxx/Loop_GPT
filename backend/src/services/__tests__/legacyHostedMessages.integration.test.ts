@@ -191,7 +191,7 @@ describe('global model selection retirement', () => {
     const res = await fetch(`${base}/api/models/catalog`)
     expect(res.status).toBe(200)
     const text = await res.text()
-    expect(text).toContain('loop-chat-large')
+    expect(text).toContain('loop-large')
     expect(text).not.toContain('operator-large')
     expect(text).not.toContain('large.example.test')
   })

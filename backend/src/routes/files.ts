@@ -10,6 +10,7 @@ import {
   publishOwnedFile, unpublishOwnedFile, readPublishedFile,
 } from '../services/privateFiles'
 import { extractDocumentText, MAX_DOC_BYTES } from '../services/documentText'
+import { createFileLink, verifyFileLink } from '../services/signedFileUrl'
 
 export function fileErrorResponse(error: unknown, res: express.Response) {
   if (error instanceof FileAccessError) return res.status(error.status).json({ error: error.message })
@@ -32,27 +33,80 @@ async function authenticateFileRequest(req: ApiRequest, res: express.Response, n
 }
 
 export const filesRouter = express.Router()
+
+/**
+ * File content. Two accepted credentials:
+ *  - Authorization header (JWT or developer key) — the in-app path.
+ *  - A short-lived signed link (?p=&s=) minted by POST /:id/signed-link —
+ *    the "Open in new tab" path for private (non-published) artifacts. The
+ *    MAC binds owner + file + expiry; signed reads render inline (sandboxed
+ *    by CSP) instead of downloading.
+ *
+ * Registered BEFORE the router-wide auth guard so the signed path works
+ * without a session; every read is still ownership-scoped.
+ */
+filesRouter.get('/:id/content', async (req, res, next) => {
+  try {
+    const payload = String(req.query.p || '')
+    const sig = String(req.query.s || '')
+    const signed = payload && sig ? verifyFileLink(payload, sig, req.params.id) : null
+    let userId: string
+    if (signed) {
+      userId = signed.ownerId
+    } else {
+      const authorized = await new Promise<boolean>((resolve) => {
+        let settled = false
+        // The auth middleware either calls next() (accept), calls next(err)
+        // (contained failure — forwarded to the error chain exactly as the
+        // pre-restructure router.use flow did), or writes an error response
+        // without calling next (reject — settle on 'finish').
+        res.on('finish', () => { if (!settled) { settled = true; resolve(false) } })
+        authenticateFileRequest(req as ApiRequest, res, (err?: any) => {
+          if (!settled) { settled = true; resolve(!err) }
+          if (err) next(err)
+        })
+      })
+      if (!authorized) return // a response (or error-chain 500) has been sent
+      userId = (req as any).userId
+    }
+    const { file, buffer } = await readOwnedFile(userId, req.params.id)
+    res.setHeader('Cache-Control', 'private, no-store')
+    res.vary('Authorization')
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    if (signed) {
+      // Inline so the new tab renders; the CSP keeps the document sandboxed
+      // but renderable (self-contained HTML artifacts).
+      res.setHeader('Content-Security-Policy',
+        "sandbox allow-scripts allow-forms; default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'")
+      res.setHeader('Content-Disposition', `inline; filename="${file.name}"`)
+    } else {
+      res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'")
+      res.setHeader('Content-Disposition', `attachment; filename="${file.name}"`)
+    }
+    res.setHeader('Content-Type', file.mimeType)
+    res.send(buffer)
+  } catch (error) { fileErrorResponse(error, res) }
+})
+
 filesRouter.use(authenticateFileRequest)
 filesRouter.get('/:id', async (req, res) => {
   try { res.json(fileReference(await findOwnedFile((req as any).userId, req.params.id))) }
   catch (error) { fileErrorResponse(error, res) }
 })
-filesRouter.get('/:id/content', async (req, res) => {
-  try {
-    const { file, buffer } = await readOwnedFile((req as any).userId, req.params.id)
-    res.setHeader('Cache-Control', 'private, no-store')
-    res.vary('Authorization')
-    res.setHeader('X-Content-Type-Options', 'nosniff')
-    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'")
-    res.setHeader('Content-Disposition', `attachment; filename="${file.name}"`)
-    res.setHeader('Content-Type', file.mimeType)
-    res.send(buffer)
-  } catch (error) { fileErrorResponse(error, res) }
-})
 filesRouter.delete('/:id', async (req, res) => {
   try { await deleteOwnedFile((req as any).userId, req.params.id); res.status(204).end() }
   catch (error) { fileErrorResponse(error, res) }
 })
+/** Mint a short-lived signed link for opening a private artifact in a new
+ * tab (the new tab carries no session). Ownership-checked before signing. */
+filesRouter.post('/:id/signed-link', async (req, res) => {
+  try {
+    await findOwnedFile((req as any).userId, req.params.id)
+    const link = createFileLink((req as any).userId, req.params.id)
+    res.json({ url: link.url, expiresIn: link.expiresIn })
+  } catch (error) { fileErrorResponse(error, res) }
+})
+
 /** Publish a view-only public link. */
 filesRouter.post('/:id/publish', async (req, res) => {
   try {
