@@ -282,6 +282,36 @@ gated by the full suites.
   build green. Deployed on `c670a8c`; live bundle carries the stream
   placeholder, signed-link minting, and PiP signatures; healthz 200.
 
+## Phase 2.4 — Image CLS hygiene + real lightbox (audit P4) — SHIPPED (2026-09-26, commit `d870c05`)
+
+- **Dimension pinning (now actually true)**: the brief's "vision pipeline
+  already stores dimensions" was aspirational — nothing persisted them.
+  Now: `services/imageDimensions.ts` sniffs intrinsic PNG/JPEG/WebP sizes
+  from headers (no decode), and the stream controller persists
+  `imageWidth`/`imageHeight` into the user-message metadata for the first
+  uploaded image. The client sets explicit `<img width/height>` from that
+  metadata — layout shift eliminated for new messages.
+- **Lazy/async + shimmer everywhere**: stored user images
+  (`loading="lazy" decoding="async"`), ArtifactCard images render a sized
+  shimmer skeleton while the authed blob loads and fade in on load,
+  the panel's focused image gets a shimmer placeholder, composer chips pin
+  80×80.
+- **`Lightbox.tsx`** (the real `ArtifactViewer` successor): body-ported
+  fullscreen viewer — pinch/wheel/double-click zoom (1–4×) with drag-to-pan
+  when zoomed, next/prev across the conversation's images (buttons, arrow
+  keys, horizontal swipe, wrapping), swipe-down-to-close on touch, Esc and
+  backdrop close. Opens from the panel's focused image via an expand
+  affordance.
+- **Tests**: 4 `imageDimensions` unit tests (PNG IHDR, JPEG SOF, malformed,
+  data-URI), 5 Lightbox component tests (portal+counter, nav buttons/keys
+  with wrap, double-click zoom, Esc/button close, single-image chrome).
+  Gates: backend **1142/5** unit, **459/3** integration, lint 0, tsc clean;
+  frontend **54/54**, Playwright **12/12**, build green. Deployed on
+  `d870c05`; all four CI workflows green; healthz 200; live bundle carries
+  the lightbox + metadata-dims signatures.
+- Note: generated-image artifacts don't carry dimensions server-side yet
+  (upload path only); their CLS is covered by the shimmer skeleton.
+
 ## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
 
 - **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
