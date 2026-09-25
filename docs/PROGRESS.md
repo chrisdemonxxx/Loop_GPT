@@ -138,9 +138,11 @@ Resolved against live Railway + Resend state (not guesses). Audit = `AUDIT_REPOR
     `c07056ba6a6aad87c13c31c0b1e41b6a`) — synthetic "Phase 1.3 pipeline
     verification" events visible in the Sentry dashboards.
   - REMAINING NEEDS CONFIRMATION: uptime monitor account on
-    `https://loop-gpt.cyou/healthz` (operator chose not to sign up for it in
-    this pass); post-deploy chunk check that the keys are baked into the
-    rebuilt static export.
+    `https://loop-gpt.cyou/healthz` only (operator chose not to sign up for
+    it in this pass). Post-deploy chunk verification DONE: the rebuilt
+    bundle serves the PostHog key + web Sentry DSN in
+    `_next/static/chunks/app/layout-a2d860bd651be591.js` and
+    `app/chat/page-a032830b95bca0f7.js` (fetched from production).
 - **Web bundle hygiene**: the deployed `web/` now builds from repo commit
   `336f4c0` (branch `release/owned-staging-20260917` pushed).
 
