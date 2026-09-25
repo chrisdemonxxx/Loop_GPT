@@ -562,6 +562,44 @@ UI/UX rebuild (audit §6 P1–P6 + 2.7) is live; next per plan: Phase 3
 §8-34 enforce `detectExtractionAttempt` (enforcement shape to be proposed
 first); §8-22 branch-version arrows (awaiting schema sign-off).
 
+## Phase 3 — Agent activity: live output + progress + view-in-panel (audit §8-28/29) — SHIPPED (2026-09-26, commit `4d4a5eb`)
+
+- **Live `execute_code` stdout/stderr (§8-28)**: the sandbox harness streams
+  child chunks through a new `makeOutputBatcher` (400-char / 150-ms flushes —
+  live output without per-line SSE spam) as `tool_output` events; a final
+  flush precedes the result. The runtime stamps the executing step by
+  temporarily wrapping `emit` on the SAME `ToolContext` — the run grant is
+  WeakMap-keyed to ctx identity, so spreading the context (first attempt)
+  orphaned the grant and failed `assertRunAccess`; the sequential-loop emit
+  swap preserves identity and the security invariant, restoring in
+  `finally`.
+- **General progress checklist (§8-29)**: a `progress` event type any
+  multi-phase tool or future sub-agent orchestrator can emit (latest per
+  step wins). `createDocument` emits build/save phases through it. The
+  frontend renders the live checklist in the step card.
+- **Per-step "View in panel" (§8-28)**: the runtime records each step's
+  artifact NAMES in the persisted `metadata.steps` (full refs already live
+  in `metadata.artifacts`); live `tool_result` data carries the refs. Step
+  cards render a compact jump on the collapsed row and named links when
+  expanded — live AND stored turns — resolving via a page-level
+  `onOpenArtifactByName` that opens the artifacts panel focused on the match.
+- **Live E2E (production)**: a real agent run executing a JavaScript snippet
+  that prints three lines across ~800ms produced **3 live `tool_output`
+  events, each stamped step 0, arriving as the program printed**, followed
+  by the complete tool_result. `healthz` 200; bundle carries the Live output
+  and View-in-panel UIs; all four CI workflows green.
+- **Tests**: 4 batcher unit (size/timer/separate-streams/final flushes),
+  1 integration E2E (a `custom:fixture` tool streams output + progress
+  stamped step 0 through the authenticated SSE route; persisted steps
+  record artifact names), 5 TurnActivity component tests (live output,
+  checklist, compact jump, expanded links, stored links). Gates: backend
+  unit **1152/5**, integration **469/3**, lint 0; frontend **98/98**,
+  Playwright **12/12**, tsc + build green.
+
+**Phase 3 remaining**: §8-34 enforce `detectExtractionAttempt` (enforcement
+shape to be proposed first); §8-22 branch-version arrows (awaiting schema
+sign-off).
+
 ## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
 
 - **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
