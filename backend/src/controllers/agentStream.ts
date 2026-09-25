@@ -29,8 +29,9 @@ import type { AgentEvent, ChatMessage, ContentPart, ToolContext } from '../agent
 import { resolveHostedModelRequest } from '../services/hostedModelRequest'
 import { resolveVisionTarget, visionModelEnabled } from '../services/chatModels'
 import { clearApproval } from '../agent/approvalStore'
-import { sanitizeMetadata, detectExtractionAttempt } from '../agent/guardrails'
+import { sanitizeMetadata, detectExtractionAttempt, EXTRACTION_DEFENSE_PROMPT } from '../agent/guardrails'
 import { agentConfig } from '../agent/config'
+import { configStore } from '../agent/configStore'
 import { recordUsage, estimateTokens, type UsageKind } from '../services/billing'
 import { reserveDailyCredits, dailyDispatch, cleanupDailyReservation, DailyCreditError } from '../services/dailyReservations'
 import { startRun as startResearchRun } from '../services/researchRuns'
@@ -230,8 +231,12 @@ export async function streamAgentRun(req: Request, res: Response) {
       content = content ? `${blocks}\n\n${content}` : blocks
     }
 
-    if (content && detectExtractionAttempt(content)) {
-      console.warn(`[guardrails] possible prompt-extraction attempt from user ${userId}`)
+    // Extraction-pattern detection (audit §8-34): enforced, not just logged.
+    // The run proceeds (benign phrasings must not hard-fail), but with the
+    // EXTRACTION_DEFENSE_PROMPT appended to the system prompt + an audit entry.
+    const extractionDetected = content ? detectExtractionAttempt(content) : false
+    if (extractionDetected) {
+      console.warn(`[guardrails] prompt-extraction attempt from user ${userId}: defense prompt engaged`)
     }
     try {
       reservation = await reserveDailyCredits(userId, meterKind, target.model)
@@ -257,6 +262,20 @@ export async function streamAgentRun(req: Request, res: Response) {
         lifecycle.check()
       }, input.data.projectId, input.data.incognito === true)
       lifecycle.check()
+      // Audit the enforced detection with the resolved conversation id (§8-34).
+      if (extractionDetected) {
+        try {
+          configStore.appendToolAudit({
+            at: new Date().toISOString(),
+            userId,
+            conversationId: conversation.id,
+            tool: 'system:extraction_attempt',
+            args: '(redacted)',
+            outcome: 'denied',
+            ms: 0,
+          })
+        } catch { /* audit is best-effort; the defense prompt is the enforcement */ }
+      }
       await saveMessage(conversation.id, {
         role: 'user',
         content: raw || '',
@@ -344,6 +363,9 @@ export async function streamAgentRun(req: Request, res: Response) {
         BASE_SYSTEM_PROMPT,
         skillIndex.length ? `Available skills (already applied where relevant):\n${skillIndex.join('\n')}` : '',
         ...skillInstructions,
+        // §8-34 enforcement: the detected threat gets a targeted hardening
+        // block for this run, not a refusal.
+        ...(extractionDetected ? [EXTRACTION_DEFENSE_PROMPT] : []),
       ].filter(Boolean).join('\n\n')
       let finalContent = ''
       let finalMetadata: any = {}
