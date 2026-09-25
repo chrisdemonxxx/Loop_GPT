@@ -105,6 +105,45 @@ Resolved against live Railway + Resend state (not guesses). Audit = `AUDIT_REPOR
   monitor on `https://loop-gpt.cyou/healthz` (UptimeRobot/BetterStack free
   tier) needs an operator account. Both NEEDS CONFIRMATION until then.
 
+## Phase 1 CLOSE-OUT (2026-09-26, all P0 blockers resolved)
+
+- **1.1 Email — FULLY CLOSED with production evidence.** Complete 6-step E2E
+  chain against live prod: real signup → Welcome + Verify emails `delivered`
+  (Resend `last_event`) → `POST /api/auth/verify` consumed the token and
+  flipped `emailVerified` (visible as `t` in the DB dump taken later) →
+  login(old password) OK → `POST /api/auth/reset` with a fresh token OK →
+  **the pre-reset JWT was rejected 401 after reset** (`sessionInvalidatedAt`
+  proven) → login(new password) OK. Notes: reset tokens TTL = 1h
+  (`services/tokens.ts`; the browser-agent round trip outlived the first
+  token — a fresh one was pulled from the delivered email body via the
+  Resend API). Tokens are stored SHA-256-hashed with compare-and-set burn.
+- **1.2 Backups — FULLY CLOSED.** Daily volume backups confirmed ON in the
+  dashboard (retention 6 days). Scratch-restore rehearsal EXECUTED: temp
+  TCP proxy → `pg_dump` (774 KB, SHA256 84D2669B…42470A) → `pg_restore` into
+  a scratch postgres:16 container → **33/33 tables**, 13 users (incl. E2E
+  account with `emailVerified=t`), 6 verify + 3 reset token rows, 199 usage
+  events — restore path proven, proxy deleted immediately. Evidence in
+  `docs/RUNBOOK.md` §3a.
+- **1.3 Observability — WIRED + PIPELINES VERIFIED.**
+  - Backend: `SENTRY_DSN` set (runtime env, deployment `2472bec4` live).
+  - Web: `NEXT_PUBLIC_SENTRY_DSN` / `NEXT_PUBLIC_POSTHOG_KEY` /
+    `NEXT_PUBLIC_POSTHOG_HOST` set on the web service — and a real gap was
+    found + fixed: Railway passes service vars as Docker **build args**, but
+    `web/Dockerfile` never declared them, so the static export shipped
+    un-instrumented. Fix (commit `336f4c0`): `ARG`+`ENV` declarations before
+    `npm run build`; all services redeployed on the branch push.
+  - Pipeline verification: PostHog `capture/` → `{"status":"Ok"}`; Sentry
+    envelope ingest → HTTP 200 on BOTH DSNs (backend event
+    `bc9c0f11e06cc85b3654529eba14110e`, web event
+    `c07056ba6a6aad87c13c31c0b1e41b6a`) — synthetic "Phase 1.3 pipeline
+    verification" events visible in the Sentry dashboards.
+  - REMAINING NEEDS CONFIRMATION: uptime monitor account on
+    `https://loop-gpt.cyou/healthz` (operator chose not to sign up for it in
+    this pass); post-deploy chunk check that the keys are baked into the
+    rebuilt static export.
+- **Web bundle hygiene**: the deployed `web/` now builds from repo commit
+  `336f4c0` (branch `release/owned-staging-20260917` pushed).
+
 
 ## Production-readiness pass (2026-09-22, phases 0–7) — COMPLETE
 

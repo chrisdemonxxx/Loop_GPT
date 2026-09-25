@@ -80,11 +80,24 @@ psql "postgresql://postgres:scratch@127.0.0.1:54329/postgres" -c "\dt"
 # e.g.: SELECT count(*) FROM "User"; SELECT count(*) FROM "Conversation";
 ```
 
-**Validation record: PENDING.** To execute: needs the production
-`DATABASE_URL` value (dashboard → postgres service panel, or run
-`railway variables` locally). Record here when done: dump timestamp, source
-table count, scratch table count, spot-check results. Until recorded, the
-platform volume backups (§3b) are the only proven restore path.
+**Validation record (EXECUTED 2026-09-26).** Rehearsal ran against production:
+temporary public TCP proxy (`shortline.proxy.rlwy.net:29572 → postgres:5432`,
+created + deleted via MCP within the rehearsal window) → `pg_dump` (custom
+format, **774,164 bytes**, SHA256
+`84D2669BF2B79F464A62AA6E23927FE8DACF5165D9E1BA2F004B2471FF42470A`, local
+artifact `C:\Users\chris\AppData\Local\Temp\opencode\pg-rehearsal\loop-gpt-backup.dump`)
+→ `pg_restore --create` into a scratch `postgres:16-bookworm` Docker container
+→ verified: **33/33 public tables**, 13 `User` rows (incl. the E2E account with
+`emailVerified = t` — the flag flipped during the Phase 1 email tests is intact
+in the restored copy), 6 verify + 3 reset `Token` rows, 199 `UsageEvent` rows.
+Restore path proven; proxy removed immediately after. Scratch container torn
+down after evidence capture.
+
+> Gotcha recorded during the rehearsal: quoting `FROM "User"` through
+> PowerShell → docker → psql silently strips the double quotes, and
+> `SELECT count(*) FROM User` folds to the reserved `user` special relation
+> (returns 1) — use stdin (`psql < file.sql`) or `docker exec -i` for
+> identifier-quoted SQL on Windows.
 
 ### 3b. Platform volume backup → restore (dashboard flow)
 
