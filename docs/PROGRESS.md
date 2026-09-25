@@ -365,6 +365,36 @@ gated by the full suites.
 2.7 composer gaps (drag-and-drop uploads with drop-zone overlay,
 paste-image support, upload progress + visible errors).
 
+## Phase 2.7 — Composer gaps (drag-drop, paste, upload progress + errors) — SHIPPED (2026-09-26, commit `13341a3`)
+
+- **Drag-and-drop**: `onDragEnter/Over/Leave/Drop` on the composer with a
+  visible dashed drop-zone overlay ("Drop files to attach", terracotta) —
+  `onDrop` was entirely absent before. Drag-depth tracking avoids flicker.
+- **Paste-to-attach**: `onPaste` on the textarea reads clipboard files
+  (images + supported docs) — also previously absent.
+- **Attach-time uploads**: new `useAttachments` hook uploads as files are
+  attached (both upload routes already accept `'new'` and mint the
+  conversation; the first upload's conversation is reused by later
+  attachments and the send), with per-chip progress bars (axios
+  `onUploadProgress`), visible error states with a **Retry** affordance
+  (image failures were silent before), and the 4-per-turn cap enforced in
+  one place. The send consumes the ready server ids — the silent send-time
+  upload path is deleted from `useChatStream`; send waits while an upload
+  is in flight so no attachment is silently dropped; failed chips stay
+  visible (retry/remove) instead of blocking the send.
+- `ensureConversation` prefers the conversation the uploads created, so a
+  fresh chat with an image attachment lands in the right conversation.
+- **Tests**: composer suite up to 10 (drop-zone visibility + file
+  dispatch, paste dispatch, progress bars on chips, error→retry wiring,
+  send enabled by a done attachment). Gates: frontend **64/64**,
+  Playwright **12/12**, tsc + build green. Deployed on `13341a3`; CI
+  green; live bundle carries drop-zone, progress, and retry signatures;
+  healthz 200.
+
+**Phase 2 COMPLETE: 2.1–2.7 all shipped and deployed.** The full critical
+UI/UX rebuild (audit §6 P1–P6 + 2.7) is live; next per plan: Phase 3
+(audit §8 "Important" 13–34).
+
 ## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
 
 - **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
