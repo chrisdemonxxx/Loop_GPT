@@ -1,15 +1,46 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { FileDown, Image as ImageIcon, Code, FileText, File, ChevronDown, DownloadIcon, Share2, Copy, GitCompare, X } from 'lucide-react'
-import { API_URL, authHeaders } from '../../lib/api'
+import {
+  FileDown, Image as ImageIcon, Code, FileText, File, ChevronDown, ChevronLeft, DownloadIcon,
+  Share2, Copy, GitCompare, X, Maximize2, Minimize2, RefreshCw, ExternalLink, Monitor, Tablet, Smartphone, Wrench,
+} from 'lucide-react'
+import { authHeaders } from '../../lib/api'
 import type { ArtifactRef } from '../../lib/stream'
 import Markdown from './Markdown'
+import { artifactHref, artifactFileId, downloadArtifact, openArtifactInNewTab, useAuthedText, useAuthedUrl, isVideoArtifact } from './artifactUrl'
+import { PdfView, SheetView, MermaidView, withErrorBridge, DEVICE_WIDTH, type ArtifactDevice } from './ArtifactViewers'
 
 interface Props {
   artifacts: ArtifactRef[]
   onClose: () => void
+  /** Focused artifact id (opened from an artifact card in the chat). */
+  focusId?: string | null
+  onBackToList?: () => void
+  /** Focus an artifact from the panel's own list (focus stays page-owned). */
+  onFocusArtifact?: (id: string) => void
+  /** In-flight artifact-producing tools → "Building…" placeholders. */
+  buildingKinds?: string[]
+  /** Composer prefill for the sandbox "Fix error" affordance. */
+  onFixError?: (prompt: string) => void
+}
+
+const WIDTH_KEY = 'artifactsPanelWidth'
+const MIN_W = 320
+const MAX_W = 720
+
+/** lg+ viewport check so the persisted width only applies on desktop. */
+function useIsDesktopViewport(): boolean {
+  const [isDesktop, setIsDesktop] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)')
+    const apply = () => setIsDesktop(mq.matches)
+    apply()
+    mq.addEventListener('change', apply)
+    return () => mq.removeEventListener('change', apply)
+  }, [])
+  return isDesktop
 }
 
 /** Group artifacts by base filename (stripping version suffixes). */
@@ -25,63 +56,101 @@ function groupVersions(artifacts: ArtifactRef[]): { base: string; versions: Arti
 
 type Tab = 'preview' | 'raw' | 'sandbox'
 
-export default function ArtifactsPanel({ artifacts, onClose }: Props) {
+const BUILDING_LABEL: Record<string, string> = {
+  create_document: 'Building document…',
+  generate_image: 'Generating image…',
+  generate_video: 'Generating video…',
+  generate_style: 'Rendering style…',
+}
+
+export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToList, onFocusArtifact, buildingKinds = [], onFixError }: Props) {
   const groups = groupVersions(artifacts)
-  const [expanded, setExpanded] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('preview')
-  const [textContent, setTextContent] = useState<string | null>(null)
-  const [published, setPublished] = useState<Record<string, string>>({})
-  const [diff, setDiff] = useState<{ from: string; to: string; lines: { sign: string; text: string }[] } | null>(null)
+  const focused = focusId ? artifacts.find((a) => a.id === focusId) || null : null
+  const isDesktopViewport = useIsDesktopViewport()
 
-  const selected = expanded ? artifacts.find((a) => a.id === expanded) : null
-
-  // Fetch text content for code/markdown artifacts when selected.
+  // ── Panel chrome: persisted width + fullscreen ─────────────────────────
+  const [width, setWidth] = useState(380)
+  const [fullscreen, setFullscreen] = useState(false)
   useEffect(() => {
-    if (!selected) { setTextContent(null); return }
-    const href = selected.url ? (selected.url.startsWith('http') ? selected.url : `${API_URL}${selected.url}`) : undefined
-    if (!href || selected.kind === 'image') { setTextContent(null); return }
-    let cancelled = false
-    fetch(href, { headers: authHeaders(false) })
-      .then((r) => r.text())
-      .then((text) => { if (!cancelled) setTextContent(text) })
-      .catch(() => { if (!cancelled) setTextContent(null) })
-    return () => { cancelled = true }
-  }, [selected])
-
-  async function download(a: ArtifactRef) {
-    const href = a.url ? (a.url.startsWith('http') ? a.url : `${API_URL}${a.url}`) : undefined
-    if (!href) return
-    try {
-      const res = await fetch(href, { headers: authHeaders(false) })
-      if (!res.ok) return
-      const blob = await res.blob()
-      const objectUrl = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = objectUrl; link.download = a.name; link.click(); link.remove()
-      URL.revokeObjectURL(objectUrl)
-    } catch { /* ignore */ }
+    const saved = Number(localStorage.getItem(WIDTH_KEY))
+    if (Number.isFinite(saved) && saved >= MIN_W && saved <= MAX_W) setWidth(saved)
+  }, [])
+  const dragRef = useRef<{ startX: number; startW: number } | null>(null)
+  const onDragStart = (e: React.PointerEvent) => {
+    if (fullscreen) return
+    dragRef.current = { startX: e.clientX, startW: width }
+    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+  }
+  const onDragMove = (e: React.PointerEvent) => {
+    if (!dragRef.current) return
+    const next = Math.min(MAX_W, Math.max(MIN_W, dragRef.current.startW + (dragRef.current.startX - e.clientX)))
+    setWidth(next)
+  }
+  const onDragEnd = () => {
+    if (dragRef.current) { dragRef.current = null; localStorage.setItem(WIDTH_KEY, String(width)) }
   }
 
+  // ── Focused view state ──────────────────────────────────────────────────
+  const [tab, setTab] = useState<Tab>('preview')
+  const [device, setDevice] = useState<ArtifactDevice>('desktop')
+  const [nonce, setNonce] = useState(0)
+  const [published, setPublished] = useState<Record<string, string>>({})
+  const [sandboxError, setSandboxError] = useState<string | null>(null)
+  const [diff, setDiff] = useState<{ from: string; to: string; lines: { sign: string; text: string }[] } | null>(null)
+
+  useEffect(() => { setTab('preview'); setSandboxError(null) }, [focusId])
+
+  const isHtml = !!(focused && /\.(html?|htm)$/i.test(focused.name))
+  const isSheet = !!(focused && (focused.kind === 'xlsx' || focused.kind === 'csv' || /\.(xlsx?|csv)$/i.test(focused.name)))
+  const isPdf = focused?.kind === 'pdf' || /\.(pdf)$/i.test(focused?.name || '')
+  const isMermaid = !!(focused && (/\.(mmd|mermaid)$/i.test(focused.name) || focused.kind === 'mermaid'))
+  const { text: textContent, loading: textLoading } = useAuthedText(
+    focused && focused.kind !== 'image' && !isVideoArtifact(focused) && !isPdf && !isSheet && !isMermaid ? artifactHref(focused.url) : undefined,
+  )
+  const mermaidText = useAuthedText(isMermaid ? artifactHref(focused?.url) : undefined)
+  // Images/videos need authed blob URLs — a raw <img src>/src would 401.
+  const focusHref = focused ? artifactHref(focused.url) : undefined
+  const focusImage = useAuthedUrl(focused?.kind === 'image' ? focusHref : undefined)
+  const focusVideo = useAuthedUrl(focused && isVideoArtifact(focused) ? focusHref : undefined)
+
+  // Sandbox error bridge: uncaught errors inside the previewed document.
+  useEffect(() => {
+    if (!focused || tab !== 'sandbox') return
+    const onMessage = (e: MessageEvent) => {
+      if (e.data && typeof e.data.__artifactError === 'string') setSandboxError(e.data.__artifactError)
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [focused, tab])
+
+  const fixPrompt = useCallback(() => {
+    if (!focused || !sandboxError) return
+    const source = (textContent || '').slice(0, 8000)
+    onFixError?.(
+      `Fix the error in the artifact "${focused.name}". The sandboxed preview threw:\n\n${sandboxError}\n\n` +
+      (source ? `Current source:\n\n\`\`\`\n${source}\n\`\`\`\n\n` : '') +
+      'Regenerate the corrected artifact.',
+    )
+  }, [focused, sandboxError, textContent, onFixError])
+
   async function togglePublish(a: ArtifactRef) {
-    const href = a.url ? (a.url.startsWith('http') ? a.url : `${API_URL}${a.url}`) : ''
-    const idMatch = href.match(/\/api\/files\/([^/]+)\//)
-    if (!idMatch) return
-    const id = idMatch[1]
+    const id = artifactFileId(a)
+    if (!id) return
     if (published[a.id]) {
-      await fetch(`${API_URL}/api/files/${id}/publish`, { method: 'DELETE', headers: authHeaders() })
+      await fetch(`/api/files/${id}/publish`, { method: 'DELETE', headers: authHeaders() })
       setPublished((p) => { const n = { ...p }; delete n[a.id]; return n })
       return
     }
-    const res = await fetch(`${API_URL}/api/files/${id}/publish`, { method: 'POST', headers: authHeaders() })
+    const res = await fetch(`/api/files/${id}/publish`, { method: 'POST', headers: authHeaders() })
     if (!res.ok) return
     const { url } = await res.json()
-    setPublished((p) => ({ ...p, [a.id]: `${API_URL}${url}` }))
+    setPublished((p) => ({ ...p, [a.id]: url }))
   }
 
   async function compareVersions(g: { base: string; versions: ArtifactRef[] }) {
     const [older, newer] = [g.versions[0], g.versions[g.versions.length - 1]]
     const read = async (a: ArtifactRef) => {
-      const href = a.url ? (a.url.startsWith('http') ? a.url : `${API_URL}${a.url}`) : ''
+      const href = artifactHref(a.url) || ''
       const res = await fetch(href, { headers: authHeaders(false) })
       return res.ok ? (await res.text()).split('\n') : []
     }
@@ -89,162 +158,248 @@ export default function ArtifactsPanel({ artifacts, onClose }: Props) {
     setDiff({ from: older.name, to: newer.name, lines: lineDiff(fromLines, toLines) })
   }
 
+  const openInNewTab = focused ? () => openArtifactInNewTab(focused) : undefined
+
   return (
     <motion.aside
       initial={{ x: 400, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: 400, opacity: 0 }}
       transition={{ type: 'spring', stiffness: 320, damping: 34 }}
-      className="fixed lg:relative inset-y-0 right-0 z-40 lg:z-auto flex w-full max-w-[92vw] sm:max-w-[440px] lg:w-[380px] lg:max-w-none shrink-0 px-2.5 sm:px-3 lg:p-3 h-full pt-[max(0.625rem,env(safe-area-inset-top))] pb-[max(0.625rem,env(safe-area-inset-bottom))] lg:pt-3 lg:pb-3"
+      style={fullscreen ? undefined : isDesktopViewport ? { width } : undefined}
+      className={
+        fullscreen
+          ? 'fixed inset-0 z-50 flex p-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))]'
+          : 'fixed lg:relative inset-y-0 right-0 z-40 lg:z-auto flex w-full max-w-[92vw] sm:max-w-[440px] lg:max-w-none shrink-0 px-2.5 sm:px-3 lg:p-3 h-full pt-[max(0.625rem,env(safe-area-inset-top))] pb-[max(0.625rem,env(safe-area-inset-bottom))] lg:pt-3 lg:pb-3'
+      }
     >
-      <div className="glass-strong rounded-2xl h-full flex flex-col overflow-hidden shadow-panel">
-        {/* Header */}
-        <div className="flex items-center gap-2.5 px-4 py-3 border-b border-white/5">
-          <div className="w-2 h-2 rounded-full bg-[#c96442]" />
-          <div className="flex-1">
-            <div className="text-sm font-semibold text-slate-100">Artifacts</div>
-            <div className="text-[11px] text-slate-500">{artifacts.length} items</div>
-          </div>
-          {onClose && (
-            <button onClick={onClose} className="p-1 -mr-1 rounded-lg hover:bg-white/5 text-slate-400" title="Close"><ChevronDown size={16} /></button>
-          )}
-        </div>
-
-        {/* Version diff */}
-        {diff && (
-          <div className="border-b border-white/5 bg-black/20">
-            <div className="flex items-center justify-between px-4 py-2">
-              <div className="text-[11px] text-slate-400 truncate">{diff.from} → {diff.to}</div>
-              <button onClick={() => setDiff(null)} className="text-slate-500 hover:text-slate-300"><X size={13} /></button>
-            </div>
-            <div className="max-h-56 overflow-auto px-3 pb-2 font-mono text-[11px] leading-relaxed">
-              {diff.lines.map((l, i) => (
-                <div key={i} className={l.sign === '+' ? 'text-emerald-400' : l.sign === '-' ? 'text-rose-400' : 'text-slate-500'}>
-                  <span className="select-none">{l.sign} </span>{l.text || '\u00a0'}
-                </div>
-              ))}
-            </div>
+      <div className="glass-strong rounded-2xl h-full w-full flex flex-col overflow-hidden shadow-panel relative">
+        {/* Drag handle (desktop resize, persisted) */}
+        {!fullscreen && (
+          <div
+            onPointerDown={onDragStart}
+            onPointerMove={onDragMove}
+            onPointerUp={onDragEnd}
+            onPointerCancel={onDragEnd}
+            title="Drag to resize"
+            className="hidden lg:flex absolute left-0 inset-y-0 w-1.5 z-10 cursor-col-resize items-center justify-center group"
+          >
+            <span className="w-0.5 h-10 rounded-full bg-white/10 group-hover:bg-[#c96442]/60 transition" />
           </div>
         )}
 
-        {/* Selected artifact detail */}
-        <AnimatePresence>
-          {selected && (
-            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-              className="border-b border-white/5 overflow-hidden">
-              <div className="p-3 space-y-3">
-                {/* Tab bar */}
-                <div className="flex gap-1 text-[11px]">
-                  {['preview', 'raw', 'sandbox'].filter((t) => t !== 'sandbox' || selected.kind === 'file').map((t) => (
-                    <button key={t} onClick={() => setTab(t as Tab)}
-                      className={`px-2.5 py-1 rounded-lg transition ${tab === t ? 'bg-white/10 text-slate-200' : 'text-slate-500 hover:text-slate-300'}`}>
-                      {t === 'preview' ? 'Preview' : t === 'raw' ? 'Raw' : 'Sandbox'}
+        {/* Header */}
+        <div className="flex items-center gap-2.5 px-4 py-3 border-b border-white/5 shrink-0">
+          {focused && onBackToList ? (
+            <button onClick={onBackToList} className="p-1 -ml-1 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-200 transition" title="Back to list"><ChevronLeft size={16} /></button>
+          ) : (
+            <div className="w-2 h-2 rounded-full bg-[#c96442]" />
+          )}
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold text-slate-100 truncate">{focused ? focused.name : 'Artifacts'}</div>
+            <div className="text-[11px] text-slate-500 truncate">
+              {focused ? focused.kind.toUpperCase() : `${artifacts.length} item${artifacts.length === 1 ? '' : 's'}`}
+            </div>
+          </div>
+          <button onClick={() => setFullscreen((v) => !v)} className="p-1 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-200 transition" title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
+            {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-200 transition" title="Close"><X size={16} /></button>
+        </div>
+
+        {/* ── Focused artifact view ─────────────────────────────────────── */}
+        {focused && (
+          <>
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-white/5 shrink-0 overflow-x-auto">
+              {(['preview', 'raw', 'sandbox'] as Tab[])
+                .filter((t) => t !== 'sandbox' || isHtml)
+                .map((t) => (
+                  <button key={t} onClick={() => { setTab(t); setSandboxError(null) }}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] transition ${tab === t ? 'bg-white/10 text-slate-200' : 'text-slate-500 hover:text-slate-300'}`}>
+                    {t === 'preview' ? 'Preview' : t === 'raw' ? 'Raw' : 'Sandbox'}
+                  </button>
+                ))}
+              <span className="flex-1" />
+              {isHtml && tab === 'sandbox' && (
+                <>
+                  {(['desktop', 'tablet', 'mobile'] as ArtifactDevice[]).map((d) => (
+                    <button key={d} onClick={() => setDevice(d)} title={`Preview at ${d} size`}
+                      className={`p-1 rounded-lg transition ${device === d ? 'bg-white/10 text-slate-200' : 'text-slate-500 hover:text-slate-300'}`}>
+                      {d === 'desktop' ? <Monitor size={13} /> : d === 'tablet' ? <Tablet size={13} /> : <Smartphone size={13} />}
                     </button>
                   ))}
-                </div>
+                  <button onClick={() => { setNonce((n) => n + 1); setSandboxError(null) }} title="Refresh preview" className="p-1 rounded-lg text-slate-500 hover:text-slate-300 transition"><RefreshCw size={13} /></button>
+                </>
+              )}
+              {openInNewTab && (
+                <button onClick={openInNewTab} title="Open in new tab (short-lived private link)" className="p-1 rounded-lg text-slate-500 hover:text-slate-300 transition"><ExternalLink size={13} /></button>
+              )}
+            </div>
 
-                {/* Content */}
-                <div className="max-h-[300px] overflow-auto">
-                  {tab === 'preview' && selected.kind === 'image' && (
-                    <img src={selected.url?.startsWith('http') ? selected.url : `${API_URL}${selected.url}`}
-                      alt={selected.name} className="w-full rounded-xl border border-white/10" />
+            {/* Content */}
+            <div className="flex-1 min-h-0 overflow-auto p-3">
+              {tab === 'preview' && focused.kind === 'image' && (
+                focusImage
+                  ? <img src={focusImage} alt={focused.name} className="w-full rounded-xl border border-white/10" />
+                  : <LoadingShim />
+              )}
+              {tab === 'preview' && isVideoArtifact(focused) && (
+                focusVideo
+                  ? <video src={focusVideo} controls playsInline preload="metadata" className="w-full rounded-xl border border-white/10 bg-black"><track kind="captions" /></video>
+                  : <LoadingShim />
+              )}
+              {tab === 'preview' && isPdf && <PdfView a={focused} />}
+              {tab === 'preview' && isSheet && <SheetView a={focused} />}
+              {tab === 'preview' && isMermaid && (mermaidText.text ? <MermaidView code={mermaidText.text} /> : <LoadingShim />)}
+              {tab === 'preview' && !isPdf && !isSheet && !isMermaid && focused.kind !== 'image' && !isVideoArtifact(focused) && (
+                textLoading ? <LoadingShim /> :
+                /\.(md|txt)$/i.test(focused.name) && textContent !== null ? (
+                  <div className="text-[13px] leading-relaxed text-slate-200"><Markdown content={textContent.slice(0, 20000)} /></div>
+                ) : textContent !== null ? (
+                  <pre className="text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap font-mono">{textContent.slice(0, 20000)}</pre>
+                ) : null
+              )}
+              {tab === 'raw' && (textLoading ? <LoadingShim /> : (
+                <pre className="text-[12px] leading-relaxed text-slate-400 whitespace-pre-wrap font-mono">{(textContent || '').slice(0, 30000)}</pre>
+              ))}
+              {tab === 'sandbox' && isHtml && (
+                <div className="h-full flex flex-col gap-2">
+                  {sandboxError && (
+                    <div className="rounded-xl border border-rose-500/20 bg-rose-500/[0.04] px-3 py-2 flex items-start gap-2">
+                      <span className="text-[12px] text-rose-300 flex-1 min-w-0 break-all">{sandboxError}</span>
+                      {onFixError && (
+                        <button type="button" onClick={fixPrompt} className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#c96442] text-white text-[11px] font-medium hover:bg-[#b5593a] transition">
+                          <Wrench size={11} /> Fix error
+                        </button>
+                      )}
+                    </div>
                   )}
-                  {tab === 'preview' && textContent !== null && /\.(md|txt)$/i.test(selected.name) && (
-                    <div className="text-[13px] leading-relaxed text-slate-200"><Markdown content={textContent.slice(0, 20000)} /></div>
-                  )}
-                  {tab === 'preview' && textContent !== null && !/\.(md|txt)$/i.test(selected.name) && (
-                    <pre className="text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap font-mono">{textContent.slice(0, 20000)}</pre>
-                  )}
-                  {tab === 'raw' && textContent !== null && (
-                    <pre className="text-[12px] leading-relaxed text-slate-400 whitespace-pre-wrap font-mono">{textContent.slice(0, 30000)}</pre>
-                  )}
-                  {(tab === 'sandbox' && selected.kind === 'file') && (
-                    textContent !== null ? (
+                  <div className="flex-1 min-h-0 flex justify-center">
+                    {textContent !== null ? (
                       <iframe
-                        title={selected.name}
-                        srcDoc={textContent}
+                        key={`${focused.id}-${nonce}`}
+                        title={`Sandbox: ${focused.name}`}
+                        srcDoc={withErrorBridge(textContent)}
                         // No allow-same-origin: the document runs in an opaque
                         // origin and cannot touch the parent app or its storage.
-                        sandbox="allow-scripts allow-popups"
-                        className="w-full h-[280px] rounded-xl border border-white/10 bg-white"
+                        sandbox="allow-scripts allow-popups allow-forms"
+                        style={{ width: DEVICE_WIDTH[device] }}
+                        className="h-full max-h-full rounded-xl border border-white/10 bg-white"
                       />
-                    ) : (
-                      <div className="p-4 text-center text-[12px] text-slate-500">Loading preview…</div>
-                    )
-                  )}
-                  {(tab !== 'preview' && textContent === null) && (
-                    <div className="p-4 text-center text-[12px] text-slate-500">Loading content…</div>
-                  )}
+                    ) : <LoadingShim />}
+                  </div>
                 </div>
-
-                {/* Download / Publish */}
-                <button onClick={() => download(selected)}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl glass hover:bg-white/5 text-[12px] text-slate-200 transition">
-                  <DownloadIcon size={13} /> Download {selected.name}
-                </button>
-                <button onClick={() => togglePublish(selected)}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl glass hover:bg-white/5 text-[12px] text-slate-200 transition">
-                  <Share2 size={13} /> {published[selected.id] ? 'Unpublish' : 'Publish view-only link'}
-                </button>
-                {published[selected.id] && (
-                  <div className="text-[11px] text-slate-400 break-all flex items-center gap-1.5">
-                    <a href={published[selected.id]} target="_blank" rel="noreferrer" className="text-sky-400 hover:underline">{published[selected.id]}</a>
-                    <button onClick={() => navigator.clipboard?.writeText(published[selected.id])} className="text-slate-500 hover:text-slate-300" title="Copy"><Copy size={11} /></button>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Artifact list */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
-          {groups.length === 0 && (
-            <div className="h-full flex flex-col items-center justify-center text-center text-slate-600 gap-2">
-              <FileText size={28} className="text-slate-700" />
-              <p className="text-xs max-w-[200px]">Generated files and code snippets appear here as the agent creates them.</p>
+              )}
             </div>
-          )}
-          {groups.map((g) => {
-            const latest = g.versions[g.versions.length - 1]
-            const isExpanded = expanded === latest.id
-            return (
-              <div key={g.base} className="glass rounded-xl overflow-hidden">
-                <button
-                  onClick={() => setExpanded(isExpanded ? null : latest.id)}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-white/[0.03] transition"
-                >
-                  <IconForKind latest={latest} />
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-[13px] text-slate-200 truncate">{g.base}</span>
-                    {g.versions.length > 1 && (
-                      <span className="text-[10px] text-slate-500">{g.versions.length} versions</span>
-                    )}
-                  </span>
-                  <span className="text-[10px] uppercase tracking-wide text-slate-500">{latest.kind}</span>
+
+            {/* Footer actions */}
+            <div className="px-3 py-2.5 border-t border-white/5 space-y-2 shrink-0">
+              <div className="flex gap-2">
+                <button onClick={() => downloadArtifact(focused, artifactHref(focused.url))}
+                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-xl glass hover:bg-white/5 text-[12px] text-slate-200 transition">
+                  <DownloadIcon size={13} /> Download
                 </button>
-                {isExpanded && g.versions.length > 1 && (
-                  <div className="border-t border-white/5 px-3 py-1.5 space-y-1">
-                    <button onClick={() => compareVersions(g)}
-                      className="flex items-center gap-1.5 w-full text-left text-[11px] text-[#c96442] hover:underline pb-1">
-                      <GitCompare size={11} /> Compare {g.versions.length} versions
-                    </button>
-                    {g.versions.map((v) => (
-                      <button key={v.id} onClick={() => download(v)}
-                        className="flex items-center gap-2 w-full text-left text-[11px] text-slate-400 hover:text-slate-200 transition py-0.5">
-                        <span className="font-mono">v{String(g.versions.indexOf(v) + 1)}</span>
-                        <span className="truncate">{v.name}</span>
-                        <DownloadIcon size={10} className="ml-auto shrink-0" />
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <button onClick={() => togglePublish(focused)}
+                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-xl glass hover:bg-white/5 text-[12px] text-slate-200 transition">
+                  <Share2 size={13} /> {published[focused.id] ? 'Unpublish' : 'Publish link'}
+                </button>
               </div>
-            )
-          })}
-        </div>
+              {published[focused.id] && (
+                <div className="text-[11px] text-slate-400 break-all flex items-center gap-1.5">
+                  <a href={published[focused.id]} target="_blank" rel="noreferrer" className="text-sky-400 hover:underline">{published[focused.id]}</a>
+                  <button onClick={() => navigator.clipboard?.writeText(published[focused.id])} className="text-slate-500 hover:text-slate-300" title="Copy"><Copy size={11} /></button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* ── List view ─────────────────────────────────────────────────── */}
+        {!focused && (
+          <>
+            {diff && (
+              <div className="border-b border-white/5 bg-black/20 shrink-0">
+                <div className="flex items-center justify-between px-4 py-2">
+                  <div className="text-[11px] text-slate-400 truncate">{diff.from} → {diff.to}</div>
+                  <button onClick={() => setDiff(null)} className="text-slate-500 hover:text-slate-300"><X size={13} /></button>
+                </div>
+                <div className="max-h-56 overflow-auto px-3 pb-2 font-mono text-[11px] leading-relaxed">
+                  {diff.lines.map((l, i) => (
+                    <div key={i} className={l.sign === '+' ? 'text-emerald-400' : l.sign === '-' ? 'text-rose-400' : 'text-slate-500'}>
+                      <span className="select-none">{l.sign} </span>{l.text || '\u00a0'}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto p-3 space-y-1.5 min-h-0">
+              {/* In-flight artifact builds (per-artifact streaming state) */}
+              {buildingKinds.map((k, i) => (
+                <div key={`${k}-${i}`} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5 flex items-center gap-2.5">
+                  <FileDown size={15} className="text-[#c96442] shrink-0 animate-pulse" />
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-[13px] text-slate-300 truncate">{BUILDING_LABEL[k] || 'Building…'}</span>
+                    <span className="block h-1.5 mt-1 rounded-full shimmer" style={{ width: '60%' }} />
+                  </span>
+                </div>
+              ))}
+
+              {groups.length === 0 && buildingKinds.length === 0 && (
+                <div className="h-full flex flex-col items-center justify-center text-center text-slate-600 gap-2">
+                  <FileText size={28} className="text-slate-700" />
+                  <p className="text-xs max-w-[200px]">Generated files and code snippets appear here as the agent creates them.</p>
+                </div>
+              )}
+              {groups.map((g) => {
+                const latest = g.versions[g.versions.length - 1]
+                return (
+                  <div key={g.base} className="glass rounded-xl overflow-hidden">
+                    <button
+                      onClick={() => onFocusArtifact?.(latest.id)}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-white/[0.03] transition"
+                    >
+                      <IconForKind latest={latest} />
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-[13px] text-slate-200 truncate">{g.base}</span>
+                        {g.versions.length > 1 && (
+                          <span className="text-[10px] text-slate-500">{g.versions.length} versions</span>
+                        )}
+                      </span>
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">{latest.kind}</span>
+                    </button>
+                    {g.versions.length > 1 && (
+                      <div className="border-t border-white/5 px-3 py-1.5 space-y-1">
+                        <button onClick={() => compareVersions(g)}
+                          className="flex items-center gap-1.5 w-full text-left text-[11px] text-[#c96442] hover:underline pb-1">
+                          <GitCompare size={11} /> Compare {g.versions.length} versions
+                        </button>
+                        {g.versions.map((v) => (
+                          <button key={v.id} onClick={() => downloadArtifact(v, artifactHref(v.url))}
+                            className="flex items-center gap-2 w-full text-left text-[11px] text-slate-400 hover:text-slate-200 transition py-0.5">
+                            <span className="font-mono">v{String(g.versions.indexOf(v) + 1)}</span>
+                            <span className="truncate">{v.name}</span>
+                            <DownloadIcon size={10} className="ml-auto shrink-0" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
       </div>
     </motion.aside>
+  )
+}
+
+function LoadingShim() {
+  return (
+    <div className="flex items-center gap-2 justify-center py-10 text-[12px] text-slate-500">
+      <span className="shimmer inline-block h-2.5 w-2.5 rounded-full" /> Loading…
+    </div>
   )
 }
 

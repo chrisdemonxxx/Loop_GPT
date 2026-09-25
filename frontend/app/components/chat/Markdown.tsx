@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { Check, Copy } from 'lucide-react'
+import { MermaidView } from './ArtifactViewers'
 import 'highlight.js/styles/atom-one-dark.css'
 
 function CodeBlock({ className, children }: { className?: string; children: any }) {
@@ -17,6 +18,8 @@ function CodeBlock({ className, children }: { className?: string; children: any 
       setTimeout(() => setCopied(false), 1400)
     })
   }
+  // Mermaid fences render as diagrams in-flow (audit P2: renderer was absent).
+  if (lang === 'mermaid') return <MermaidView code={text} />
   return (
     <div className="my-3 overflow-hidden rounded-lg border border-white/10 bg-[#0d1117]">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/10 bg-white/[0.03]">

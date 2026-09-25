@@ -29,6 +29,8 @@ interface MessageListProps {
   onDeny?: () => void
   toolCount?: number
   onOpenTools?: () => void
+  /** Artifact cards open the right-hand panel focused on the artifact (P2). */
+  onOpenArtifact?: (artifact: ArtifactRef) => void
   onEditMessage: (messageId: string, content: string) => void
   onRetryBefore: (beforeIndex: number) => void
   onStartPrompt?: (prompt: string) => void
@@ -39,7 +41,7 @@ interface MessageListProps {
 export default function MessageList({
   messages, liveUser, liveSteps, liveAnswer, liveThinking, liveArtifacts,
   running, statusMsg, mode, pendingApproval, onApprove, onDeny, toolCount, onOpenTools,
-  onEditMessage, onRetryBefore, onStartPrompt,
+  onOpenArtifact, onEditMessage, onRetryBefore, onStartPrompt,
 }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null)
   const showEmpty = messages.length === 0 && !liveUser
@@ -58,6 +60,7 @@ export default function MessageList({
             <MessageBubble
               key={m.id}
               message={m}
+              onOpenArtifact={onOpenArtifact}
               onEdit={m.role === 'user' ? () => onEditMessage(m.id, m.content) : undefined}
               onRetry={m.role === 'assistant' ? () => onRetryBefore(idx) : undefined}
             />
@@ -102,7 +105,7 @@ export default function MessageList({
               {/* In-run artifacts render in the flow, not only after reload */}
               {liveArtifacts.length > 0 && (
                 <div className="flex flex-wrap gap-2">
-                  {liveArtifacts.map((a) => <ArtifactCard key={a.id} a={a} />)}
+                  {liveArtifacts.map((a) => <ArtifactCard key={a.id} a={a} onOpen={onOpenArtifact ? () => onOpenArtifact(a) : undefined} />)}
                 </div>
               )}
 

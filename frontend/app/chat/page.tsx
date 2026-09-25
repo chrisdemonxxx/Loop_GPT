@@ -46,6 +46,9 @@ export default function ChatPage() {
   const [researchOpen, setResearchOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [toolCount, setToolCount] = useState(0)
+  /** Artifact panel focus (P2): set by artifact-card clicks; the panel opens
+   * focused and "Back to list" clears it while staying open. */
+  const [focusedArtifactId, setFocusedArtifactId] = useState<string | null>(null)
 
   // ── Attachments (null = all tools, the server default) ─────────────────────
   const [selectedImages, setSelectedImages] = useState<File[]>([])
@@ -270,6 +273,23 @@ export default function ChatPage() {
     localStorage.removeItem('token'); localStorage.removeItem('user')
     window.location.href = '/login'
   }
+  /** Artifact cards (chat + live run) open the right panel focused (audit P2). */
+  const openArtifact = (a: import('../lib/stream').ArtifactRef) => {
+    setFocusedArtifactId(a.id)
+    panels.setArtifactsOpen(true)
+  }
+  /** "Fix error" from the sandboxed preview: pre-fill the composer with the
+   * error + artifact source so the agent regenerates a corrected artifact. */
+  const handleFixError = (prompt: string) => {
+    setInput(prompt)
+    requestAnimationFrame(() => document.querySelector('textarea')?.focus())
+  }
+  /** Per-artifact "Building…" placeholders: artifact-producing tools that are
+   * in flight in the live turn (create_document/generate_image/video/style). */
+  const ARTIFACT_TOOLS = new Set(['create_document', 'generate_image', 'generate_video', 'generate_style'])
+  const buildingKinds = chat.running
+    ? [...new Set(chat.liveSteps.filter((s) => s.kind === 'tool' && s.tool && !s.tool.result && ARTIFACT_TOOLS.has(s.tool.name)).map((s) => s.tool!.name))]
+    : []
   // Every artifact from the loaded conversation plus the live run.
   const allArtifacts = [
     ...(messages as Message[]).flatMap((m) => (m.metadata?.artifacts as import('../lib/stream').ArtifactRef[] | undefined) || []),
@@ -380,6 +400,7 @@ export default function ChatPage() {
           onDeny={() => { chat.pendingApproval?.approve(false).then(() => chat.setPendingApproval(null)) }}
           toolCount={toolCount}
           onOpenTools={() => { setSettingsTab('tools'); setShowSettings(true) }}
+          onOpenArtifact={openArtifact}
           onEditMessage={forkAtMessage}
           onRetryBefore={retryBefore}
         />
@@ -426,7 +447,15 @@ export default function ChatPage() {
           inline per turn, audit P1/P2). ─────────────────────────────────── */}
       <AnimatePresence initial={false}>
         {panels.artifactsOpen && (
-          <ArtifactsPanel artifacts={allArtifacts} onClose={() => panels.setArtifactsOpen(false)} />
+          <ArtifactsPanel
+            artifacts={allArtifacts}
+            focusId={focusedArtifactId}
+            onBackToList={() => setFocusedArtifactId(null)}
+            onFocusArtifact={(id) => setFocusedArtifactId(id)}
+            buildingKinds={buildingKinds}
+            onFixError={handleFixError}
+            onClose={() => { panels.setArtifactsOpen(false); setFocusedArtifactId(null) }}
+          />
         )}
       </AnimatePresence>
 

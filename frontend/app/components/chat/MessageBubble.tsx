@@ -2,26 +2,27 @@
 
 import { useState } from 'react'
 import { Copy, Check, Edit2, RotateCcw, Sparkles, Volume2, Pause, Square, Brain } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import { type ArtifactRef } from '../../lib/stream'
 import type { Message, StoredStep } from './types'
 import Markdown from './Markdown'
 import { useAttachmentUrl } from './artifactUrl'
-import { ArtifactCard, ArtifactViewer } from './ArtifactCard'
+import { ArtifactCard } from './ArtifactCard'
 import TurnActivity from './TurnActivity'
 import { useSpeech } from '../../lib/voice'
 
 /** One chat row: user bubble (right, editable) or assistant turn (markdown,
- * artifacts, sources, enhanced-prompt diff, read-aloud, retry). */
+ * artifacts, sources, enhanced-prompt diff, read-aloud, retry). Artifact
+ * cards open the right-hand artifacts panel (page-owned focus state). */
 export function MessageBubble({
-  message, onEdit, onRetry,
+  message, onEdit, onRetry, onOpenArtifact,
 }: {
   message: Message
   onEdit?: () => void
   onRetry?: () => void
+  onOpenArtifact?: (artifact: ArtifactRef) => void
 }) {
   const [copied, setCopied] = useState(false)
-  const [viewer, setViewer] = useState<ArtifactRef | null>(null)
   const [showPrompt, setShowPrompt] = useState(false)
   const artifacts: ArtifactRef[] = message.metadata?.artifacts || []
   const storedSteps: StoredStep[] = Array.isArray(message.metadata?.steps) ? message.metadata.steps : []
@@ -123,7 +124,7 @@ export function MessageBubble({
 
       {artifacts.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {artifacts.map((a) => <ArtifactCard key={a.id} a={a} onOpen={() => setViewer(a)} />)}
+          {artifacts.map((a) => <ArtifactCard key={a.id} a={a} onOpen={onOpenArtifact ? () => onOpenArtifact(a) : undefined} />)}
         </div>
       )}
 
@@ -163,9 +164,6 @@ export function MessageBubble({
         )}
         {onRetry && <ActionBtn onClick={onRetry} title="Retry" ariaLabel="Retry response" icon={<RotateCcw size={14} />} />}
       </div>
-
-      {/* Fullscreen artifact viewer (image zoom / code render). */}
-      <AnimatePresence>{viewer && <ArtifactViewer a={viewer} onClose={() => setViewer(null)} />}</AnimatePresence>
     </motion.div>
   )
 }
