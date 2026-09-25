@@ -30,24 +30,18 @@ jobs:
       - run: npx --no-install playwright install --with-deps chromium
       - run: npx --no-install playwright test
 
-  web-harness:
+  # NOTE: the former `web-harness` job (Vite/React-19 alternative client in
+  # web/src) was removed when that client was archived to attic/web-vite-client.
+  # web/ still contains the live deployment path: Dockerfile + nginx.template.conf
+  # + railway.json build the Next.js frontend/ static export and proxy /api + /v1.
+  owned-web-docker:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: web
-    env:
-      VITE_API_ORIGIN: ''
-      WEB_DEV_API_ORIGIN: http://127.0.0.1:9
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci --no-audit --no-fund
-      - run: npm run build
-      - run: npm test
-      - run: npx --no-install playwright install --with-deps chromium
-      - run: npm run test:browser
+      - name: Validate owned-web deployment files (nginx template + entrypoint present)
+        run: |
+          test -f web/Dockerfile
+          test -f web/nginx.template.conf
+          test -f web/Dockerfile.dockerignore
+          test -f web/railway.json
