@@ -93,6 +93,13 @@ const streamInput = z.object({
   stepMode: z.boolean().optional(),
   incognito: z.boolean().optional(),
   projectId: z.string().min(1).max(160).optional(),
+  /** Web-search override (audit §8-25): true forces web_search+web_fetch in;
+   * false strips them — regardless of the per-chat tool selection. Agent
+   * mode only (chat has no tools; research requires them). */
+  webSearch: z.boolean().optional(),
+  /** Extended-thinking override (audit §8-26): per-run CoT switch for
+   * thinking-capable models (e.g. Qwen /think vs /no_think). */
+  thinking: z.boolean().optional(),
 }).refine(
   (value) => value.content || value.attachmentId || (value.attachmentIds?.length ?? 0) > 0,
   'Message content or attachment is required',
@@ -122,8 +129,17 @@ export async function streamAgentRun(req: Request, res: Response) {
   // Incognito runs never offer the remember tool (memory stays untouched).
   const selectableNames = [...reviewed.map((tool) => tool.name), ...connectionIds.map(connectionToolName)]
     .filter((name) => !(input.data.incognito && name === 'remember'))
-  const selectedNames = mode === 'chat' ? [] : input.data.toolNames ?? (mode === 'research' ? ['web_search', 'web_fetch'] : selectableNames)
+  let selectedNames = mode === 'chat' ? [] : input.data.toolNames ?? (mode === 'research' ? ['web_search', 'web_fetch'] : selectableNames)
   if (selectedNames.some((name) => !selectableNames.includes(name))) return res.status(400).json({ error: 'Requested tool is not available' })
+  // Web-search toggle (audit §8-25): agent mode only. The toggle is an
+  // explicit override of the tool list — on forces the web tools in even
+  // when the per-chat selection excluded them; off strips them out.
+  if (mode === 'agent' && input.data.webSearch !== undefined) {
+    const WEB_TOOLS = ['web_search', 'web_fetch']
+    selectedNames = input.data.webSearch
+      ? [...new Set([...selectedNames, ...WEB_TOOLS.filter((n) => selectableNames.includes(n))])]
+      : selectedNames.filter((n) => !WEB_TOOLS.includes(n))
+  }
   if (mode === 'research' && !['web_search', 'web_fetch'].every((name) => selectedNames.includes(name))) return res.status(400).json({ error: 'Research requires web_search and web_fetch' })
   if (attachmentIds.length && conversationId === 'new') return res.status(400).json({ error: 'Use the conversation ID returned by image upload' })
   const lifecycle = requestLifecycle(res)
@@ -342,6 +358,8 @@ export async function streamAgentRun(req: Request, res: Response) {
           autoApprove: input.data.autoApprove === true,
           stepMode: input.data.stepMode === true,
           useMemory: input.data.incognito !== true,
+          /** Extended-thinking override (audit §8-26). */
+          thinking: input.data.thinking,
           ctx: authorizedCtx,
           beforeDispatch,
         })

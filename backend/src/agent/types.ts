@@ -107,4 +107,11 @@ export interface RunAgentOptions {
     stepMode?: boolean
     /** Incognito: skip memory injection and block the remember tool. */
     useMemory?: boolean
+    /**
+     * Extended-thinking override (audit §8-26): per-run CoT switch for
+     * thinking-capable models. `true` forces thinking on (e.g. Qwen /think),
+     * `false` forces it off (/no_think); omitted keeps the operator env
+     * default (QWEN_THINKING).
+     */
+    thinking?: boolean
   }

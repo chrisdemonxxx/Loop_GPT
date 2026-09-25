@@ -247,6 +247,47 @@ describe('workspace runtime authorization', () => {
     expect(saved.content).toBe('Completed')
   })
 
+  it('webSearch=false strips web tools even from the default selection (audit §8-25)', async () => {
+    const f = await fixture()
+    const response = await request(`/api/agent/${f.conversationId}/stream`, alice, 'POST', { content: 'Hi', mode: 'agent', workspaceId: f.workspaceId, webSearch: false })
+    expect(response.status).toBe(200)
+    // Drain the SSE stream: the run is still in flight when headers arrive.
+    await response.text()
+    const tools = JSON.stringify(remote.turn.mock.calls[0][0].tools)
+    expect(tools).not.toContain('web_search')
+    expect(tools).not.toContain('web_fetch')
+  })
+
+  it('webSearch=true forces web tools past an excluding tool selection (audit §8-25)', async () => {
+    const f = await fixture()
+    const response = await request(`/api/agent/${f.conversationId}/stream`, alice, 'POST', { content: 'Hi', mode: 'agent', workspaceId: f.workspaceId, toolNames: ['calculator'], webSearch: true })
+    expect(response.status).toBe(200)
+    // Drain before asserting on the dispatched model call.
+    await response.text()
+    const tools = JSON.stringify(remote.turn.mock.calls[0][0].tools)
+    expect(tools).toContain('web_search')
+    expect(tools).toContain('web_fetch')
+    expect(tools).toContain('calculator')
+  })
+
+  it('applies the per-run thinking override to the model prompt (audit §8-26)', async () => {
+    const f = await fixture(); const ctx = await grant(f, ['calculator'])
+    const systemOf = (call: number) => String(remote.turn.mock.calls[call][0].messages[0].content)
+    // Default (env unset in tests): /no_think.
+    await runAgent({ provider: 'huggingface', model: 'test-model', ctx, toolNames: ['calculator'], messages: [{ role: 'user', content: 'Hi' }] })
+    expect(systemOf(0)).toContain('/no_think')
+    // Explicit on wins over the env default.
+    await runAgent({ provider: 'huggingface', model: 'test-model', ctx, toolNames: ['calculator'], messages: [{ role: 'user', content: 'Hi' }], thinking: true })
+    expect(systemOf(1)).toContain('/think')
+    expect(systemOf(1)).not.toContain('/no_think')
+    // Explicit off wins even when the env default is on.
+    vi.stubEnv('QWEN_THINKING', 'true')
+    try {
+      await runAgent({ provider: 'huggingface', model: 'test-model', ctx, toolNames: ['calculator'], messages: [{ role: 'user', content: 'Hi' }], thinking: false })
+      expect(systemOf(2)).toContain('/no_think')
+    } finally { vi.unstubAllEnvs() }
+  })
+
   it('rejects unavailable tool requests and credit-check failures before starting a run', async () => {
     const before = await db.conversation.count({ where: { userId: alice } })
     expect((await request('/api/agent/new/stream', alice, 'POST', { content: 'Hi', toolNames: ['fixture_not_a_tool'] })).status).toBe(400)

@@ -14,6 +14,10 @@ const base = {
   onRetryAttachment: () => {},
   running: false,
   runMode: 'auto' as 'auto' | 'plan' | 'step' | 'accept',
+  webSearch: 'auto' as 'auto' | 'on' | 'off',
+  onToggleWebSearch: () => {},
+  thinking: 'auto' as 'auto' | 'on' | 'off',
+  onToggleThinking: () => {},
   showSlash: false,
   showPlus: false,
   showModeMenu: false,
@@ -110,5 +114,36 @@ describe('Composer', () => {
   it('marks the non-default active mode on the collapsed button', () => {
     renderComposer({ runMode: 'step' })
     expect(screen.getByTitle('Confirm before every action').textContent).toContain('Ask first')
+  })
+
+  it('renders the web-search and thinking toggles cycling Auto → On → Off', () => {
+    const onToggleWebSearch = vi.fn()
+    const onToggleThinking = vi.fn()
+    const { rerender } = renderComposer({ onToggleWebSearch, onToggleThinking })
+    const web = screen.getByRole('button', { name: /web search: auto/i })
+    const brain = screen.getByRole('button', { name: /extended thinking: auto/i })
+    expect(web).toBeInTheDocument()
+    expect(brain).toBeInTheDocument()
+    // Cycle from auto lands on on; from on lands on off.
+    fireEvent.click(web)
+    expect(onToggleWebSearch).toHaveBeenCalledWith('on')
+    renderComposer({ webSearch: 'on', onToggleWebSearch, onToggleThinking })
+    fireEvent.click(screen.getByRole('button', { name: /web search: on/i }))
+    expect(onToggleWebSearch).toHaveBeenCalledWith('off')
+    renderComposer({ webSearch: 'off', onToggleWebSearch, onToggleThinking })
+    fireEvent.click(screen.getByRole('button', { name: /web search: off/i }))
+    expect(onToggleWebSearch).toHaveBeenCalledWith('auto')
+    fireEvent.click(brain)
+    expect(onToggleThinking).toHaveBeenCalledWith('on')
+  })
+
+  it('marks explicit toggle states visually (on = terracotta, off = struck)', () => {
+    renderComposer({ webSearch: 'on', thinking: 'off' })
+    const web = screen.getByRole('button', { name: /web search: on/i })
+    const brain = screen.getByRole('button', { name: /extended thinking: off/i })
+    expect(web.className).toContain('text-[#e79d7f]')
+    expect(web.getAttribute('aria-pressed')).toBe('true')
+    expect(brain.getAttribute('aria-pressed')).toBe('true')
+    expect(brain.className).toContain('line-through')
   })
 })

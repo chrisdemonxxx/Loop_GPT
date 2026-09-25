@@ -1,13 +1,13 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Send, X, Mic, UploadCloud } from 'lucide-react'
+import { Send, X, Mic, UploadCloud, Globe, Brain } from 'lucide-react'
 import type { AgentMode } from '../../lib/api'
 import { SLASH_SECTIONS, filterCommands } from '../../lib/commands'
 import { useI18n } from '../../lib/i18n'
 import { useDictation } from '../../lib/voice'
 import type { PendingAttachment } from '../../chat/hooks'
-import { SlashPalette, RunModePicker } from './composer/SlashPalette'
+import { SlashPalette, RunModePicker, TriStateToggle, type ToggleState } from './composer/SlashPalette'
 import { PlusMenu, AttachmentChips, DictationBar } from './composer/PlusMenu'
 
 export type RunMode = 'auto' | 'plan' | 'step' | 'accept'
@@ -20,6 +20,13 @@ interface ComposerProps {
   onRetryAttachment: (id: string) => void
   running: boolean
   runMode: RunMode
+  /** Web-search override (§8-25): auto defers to tool selection; on/off are
+   *  explicit per-run overrides. */
+  webSearch: ToggleState
+  onToggleWebSearch: (next: ToggleState) => void
+  /** Extended-thinking override (§8-26): same tri-state contract. */
+  thinking: ToggleState
+  onToggleThinking: (next: ToggleState) => void
   /** Context meter (§2.5): 0-100 estimated window usage. */
   contextPct?: number
   contextTokens?: number
@@ -51,7 +58,9 @@ const MAX_IMAGES = 4
  * plus drag-and-drop uploads with a visible drop zone and paste-to-attach
  * (audit P2.7). Attachments upload at attach time with per-chip progress. */
 export default function Composer({
-  input, attachments, onRemoveAttachment, onRetryAttachment, running, runMode, contextPct, contextTokens, incognito,
+  input, attachments, onRemoveAttachment, onRetryAttachment, running, runMode,
+  webSearch, onToggleWebSearch, thinking, onToggleThinking,
+  contextPct, contextTokens, incognito,
   showSlash, showPlus, showModeMenu,
   onInputChange, onSelectSlashCommand, onSend, onStop,
   onImagesSelected,
@@ -255,6 +264,32 @@ export default function Composer({
             onClose={onCloseModeMenu}
             onCloseOther={onClosePlus}
             onChange={onRunModeChange}
+          />
+
+          {/* Web-search toggle (§8-25) — cycles Auto → On → Off */}
+          <TriStateToggle
+            icon={Globe}
+            kind="web"
+            state={webSearch}
+            onCycle={onToggleWebSearch}
+            titleFor={(s) => s === 'auto'
+              ? 'Web search: auto — the tool selection decides'
+              : s === 'on'
+                ? 'Web search: on — force web tools into this run'
+                : 'Web search: off — strip web tools from this run'}
+          />
+
+          {/* Extended-thinking toggle (§8-26) — cycles Auto → On → Off */}
+          <TriStateToggle
+            icon={Brain}
+            kind="thinking"
+            state={thinking}
+            onCycle={onToggleThinking}
+            titleFor={(s) => s === 'auto'
+              ? 'Extended thinking: auto — model default'
+              : s === 'on'
+                ? 'Extended thinking: on — deeper reasoning for this run'
+                : 'Extended thinking: off — answer directly for this run'}
           />
 
           {/* Mic (STT dictation) — hidden on unsupported browsers */}

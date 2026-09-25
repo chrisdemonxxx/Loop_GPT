@@ -3,10 +3,13 @@
 import { useState, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
 import { Check, Copy } from 'lucide-react'
 import { MermaidView } from './ArtifactViewers'
 import 'highlight.js/styles/atom-one-dark.css'
+import 'katex/dist/katex.min.css'
 
 function CodeBlock({ className, children }: { className?: string; children: any }) {
   const [copied, setCopied] = useState(false)
@@ -38,8 +41,8 @@ function MarkdownImpl({ content }: { content: string }) {
   return (
     <div className="prose-chat text-[15px] leading-[1.7] text-slate-100">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex, rehypeHighlight]}
         components={{
           code({ node, className, children, ...props }: any) {
             const isBlock = /language-/.test(className || '') || String(children).includes('\n')

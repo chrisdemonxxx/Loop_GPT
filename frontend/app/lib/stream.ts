@@ -41,6 +41,10 @@ export interface StreamBody {
   /** Incognito: no sidebar entry, no memory read/write, excluded from synthesis. */
   incognito?: boolean
   projectId?: string
+  /** Web-search override (§8-25): true forces web tools in, false strips them. */
+  webSearch?: boolean
+  /** Extended-thinking override (§8-26): per-run CoT switch. */
+  thinking?: boolean
   mode?: string
   provider?: string
   model?: string
@@ -61,7 +65,7 @@ export async function runAgentStream(
   // /api/agent/:id/stream and rejects BYOK fields (provider/model/apiKey) and
   // server file paths (imagePath). Send only the hosted contract, including the
   // attachmentId so image attachments actually reach the vision path.
-  const safeBody: { content: string; mode: string; attachmentId?: string; attachmentIds?: string[]; toolNames?: string[]; autoApprove?: boolean; stepMode?: boolean; incognito?: boolean; projectId?: string; model?: string } = {
+  const safeBody: { content: string; mode: string; attachmentId?: string; attachmentIds?: string[]; toolNames?: string[]; autoApprove?: boolean; stepMode?: boolean; incognito?: boolean; projectId?: string; model?: string; webSearch?: boolean; thinking?: boolean } = {
     content: body.content,
     mode: body.mode || 'chat',
   }
@@ -74,6 +78,10 @@ export async function runAgentStream(
   if (body.stepMode) safeBody.stepMode = true
   if (body.incognito) safeBody.incognito = true
   if (body.projectId) safeBody.projectId = body.projectId
+  // Explicit per-run capability overrides (§8-25/26): only present when
+  // the user chose them (undefined = server default).
+  if (body.webSearch !== undefined) safeBody.webSearch = body.webSearch
+  if (body.thinking !== undefined) safeBody.thinking = body.thinking
   // Hosted model tier selection (the server rejects provider/apiKey/baseUrl).
   if (body.model) safeBody.model = body.model
   const res = await fetch(`${API_URL}/api/agent/${conversationId}/stream`, {

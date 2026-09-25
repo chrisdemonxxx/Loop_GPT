@@ -207,8 +207,14 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
   // confidentiality rules, then tool guide. An UNRESTRICTED_PREAMBLE can be
   // injected via env to help uncensored models stay on-task.
   const preamble = process.env.UNRESTRICTED_PREAMBLE || ''
-  // Qwen 3: append /no_think unless QWEN_THINKING=true (controls CoT budget)
-  const qwenSuffix = process.env.QWEN_THINKING === 'true' ? '/think' : (process.env.QWEN_THINKING === undefined ? '/no_think' : '')
+  // Qwen 3: append /no_think unless QWEN_THINKING=true (controls CoT budget).
+  // A per-run thinking override (audit §8-26) wins over the env default:
+  // explicit on → /think, explicit off → /no_think.
+  const qwenSuffix = opts.thinking === true
+    ? '/think'
+    : opts.thinking === false
+      ? '/no_think'
+      : process.env.QWEN_THINKING === 'true' ? '/think' : (process.env.QWEN_THINKING === undefined ? '/no_think' : '')
   const working: ChatMessage[] = []
   const sys = [
     preamble,

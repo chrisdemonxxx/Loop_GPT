@@ -137,9 +137,49 @@ function ModeItem({
       <Icon size={15} className={`shrink-0 ${active ? 'text-[#c96442]' : 'text-slate-400'}`} />
       <span className="min-w-0 flex-1">
         <span className={`text-[13px] ${active ? 'text-slate-100 font-medium' : 'text-slate-200'}`}>{label}</span>
-        <span className="block text-[12px] text-slate-400">{hint}</span>
+        <span className="block text-[12px] text-slate-500">{hint}</span>
       </span>
       {active && <Check size={13} className="text-[#c96442] shrink-0" />}
+    </button>
+  )
+}
+
+export type ToggleState = 'auto' | 'on' | 'off'
+
+const STATE_META: Record<ToggleState, { label: string; cls: string }> = {
+  auto: { label: 'Auto', cls: 'border-white/[0.08] text-slate-400' },
+  on: { label: 'On', cls: 'border-[#c96442]/40 text-[#e79d7f] bg-[#c96442]/[0.07]' },
+  off: { label: 'Off', cls: 'border-white/[0.08] text-slate-500 line-through decoration-slate-500' },
+}
+
+/**
+ * Tri-state capability toggle (audit §8-25/26): cycles Auto → On → Off.
+ * Auto defers to the server/per-chat tool selection default; On and Off are
+ * explicit per-run overrides. Used for web search and extended thinking.
+ */
+export function TriStateToggle({
+  icon: Icon, kind, state, onCycle, titleFor,
+}: {
+  icon: any
+  kind: 'web' | 'thinking'
+  state: ToggleState
+  onCycle: (next: ToggleState) => void
+  titleFor: (state: ToggleState) => string
+}) {
+  const meta = STATE_META[state]
+  const next: ToggleState = state === 'auto' ? 'on' : state === 'on' ? 'off' : 'auto'
+  const ariaLabel = `${kind === 'web' ? 'Web search' : 'Extended thinking'}: ${meta.label.toLowerCase()}`
+  return (
+    <button
+      type="button"
+      onClick={() => onCycle(next)}
+      title={titleFor(state)}
+      aria-label={ariaLabel}
+      aria-pressed={state !== 'auto'}
+      className={`tap-target h-8 px-2 flex items-center gap-1 rounded-lg border transition text-xs ${meta.cls}`}
+    >
+      <Icon size={13} />
+      <span className="hidden md:inline">{meta.label}</span>
     </button>
   )
 }

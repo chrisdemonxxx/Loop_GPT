@@ -350,6 +350,9 @@ export interface ChatStreamSendOptions {
   selectedTools?: Set<string> | null
   incognito: boolean
   projectId?: string
+  /** Explicit per-run overrides (§8-25/26): undefined = server default. */
+  webSearch?: boolean
+  thinking?: boolean
   /** Resolves (creating if needed) the conversation for this turn. */
   ensureConversation: (firstMessage: string) => Promise<string>
 }
@@ -387,7 +390,7 @@ export function useChatStream() {
   }
 
   async function send(opts: ChatStreamSendOptions) {
-    const { content, sendMode, commandTools, attachmentIds, previews, docNames, runMode, modelTier, selectedTools, incognito, projectId, ensureConversation } = opts
+    const { content, sendMode, commandTools, attachmentIds, previews, docNames, runMode, modelTier, selectedTools, incognito, projectId, webSearch, thinking, ensureConversation } = opts
     setRunning(true); setStatusMsg(''); setLiveSteps([]); setLiveArtifacts([]); setLiveThinking('')
     setLiveUser({ content, image: previews[0], images: previews, docs: docNames })
     track('message_sent', { mode: sendMode })
@@ -410,6 +413,9 @@ export function useChatStream() {
         stepMode: runMode === 'step',
         incognito,
         projectId,
+        // Explicit capability overrides — only present when chosen (§8-25/26).
+        ...(webSearch !== undefined ? { webSearch } : {}),
+        ...(thinking !== undefined ? { thinking } : {}),
       }, {
         onStatus: (m) => { if (!m.startsWith('conversation:')) setStatusMsg(m) },
         onWarming: (m) => setStatusMsg(m),

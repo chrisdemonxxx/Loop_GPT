@@ -40,6 +40,9 @@ export default function ChatPage() {
   const [showPlus, setShowPlus] = useState(false)
   const [showModeMenu, setShowModeMenu] = useState(false)
   const [runMode, setRunMode] = useState<'auto' | 'plan' | 'accept' | 'step'>('auto')
+  // ── Per-run capability toggles (§8-25/26): auto = server default.
+  const [webSearch, setWebSearch] = useState<'auto' | 'on' | 'off'>('auto')
+  const [thinking, setThinking] = useState<'auto' | 'on' | 'off'>('auto')
   const [incognito, setIncognito] = useState(false)
   const [modelTier, setModelTierState] = useState('')
   const [showSettings, setShowSettings] = useState(false)
@@ -212,6 +215,9 @@ export default function ChatPage() {
       runMode, modelTier,
       selectedTools, incognito,
       projectId: activeProjectId || undefined,
+      // Explicit overrides only (§8-25/26): undefined keeps the server default.
+      webSearch: webSearch === 'auto' ? undefined : webSearch === 'on',
+      thinking: thinking === 'auto' ? undefined : thinking === 'on',
       ensureConversation,
     })
   }
@@ -442,6 +448,10 @@ export default function ChatPage() {
               onRetryAttachment={uploads.retry}
               running={chat.running}
               runMode={runMode}
+              webSearch={webSearch}
+              onToggleWebSearch={setWebSearch}
+              thinking={thinking}
+              onToggleThinking={setThinking}
               contextPct={contextPct}
               contextTokens={contextTokens}
               incognito={incognito}
