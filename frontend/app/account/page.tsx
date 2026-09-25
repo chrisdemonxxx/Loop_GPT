@@ -139,7 +139,7 @@ export default function AccountPage() {
           <ArrowLeft size={16} /> Back to chat
         </Link>
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-neon-violet to-neon-cyan flex items-center justify-center shadow-glow"><Sparkles size={14} className="text-white" /></div>
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#c96442] to-[#d8a08a] flex items-center justify-center shadow-glow"><Sparkles size={14} className="text-white" /></div>
           <span className="font-semibold text-gradient">Loop GPT</span>
         </div>
       </div>
@@ -151,8 +151,8 @@ export default function AccountPage() {
         <>
           <p className="text-sm text-slate-500 mb-6">
             {acct ? <>Signed in as <span className="text-slate-300">{acct.email}</span></> : 'Guest session'}
-            {acct?.unlimited && <span className="ml-2 inline-flex items-center gap-1 text-xs text-neon-cyan bg-neon-cyan/10 border border-neon-cyan/20 rounded-full px-2 py-0.5"><InfinityIcon size={11} /> Unlimited</span>}
-            {acct?.role === 'admin' && <Link href="/admin" className="ml-2 text-xs text-neon-violet hover:underline">Admin portal →</Link>}
+            {acct?.unlimited && <span className="ml-2 inline-flex items-center gap-1 text-xs text-[#d8a08a] bg-[#d8a08a]/10 border border-[#d8a08a]/20 rounded-full px-2 py-0.5"><InfinityIcon size={11} /> Unlimited</span>}
+            {acct?.role === 'admin' && <Link href="/admin" className="ml-2 text-xs text-[#c96442] hover:underline">Admin portal →</Link>}
           </p>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
@@ -164,7 +164,7 @@ export default function AccountPage() {
 
           {/* Voucher redeem */}
           <div className="glass-strong rounded-2xl p-5 mb-6">
-            <div className="flex items-center gap-2 mb-1 text-slate-100 font-medium"><Ticket size={16} className="text-neon-violet" /> Redeem a voucher</div>
+            <div className="flex items-center gap-2 mb-1 text-slate-100 font-medium"><Ticket size={16} className="text-[#c96442]" /> Redeem a voucher</div>
             <p className="text-xs text-slate-500 mb-3">Have a team or promo code? Unlock unlimited access or top up credits.</p>
             <form onSubmit={redeem} className="flex gap-2">
               <input
@@ -173,7 +173,7 @@ export default function AccountPage() {
                 placeholder="LOOP-XXXXX-XXXXX"
                 className="flex-1 bg-ink-800 border border-white/10 rounded-lg px-3 py-2.5 text-slate-100 text-sm font-mono tracking-wide focus:outline-none focus:accent-ring placeholder-slate-600"
               />
-              <button type="submit" disabled={redeeming} className="px-4 rounded-lg text-white bg-gradient-to-r from-neon-violet to-neon-indigo hover:opacity-90 disabled:opacity-50 transition shadow-glow font-medium text-sm flex items-center gap-2">
+              <button type="submit" disabled={redeeming} className="px-4 rounded-lg text-white bg-gradient-to-r from-[#c96442] to-[#b5593a] hover:opacity-90 disabled:opacity-50 transition shadow-glow font-medium text-sm flex items-center gap-2">
                 {redeeming ? <Loader2 size={15} className="animate-spin" /> : 'Redeem'}
               </button>
             </form>
@@ -249,11 +249,11 @@ export default function AccountPage() {
                 <div className="text-xs text-slate-500">1,000 messages + 100 images per day, priority speed.</div>
               </div>
               {billing?.enabled && billing.plans.pro ? (
-                <button onClick={() => upgrade('pro')} disabled={checkingOut} className="px-4 py-2 rounded-lg text-white bg-gradient-to-r from-neon-violet to-neon-cyan hover:opacity-90 disabled:opacity-50 transition shadow-glow text-sm font-medium flex items-center gap-2">
+                <button onClick={() => upgrade('pro')} disabled={checkingOut} className="px-4 py-2 rounded-lg text-white bg-gradient-to-r from-[#c96442] to-[#d8a08a] hover:opacity-90 disabled:opacity-50 transition shadow-glow text-sm font-medium flex items-center gap-2">
                   {checkingOut ? <Loader2 size={15} className="animate-spin" /> : 'Upgrade'}
                 </button>
               ) : (
-                <Link href="/#pricing" className="px-4 py-2 rounded-lg text-white bg-gradient-to-r from-neon-violet to-neon-cyan hover:opacity-90 transition shadow-glow text-sm font-medium">See plans</Link>
+                <Link href="/#pricing" className="px-4 py-2 rounded-lg text-white bg-gradient-to-r from-[#c96442] to-[#d8a08a] hover:opacity-90 transition shadow-glow text-sm font-medium">See plans</Link>
               )}
             </div>
           )}

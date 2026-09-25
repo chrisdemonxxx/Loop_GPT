@@ -100,7 +100,7 @@ export default function ArtifactsPanel({ artifacts, onClose }: Props) {
       <div className="glass-strong rounded-2xl h-full flex flex-col overflow-hidden shadow-panel">
         {/* Header */}
         <div className="flex items-center gap-2.5 px-4 py-3 border-b border-white/5">
-          <div className="w-2 h-2 rounded-full bg-neon-fuchsia" />
+          <div className="w-2 h-2 rounded-full bg-[#c96442]" />
           <div className="flex-1">
             <div className="text-sm font-semibold text-slate-100">Artifacts</div>
             <div className="text-[11px] text-slate-500">{artifacts.length} items</div>
@@ -226,7 +226,7 @@ export default function ArtifactsPanel({ artifacts, onClose }: Props) {
                 {isExpanded && g.versions.length > 1 && (
                   <div className="border-t border-white/5 px-3 py-1.5 space-y-1">
                     <button onClick={() => compareVersions(g)}
-                      className="flex items-center gap-1.5 w-full text-left text-[11px] text-neon-violet hover:underline pb-1">
+                      className="flex items-center gap-1.5 w-full text-left text-[11px] text-[#c96442] hover:underline pb-1">
                       <GitCompare size={11} /> Compare {g.versions.length} versions
                     </button>
                     {g.versions.map((v) => (
@@ -263,8 +263,8 @@ function lineDiff(from: string[], to: string[]): { sign: string; text: string }[
 }
 
 function IconForKind({ latest }: { latest: ArtifactRef }) {
-  if (latest.kind === 'image') return <ImageIcon size={16} className="text-neon-cyan shrink-0" />
-  if (/\.(md|txt)$/i.test(latest.name)) return <FileText size={16} className="text-neon-violet shrink-0" />
-  if (/\.(js|ts|jsx|tsx|py|go|rs|rb)$/i.test(latest.name)) return <Code size={16} className="text-neon-green shrink-0" />
+  if (latest.kind === 'image') return <ImageIcon size={16} className="text-[#d8a08a] shrink-0" />
+  if (/\.(md|txt)$/i.test(latest.name)) return <FileText size={16} className="text-[#c96442] shrink-0" />
+  if (/\.(js|ts|jsx|tsx|py|go|rs|rb)$/i.test(latest.name)) return <Code size={16} className="text-[#6ee7a0] shrink-0" />
   return <File size={16} className="text-slate-500 shrink-0" />
 }

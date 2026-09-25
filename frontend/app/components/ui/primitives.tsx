@@ -84,10 +84,10 @@ export function SectionHeader({ title, count, action }: { title: string; count?:
 export function StatusDot({ state }: { state: 'idle' | 'working' | 'waiting' | 'error' | 'ok' }) {
   const map: Record<string, string> = {
     idle: 'bg-slate-600',
-    working: 'bg-neon-green animate-pulseGlow',
+    working: 'bg-[#6ee7a0] animate-pulseGlow',
     waiting: 'bg-amber-400 animate-pulseGlow',
     error: 'bg-rose-400',
-    ok: 'bg-neon-green',
+    ok: 'bg-[#6ee7a0]',
   }
   return <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${map[state]}`} aria-hidden />
 }

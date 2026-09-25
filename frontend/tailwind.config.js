@@ -53,18 +53,9 @@ module.exports = {
           700: '#1c1c2b',
           600: '#262637',
         },
-        // Calm, Claude-aligned accents. NOTE: the `neon-*` CLASS NAMES are
-        // legacy aliases kept for compatibility — their VALUES are the single
-        // terracotta accent system (#c96442 family), not neon colors. Do not
-        // add new usages; prefer the hex/accent utilities in new code.
-        neon: {
-          violet: '#c96442',
-          indigo: '#b5593a',
-          cyan: '#d8a08a',
-          fuchsia: '#c96442',
-          green: '#6ee7a0',
-          amber: '#e0a458',
-        },
+        // Calm, Claude-aligned accents (the single terracotta system,
+        // #c96442 family). The legacy `neon-*` alias names were removed
+        // after all references were migrated to their exact hex values.
       },
       boxShadow: {
         // Soft neutral elevation instead of colored glow.

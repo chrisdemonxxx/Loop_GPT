@@ -96,7 +96,7 @@ export default function AgentComputer({ running, status, steps, artifacts, toolC
   const stateMeta: Record<PanelState, { label: string; dot: string; icon: any; text: string }> = {
     idle: { label: 'Idle', dot: 'bg-slate-500', icon: Activity, text: 'text-slate-400' },
     thinking: { label: 'Thinking', dot: 'bg-amber-400 animate-pulseGlow', icon: Loader2, text: 'text-amber-400' },
-    running: { label: 'Running tool', dot: 'bg-neon-green animate-pulseGlow', icon: Wrench, text: 'text-neon-green' },
+    running: { label: 'Running tool', dot: 'bg-[#6ee7a0] animate-pulseGlow', icon: Wrench, text: 'text-[#6ee7a0]' },
     waiting: { label: 'Waiting for input', dot: 'bg-[#c96442] animate-pulseGlow', icon: MousePointerClick, text: 'text-[#e79d7f]' },
     error: { label: 'Error', dot: 'bg-rose-400', icon: AlertCircle, text: 'text-rose-400' },
   }
