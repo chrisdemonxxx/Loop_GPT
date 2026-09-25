@@ -411,6 +411,7 @@ export default function ChatPage() {
         {/* Messages */}
         <MessageList
           messages={messages}
+          conversationId={currentConversationId}
           liveUser={chat.liveUser}
           liveSteps={chat.liveSteps}
           liveAnswer={chat.liveAnswer}

@@ -1,8 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { Copy, Check, Edit2, RotateCcw, Sparkles, Volume2, Pause, Square, Brain } from 'lucide-react'
+import { Copy, Check, Edit2, RotateCcw, Sparkles, Volume2, Pause, Square, Brain, ThumbsUp, ThumbsDown, Loader2 } from 'lucide-react'
 import { motion } from 'framer-motion'
+import { API_URL, authHeaders } from '../../lib/api'
 import { type ArtifactRef } from '../../lib/stream'
 import type { Message, StoredStep } from './types'
 import Markdown from './Markdown'
@@ -10,20 +11,32 @@ import { useAttachmentUrl } from './artifactUrl'
 import { ArtifactCard } from './ArtifactCard'
 import TurnActivity from './TurnActivity'
 import { useSpeech } from '../../lib/voice'
+import { useToast } from '../../lib/toast'
 
-/** One chat row: user bubble (right, editable) or assistant turn (markdown,
- * artifacts, sources, enhanced-prompt diff, read-aloud, retry). Artifact
- * cards open the right-hand artifacts panel (page-owned focus state). */
+/** Long user messages truncate with an inline expander (audit §8-20). */
+const USER_TRUNCATE = 420
+
+/** One chat row: user bubble (right, editable, truncated when long) or
+ * assistant turn (markdown, artifacts, sources, read-aloud, retry, and
+ * thumbs feedback wired to POST /api/telemetry/feedback — audit §8-21).
+ * Artifact cards open the right-hand artifacts panel. */
 export function MessageBubble({
-  message, onEdit, onRetry, onOpenArtifact,
+  message, conversationId, onEdit, onRetry, onOpenArtifact,
 }: {
   message: Message
+  conversationId?: string | null
   onEdit?: () => void
   onRetry?: () => void
   onOpenArtifact?: (artifact: ArtifactRef) => void
 }) {
   const [copied, setCopied] = useState(false)
   const [showPrompt, setShowPrompt] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const [rating, setRating] = useState<'up' | 'down' | null>(null)
+  const [comment, setComment] = useState('')
+  const [sending, setSending] = useState(false)
+  const toast = useToast()
   const artifacts: ArtifactRef[] = message.metadata?.artifacts || []
   const storedSteps: StoredStep[] = Array.isArray(message.metadata?.steps) ? message.metadata.steps : []
   const sources = message.metadata?.sources as { index: number; title: string; url: string }[] | undefined
@@ -64,7 +77,27 @@ export function MessageBubble({
           )}
           {message.content && (
             <div className="whitespace-pre-wrap text-slate-100 text-[15px] leading-relaxed">
-              {message.content}
+              {expanded || (message.content.length <= USER_TRUNCATE)
+                ? message.content
+                : <>
+                    {message.content.slice(0, USER_TRUNCATE).replace(/\s+\S*$/, '')}…
+                    <button
+                      type="button"
+                      onClick={() => setExpanded(true)}
+                      className="ml-1 text-[12.5px] text-[#e79d7f] hover:underline"
+                    >
+                      Show more
+                    </button>
+                  </>}
+              {expanded && message.content.length > USER_TRUNCATE && (
+                <button
+                  type="button"
+                  onClick={() => setExpanded(false)}
+                  className="ml-1 text-[12.5px] text-slate-400 hover:underline"
+                >
+                  Show less
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -171,7 +204,97 @@ export function MessageBubble({
           </>
         )}
         {onRetry && <ActionBtn onClick={onRetry} title="Retry" ariaLabel="Retry response" icon={<RotateCcw size={14} />} />}
+        {/* Feedback (audit §8-21): wired to POST /api/telemetry/feedback —
+            previously thumbs were local-state-only and never sent. */}
+        <ActionBtn
+          onClick={() => { setRating('up'); setFeedbackOpen(true) }}
+          title="Good response"
+          ariaLabel="Rate this response as good"
+          icon={<ThumbsUp size={14} />}
+        />
+        <ActionBtn
+          onClick={() => { setRating('down'); setFeedbackOpen(true) }}
+          title="Poor response"
+          ariaLabel="Rate this response as poor"
+          icon={<ThumbsDown size={14} />}
+        />
       </div>
+
+      {/* Feedback modal (rating + optional comment → telemetry). */}
+      {feedbackOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setFeedbackOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Send feedback"
+        >
+          <div
+            className="glass-strong rounded-2xl border border-white/10 w-full max-w-sm p-4 space-y-3 shadow-panel"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-[14px] font-medium text-slate-100">Send feedback</div>
+            <div className="flex gap-2">
+              {(['up', 'down'] as const).map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setRating(r)}
+                  aria-pressed={rating === r}
+                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border text-[13px] transition ${
+                    rating === r
+                      ? 'border-[#c96442]/50 bg-[#c96442]/[0.08] text-[#e79d7f]'
+                      : 'border-white/[0.08] text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {r === 'up' ? <ThumbsUp size={14} /> : <ThumbsDown size={14} />}
+                  {r === 'up' ? 'Good' : 'Needs work'}
+                </button>
+              ))}
+            </div>
+            <textarea
+              rows={3}
+              placeholder="Optional: what worked, what didn't?"
+              onChange={(e) => setComment(e.target.value)}
+              className="w-full rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-[13px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-white/15 resize-none"
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!rating) return
+                  setSending(true)
+                  try {
+                    const res = await fetch(`${API_URL}/api/telemetry/feedback`, {
+                      method: 'POST',
+                      headers: authHeaders(),
+                      body: JSON.stringify({ conversationId: conversationId || null, messageId: message.id, rating, comment: comment || undefined }),
+                    })
+                    if (!res.ok) throw new Error('send')
+                    toast.push('success', 'Thanks — feedback recorded')
+                    setFeedbackOpen(false)
+                  } catch {
+                    toast.push('error', 'Could not send feedback — try again')
+                  } finally {
+                    setSending(false)
+                  }
+                }}
+                disabled={!rating || sending}
+                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[13px] font-medium text-white bg-[#c96442] hover:bg-[#b5593a] disabled:opacity-40 transition"
+              >
+                {sending && <Loader2 size={13} className="animate-spin" />} Submit feedback
+              </button>
+              <button
+                type="button"
+                onClick={() => setFeedbackOpen(false)}
+                className="px-3 py-2 rounded-xl text-[13px] text-slate-400 hover:text-slate-200 border border-white/[0.08] transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </motion.div>
   )
 }

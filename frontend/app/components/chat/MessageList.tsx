@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
-import { Loader2, Brain, FileText } from 'lucide-react'
-import { motion } from 'framer-motion'
+import { useEffect, useRef, useState } from 'react'
+import { Loader2, Brain, FileText, ArrowDown } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { type AgentMode } from '../../lib/api'
 import { type ArtifactRef } from '../../lib/stream'
 import Markdown from './Markdown'
@@ -14,6 +14,8 @@ import TurnActivity from './TurnActivity'
 
 interface MessageListProps {
   messages: Message[]
+  /** For feedback submission (audit §8-21). */
+  conversationId?: string | null
   liveUser: { content: string; image?: string; images?: string[]; docs?: string[] } | null
   liveSteps: LiveStep[]
   liveAnswer: string
@@ -37,21 +39,43 @@ interface MessageListProps {
 }
 
 /** The conversation transcript: stored bubbles, the live user turn, and the
- * streaming assistant turn (thinking, status, answer, inline activity feed). */
+ * streaming assistant turn (thinking, status, answer, inline activity feed).
+ * Auto-scroll only while the reader is at the bottom (scroll-fight
+ * protection, audit §8-18); otherwise a floating jump-to-bottom button. */
 export default function MessageList({
-  messages, liveUser, liveSteps, liveAnswer, liveThinking, liveArtifacts,
+  messages, conversationId, liveUser, liveSteps, liveAnswer, liveThinking, liveArtifacts,
   running, statusMsg, mode, pendingApproval, onApprove, onDeny, toolCount, onOpenTools,
   onOpenArtifact, onEditMessage, onRetryBefore, onStartPrompt,
 }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [atBottom, setAtBottom] = useState(true)
   const showEmpty = messages.length === 0 && !liveUser
 
-  useEffect(() => {
+  /** True when the reader is within ~160px of the bottom. */
+  const measureBottom = () => {
+    const el = scrollRef.current
+    if (!el) return true
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 160
+  }
+  const onScroll = () => setAtBottom(measureBottom())
+
+  const jumpToBottom = () => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
+    setAtBottom(true)
+  }
+
+  // Auto-scroll on new content ONLY while the reader is at the bottom —
+  // scrolling up to read history wins over incoming content (no fighting).
+  useEffect(() => {
+    if (atBottom) endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, liveSteps, statusMsg, liveAnswer])
 
   return (
-    <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 sm:py-8 min-h-0">
+    <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 sm:py-8 min-h-0 relative"
+      ref={scrollRef}
+      onScroll={onScroll}
+    >
       {showEmpty ? (
         <EmptyState onStartPrompt={onStartPrompt} />
       ) : (
@@ -60,6 +84,7 @@ export default function MessageList({
             <MessageBubble
               key={m.id}
               message={m}
+              conversationId={conversationId}
               onOpenArtifact={onOpenArtifact}
               onEdit={m.role === 'user' ? () => onEditMessage(m.id, m.content) : undefined}
               onRetry={m.role === 'assistant' ? () => onRetryBefore(idx) : undefined}
@@ -158,6 +183,26 @@ export default function MessageList({
               </div>
             </>
           )}
+
+          {/* Floating jump-to-bottom (audit §8-18): visible while reading
+              history; hidden at the bottom. */}
+          <AnimatePresence>
+            {!atBottom && (
+              <motion.button
+                type="button"
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 6 }}
+                transition={{ duration: 0.15 }}
+                onClick={jumpToBottom}
+                title="Jump to latest"
+                aria-label="Jump to latest"
+                className="fixed bottom-32 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full glass border border-white/10 text-[12px] text-slate-300 hover:text-slate-100 shadow-panel"
+              >
+                <ArrowDown size={12} /> Latest
+              </motion.button>
+            )}
+          </AnimatePresence>
 
           <div ref={endRef} />
         </div>
