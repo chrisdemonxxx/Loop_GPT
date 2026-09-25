@@ -24,7 +24,7 @@ import conversationsRouter from '../../routes/conversations'
 import messagesRouter from '../../routes/messages'
 import agentRouter from '../../routes/agent'
 import v1Router from '../../routes/v1'
-import { filesRouter, imageUploadRouter, rejectLegacyUploads } from '../../routes/files'
+import { filesRouter, publicFilesRouter, imageUploadRouter, rejectLegacyUploads } from '../../routes/files'
 import { storePrivateFile, readOwnedFile, readOwnedImage, deleteOwnedFile } from '../privateFiles'
 import { getOrCreateConversation } from '../chatStore'
 import { createApiKey, revokeApiKey } from '../apiKeys'
@@ -65,7 +65,11 @@ beforeAll(async () => {
   const app = express()
   app.use(express.json())
   app.use('/api/auth', authRouter)
-  app.use('/api/files', filesRouter)
+  // Same mount order as server.ts: the public token route must be reached
+// before filesRouter, whose router-wide auth use() would otherwise swallow
+// the anonymous public path.
+app.use('/api/files', publicFilesRouter)
+app.use('/api/files', filesRouter)
   app.use('/api/conversations', imageUploadRouter, conversationsRouter, messagesRouter, agentRouter)
   app.use('/api/agent', agentRouter)
   app.use('/v1', v1Router)
@@ -216,6 +220,56 @@ describe('private file and account isolation over HTTP/PostgreSQL', () => {
     expect((await fetch(`${base}${crossFile}`)).status).toBe(401)
     // Query-string garbage never bypasses the auth guard.
     expect((await fetch(`${base}/api/files/${other.id}/content?p=AAAA&s=BBBB`)).status).toBe(401)
+  })
+
+  it('serves byte ranges: Accept-Ranges on the first response, 206 + Content-Range for Range requests (audit P3)', async () => {
+    const file = await ownedImage()
+    // The FIRST response advertises byte-range support and carries the full body.
+    const first = await fetch(`${base}/api/files/${file.id}/content`, { headers: bearer(alice.id) })
+    expect(first.status).toBe(200)
+    expect(first.headers.get('accept-ranges')).toBe('bytes')
+    expect(Number(first.headers.get('content-length'))).toBe(png.length)
+    expect(Buffer.from(await first.arrayBuffer())).toEqual(png)
+
+    // A bounded range returns exactly the requested slice as 206.
+    const part = await fetch(`${base}/api/files/${file.id}/content`, { headers: { ...bearer(alice.id), Range: 'bytes=0-9' } })
+    expect(part.status).toBe(206)
+    expect(part.headers.get('content-range')).toBe(`bytes 0-9/${png.length}`)
+    expect(part.headers.get('accept-ranges')).toBe('bytes')
+    expect(Number(part.headers.get('content-length'))).toBe(10)
+    expect(Buffer.from(await part.arrayBuffer())).toEqual(png.subarray(0, 10))
+
+    // Open-ended and suffix forms work as the video element issues them.
+    const tail = await fetch(`${base}/api/files/${file.id}/content`, { headers: { ...bearer(alice.id), Range: 'bytes=-10' } })
+    expect(tail.status).toBe(206)
+    expect(Buffer.from(await tail.arrayBuffer())).toEqual(png.subarray(png.length - 10))
+    const rest = await fetch(`${base}/api/files/${file.id}/content`, { headers: { ...bearer(alice.id), Range: `bytes=10-` } })
+    expect(rest.status).toBe(206)
+    expect(Buffer.from(await rest.arrayBuffer())).toEqual(png.subarray(10))
+
+    // Unsatisfiable ranges get 416 with the total.
+    const invalid = await fetch(`${base}/api/files/${file.id}/content`, { headers: { ...bearer(alice.id), Range: `bytes=${png.length + 10}-` } })
+    expect(invalid.status).toBe(416)
+    expect(invalid.headers.get('content-range')).toBe(`bytes */${png.length}`)
+  })
+
+  it('supports byte ranges over signed links and published tokens (streaming <video> paths)', async () => {
+    const file = await ownedImage()
+    const mint = await fetch(`${base}/api/files/${file.id}/signed-link`, { method: 'POST', headers: bearer(alice.id) })
+    const { url } = await mint.json()
+    // Signed link + Range (sessionless streaming).
+    const signedPart = await fetch(`${base}${url}`, { headers: { Range: 'bytes=0-9' } })
+    expect(signedPart.status).toBe(206)
+    expect(signedPart.headers.get('content-range')).toBe(`bytes 0-9/${png.length}`)
+    expect(signedPart.headers.get('content-disposition')).toContain('inline;')
+    expect(Buffer.from(await signedPart.arrayBuffer())).toEqual(png.subarray(0, 10))
+
+    // Published token + Range (public shared video).
+    const publish = await fetch(`${base}/api/files/${file.id}/publish`, { method: 'POST', headers: bearer(alice.id) })
+    const { url: publicUrl } = await publish.json()
+    const publicPart = await fetch(`${base}${publicUrl}`, { headers: { Range: 'bytes=0-9' } })
+    expect(publicPart.status).toBe(206)
+    expect(Buffer.from(await publicPart.arrayBuffer())).toEqual(png.subarray(0, 10))
   })
 
   it('prevents attaching a file to another conversation even for the same user', async () => {

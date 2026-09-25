@@ -4,32 +4,25 @@ import { FileDown, Maximize2 } from 'lucide-react'
 import { API_URL } from '../../lib/api'
 import { type ArtifactRef } from '../../lib/stream'
 import { downloadArtifact, isVideoArtifact, useAuthedUrl } from './artifactUrl'
+import VideoPlayer from './VideoPlayer'
 
-/** Chat-inline artifact affordance: video player, zoomable image button, or
- * a download chip for everything else. Images/videos/cards open the
- * right-hand artifacts panel via `onOpen` when provided. */
+/** Chat-inline artifact affordance: streaming video player, zoomable image
+ * button, or a download chip for everything else. Cards open the right-hand
+ * artifacts panel via `onOpen` when provided. */
 export function ArtifactCard({ a, onOpen }: { a: ArtifactRef; onOpen?: () => void }) {
   const href = a.url ? (a.url.startsWith('http') ? a.url : `${API_URL}${a.url}`) : undefined
   const imageSrc = useAuthedUrl(a.kind === 'image' ? href : undefined)
-  const videoSrc = useAuthedUrl(isVideoArtifact(a) ? href : undefined)
-  if (isVideoArtifact(a) && videoSrc) {
+  if (isVideoArtifact(a)) {
+    // Range-capable signed streaming (audit P3) — no whole-file blob download.
     return (
-      <div className="group relative inline-flex max-w-md">
-        <video
-          src={videoSrc}
-          controls
-          playsInline
-          preload="metadata"
-          className="w-full max-h-96 rounded-2xl border border-white/10 bg-black"
-        >
-          <track kind="captions" />
-        </video>
+      <div className="group relative inline-flex max-w-md w-full">
+        <VideoPlayer a={a} />
         <button
           type="button"
           onClick={() => downloadArtifact(a, href)}
           title="Download"
           aria-label={`Download ${a.name}`}
-          className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 text-slate-200 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition"
+          className="absolute top-2 right-11 p-1.5 rounded-lg bg-black/60 text-slate-200 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition"
         >
           <FileDown size={14} />
         </button>

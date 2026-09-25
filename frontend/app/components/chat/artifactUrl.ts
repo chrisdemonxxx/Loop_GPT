@@ -119,3 +119,28 @@ export async function openArtifactInNewTab(a: ArtifactRef): Promise<void> {
     window.open(url.startsWith('http') ? url : `${API_URL}${url}`, '_blank', 'noopener')
   } catch { /* leave the artifact in place */ }
 }
+
+/**
+ * A same-origin, short-lived signed URL for a private artifact (audit P3).
+ * Unlike the blob hooks (which download the whole file), a signed URL lets
+ * the native media element issue real HTTP byte-range requests — video
+ * starts playing immediately and seeking streams only the needed slices.
+ * `retry` re-mints (e.g. when a long session outlives the link's TTL).
+ */
+export function useSignedArtifactUrl(a?: ArtifactRef): { url: string | null; retry: () => void } {
+  const [url, setUrl] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    const id = a ? artifactFileId(a) : null
+    if (!a || !id) { setUrl(null); return }
+    let cancelled = false
+    fetch(`${API_URL}/api/files/${id}/signed-link`, { method: 'POST', headers: authHeaders() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { url?: string } | null) => {
+        if (!cancelled && d?.url) setUrl(d.url.startsWith('http') ? d.url : `${API_URL}${d.url}`)
+      })
+      .catch(() => { /* stays null; the caller shows its fallback */ })
+    return () => { cancelled = true }
+  }, [a?.id, a?.url, attempt])
+  return { url, retry: () => { setUrl(null); setAttempt((n) => n + 1) } }
+}

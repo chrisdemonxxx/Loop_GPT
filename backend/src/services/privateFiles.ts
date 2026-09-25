@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'crypto'
 import { constants } from 'fs'
+import type { Request, Response } from 'express'
 import { prisma } from './prisma'
 import { PrivateStorageError, readBoundedFile, withPrivateStorage, writePrivateBytes } from './privateStorage'
 
@@ -9,6 +10,73 @@ export const FILE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-
 
 export class FileAccessError extends Error {
   constructor(public readonly status: number, message: string) { super(message) }
+}
+
+export interface ByteRange { start: number; end: number }
+
+/**
+ * Parse an HTTP `Range` header for a resource of `total` bytes (audit P3).
+ * Returns `null` when the header is absent or not a byte range (serve 200
+ * full), `'invalid'` for unsatisfiable syntax/values (serve 416), or the
+ * inclusive `{start, end}` slice to serve as 206.
+ */
+export function parseRange(header: unknown, total: number): ByteRange | null | 'invalid' {
+  if (typeof header !== 'string') return null
+  const trimmed = header.trim()
+  const m = /^bytes=(\d*)-(\d*)$/.exec(trimmed)
+  if (!m) return null
+  const [, sRaw, eRaw] = m
+  if (sRaw === '' && eRaw === '') return 'invalid'
+  let start: number
+  let end: number
+  if (sRaw === '') {
+    // Suffix form `bytes=-N`: the last N bytes.
+    const suffix = Number(eRaw)
+    if (suffix === 0) return 'invalid'
+    start = Math.max(0, total - suffix)
+    end = total - 1
+  } else {
+    start = Number(sRaw)
+    end = eRaw === '' ? total - 1 : Math.min(total - 1, Number(eRaw))
+  }
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) return 'invalid'
+  if (total === 0 || start >= total || start > end) return 'invalid'
+  return { start, end }
+}
+
+/**
+ * Send a private file with full HTTP byte-range support (audit P3): the
+ * FIRST response advertises `Accept-Ranges: bytes` (the missing piece that
+ * kept native players from even trying range requests), and Range requests
+ * return `206 Partial Content` with `Content-Range` so `<video>` elements
+ * can seek and stream instead of waiting for whole-file downloads.
+ */
+export function sendFileResponse(
+  res: Response,
+  file: { name: string; mimeType: string },
+  buffer: Buffer,
+  opts: { inline?: boolean; csp?: string } = {}
+): void {
+  const total = buffer.length
+  res.setHeader('Accept-Ranges', 'bytes')
+  if (opts.csp) res.setHeader('Content-Security-Policy', opts.csp)
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Content-Disposition', `${opts.inline ? 'inline' : 'attachment'}; filename="${file.name}"`)
+  res.setHeader('Content-Type', file.mimeType)
+  const range = parseRange((res.req as Request | undefined)?.headers?.range, total)
+  if (range === 'invalid') {
+    res.setHeader('Content-Range', `bytes */${total}`)
+    res.status(416).end()
+    return
+  }
+  if (range) {
+    res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${total}`)
+    res.setHeader('Content-Length', String(range.end - range.start + 1))
+    res.status(206).send(buffer.subarray(range.start, range.end + 1))
+    return
+  }
+  res.setHeader('Content-Length', String(total))
+  res.send(buffer)
 }
 
 function database() {

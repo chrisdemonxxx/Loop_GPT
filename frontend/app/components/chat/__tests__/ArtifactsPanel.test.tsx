@@ -24,16 +24,17 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 function renderPanel(overrides: Partial<Parameters<typeof ArtifactsPanel>[0]> = {}) {
+  const onFixError = vi.fn()
   const props = {
     artifacts,
     onClose: vi.fn(),
     onBackToList: vi.fn(),
     onFocusArtifact: vi.fn(),
-    onFixError: vi.fn(),
+    onFixError,
     ...overrides,
   }
   const result = render(<ArtifactsPanel {...props} />)
-  return { ...result, props }
+  return { ...result, props, onFixError }
 }
 
 describe('ArtifactsPanel — list and focus', () => {
@@ -60,15 +61,15 @@ describe('ArtifactsPanel — list and focus', () => {
 
 describe('ArtifactsPanel — sandbox error bridge', () => {
   it('surfaces sandbox errors and dispatches the Fix-error prompt', async () => {
-    const { props } = renderPanel({ focusId: 'a2' })
+    const { onFixError } = renderPanel({ focusId: 'a2' })
     // Switch to the Sandbox tab for the HTML artifact.
     fireEvent.click(screen.getByRole('button', { name: 'Sandbox' }))
     // The previewed document posts an uncaught error back to the panel.
     fireEvent(window, new MessageEvent('message', { data: { __artifactError: 'undefined is not a function' } }))
     expect(await screen.findByText(/undefined is not a function/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /fix error/i }))
-    expect(props.onFixError).toHaveBeenCalledOnce()
-    const prompt = props.onFixError.mock.calls[0][0] as string
+    expect(onFixError).toHaveBeenCalledOnce()
+    const prompt = onFixError.mock.calls[0][0] as string
     expect(prompt).toContain('site.html')
     expect(prompt).toContain('undefined is not a function')
     expect(prompt).toContain('file body') // the artifact source rides along

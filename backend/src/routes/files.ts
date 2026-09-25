@@ -8,6 +8,7 @@ import {
   MAX_IMAGE_BYTES, FileAccessError, detectImageMime, requireOwnedConversation,
   storePrivateFile, readOwnedFile, findOwnedFile, deleteOwnedFile, fileReference,
   publishOwnedFile, unpublishOwnedFile, readPublishedFile,
+  sendFileResponse,
 } from '../services/privateFiles'
 import { extractDocumentText, MAX_DOC_BYTES } from '../services/documentText'
 import { createFileLink, verifyFileLink } from '../services/signedFileUrl'
@@ -72,19 +73,15 @@ filesRouter.get('/:id/content', async (req, res, next) => {
     const { file, buffer } = await readOwnedFile(userId, req.params.id)
     res.setHeader('Cache-Control', 'private, no-store')
     res.vary('Authorization')
-    res.setHeader('X-Content-Type-Options', 'nosniff')
-    if (signed) {
-      // Inline so the new tab renders; the CSP keeps the document sandboxed
-      // but renderable (self-contained HTML artifacts).
-      res.setHeader('Content-Security-Policy',
-        "sandbox allow-scripts allow-forms; default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'")
-      res.setHeader('Content-Disposition', `inline; filename="${file.name}"`)
-    } else {
-      res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'")
-      res.setHeader('Content-Disposition', `attachment; filename="${file.name}"`)
-    }
-    res.setHeader('Content-Type', file.mimeType)
-    res.send(buffer)
+    // Byte-range aware send (audit P3): Accept-Ranges on the first response,
+    // 206/Content-Range for Range requests — native <video> streaming over
+    // both credential paths (session header and signed link).
+    sendFileResponse(res, file, buffer, signed
+      ? {
+          inline: true,
+          csp: "sandbox allow-scripts allow-forms; default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
+        }
+      : { inline: false, csp: 'sandbox; default-src \'none\'' })
   } catch (error) { fileErrorResponse(error, res) }
 })
 
@@ -119,17 +116,14 @@ filesRouter.delete('/:id/publish', async (req, res) => {
   catch (error) { fileErrorResponse(error, res) }
 })
 
-/** Anonymous read-only download of a published file. */
+/** Anonymous read-only download of a published file. Range-aware so shared
+ * videos stream/seek in the browser player. */
 export const publicFilesRouter = express.Router()
 publicFilesRouter.get('/public/:token/content', async (req, res) => {
   try {
     const { file, buffer } = await readPublishedFile(req.params.token)
     res.setHeader('Cache-Control', 'public, max-age=300')
-    res.setHeader('X-Content-Type-Options', 'nosniff')
-    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'")
-    res.setHeader('Content-Disposition', `inline; filename="${file.name}"`)
-    res.setHeader('Content-Type', file.mimeType)
-    res.send(buffer)
+    sendFileResponse(res, file, buffer, { inline: true, csp: "sandbox; default-src 'none'" })
   } catch (error) { fileErrorResponse(error, res) }
 })
 

@@ -11,6 +11,7 @@ import type { ArtifactRef } from '../../lib/stream'
 import Markdown from './Markdown'
 import { artifactHref, artifactFileId, downloadArtifact, openArtifactInNewTab, useAuthedText, useAuthedUrl, isVideoArtifact } from './artifactUrl'
 import { PdfView, SheetView, MermaidView, withErrorBridge, DEVICE_WIDTH, type ArtifactDevice } from './ArtifactViewers'
+import VideoPlayer from './VideoPlayer'
 
 interface Props {
   artifacts: ArtifactRef[]
@@ -108,10 +109,10 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
     focused && focused.kind !== 'image' && !isVideoArtifact(focused) && !isPdf && !isSheet && !isMermaid ? artifactHref(focused.url) : undefined,
   )
   const mermaidText = useAuthedText(isMermaid ? artifactHref(focused?.url) : undefined)
-  // Images/videos need authed blob URLs — a raw <img src>/src would 401.
+  // Images need authed blob URLs — a raw <img src> would 401. Videos stream
+  // via the signed-URL VideoPlayer instead.
   const focusHref = focused ? artifactHref(focused.url) : undefined
   const focusImage = useAuthedUrl(focused?.kind === 'image' ? focusHref : undefined)
-  const focusVideo = useAuthedUrl(focused && isVideoArtifact(focused) ? focusHref : undefined)
 
   // Sandbox error bridge: uncaught errors inside the previewed document.
   useEffect(() => {
@@ -243,11 +244,7 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
                   ? <img src={focusImage} alt={focused.name} className="w-full rounded-xl border border-white/10" />
                   : <LoadingShim />
               )}
-              {tab === 'preview' && isVideoArtifact(focused) && (
-                focusVideo
-                  ? <video src={focusVideo} controls playsInline preload="metadata" className="w-full rounded-xl border border-white/10 bg-black"><track kind="captions" /></video>
-                  : <LoadingShim />
-              )}
+              {tab === 'preview' && isVideoArtifact(focused) && <VideoPlayer a={focused} className="w-full" />}
               {tab === 'preview' && isPdf && <PdfView a={focused} />}
               {tab === 'preview' && isSheet && <SheetView a={focused} />}
               {tab === 'preview' && isMermaid && (mermaidText.text ? <MermaidView code={mermaidText.text} /> : <LoadingShim />)}
