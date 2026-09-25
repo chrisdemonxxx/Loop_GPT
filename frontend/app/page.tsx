@@ -21,7 +21,7 @@ const FEATURES = [
 const PLANS = [
   {
     name: 'Free', price: '$0', period: 'forever', cta: 'Start free', href: '/signup', highlight: true,
-    features: ['~30 messages/day', 'Chat + web search + calculator', '3 images/day', '1 deep-research/day', 'PDF export', 'Community support'],
+    features: ['~30 messages/day', 'Chat + web search + calculator', '5 images/day', '1 deep-research/day', 'PDF export', 'Community support'],
   },
   {
     name: 'Pro', price: 'Soon', period: '', cta: 'Join the waitlist', href: '/signup', highlight: false,
