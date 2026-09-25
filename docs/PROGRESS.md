@@ -146,6 +146,49 @@ Resolved against live Railway + Resend state (not guesses). Audit = `AUDIT_REPOR
 - **Web bundle hygiene**: the deployed `web/` now builds from repo commit
   `336f4c0` (branch `release/owned-staging-20260917` pushed).
 
+## Production-readiness Phase 4 — architecture cleanup (2026-09-26, executed before Phase 2 as planned)
+
+Structural prerequisite for the Phase 2 UI rebuild; zero behavior change,
+gated by the full suites.
+
+- **`frontend/app/chat/page.tsx` (755 → 440 lines)** — thin orchestration
+  shell. Extracted: `app/chat/hooks.ts` (`usePanels` panel/desktop state,
+  `useWorkspaceProjects` bootstrap, `useConversationsData` react-query layer,
+  `useChatStream` the live-run state machine + send pipeline incl. uploads,
+  approval handshake, once-per-run activity auto-open); presentational
+  `ChatHeader.tsx` (export-menu state now header-local).
+- **`MessageList.tsx` (593 → 142)** — split into `MessageBubble.tsx`,
+  `ArtifactCard.tsx` (+ fullscreen `ArtifactViewer`), `artifactUrl.ts`
+  (authed URL hooks + download), `EmptyState.tsx` (+ `ThinkingDots`),
+  shared `types.ts`. Same props contract.
+- **`Composer.tsx` (432 → 252)** — public props unchanged (pinned by its
+  test); `composer/SlashPalette.tsx` (also owns `RunModePicker`),
+  `composer/PlusMenu.tsx` (also `AttachmentChips` + `DictationBar`).
+  Menu mutual-exclusivity preserved via `onCloseOther` callbacks.
+  (A `ComposerContext` was considered and deferred — Phase 2 will
+  restructure the page→composer boundary anyway.)
+- **Backend `routes/agent.ts` (788 → 389)** — the ~280-line
+  `POST /:conversationId/stream` pipeline moved verbatim to
+  `controllers/agentStream.ts` (`streamAgentRun`), `requestLifecycle`
+  exported and shared with the completions route.
+- **Backend ESLint — NEW.** ESLint 8 + @typescript-eslint 7 extending the
+  shared root `eslint.base.json`; `npm run lint` gates CI
+  (`backend-validation.yml`, after `npm ci`). Rollout fixed 26 errors:
+  auto-fixables, regex class-escape cleanups, typed mock helpers,
+  `chatStore` lazy bcrypt → dynamic import, a real paren repair in the
+  `dailyDisconnect` it.each. Deliberate control-char sanitizers
+  (provider/public http, httpClient, documentText) and the fail-closed
+  cleanup throw (privateStorage) carry documented inline disables.
+  29 `no-unused-vars` advisories remain as non-gating warnings.
+- **`neon-*` Tailwind aliases — REMOVED.** The audit's own precondition was
+  already stale: 39 references still existed (account/admin/auth pages,
+  ArtifactsPanel, primitives, AgentComputer). All migrated to exact-value
+  arbitrary classes (`text-[#c96442]` etc. — generated CSS identical), then
+  the alias block deleted from `tailwind.config.js`.
+- Gates: frontend `tsc` + 32 unit tests + 12 Playwright + `next build`;
+  backend `tsc` + 1128 tests + lint 0 errors. Both commits pushed and
+  deployed via the branch (`db08c53`, `22a7443`).
+
 
 ## Production-readiness pass (2026-09-22, phases 0–7) — COMPLETE
 
