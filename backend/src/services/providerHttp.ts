@@ -33,6 +33,7 @@ export interface ProviderResponse {
 export type SidecarHttpOptions = Omit<ProviderHttpOptions, 'allowedOrigins'>
 export type SidecarPath = '/health' | '/api/generate' | '/api/analyze' | '/api/vision-chat'
 const error = (code: string, status?: number) => new ProviderHttpError(code, status)
+      // eslint-disable-next-line no-control-regex -- deliberate: rejects control characters in sidecar request bodies
 const unsafeRaw = /[\s\u0000-\u001f\u007f-\u009f\\]/
 const headerLimit = 16 * 1024
 const requestLimit = 32 * 1024 * 1024
@@ -71,6 +72,7 @@ function prepare(url: URL, options: ProviderHttpOptions, internal: boolean) {
   for (const [name, value] of Object.entries(options.headers || {})) {
     const key = name.toLowerCase()
     if ((!plainHeaders.has(key) && !credentialHeaders.has(key)) || Object.prototype.hasOwnProperty.call(headers, key) ||
+      // eslint-disable-next-line no-control-regex -- deliberate: rejects control characters in provider headers
         typeof value !== 'string' || /[\u0000-\u001f\u007f-\u009f]/.test(value)) throw error('invalid_request')
     try { http.validateHeaderName(name); http.validateHeaderValue(name, value) } catch { throw error('invalid_request') }
     if (credentialHeaders.has(key)) {

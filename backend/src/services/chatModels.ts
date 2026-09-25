@@ -163,7 +163,7 @@ export function tierFor(model?: string | null): ChatTier {
   if (largeModelEnabled()) {
     const upstream = (process.env.HF_LARGE_MODEL || '').toLowerCase()
     if (upstream && upstream === m) return 'large'
-    if (/^(glm|zai|z-ai)[\w.\-]*/.test(m)) return 'large'
+    if (/^(glm|zai|z-ai)[\w.-]*/.test(m)) return 'large'
   }
   return 'standard'
 }

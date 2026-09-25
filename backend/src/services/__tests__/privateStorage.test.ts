@@ -88,7 +88,7 @@ describe('private filesystem configuration and namespace', () => {
     const target = path.join(parent, 'marker-target')
     await fs.writeFile(target, JSON.stringify({ version: 1, id: env.PRIVATE_FILES_STORE_ID }))
     try { await fs.symlink(target, marker()) } catch (error: any) {
-      if (process.platform === 'win32' && error.code === 'EPERM') { context.skip(); return }; throw error
+      if (process.platform === 'win32' && error.code === 'EPERM') { context.skip(); return } throw error
     }
     await expect(resolveRoot({}, env)).rejects.toMatchObject(unavailable)
     await expect(initializePrivateStorage(env)).rejects.toMatchObject(unavailable)

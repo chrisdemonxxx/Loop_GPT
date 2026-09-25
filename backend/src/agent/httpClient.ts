@@ -58,6 +58,7 @@ export function decodeMedia(value: string): Buffer {
  */
 export function mediaUrl(value: string, endpoint?: string, sameOrigin = false): string {
   try {
+      // eslint-disable-next-line no-control-regex -- deliberate: URL sanitizer: rejects control characters in provider media URLs
     if (typeof value !== 'string' || !value || value.length > 8192 || /[\s\u0000-\u001f\u007f-\u009f\\#]/.test(value)) throw new Error()
     const url = endpoint ? new URL(value, endpoint) : new URL(value)
     if (url.protocol !== 'https:' || url.username || url.password || url.hash ||

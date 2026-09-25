@@ -238,8 +238,8 @@ MONITORING:
         continue
       }
 
-      if (inPlanSection && /^\d+[\.\)]\s/.test(trimmed)) {
-        const stepText = trimmed.replace(/^\d+[\.\)]\s*/, '')
+      if (inPlanSection && /^\d+[.)]\s/.test(trimmed)) {
+        const stepText = trimmed.replace(/^\d+[.)]\s*/, '')
         steps.push({
           step: stepNumber++,
           action: stepText.split(':')[0] || stepText,
@@ -337,7 +337,7 @@ MONITORING:
         frequency: sections.schedule || 'on-demand',
         trigger: sections.trigger || 'manual',
       },
-      steps: sections.steps ? sections.steps.split(/\d+[\.\)]\s*/).filter((s: string) => s.trim()).map((s: string, i: number) => ({
+      steps: sections.steps ? sections.steps.split(/\d+[.)]\s*/).filter((s: string) => s.trim()).map((s: string, i: number) => ({
         step: i + 1,
         action: s.trim(),
         status: 'pending' as const,

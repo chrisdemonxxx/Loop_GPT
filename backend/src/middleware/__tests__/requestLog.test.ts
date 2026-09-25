@@ -5,10 +5,10 @@ import { requestLog, recentRequests, metricsSummary, _resetRingForTests } from '
 beforeEach(() => { _resetRingForTests() })
 
 function mockRes(status = 200) {
-  const listeners: Record<string, Function[]> = {}
+  const listeners: Record<string, Array<() => void>> = {}
   const res = {
     statusCode: status,
-    on: (event: string, fn: Function) => { (listeners[event] ||= []).push(fn) },
+    on: (event: string, fn: () => void) => { (listeners[event] ||= []).push(fn) },
   } as unknown as Response
   const fire = (event: string) => { for (const fn of listeners[event] || []) fn() }
   return { res, fire }

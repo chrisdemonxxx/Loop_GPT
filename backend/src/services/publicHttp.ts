@@ -35,6 +35,7 @@ export function isPublicAddress(address: string): boolean {
 }
 
 export function validatePublicUrl(value: string): URL {
+      // eslint-disable-next-line no-control-regex -- deliberate: rejects control characters in public URLs
   if (typeof value !== 'string' || value.length > 8192 || /[\u0000-\u0020\u007f\\]/.test(value)) throw invalid()
   let url: URL
   try { url = new URL(value) } catch { throw invalid() }

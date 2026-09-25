@@ -126,7 +126,7 @@ export const authenticateToken = (req: express.Request, res: express.Response, n
 
   if (isDevMode && authHeader === undefined) {
     // Use a default test user ID for development
-    ;(req as any).userId = 'dev-user-123'
+    (req as any).userId = 'dev-user-123'
     return next()
   }
 
@@ -139,7 +139,7 @@ export const authenticateToken = (req: express.Request, res: express.Response, n
         decoded.userId.trim().length === 0 || decoded.userId.length > 128) {
       return res.status(401).json({ error: 'Invalid token' })
     }
-    ;(req as any).userId = decoded.userId
+    (req as any).userId = decoded.userId
     // Password-reset invalidation: reject tokens issued before the user's
     // last reset. One indexed read; fail-open on DB errors (the signature is
     // already verified) so a transient DB blip doesn't lock users out.

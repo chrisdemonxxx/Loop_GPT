@@ -179,7 +179,7 @@ export async function streamTurn(opts: StreamTurnOptions): Promise<StreamTurnRes
   // Qwen 3 thinking mode: set QWEN_THINKING=true to enable chain-of-thought
   // (slower but better for hard reasoning). Default: disabled (faster).
   if (process.env.QWEN_THINKING !== 'true') {
-    ;(params as any).enable_thinking = false
+    (params as any).enable_thinking = false
   }
 
   if (tools && tools.length > 0) {

@@ -27,6 +27,7 @@ export async function extractDocumentText(buffer: Buffer, filename: string): Pro
   if (full > MAX_DOC_BYTES) throw Object.assign(new Error('File exceeds the 15MB limit.'), { status: 413 })
 
   const finish = (kind: ExtractedDoc['kind'], raw: string): ExtractedDoc => {
+      // eslint-disable-next-line no-control-regex -- deliberate: strip NUL bytes from extracted document text
     const text = cap(raw.replace(/\u0000/g, '').trim())
     return { text, kind, truncated: raw.length > MAX_DOC_CHARS, chars: text.length }
   }

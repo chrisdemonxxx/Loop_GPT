@@ -220,8 +220,7 @@ describe('JWT disconnects before daily dispatch', () => {
   })
 
   it.each(mounts.flatMap(mount => ['chat', 'agent', 'research'].flatMap(mode =>
-    ['conversation', 'user-message'].map(stage => ({ mount, mode, stage })))))
-  ('releases a hold during $stage setup: $mount $mode', async ({ mount, mode, stage }) => {
+    ['conversation', 'user-message'].map(stage => ({ mount, mode, stage })))))('releases a hold during $stage setup: $mount $mode', async ({ mount, mode, stage }) => {
     // Pre-create personal membership. An unbound legacy conversation blocks in
     // prepareRunConversation; a bound one blocks the user-message FK insert.
     const prepared = await prepareRunConversation(userId, 'new', 'Owned fixture')

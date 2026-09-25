@@ -53,7 +53,7 @@ function buildRules(): Array<{ re: RegExp; sub: string }> {
       sub: "I'm Loop GPT, your AI assistant",
     })
     rules.push({
-      re: /\bI(?:'m| am) (?:the )?(?:an? )?(qwen|llama|gpt-?[0-9o]+|claude|mistral|mixtral|gemma|deepseek)[\w.\-]*/gi,
+      re: /\bI(?:'m| am) (?:the )?(?:an? )?(qwen|llama|gpt-?[0-9o]+|claude|mistral|mixtral|gemma|deepseek)[\w.-]*/gi,
       sub: "I'm Loop GPT",
     })
   }

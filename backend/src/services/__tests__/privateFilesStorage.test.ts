@@ -96,7 +96,7 @@ describe('all private file entry points use the identified storage root', () => 
     const target = path.join(root, 'target')
     await fs.rename(path.join(root, staged.id), target)
     try { await fs.symlink(target, path.join(root, staged.id)) } catch (error: any) {
-      if (process.platform === 'win32' && error.code === 'EPERM') { context.skip(); return }; throw error
+      if (process.platform === 'win32' && error.code === 'EPERM') { context.skip(); return } throw error
     }
     await expect(verifyStagedArtifact(staged)).rejects.toMatchObject({ status: 409 })
   })

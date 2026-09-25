@@ -52,7 +52,7 @@ export const searchKnowledgeTool: ToolDefinition = {
       })
       const workspaceIds = memberships.map((m) => m.workspaceId)
 
-      let chunks = await prisma!.knowledgeChunk.findMany({
+      const chunks = await prisma!.knowledgeChunk.findMany({
         where: projectId
           ? { projectId, project: { workspaceId: { in: workspaceIds } } }
           : { project: { workspaceId: { in: workspaceIds } } },

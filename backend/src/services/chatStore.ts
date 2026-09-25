@@ -36,7 +36,8 @@ async function ensureDevUser(userId: string) {
   if (userId === 'dev-user-123' && process.env.NODE_ENV === 'development' && process.env.ENABLE_DEV_MODE === 'true') {
     const existing = await prisma.user.findUnique({ where: { id: userId } })
     if (!existing) {
-      const bcrypt = require('bcryptjs')
+      // Lazy-load bcrypt (dev-mode guest bootstrap only); keeps the module out of the hot path.
+      const bcrypt = (await import('bcryptjs')).default
       await prisma.user.upsert({
         where: { id: userId }, update: {},
         create: { id: userId, email: 'guest@loop-gpt.local', password: await bcrypt.hash(randomBytes(32).toString('hex'), 10), name: 'Local Developer' },

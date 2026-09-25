@@ -237,6 +237,7 @@ async function inNamespace<T>(settings: ReturnType<typeof config>, initialize: b
     return await operation(namespace)
   } finally {
     if (directory) {
+      // eslint-disable-next-line no-unsafe-finally -- fail-closed by design: a failed cleanup surfaces as PrivateStorageError and never leaks the raw cause.
       try { await directory.close() } catch { throw new PrivateStorageError() }
     }
   }
