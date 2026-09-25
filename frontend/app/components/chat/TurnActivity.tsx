@@ -117,10 +117,10 @@ export default function TurnActivity({
         <span className={`text-[12px] ${turnState === 'done' ? 'text-slate-400' : meta.text} font-medium`}>
           {turnState === 'running' && status ? status : `Ran ${stepCount} step${stepCount === 1 ? '' : 's'}`}
         </span>
-        {turnState === 'waiting' && <span className="text-[11px] text-slate-500">· approve to continue</span>}
-        {turnState === 'error' && <span className="text-[11px] text-slate-500">· a step failed</span>}
+        {turnState === 'waiting' && <span className="text-[11px] text-slate-400">· approve to continue</span>}
+        {turnState === 'error' && <span className="text-[11px] text-slate-400">· a step failed</span>}
         <span className="flex-1" />
-        <ChevronDown size={13} className={`text-slate-600 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown size={13} className={`text-slate-500 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {/* Retry affordance on a failed turn (audit P1). */}
@@ -205,7 +205,7 @@ export default function TurnActivity({
 
               {/* Live status tail while streaming. */}
               {running && (
-                <div className="flex items-center gap-2 text-slate-500 px-0.5">
+                <div className="flex items-center gap-2 text-slate-400 px-0.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
                   <span className="cursor text-[11px]">{status || 'thinking'}</span>
                 </div>
@@ -259,25 +259,25 @@ function StepCard({
           <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
         )}
         <span className="font-mono text-[11.5px] text-slate-200 shrink-0">{name}</span>
-        <span className="text-[11px] text-slate-500 truncate flex-1">{argSummary(args)}</span>
-        {durationMs !== undefined && <span className="text-[10px] text-slate-500 shrink-0">{fmtDuration(durationMs)}</span>}
-        {ts && <span className="text-[10px] text-slate-600 shrink-0 flex items-center gap-0.5"><Clock size={9} /> {fmtTime(ts)}</span>}
-        <ChevronDown size={12} className={`text-slate-600 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        <span className="text-[11px] text-slate-400 truncate flex-1">{argSummary(args)}</span>
+        {durationMs !== undefined && <span className="text-[10px] text-slate-400 shrink-0">{fmtDuration(durationMs)}</span>}
+        {ts && <span className="text-[10px] text-slate-500 shrink-0 flex items-center gap-0.5"><Clock size={9} /> {fmtTime(ts)}</span>}
+        <ChevronDown size={12} className={`text-slate-500 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
       {isOpen && (
         <div className="border-t border-white/[0.05] px-2.5 py-2">
-          <div className="text-[10px] uppercase tracking-wide text-slate-600 mb-1">Input</div>
+          <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Input</div>
           <pre className="text-[10.5px] font-mono text-slate-400 whitespace-pre-wrap break-all mb-2">{JSON.stringify(args ?? {}, null, 1).slice(0, 1200)}</pre>
           {resultText && (
             <>
-              <div className="text-[10px] uppercase tracking-wide text-slate-600 mb-1">Output</div>
+              <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Output</div>
               <pre className={`text-[10.5px] font-mono whitespace-pre-wrap break-all ${isError ? 'text-rose-300' : 'text-slate-300'}`}>{resultText.slice(0, 2000)}{(resultText.length > 2000 ? '\n…' : '')}</pre>
             </>
           )}
         </div>
       )}
       {!isOpen && !result && running && (
-        <div className="px-2.5 pb-2 text-[11px] text-slate-500">running…</div>
+        <div className="px-2.5 pb-2 text-[11px] text-slate-400">running…</div>
       )}
     </motion.div>
   )
@@ -306,13 +306,13 @@ function ToolsFooter({ toolCount, onOpenTools }: { toolCount: number; onOpenTool
       </button>
       {show && (
         <div className="mt-1.5 rounded-xl border border-white/[0.06] bg-white/[0.02] max-h-40 overflow-y-auto">
-          {tools.length === 0 && <div className="px-3 py-2 text-[12px] text-slate-500">Loading tools…</div>}
+          {tools.length === 0 && <div className="px-3 py-2 text-[12px] text-slate-400">Loading tools…</div>}
           {tools.map((t) => (
             <div key={t.name} className="px-3 py-1.5 flex items-start gap-2">
-              <Wrench size={11} className="text-slate-600 mt-0.5 shrink-0" />
+              <Wrench size={11} className="text-slate-500 mt-0.5 shrink-0" />
               <div className="min-w-0">
                 <span className="font-mono text-[11.5px] text-slate-300">{t.name}</span>
-                <span className="block text-[11px] text-slate-500 truncate">{t.description}</span>
+                <span className="block text-[11px] text-slate-400 truncate">{t.description}</span>
               </div>
             </div>
           ))}

@@ -41,7 +41,7 @@ export function SheetView({ a }: { a: ArtifactRef }) {
     })()
     return () => { cancelled = true }
   }, [href])
-  if (error) return <div className="p-4 text-center text-[12px] text-slate-500">{error}</div>
+  if (error) return <div className="p-4 text-center text-[12px] text-slate-400">{error}</div>
   if (!rows) return <Loading label="Loading spreadsheet…" />
   return (
     <div className="overflow-auto">
@@ -56,7 +56,7 @@ export function SheetView({ a }: { a: ArtifactRef }) {
           ))}
         </tbody>
       </table>
-      {rows.length > 500 && <div className="px-2 py-1.5 text-[11px] text-slate-500">Showing first 500 of {rows.length} rows.</div>}
+      {rows.length > 500 && <div className="px-2 py-1.5 text-[11px] text-slate-400">Showing first 500 of {rows.length} rows.</div>}
     </div>
   )
 }
@@ -94,7 +94,7 @@ export function MermaidView({ code }: { code: string }) {
 /** Loading placeholder with spinner + label. */
 export function Loading({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2 justify-center py-10 text-[12px] text-slate-500">
+    <div className="flex items-center gap-2 justify-center py-10 text-[12px] text-slate-400">
       <Loader2 size={14} className="animate-spin" /> {label}
     </div>
   )

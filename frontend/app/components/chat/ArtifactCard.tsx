@@ -75,7 +75,7 @@ export function ArtifactCard({ a, onOpen }: { a: ArtifactRef; onOpen?: () => voi
       <FileDown size={14} className="text-[#c96442] shrink-0" />
       <span className="min-w-0">
         <span className="block text-slate-200 truncate">{a.name}</span>
-        <span className="block text-[10px] uppercase text-slate-500">{a.kind}</span>
+        <span className="block text-[10px] uppercase text-slate-400">{a.kind}</span>
       </span>
     </button>
   )

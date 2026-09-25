@@ -172,7 +172,7 @@ export default function Composer({
           aria-label={t('placeholder')}
           placeholder={t('placeholder')}
           rows={1}
-          className="w-full bg-transparent px-4 pt-3 pb-1 resize-none focus:outline-none placeholder-slate-600 text-[15px] text-slate-100 leading-relaxed"
+          className="w-full bg-transparent px-4 pt-3 pb-1 resize-none focus:outline-none placeholder-slate-500 text-[15px] text-slate-100 leading-relaxed"
           style={{ maxHeight: 220 }}
           onInput={(e) => {
             const el = e.target as HTMLTextAreaElement
@@ -213,7 +213,7 @@ export default function Composer({
               onClick={startDictation}
               title={t('mic')}
               aria-label={t('mic')}
-              className="w-8 h-8 flex items-center justify-center rounded-lg border border-white/[0.08] text-slate-500 hover:bg-white/[0.05] hover:text-slate-300 transition"
+              className="tap-target w-8 h-8 flex items-center justify-center rounded-lg border border-white/[0.08] text-slate-400 hover:bg-white/[0.05] hover:text-slate-300 transition"
             >
               <Mic size={16} />
             </button>
@@ -227,7 +227,7 @@ export default function Composer({
                 onClick={onStop}
                 title="Stop"
                 aria-label="Stop response"
-                className="w-9 h-9 flex items-center justify-center rounded-lg border border-white/[0.08] text-slate-300 hover:border-rose-400/30 hover:text-rose-400 transition"
+                className="tap-target w-9 h-9 flex items-center justify-center rounded-lg border border-white/[0.08] text-slate-300 hover:border-rose-400/30 hover:text-rose-400 transition"
               >
                 <X size={18} />
               </button>
@@ -237,7 +237,7 @@ export default function Composer({
                 disabled={!canSend}
                 title="Send"
                 aria-label="Send message"
-                className="w-9 h-9 flex items-center justify-center rounded-lg text-white bg-[#c96442] disabled:opacity-25 disabled:cursor-not-allowed hover:bg-[#b5593a] active:bg-[#a34e34] transition"
+                className="tap-target w-9 h-9 flex items-center justify-center rounded-lg text-white bg-[#c96442] disabled:opacity-25 disabled:cursor-not-allowed hover:bg-[#b5593a] active:bg-[#a34e34] transition"
               >
                 <Send size={16} />
               </button>
@@ -263,7 +263,7 @@ export default function Composer({
             />
           </div>
         )}
-        <p className="text-[11px] text-slate-700 flex-1 text-center">
+        <p className="text-[11px] text-slate-500 flex-1 text-center">
           {incognito ? <span className="text-[#e79d7f]/80">Incognito — private chat, no memory. </span> : null}
           {t('disclaimer')}
         </p>

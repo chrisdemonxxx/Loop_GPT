@@ -163,20 +163,32 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
 
   const openInNewTab = focused ? () => openArtifactInNewTab(focused) : undefined
 
+  // Mobile (below lg): a true bottom sheet — slides up, not in from the right
+  // (audit P6). Desktop keeps the docked right-hand panel; fullscreen stays a
+  // full overlay on both.
+  const sheet = !fullscreen && !isDesktopViewport
+
   return (
     <motion.aside
-      initial={{ x: 400, opacity: 0 }}
-      animate={{ x: 0, opacity: 1 }}
-      exit={{ x: 400, opacity: 0 }}
+      initial={sheet ? { y: 400 } : { x: 400, opacity: 0 }}
+      animate={sheet ? { y: 0 } : { x: 0, opacity: 1 }}
+      exit={sheet ? { y: 400 } : { x: 400, opacity: 0 }}
       transition={{ type: 'spring', stiffness: 320, damping: 34 }}
       style={fullscreen ? undefined : isDesktopViewport ? { width } : undefined}
       className={
         fullscreen
           ? 'fixed inset-0 z-50 flex p-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))]'
-          : 'fixed lg:relative inset-y-0 right-0 z-40 lg:z-auto flex w-full max-w-[92vw] sm:max-w-[440px] lg:max-w-none shrink-0 px-2.5 sm:px-3 lg:p-3 h-full pt-[max(0.625rem,env(safe-area-inset-top))] pb-[max(0.625rem,env(safe-area-inset-bottom))] lg:pt-3 lg:pb-3'
+          : sheet
+            ? 'fixed inset-x-0 bottom-0 z-40 flex flex-col h-[85dvh] px-2.5 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]'
+            : 'fixed lg:relative inset-y-0 right-0 z-40 lg:z-auto flex w-full max-w-[92vw] sm:max-w-[440px] lg:max-w-none shrink-0 px-2.5 sm:px-3 lg:p-3 h-full pt-[max(0.625rem,env(safe-area-inset-top))] pb-[max(0.625rem,env(safe-area-inset-bottom))] lg:pt-3 lg:pb-3'
       }
     >
       <div className="glass-strong rounded-2xl h-full w-full flex flex-col overflow-hidden shadow-panel relative">
+        {sheet && (
+          <div className="pt-1 flex justify-center shrink-0" aria-hidden="true">
+            <span className="w-10 h-1 rounded-full bg-white/15" />
+          </div>
+        )}
         {/* Drag handle (desktop resize, persisted) */}
         {!fullscreen && (
           <div
@@ -200,7 +212,7 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
           )}
           <div className="flex-1 min-w-0">
             <div className="text-sm font-semibold text-slate-100 truncate">{focused ? focused.name : 'Artifacts'}</div>
-            <div className="text-[11px] text-slate-500 truncate">
+            <div className="text-[11px] text-slate-400 truncate">
               {focused ? focused.kind.toUpperCase() : `${artifacts.length} item${artifacts.length === 1 ? '' : 's'}`}
             </div>
           </div>
@@ -218,7 +230,7 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
                 .filter((t) => t !== 'sandbox' || isHtml)
                 .map((t) => (
                   <button key={t} onClick={() => { setTab(t); setSandboxError(null) }}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] transition ${tab === t ? 'bg-white/10 text-slate-200' : 'text-slate-500 hover:text-slate-300'}`}>
+                    className={`px-2.5 py-1 rounded-lg text-[11px] transition ${tab === t ? 'bg-white/10 text-slate-200' : 'text-slate-400 hover:text-slate-300'}`}>
                     {t === 'preview' ? 'Preview' : t === 'raw' ? 'Raw' : 'Sandbox'}
                   </button>
                 ))}
@@ -227,15 +239,15 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
                 <>
                   {(['desktop', 'tablet', 'mobile'] as ArtifactDevice[]).map((d) => (
                     <button key={d} onClick={() => setDevice(d)} title={`Preview at ${d} size`}
-                      className={`p-1 rounded-lg transition ${device === d ? 'bg-white/10 text-slate-200' : 'text-slate-500 hover:text-slate-300'}`}>
+                      className={`p-1 rounded-lg transition ${device === d ? 'bg-white/10 text-slate-200' : 'text-slate-400 hover:text-slate-300'}`}>
                       {d === 'desktop' ? <Monitor size={13} /> : d === 'tablet' ? <Tablet size={13} /> : <Smartphone size={13} />}
                     </button>
                   ))}
-                  <button onClick={() => { setNonce((n) => n + 1); setSandboxError(null) }} title="Refresh preview" className="p-1 rounded-lg text-slate-500 hover:text-slate-300 transition"><RefreshCw size={13} /></button>
+                  <button onClick={() => { setNonce((n) => n + 1); setSandboxError(null) }} title="Refresh preview" className="p-1 rounded-lg text-slate-400 hover:text-slate-300 transition"><RefreshCw size={13} /></button>
                 </>
               )}
               {openInNewTab && (
-                <button onClick={openInNewTab} title="Open in new tab (short-lived private link)" className="p-1 rounded-lg text-slate-500 hover:text-slate-300 transition"><ExternalLink size={13} /></button>
+                <button onClick={openInNewTab} title="Open in new tab (short-lived private link)" className="p-1 rounded-lg text-slate-400 hover:text-slate-300 transition"><ExternalLink size={13} /></button>
               )}
             </div>
 
@@ -323,7 +335,7 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
               {published[focused.id] && (
                 <div className="text-[11px] text-slate-400 break-all flex items-center gap-1.5">
                   <a href={published[focused.id]} target="_blank" rel="noreferrer" className="text-sky-400 hover:underline">{published[focused.id]}</a>
-                  <button onClick={() => navigator.clipboard?.writeText(published[focused.id])} className="text-slate-500 hover:text-slate-300" title="Copy"><Copy size={11} /></button>
+                  <button onClick={() => navigator.clipboard?.writeText(published[focused.id])} className="text-slate-400 hover:text-slate-300" title="Copy"><Copy size={11} /></button>
                 </div>
               )}
             </div>
@@ -337,11 +349,11 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
               <div className="border-b border-white/5 bg-black/20 shrink-0">
                 <div className="flex items-center justify-between px-4 py-2">
                   <div className="text-[11px] text-slate-400 truncate">{diff.from} → {diff.to}</div>
-                  <button onClick={() => setDiff(null)} className="text-slate-500 hover:text-slate-300"><X size={13} /></button>
+                  <button onClick={() => setDiff(null)} className="text-slate-400 hover:text-slate-300"><X size={13} /></button>
                 </div>
                 <div className="max-h-56 overflow-auto px-3 pb-2 font-mono text-[11px] leading-relaxed">
                   {diff.lines.map((l, i) => (
-                    <div key={i} className={l.sign === '+' ? 'text-emerald-400' : l.sign === '-' ? 'text-rose-400' : 'text-slate-500'}>
+                    <div key={i} className={l.sign === '+' ? 'text-emerald-400' : l.sign === '-' ? 'text-rose-400' : 'text-slate-400'}>
                       <span className="select-none">{l.sign} </span>{l.text || '\u00a0'}
                     </div>
                   ))}
@@ -362,8 +374,8 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
               ))}
 
               {groups.length === 0 && buildingKinds.length === 0 && (
-                <div className="h-full flex flex-col items-center justify-center text-center text-slate-600 gap-2">
-                  <FileText size={28} className="text-slate-700" />
+                <div className="h-full flex flex-col items-center justify-center text-center text-slate-500 gap-2">
+                  <FileText size={28} className="text-slate-500" />
                   <p className="text-xs max-w-[200px]">Generated files and code snippets appear here as the agent creates them.</p>
                 </div>
               )}
@@ -379,10 +391,10 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
                       <span className="flex-1 min-w-0">
                         <span className="block text-[13px] text-slate-200 truncate">{g.base}</span>
                         {g.versions.length > 1 && (
-                          <span className="text-[10px] text-slate-500">{g.versions.length} versions</span>
+                          <span className="text-[10px] text-slate-400">{g.versions.length} versions</span>
                         )}
                       </span>
-                      <span className="text-[10px] uppercase tracking-wide text-slate-500">{latest.kind}</span>
+                      <span className="text-[10px] uppercase tracking-wide text-slate-400">{latest.kind}</span>
                     </button>
                     {g.versions.length > 1 && (
                       <div className="border-t border-white/5 px-3 py-1.5 space-y-1">
@@ -413,7 +425,7 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
 
 function LoadingShim() {
   return (
-    <div className="flex items-center gap-2 justify-center py-10 text-[12px] text-slate-500">
+    <div className="flex items-center gap-2 justify-center py-10 text-[12px] text-slate-400">
       <span className="shimmer inline-block h-2.5 w-2.5 rounded-full" /> Loading…
     </div>
   )
@@ -437,5 +449,5 @@ function IconForKind({ latest }: { latest: ArtifactRef }) {
   if (latest.kind === 'image') return <ImageIcon size={16} className="text-[#d8a08a] shrink-0" />
   if (/\.(md|txt)$/i.test(latest.name)) return <FileText size={16} className="text-[#c96442] shrink-0" />
   if (/\.(js|ts|jsx|tsx|py|go|rs|rb)$/i.test(latest.name)) return <Code size={16} className="text-[#6ee7a0] shrink-0" />
-  return <File size={16} className="text-slate-500 shrink-0" />
+  return <File size={16} className="text-slate-400 shrink-0" />
 }

@@ -45,7 +45,7 @@ export default function VideoPlayer({ a, className }: { a: ArtifactRef; classNam
 
   if (!url) {
     return (
-      <div className={`flex items-center gap-2 justify-center py-10 text-[12px] text-slate-500 ${className || ''}`}>
+      <div className={`flex items-center gap-2 justify-center py-10 text-[12px] text-slate-400 ${className || ''}`}>
         <Loader2 size={14} className="animate-spin" /> Preparing video stream…
       </div>
     )

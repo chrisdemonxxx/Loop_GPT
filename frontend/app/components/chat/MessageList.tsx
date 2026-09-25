@@ -115,23 +115,23 @@ export default function MessageList({
                 {liveThinking && (
                   <details className="group rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden" open={running && !liveAnswer}>
                     <summary className="flex items-center gap-1.5 px-3 py-2 text-[12px] text-slate-400 cursor-pointer hover:text-slate-200 select-none">
-                      <Brain size={12} className="text-slate-500" />
+                      <Brain size={12} className="text-slate-400" />
                       <span>{running && !liveAnswer ? 'Thinking…' : 'Thoughts'}</span>
                       {running && !liveAnswer && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse ml-0.5" />}
                     </summary>
-                    <div className={`px-3.5 pb-3 text-[12.5px] leading-relaxed text-slate-500 whitespace-pre-wrap max-h-64 overflow-y-auto ${running && !liveAnswer ? 'shimmer-text' : ''}`}>
+                    <div className={`px-3.5 pb-3 text-[12.5px] leading-relaxed text-slate-400 whitespace-pre-wrap max-h-64 overflow-y-auto ${running && !liveAnswer ? 'shimmer-text' : ''}`}>
                       {liveThinking}
                     </div>
                   </details>
                 )}
                 {running && (mode === 'research' || mode === 'agent') && !liveAnswer && !liveSteps.some((s) => s.kind === 'tool') && (
-                  <div className="flex items-center gap-2 text-[13px] text-slate-500">
+                  <div className="flex items-center gap-2 text-[13px] text-slate-400">
                     <Loader2 size={12} className="animate-spin" />
                     <span>{statusMsg || 'working'}</span>
                   </div>
                 )}
                 {statusMsg && !liveAnswer && liveSteps.length === 0 && (
-                  <div className="flex items-center gap-2 text-[13px] text-slate-500" aria-live="polite">
+                  <div className="flex items-center gap-2 text-[13px] text-slate-400" aria-live="polite">
                     <span className="shimmer inline-block h-2.5 w-28 rounded-full" aria-hidden="true" />
                     <span>{statusMsg}</span>
                   </div>

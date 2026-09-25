@@ -164,7 +164,7 @@ export default function Lightbox({
           </button>
         </>
       )}
-      <span className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 text-[11px] text-slate-500 bg-black/40 rounded-full px-3 py-1 pointer-events-none">
+      <span className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 text-[11px] text-slate-400 bg-black/40 rounded-full px-3 py-1 pointer-events-none">
         <ZoomIn size={11} /> scroll or double-click to zoom · swipe down to close
       </span>
     </div>,

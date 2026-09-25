@@ -14,31 +14,71 @@ import type { Conversation, Message, LiveStep, PendingApproval } from '../compon
 // Panels: sidebar / activity / artifacts + responsive desktop detection
 // ---------------------------------------------------------------------------
 
-/** Panel open/close state + the 1024px desktop media-query. The activity
- * feed is inline below each response (TurnActivity), so the right edge is
- * exclusively the artifacts panel — no shared-panel mutex remains. */
+/** Panel open/close state + responsive breakpoints. The sidebar is
+ * persistent from tablet up (≥768px, audit P6), while the right panel docks
+ * only on desktop (≥1024px). The activity feed is inline below each
+ * response (TurnActivity), so the right edge is exclusively the artifacts
+ * panel — no shared-panel mutex remains. */
 export function usePanels() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [artifactsOpen, setArtifactsOpen] = useState(false)
+  const [isTablet, setIsTablet] = useState(false)
   const [isDesktop, setIsDesktop] = useState(false)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const mq = window.matchMedia('(min-width: 1024px)')
-    const apply = () => { setIsDesktop(mq.matches); setSidebarOpen(mq.matches) }
+    const tabletMq = window.matchMedia('(min-width: 768px)')
+    const desktopMq = window.matchMedia('(min-width: 1024px)')
+    const apply = () => {
+      setIsTablet(tabletMq.matches)
+      setIsDesktop(desktopMq.matches)
+      // The sidebar stays persistent from tablet up; below that it starts
+      // closed (the layout is too narrow to share with the transcript).
+      setSidebarOpen(tabletMq.matches)
+    }
     apply()
-    mq.addEventListener('change', apply)
-    return () => mq.removeEventListener('change', apply)
+    tabletMq.addEventListener('change', apply)
+    desktopMq.addEventListener('change', apply)
+    return () => {
+      tabletMq.removeEventListener('change', apply)
+      desktopMq.removeEventListener('change', apply)
+    }
   }, [])
 
-  const closeOverlays = () => { if (!isDesktop) { setSidebarOpen(false); setArtifactsOpen(false) } }
+  const closeOverlays = () => { if (!isTablet) { setSidebarOpen(false); setArtifactsOpen(false) } }
 
   return {
     sidebarOpen, setSidebarOpen,
     artifactsOpen, setArtifactsOpen,
+    isTablet,
     isDesktop,
     closeOverlays,
   }
+}
+
+/**
+ * Tracks the on-screen keyboard (audit P6) via the VisualViewport API: when
+ * the keyboard pushes the visual viewport up, --kb-offset receives the
+ * intrusion distance so the composer's bottom padding lifts above it
+ * instead of being covered (classic iOS problem).
+ */
+export function useKeyboardSafeBottom() {
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    const apply = () => {
+      const intrusion = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+      document.documentElement.style.setProperty('--kb-offset', `${Math.round(intrusion)}px`)
+    }
+    apply()
+    vv.addEventListener('resize', apply)
+    vv.addEventListener('scroll', apply)
+    return () => {
+      vv.removeEventListener('resize', apply)
+      vv.removeEventListener('scroll', apply)
+      document.documentElement.style.setProperty('--kb-offset', '0px')
+    }
+  }, [])
 }
 
 // ---------------------------------------------------------------------------

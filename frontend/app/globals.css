@@ -80,6 +80,20 @@
     animation: blink 1s step-end infinite;
   }
 
+  /* WCAG 44px minimum touch target for compact icon controls (composer +,
+     mic, mode picker, send/stop): keeps the 28–32px visual size and extends
+     the hit area with a pseudo-element pad. */
+  .tap-target { position: relative; }
+  .tap-target::before {
+    content: '';
+    position: absolute;
+    inset: -8px;
+  }
+
+  /* On-screen keyboard offset (mobile chat): set from the visualViewport
+     listener in useKeyboardSafeBottom; consumed by the composer's padding. */
+  :root { --kb-offset: 0px; }
+
   /* Shimmer skeleton for the "thinking" state */
   .shimmer {
     background: linear-gradient(90deg, rgba(148,163,184,0.04) 25%, rgba(148,163,184,0.12) 37%, rgba(148,163,184,0.04) 63%);

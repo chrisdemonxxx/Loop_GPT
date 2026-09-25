@@ -90,9 +90,9 @@ export function MessageBubble({
       {message.metadata?.reasoning && (
         <details className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
           <summary className="flex items-center gap-1.5 px-3 py-2 text-[12px] text-slate-400 cursor-pointer hover:text-slate-200 select-none">
-            <Brain size={12} className="text-slate-500" /> Thoughts
+            <Brain size={12} className="text-slate-400" /> Thoughts
           </summary>
-          <div className="px-3.5 pb-3 text-[12.5px] leading-relaxed text-slate-500 whitespace-pre-wrap max-h-64 overflow-y-auto">
+          <div className="px-3.5 pb-3 text-[12.5px] leading-relaxed text-slate-400 whitespace-pre-wrap max-h-64 overflow-y-auto">
             {String(message.metadata.reasoning)}
           </div>
         </details>
@@ -110,7 +110,7 @@ export function MessageBubble({
           <button
             type="button"
             onClick={() => setShowPrompt((v) => !v)}
-            className="inline-flex items-center gap-1 text-slate-500 hover:text-slate-300 transition"
+            className="inline-flex items-center gap-1 text-slate-400 hover:text-slate-300 transition"
             aria-expanded={showPrompt}
           >
             <Sparkles size={11} /> {showPrompt ? 'Hide' : 'View'} enhanced prompt
@@ -118,11 +118,11 @@ export function MessageBubble({
           {showPrompt && (
             <div className="mt-1.5 rounded-xl border border-white/[0.07] bg-white/[0.03] p-3 space-y-2">
               <div>
-                <div className="text-[10px] uppercase tracking-wide text-slate-500">Original</div>
+                <div className="text-[10px] uppercase tracking-wide text-slate-400">Original</div>
                 <div className="text-slate-400 whitespace-pre-wrap">{promptMeta.raw}</div>
               </div>
               <div>
-                <div className="text-[10px] uppercase tracking-wide text-slate-500">Enhanced (sent to the model)</div>
+                <div className="text-[10px] uppercase tracking-wide text-slate-400">Enhanced (sent to the model)</div>
                 <div className="text-slate-200 whitespace-pre-wrap">{promptMeta.enhanced}</div>
               </div>
             </div>
@@ -137,7 +137,7 @@ export function MessageBubble({
       )}
 
       {sources && sources.length > 0 && (
-        <div className="text-[12px] text-slate-500 space-y-1">
+        <div className="text-[12px] text-slate-400 space-y-1">
           <div className="font-medium text-slate-400 text-[12px]">Sources</div>
           <ol className="space-y-0.5">
             {sources.map((s) => (
@@ -182,7 +182,7 @@ export function ActionBtn({ onClick, title, ariaLabel, icon }: { onClick: () => 
       onClick={onClick}
       title={title}
       aria-label={ariaLabel || title}
-      className="p-1.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-white/[0.05] transition"
+      className="p-1.5 rounded-md text-slate-400 hover:text-slate-300 hover:bg-white/[0.05] transition"
     >
       {icon}
     </button>

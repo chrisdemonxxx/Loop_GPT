@@ -27,7 +27,7 @@ export function EmptyState({ onStartPrompt }: { onStartPrompt?: (p: string) => v
         <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight text-gradient">
           How can I help you today?
         </h1>
-        <p className="text-slate-500 text-[14px] max-w-sm mx-auto">
+        <p className="text-slate-400 text-[14px] max-w-sm mx-auto">
           Type <span className="font-mono text-slate-400 bg-white/[0.05] px-1.5 py-0.5 rounded text-[13px]">/</span> for
           deep research. <span className="font-mono text-slate-400 bg-white/[0.05] px-1.5 py-0.5 rounded text-[13px]">⌘K</span> for commands.
           New here? <Link href="/onboarding" className="text-[#e79d7f] hover:underline">Take the 2-minute tour →</Link>
@@ -67,7 +67,7 @@ export function ThinkingDots() {
           />
         ))}
       </span>
-      <span className="text-[13px] text-slate-500 shimmer-text">Thinking…</span>
+      <span className="text-[13px] text-slate-400 shimmer-text">Thinking…</span>
     </div>
   )
 }

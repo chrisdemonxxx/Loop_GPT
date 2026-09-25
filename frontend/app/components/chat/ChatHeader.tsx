@@ -39,7 +39,7 @@ export default function ChatHeader({
       {!sidebarOpen && (
         <button
           onClick={onOpenSidebar}
-          className="p-1.5 rounded-lg hover:bg-white/[0.05] text-slate-500 hover:text-slate-300 transition"
+          className="p-1.5 rounded-lg hover:bg-white/[0.05] text-slate-400 hover:text-slate-300 transition"
         >
           <PanelLeft size={17} />
         </button>
@@ -61,7 +61,7 @@ export default function ChatHeader({
           className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] border transition ${
             incognito
               ? 'border-[#c96442]/40 text-[#e79d7f] bg-[#c96442]/[0.07]'
-              : 'border-white/[0.06] text-slate-500 hover:bg-white/[0.05] hover:text-slate-300'
+              : 'border-white/[0.06] text-slate-400 hover:bg-white/[0.05] hover:text-slate-300'
           }`}
         >
           <Ghost size={13} />
@@ -75,7 +75,7 @@ export default function ChatHeader({
               aria-label="Export conversation"
               aria-haspopup="menu"
               aria-expanded={exportMenuOpen}
-              className="p-1.5 rounded-lg hover:bg-white/[0.05] text-slate-500 hover:text-slate-300 transition"
+              className="p-1.5 rounded-lg hover:bg-white/[0.05] text-slate-400 hover:text-slate-300 transition"
             >
               <FileDown size={15} />
             </button>
@@ -94,12 +94,12 @@ export default function ChatHeader({
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] border transition ${
               artifactsOpen
                 ? 'border-white/15 text-slate-200 bg-white/[0.08]'
-                : 'border-white/[0.06] text-slate-500 hover:bg-white/[0.05] hover:text-slate-300'
+                : 'border-white/[0.06] text-slate-400 hover:bg-white/[0.05] hover:text-slate-300'
             }`}
           >
             <FileDown size={13} />
             <span className="hidden sm:inline">Files</span>
-            <span className="text-slate-600">{artifactCount}</span>
+            <span className="text-slate-500">{artifactCount}</span>
           </button>
         )}
         {hasConversation && (
@@ -109,7 +109,7 @@ export default function ChatHeader({
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] border transition ${
               researchOpen
                 ? 'border-white/15 text-slate-200 bg-white/[0.08]'
-                : 'border-white/[0.06] text-slate-500 hover:bg-white/[0.05] hover:text-slate-300'
+                : 'border-white/[0.06] text-slate-400 hover:bg-white/[0.05] hover:text-slate-300'
             }`}
           >
             <FlaskConical size={13} />

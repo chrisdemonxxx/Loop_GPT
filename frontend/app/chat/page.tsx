@@ -19,7 +19,7 @@ import type { Conversation, Message } from '../components/chat/types'
 import { parseCommand, SLASH_COMMANDS } from '../lib/commands'
 import ProjectsPanel, { type Project } from '../components/ProjectsPanel'
 import ResearchPanel from '../components/ResearchPanel'
-import { usePanels, useWorkspaceProjects, useConversationsData, useChatStream } from './hooks'
+import { usePanels, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom } from './hooks'
 
 // slash commands live in ../lib/commands (registry + parseCommand)
 
@@ -27,8 +27,10 @@ import { usePanels, useWorkspaceProjects, useConversationsData, useChatStream } 
  * activity/artifacts overlays. All run mechanics live in ./hooks; presenters
  * live in ../components/chat. */
 export default function ChatPage() {
-  // ── Panels (sidebar / activity / artifacts + desktop detection) ───────────
+  // ── Panels (sidebar / artifacts + tablet/desktop breakpoints) ────────────
   const panels = usePanels()
+  // Lifts the composer above the on-screen keyboard (iOS, audit P6).
+  useKeyboardSafeBottom()
 
   // ── Session / UI state ────────────────────────────────────────────────────
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
@@ -303,15 +305,18 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-[100dvh] overflow-hidden text-slate-200 bg-[#111113]">
-      {/* Mobile backdrop */}
-      {panels.sidebarOpen && !panels.isDesktop && (
+      {/* Mobile backdrop — only below the tablet breakpoint; from 768px up
+          the sidebar is a persistent column and the artifacts panel is the
+          only overlay. */}
+      {(panels.sidebarOpen || panels.artifactsOpen) && !panels.isTablet && (
         <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-30 lg:hidden"
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-30"
           onClick={panels.closeOverlays}
         />
       )}
 
-      {/* ── Left sidebar ─────────────────────────────────────────────────── */}
+      {/* ── Left sidebar — persistent from tablet up (audit P6); the spec
+          width never overflows a 320px viewport. ───────────────────────── */}
       <AnimatePresence initial={false}>
         {panels.sidebarOpen && (
           <motion.aside
@@ -319,7 +324,7 @@ export default function ChatPage() {
             animate={{ x: 0 }}
             exit={{ x: -280 }}
             transition={{ type: 'spring', stiffness: 380, damping: 34 }}
-            className="fixed lg:relative inset-y-0 left-0 w-[260px] max-w-[82vw] shrink-0 flex flex-col h-full z-40 lg:z-20 pt-[env(safe-area-inset-top)] lg:pt-0 bg-[#0f0f11] border-r border-white/[0.05]"
+            className="fixed md:relative inset-y-0 left-0 w-[min(20rem,calc(100vw-2rem))] shrink-0 flex flex-col h-full z-40 md:z-20 pt-[env(safe-area-inset-top)] md:pt-0 bg-[#0f0f11] border-r border-white/[0.05]"
           >
             <Sidebar
               conversations={conversations}
@@ -405,8 +410,9 @@ export default function ChatPage() {
           onRetryBefore={retryBefore}
         />
 
-        {/* Composer */}
-        <div className="border-t border-white/[0.05] px-3 sm:px-4 py-3 sm:py-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] bg-[#111113]">
+        {/* Composer — bottom padding lifts above the iOS keyboard via the
+            --kb-offset variable from useKeyboardSafeBottom (audit P6). */}
+        <div className="border-t border-white/[0.05] px-3 sm:px-4 py-3 sm:py-4 pb-[max(0.75rem,calc(env(safe-area-inset-bottom)+var(--kb-offset)))] bg-[#111113]">
           <div className="max-w-[48rem] mx-auto">
             <Composer
               input={input}
@@ -478,7 +484,7 @@ export default function ChatPage() {
         type="button"
         aria-label="Keyboard shortcuts"
         onClick={() => setShortcutsOpen(true)}
-        className="fixed bottom-4 right-4 z-30 p-2 rounded-lg text-slate-600 hover:text-slate-400 hover:bg-white/[0.04] transition text-[12px] font-mono"
+        className="fixed bottom-4 right-4 z-30 p-2 rounded-lg text-slate-500 hover:text-slate-400 hover:bg-white/[0.04] transition text-[12px] font-mono"
         title="Keyboard shortcuts (?)"
       >
         ⌘K ?

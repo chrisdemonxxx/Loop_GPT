@@ -30,10 +30,10 @@ export function PlusMenu({
         onClick={() => { onToggle(); onCloseOther() }}
         aria-haspopup="menu"
         aria-expanded={open}
-        className={`w-8 h-8 flex items-center justify-center rounded-lg border transition ${
+        className={`tap-target w-8 h-8 flex items-center justify-center rounded-lg border transition ${
           open
             ? 'border-white/20 bg-white/10 text-slate-100'
-            : 'border-white/[0.08] text-slate-500 hover:bg-white/[0.05] hover:text-slate-300'
+            : 'border-white/[0.08] text-slate-400 hover:bg-white/[0.05] hover:text-slate-300'
         }`}
       >
         <Plus size={18} />
@@ -51,9 +51,9 @@ export function PlusMenu({
               className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.05] text-left text-[13px] text-slate-200 transition"
               role="menuitem"
             >
-              <ListChecks size={15} className="text-slate-500 shrink-0" />
+              <ListChecks size={15} className="text-slate-400 shrink-0" />
               <span className="flex-1">{t('manageTools')}</span>
-              <span className="text-[11px] text-slate-600">{toolSelectionCount === null ? 'All' : `${toolSelectionCount}`}</span>
+              <span className="text-[11px] text-slate-500">{toolSelectionCount === null ? 'All' : `${toolSelectionCount}`}</span>
             </button>
           </div>
         </div>
@@ -70,7 +70,7 @@ function PlusItem({ icon: Icon, label, onClick }: { icon: any; label: string; on
       onClick={onClick}
       className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.05] text-left text-[13px] text-slate-200 transition"
     >
-      <Icon size={15} className="text-slate-500 shrink-0" /> {label}
+      <Icon size={15} className="text-slate-400 shrink-0" /> {label}
     </button>
   )
 }
@@ -111,7 +111,7 @@ export function AttachmentChips({
             <div key={name + i} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-white/10 bg-white/[0.03]">
               <FileText size={13} className="text-slate-400 shrink-0" />
               <span className="text-[12px] text-slate-200 truncate max-w-[180px]">{name}</span>
-              <button type="button" onClick={() => onRemoveDoc(i)} aria-label={`Remove ${name}`} className="p-0.5 text-slate-500 hover:text-rose-400">
+              <button type="button" onClick={() => onRemoveDoc(i)} aria-label={`Remove ${name}`} className="p-0.5 text-slate-400 hover:text-rose-400">
                 <X size={12} />
               </button>
             </div>
@@ -140,7 +140,7 @@ export function DictationBar({
       </span>
       <div className="min-w-0 flex-1">
         <div className="text-[12px] text-slate-200 font-medium">{t('listening')} {String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</div>
-        <div className="text-[11px] text-slate-500 truncate">{interim || t('recordingHint')}</div>
+        <div className="text-[11px] text-slate-400 truncate">{interim || t('recordingHint')}</div>
       </div>
       <button type="button" onClick={onCancel} className="px-2.5 py-1.5 rounded-lg text-[12px] text-slate-300 hover:bg-white/5 transition">{t('cancelRecording')}</button>
       <button type="button" onClick={onStopAndSend} className="px-2.5 py-1.5 rounded-lg text-[12px] font-medium text-white bg-[#c96442] hover:bg-[#b5593a] transition flex items-center gap-1"><Square size={10} /> Send</button>

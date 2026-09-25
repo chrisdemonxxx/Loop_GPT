@@ -23,7 +23,7 @@ function CodeBlock({ className, children }: { className?: string; children: any 
   return (
     <div className="my-3 overflow-hidden rounded-lg border border-white/10 bg-[#0d1117]">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/10 bg-white/[0.03]">
-        <span className="text-[11px] uppercase tracking-wide text-slate-500">{lang || 'code'}</span>
+        <span className="text-[11px] uppercase tracking-wide text-slate-400">{lang || 'code'}</span>
         <button onClick={copy} className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200 transition">
           {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
         </button>

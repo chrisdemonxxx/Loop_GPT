@@ -37,7 +37,7 @@ export function SlashPalette({
         if (!items.length) return null
         return (
           <div key={section}>
-            <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-slate-600 font-medium">{section}</div>
+            <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-slate-500 font-medium">{section}</div>
             {items.map((c) => {
               const idx = commands.indexOf(c)
               const Icon = iconFor(c)
@@ -53,9 +53,9 @@ export function SlashPalette({
                     highlighted ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]'
                   }`}
                 >
-                  <Icon size={14} className={highlighted ? 'text-[#c96442] shrink-0' : 'text-slate-500 shrink-0'} />
+                  <Icon size={14} className={highlighted ? 'text-[#c96442] shrink-0' : 'text-slate-400 shrink-0'} />
                   <span className="text-[13px] text-slate-200">{c.label}</span>
-                  <span className="ml-auto text-[11px] font-mono text-slate-600">{c.cmd}</span>
+                  <span className="ml-auto text-[11px] font-mono text-slate-500">{c.cmd}</span>
                 </button>
               )
             })}
@@ -63,7 +63,7 @@ export function SlashPalette({
         )
       })}
       {/* Hint line — only for the highlighted command (cuts visual weight). */}
-      <div className="px-3 py-1.5 border-t border-white/[0.05] text-[11px] text-slate-500 truncate">
+      <div className="px-3 py-1.5 border-t border-white/[0.05] text-[11px] text-slate-400 truncate">
         {commands[activeIndex]?.hint || commandsLabel}
       </div>
     </div>
@@ -100,7 +100,7 @@ export function RunModePicker({
         aria-haspopup="menu"
         aria-expanded={open}
         title={activeMode.hint}
-        className={`h-8 px-2.5 flex items-center gap-1.5 rounded-lg border transition ${
+        className={`tap-target h-8 px-2.5 flex items-center gap-1.5 rounded-lg border transition ${
           runMode !== 'auto'
             ? 'border-[#c96442]/40 text-[#e79d7f] bg-[#c96442]/[0.07]'
             : 'border-white/[0.08] text-slate-400 hover:bg-white/[0.05] hover:text-slate-200'
@@ -108,7 +108,7 @@ export function RunModePicker({
       >
         <ActiveIcon size={13} />
         {activeMode.label}
-        <ChevronDown size={12} className="text-slate-600" />
+        <ChevronDown size={12} className="text-slate-500" />
       </button>
       {open && (
         <div className="absolute bottom-full mb-2 left-0 w-60 glass rounded-xl border border-white/[0.08] overflow-hidden z-20 shadow-panel" role="menu">
@@ -134,10 +134,10 @@ function ModeItem({
       onClick={onClick}
       className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.05] text-left transition"
     >
-      <Icon size={15} className={`shrink-0 ${active ? 'text-[#c96442]' : 'text-slate-500'}`} />
+      <Icon size={15} className={`shrink-0 ${active ? 'text-[#c96442]' : 'text-slate-400'}`} />
       <span className="min-w-0 flex-1">
         <span className={`text-[13px] ${active ? 'text-slate-100 font-medium' : 'text-slate-200'}`}>{label}</span>
-        <span className="block text-[12px] text-slate-500">{hint}</span>
+        <span className="block text-[12px] text-slate-400">{hint}</span>
       </span>
       {active && <Check size={13} className="text-[#c96442] shrink-0" />}
     </button>

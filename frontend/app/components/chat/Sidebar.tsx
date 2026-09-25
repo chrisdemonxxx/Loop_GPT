@@ -64,7 +64,7 @@ export default function Sidebar({
         <span className="font-semibold text-slate-100 text-[15px]">Loop GPT</span>
         <button
           onClick={onClose}
-          className="ml-auto p-1.5 rounded-lg hover:bg-white/5 text-slate-500 hover:text-slate-300 transition"
+          className="ml-auto p-1.5 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-300 transition"
         >
           <PanelLeft size={16} />
         </button>
@@ -79,7 +79,7 @@ export default function Sidebar({
           <Plus size={17} strokeWidth={2.5} /> {t('newSession')}
         </button>
         <div className="relative">
-          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
           <input
             type="text"
             placeholder={t('searchChats')}
@@ -97,9 +97,9 @@ export default function Sidebar({
           >
             <span className="flex items-center gap-2"><FolderOpen size={14} /> Projects</span>
             <span className="flex items-center gap-1.5 min-w-0">
-              <span className="text-[11px] text-slate-600 truncate max-w-[90px]">{activeProjectName || (projects.length > 0 ? '' : 'none')}</span>
-              {projects.length > 0 && <span className="text-[11px] text-slate-600">{projects.length}</span>}
-              <ChevronDown size={12} className={`text-slate-600 transition-transform shrink-0 ${projectsOpen ? 'rotate-180' : ''}`} />
+              <span className="text-[11px] text-slate-500 truncate max-w-[90px]">{activeProjectName || (projects.length > 0 ? '' : 'none')}</span>
+              {projects.length > 0 && <span className="text-[11px] text-slate-500">{projects.length}</span>}
+              <ChevronDown size={12} className={`text-slate-500 transition-transform shrink-0 ${projectsOpen ? 'rotate-180' : ''}`} />
             </span>
           </button>
           {projectsOpen && (
@@ -115,13 +115,13 @@ export default function Sidebar({
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${activeProjectId === p.id ? 'bg-[#c96442]' : 'bg-slate-700'}`} />
                   <span className="truncate flex-1">{p.name}</span>
                   {typeof p._count?.conversations === 'number' && (
-                    <span className="text-[10px] text-slate-600">{p._count.conversations}</span>
+                    <span className="text-[10px] text-slate-500">{p._count.conversations}</span>
                   )}
                 </button>
               ))}
               <button
                 onClick={onOpenProjects}
-                className="w-full text-left px-3 py-1.5 rounded-md text-[12px] text-slate-500 hover:text-slate-300 hover:bg-white/[0.04] transition flex items-center gap-1.5"
+                className="w-full text-left px-3 py-1.5 rounded-md text-[12px] text-slate-400 hover:text-slate-300 hover:bg-white/[0.04] transition flex items-center gap-1.5"
               >
                 <Plus size={11} /> {projects.length === 0 ? 'Create a project' : 'Manage projects'}
               </button>
@@ -158,7 +158,7 @@ export default function Sidebar({
                 onClick={() => { onSelectConversation(c.id); onClose() }}
                 className="w-full text-left px-2.5 py-2 text-[13px] text-slate-300 flex items-center gap-2"
               >
-                <MessageSquare size={13} className="text-slate-600 shrink-0" />
+                <MessageSquare size={13} className="text-slate-500 shrink-0" />
                 <span className="truncate flex-1">{c.title || 'New session'}</span>
                 <span className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 shrink-0 transition-opacity">
                   <span
@@ -167,7 +167,7 @@ export default function Sidebar({
                       setEditingId(c.id)
                       setEditingTitle(c.title || '')
                     }}
-                    className="p-1 hover:bg-white/10 rounded text-slate-500 hover:text-slate-300"
+                    className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-slate-300"
                   >
                     <Edit2 size={12} />
                   </span>
@@ -176,7 +176,7 @@ export default function Sidebar({
                       e.stopPropagation()
                       if (confirm('Delete this session?')) onDeleteConversation(c.id)
                     }}
-                    className="p-1 hover:bg-white/10 rounded text-slate-500 hover:text-rose-400"
+                    className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-rose-400"
                   >
                     <Trash2 size={12} />
                   </span>
@@ -186,12 +186,12 @@ export default function Sidebar({
           </div>
         ))}
         {searchQuery && filtered.length === 0 && (
-          <p className="px-3 py-6 text-center text-[12px] text-slate-500">
+          <p className="px-3 py-6 text-center text-[12px] text-slate-400">
             No chats match &quot;{searchQuery}&quot;
           </p>
         )}
         {!searchQuery && conversations.length === 0 && (
-          <p className="px-3 py-6 text-center text-[12px] text-slate-600">{t('noSessions')}</p>
+          <p className="px-3 py-6 text-center text-[12px] text-slate-500">{t('noSessions')}</p>
         )}
       </div>
 
@@ -208,12 +208,12 @@ export default function Sidebar({
             <div className="min-w-0 flex-1 text-left">
               <div className="text-[13px] text-slate-200 truncate">{user?.name || user?.email || t('anonymous')}</div>
               {user?.plan && (
-                <div className="text-[11px] text-slate-500 capitalize">{user.plan} plan</div>
+                <div className="text-[11px] text-slate-400 capitalize">{user.plan} plan</div>
               )}
             </div>
             <ChevronDown
               size={14}
-              className={`text-slate-500 transition-transform shrink-0 ${showUserMenu ? 'rotate-180' : ''}`}
+              className={`text-slate-400 transition-transform shrink-0 ${showUserMenu ? 'rotate-180' : ''}`}
             />
           </button>
 
@@ -255,7 +255,7 @@ export default function Sidebar({
                 <div className="my-0.5 border-t border-white/[0.05]" />
                 <MenuItem icon={LogOut} label={t('signOut')} onClick={onLogout} danger />
                 <div className="px-3 py-2 border-t border-white/[0.06]">
-                  <label className="block text-[10px] uppercase tracking-widest text-slate-600 mb-1.5">{t('language')}</label>
+                  <label className="block text-[10px] uppercase tracking-widest text-slate-500 mb-1.5">{t('language')}</label>
                   <select
                     value={locale}
                     onChange={(e) => setLocale(e.target.value as Locale)}
