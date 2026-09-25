@@ -7,19 +7,18 @@ import axios from 'axios'
 import { API_URL, authHeaders, getToken, type AgentMode } from '../lib/api'
 import { runAgentStream, type ArtifactRef } from '../lib/stream'
 import { track } from '../components/Analytics'
-import type { LiveStep } from '../components/AgentComputer'
 import type { Project } from '../components/ProjectsPanel'
-import type { Conversation, Message } from '../components/chat/types'
+import type { Conversation, Message, LiveStep, PendingApproval } from '../components/chat/types'
 
 // ---------------------------------------------------------------------------
 // Panels: sidebar / activity / artifacts + responsive desktop detection
 // ---------------------------------------------------------------------------
 
-/** Panel open/close state + the 1024px desktop media-query. (The once-per-run
- * activity auto-open latch lives in useChatStream, which owns live state.) */
+/** Panel open/close state + the 1024px desktop media-query. The activity
+ * feed is inline below each response (TurnActivity), so the right edge is
+ * exclusively the artifacts panel — no shared-panel mutex remains. */
 export function usePanels() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [computerOpen, setComputerOpen] = useState(false)
   const [artifactsOpen, setArtifactsOpen] = useState(false)
   const [isDesktop, setIsDesktop] = useState(false)
 
@@ -32,15 +31,13 @@ export function usePanels() {
     return () => mq.removeEventListener('change', apply)
   }, [])
 
-  const openComputer = () => { setComputerOpen(true); setArtifactsOpen(false); if (!isDesktop) setSidebarOpen(false) }
-  const closeOverlays = () => { if (!isDesktop) { setSidebarOpen(false); setComputerOpen(false); setArtifactsOpen(false) } }
+  const closeOverlays = () => { if (!isDesktop) { setSidebarOpen(false); setArtifactsOpen(false) } }
 
   return {
     sidebarOpen, setSidebarOpen,
-    computerOpen, setComputerOpen,
     artifactsOpen, setArtifactsOpen,
     isDesktop,
-    openComputer, closeOverlays,
+    closeOverlays,
   }
 }
 
@@ -161,24 +158,19 @@ export interface ChatStreamSendOptions {
 /** Owns everything live about an agent run: running/status, the streamed
  * steps/thinking/answer, in-run artifacts, the pending-approval handshake,
  * and the abort controller. `send()` is the full pipeline (uploads → stream
- * → invalidation) with the exact semantics the page used inline. */
-export function useChatStream({
-  onActivity,
-}: {
-  /** Called when liveSteps/liveArtifacts gain their first entry. */
-  onActivity: () => void
-}) {
+ * → invalidation) with the exact semantics the page used inline. The activity
+ * timeline renders inline per turn (TurnActivity) — there is no side panel
+ * to auto-open. */
+export function useChatStream() {
   const [running, setRunning] = useState(false)
   const [statusMsg, setStatusMsg] = useState('')
   const [liveUser, setLiveUser] = useState<{ content: string; image?: string; images?: string[]; docs?: string[] } | null>(null)
   const [liveSteps, setLiveSteps] = useState<LiveStep[]>([])
-  const [pendingApproval, setPendingApproval] = useState<{ toolName: string; approve: (ok: boolean) => Promise<any> } | null>(null)
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
   const [liveArtifacts, setLiveArtifacts] = useState<ArtifactRef[]>([])
   const [liveThinking, setLiveThinking] = useState('')
   const abortRef = useRef<AbortController | null>(null)
   const queryClient = useQueryClient()
-  const onActivityRef = useRef(onActivity)
-  useEffect(() => { onActivityRef.current = onActivity })
 
   const liveAnswer = liveSteps.filter((s) => s.kind === 'text').map((s) => s.text).join('')
 
@@ -194,13 +186,6 @@ export function useChatStream({
   const clearTurn = () => {
     setLiveSteps([]); setLiveArtifacts([]); setLiveUser(null)
   }
-
-  // Auto-open hook-up: fire onActivity once when the first tool/artifact lands.
-  const [activitySeen, setActivitySeen] = useState(false)
-  useEffect(() => {
-    const hasActivity = liveSteps.some((s) => s.kind === 'tool') || liveArtifacts.length > 0
-    if (hasActivity && !activitySeen) { setActivitySeen(true); onActivityRef.current() }
-  }, [liveSteps, liveArtifacts, activitySeen])
 
   async function uploadImage(convId: string, file: File): Promise<string | undefined> {
     const fd = new FormData()
@@ -227,7 +212,6 @@ export function useChatStream({
   async function send(opts: ChatStreamSendOptions) {
     const { content, sendMode, commandTools, images, docs, previews, runMode, modelTier, selectedTools, incognito, projectId, ensureConversation } = opts
     setRunning(true); setStatusMsg(''); setLiveSteps([]); setLiveArtifacts([]); setLiveThinking('')
-    setActivitySeen(false)
     setLiveUser({ content, image: previews[0], images: previews, docs: docs.map((d) => d.name) })
     track('message_sent', { mode: sendMode })
 
@@ -279,7 +263,11 @@ export function useChatStream({
         },
         onToolResult: (step, name, resultContent, _d, isError) => {
           setLiveSteps((prev) =>
-            prev.map((s) => (s.index === step && s.tool ? { ...s, tool: { ...s.tool, result: resultContent, isError } } : s))
+            prev.map((s) => {
+              if (s.index !== step || !s.tool) return s
+              const startedAt = s.ts || Date.now()
+              return { ...s, tool: { ...s.tool, result: resultContent, isError, durationMs: Date.now() - startedAt } }
+            })
           )
         },
         onArtifact: (a) => setLiveArtifacts((prev) => [...prev, a]),

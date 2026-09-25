@@ -4,10 +4,11 @@ import { useState } from 'react'
 import { Copy, Check, Edit2, RotateCcw, Sparkles, Volume2, Pause, Square, Brain } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { type ArtifactRef } from '../../lib/stream'
-import type { Message } from './types'
+import type { Message, StoredStep } from './types'
 import Markdown from './Markdown'
 import { useAttachmentUrl } from './artifactUrl'
 import { ArtifactCard, ArtifactViewer } from './ArtifactCard'
+import TurnActivity from './TurnActivity'
 import { useSpeech } from '../../lib/voice'
 
 /** One chat row: user bubble (right, editable) or assistant turn (markdown,
@@ -23,6 +24,7 @@ export function MessageBubble({
   const [viewer, setViewer] = useState<ArtifactRef | null>(null)
   const [showPrompt, setShowPrompt] = useState(false)
   const artifacts: ArtifactRef[] = message.metadata?.artifacts || []
+  const storedSteps: StoredStep[] = Array.isArray(message.metadata?.steps) ? message.metadata.steps : []
   const sources = message.metadata?.sources as { index: number; title: string; url: string }[] | undefined
   const promptMeta = message.metadata?.prompt as { raw: string; enhanced: string; optimized: boolean } | undefined
   const attachedImage = useAttachmentUrl(message.attachmentId)
@@ -87,6 +89,12 @@ export function MessageBubble({
         </details>
       )}
       {message.content && <Markdown content={message.content} />}
+
+      {/* Inline agent activity (audit P1): the persisted tool timeline for
+          this turn as a collapsed one-line summary ("Ran N steps"). */}
+      {storedSteps.length > 0 && (
+        <TurnActivity storedSteps={storedSteps} onRetry={onRetry} />
+      )}
 
       {promptMeta?.optimized && (
         <div className="text-[12px]">

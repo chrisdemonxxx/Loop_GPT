@@ -17,3 +17,33 @@ export interface Conversation {
   createdAt: string
   updatedAt: string
 }
+
+/** One streamed agent step (tool call or text delta group) in the live turn. */
+export interface LiveStep {
+  index: number
+  kind: 'text' | 'tool'
+  text: string
+  ts?: number
+  tool?: {
+    name: string
+    args: any
+    source?: string
+    result?: string
+    isError?: boolean
+    /** Wall time from call start to result (set when the result lands). */
+    durationMs?: number
+  }
+}
+
+/** A persisted tool step from an assistant message's metadata.steps. */
+export interface StoredStep {
+  tool: string
+  args?: Record<string, any>
+  result?: string
+}
+
+/** Pending tool-approval handshake for the live turn. */
+export interface PendingApproval {
+  toolName: string
+  approve: (ok: boolean) => Promise<any>
+}

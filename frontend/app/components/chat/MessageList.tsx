@@ -6,11 +6,11 @@ import { motion } from 'framer-motion'
 import { type AgentMode } from '../../lib/api'
 import { type ArtifactRef } from '../../lib/stream'
 import Markdown from './Markdown'
-import type { LiveStep } from '../AgentComputer'
-import type { Message } from './types'
+import type { LiveStep, Message, PendingApproval } from './types'
 import { MessageBubble } from './MessageBubble'
 import { EmptyState, ThinkingDots } from './EmptyState'
 import { ArtifactCard } from './ArtifactCard'
+import TurnActivity from './TurnActivity'
 
 interface MessageListProps {
   messages: Message[]
@@ -23,19 +23,23 @@ interface MessageListProps {
   running: boolean
   statusMsg: string
   mode: AgentMode
-  computerOpen: boolean
-  onOpenComputer: () => void
+  /** Live-turn tool approval handshake (inline activity card). */
+  pendingApproval?: PendingApproval | null
+  onApprove?: () => void
+  onDeny?: () => void
+  toolCount?: number
+  onOpenTools?: () => void
   onEditMessage: (messageId: string, content: string) => void
   onRetryBefore: (beforeIndex: number) => void
   onStartPrompt?: (prompt: string) => void
 }
 
 /** The conversation transcript: stored bubbles, the live user turn, and the
- * streaming assistant turn (thinking, status, answer, in-run artifacts). */
+ * streaming assistant turn (thinking, status, answer, inline activity feed). */
 export default function MessageList({
   messages, liveUser, liveSteps, liveAnswer, liveThinking, liveArtifacts,
-  running, statusMsg, mode, computerOpen,
-  onOpenComputer, onEditMessage, onRetryBefore, onStartPrompt,
+  running, statusMsg, mode, pendingApproval, onApprove, onDeny, toolCount, onOpenTools,
+  onEditMessage, onRetryBefore, onStartPrompt,
 }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null)
   const showEmpty = messages.length === 0 && !liveUser
@@ -117,17 +121,13 @@ export default function MessageList({
                     </div>
                   </details>
                 )}
-                {running && (mode === 'research' || mode === 'agent') && !liveAnswer && (
-                  <button
-                    onClick={computerOpen ? undefined : onOpenComputer}
-                    className="inline-flex items-center gap-1.5 text-[12px] text-slate-500 hover:text-slate-300 transition"
-                  >
+                {running && (mode === 'research' || mode === 'agent') && !liveAnswer && !liveSteps.some((s) => s.kind === 'tool') && (
+                  <div className="flex items-center gap-2 text-[13px] text-slate-500">
                     <Loader2 size={12} className="animate-spin" />
                     <span>{statusMsg || 'working'}</span>
-                    {!computerOpen && <span className="text-slate-600">· view activity</span>}
-                  </button>
+                  </div>
                 )}
-                {statusMsg && !liveAnswer && (
+                {statusMsg && !liveAnswer && liveSteps.length === 0 && (
                   <div className="flex items-center gap-2 text-[13px] text-slate-500" aria-live="polite">
                     <span className="shimmer inline-block h-2.5 w-28 rounded-full" aria-hidden="true" />
                     <span>{statusMsg}</span>
@@ -138,7 +138,20 @@ export default function MessageList({
                     <Markdown content={liveAnswer} />
                   </div>
                 )}
-                {!liveAnswer && !statusMsg && running && <ThinkingDots />}
+                {/* Inline agent activity: the per-step timeline for this turn
+                    streams below the response (audit P1). */}
+                <TurnActivity
+                  running={running}
+                  status={statusMsg}
+                  liveSteps={liveSteps}
+                  pendingApproval={pendingApproval}
+                  onApprove={onApprove}
+                  onDeny={onDeny}
+                  onRetry={() => onRetryBefore(messages.length - 1)}
+                  toolCount={toolCount}
+                  onOpenTools={onOpenTools}
+                />
+                {!liveAnswer && !statusMsg && liveSteps.length === 0 && running && <ThinkingDots />}
               </div>
             </>
           )}

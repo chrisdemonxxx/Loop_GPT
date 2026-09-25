@@ -1,19 +1,19 @@
 'use client'
 
 import { useState } from 'react'
-import { PanelLeft, FileDown, Cpu, Sparkles, FlaskConical, Ghost } from 'lucide-react'
+import { PanelLeft, FileDown, Sparkles, FlaskConical, Ghost } from 'lucide-react'
 import ModelSelector from '../ModelSelector'
 
 /** The top bar: sidebar toggle, session title, model selector, incognito,
- * export menu, Files/Research/Activity toggles. Pure presentational; every
- * behavior is delegated through props. */
+ * export menu, Files/Research toggles. Pure presentational; every behavior is
+ * delegated through props. (Agent activity is inline per turn — there is no
+ * Activity panel toggle anymore.) */
 export default function ChatHeader({
   sidebarOpen, convTitle, modelTier, onModelChange,
   incognito, onToggleIncognito,
   hasMessages, onExport,
   artifactCount, artifactsOpen, onToggleArtifacts,
   hasConversation, researchOpen, onToggleResearch,
-  computerOpen, onToggleComputer,
   onOpenSidebar,
 }: {
   sidebarOpen: boolean
@@ -30,8 +30,6 @@ export default function ChatHeader({
   hasConversation: boolean
   researchOpen: boolean
   onToggleResearch: () => void
-  computerOpen: boolean
-  onToggleComputer: () => void
   onOpenSidebar: () => void
 }) {
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
@@ -118,18 +116,6 @@ export default function ChatHeader({
             <span className="hidden sm:inline">Research</span>
           </button>
         )}
-        <button
-          onClick={onToggleComputer}
-          title="Toggle Activity panel"
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] border transition ${
-            computerOpen
-              ? 'border-white/15 text-slate-200 bg-white/[0.08]'
-              : 'border-white/[0.06] text-slate-500 hover:bg-white/[0.05] hover:text-slate-300'
-          }`}
-        >
-          <Cpu size={13} />
-          <span className="hidden sm:inline">Activity</span>
-        </button>
       </div>
     </div>
   )

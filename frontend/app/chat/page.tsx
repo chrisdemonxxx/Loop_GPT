@@ -13,7 +13,6 @@ import { ShortcutSheet } from '../components/ShortcutSheet'
 import Sidebar from '../components/chat/Sidebar'
 import Composer from '../components/chat/Composer'
 import MessageList from '../components/chat/MessageList'
-import ActivityPanel from '../components/chat/ActivityPanel'
 import ArtifactsPanel from '../components/chat/ArtifactsPanel'
 import ChatHeader from '../components/chat/ChatHeader'
 import type { Conversation, Message } from '../components/chat/types'
@@ -58,7 +57,7 @@ export default function ChatPage() {
   const { workspaceId, projects, activeProjectId, setActiveProjectId, refreshProjects } = useWorkspaceProjects()
   const { conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages } =
     useConversationsData(currentConversationId, (id) => { if (currentConversationId === id) setCurrentConversationId(null) })
-  const chat = useChatStream({ onActivity: () => panels.setComputerOpen(true) })
+  const chat = useChatStream()
 
   useEffect(() => {
     fetch(`${API_URL}/api/agent/tools`, { headers: authHeaders() })
@@ -285,7 +284,7 @@ export default function ChatPage() {
   return (
     <div className="flex h-[100dvh] overflow-hidden text-slate-200 bg-[#111113]">
       {/* Mobile backdrop */}
-      {(panels.sidebarOpen || panels.computerOpen || panels.artifactsOpen) && !panels.isDesktop && (
+      {panels.sidebarOpen && !panels.isDesktop && (
         <div
           className="fixed inset-0 bg-black/50 backdrop-blur-sm z-30 lg:hidden"
           onClick={panels.closeOverlays}
@@ -357,12 +356,10 @@ export default function ChatPage() {
           onExport={exportConversation}
           artifactCount={allArtifacts.length}
           artifactsOpen={panels.artifactsOpen}
-          onToggleArtifacts={() => { panels.setArtifactsOpen((v) => !v); panels.setComputerOpen(false) }}
+          onToggleArtifacts={() => panels.setArtifactsOpen((v) => !v)}
           hasConversation={!!currentConversationId}
           researchOpen={researchOpen}
           onToggleResearch={() => setResearchOpen((v) => !v)}
-          computerOpen={panels.computerOpen}
-          onToggleComputer={() => (panels.computerOpen ? panels.setComputerOpen(false) : panels.openComputer())}
           onOpenSidebar={() => panels.setSidebarOpen(true)}
         />
 
@@ -378,8 +375,11 @@ export default function ChatPage() {
           running={chat.running}
           statusMsg={chat.statusMsg}
           mode={mode}
-          computerOpen={panels.computerOpen}
-          onOpenComputer={panels.openComputer}
+          pendingApproval={chat.pendingApproval}
+          onApprove={() => { chat.pendingApproval?.approve(true).then(() => chat.setPendingApproval(null)) }}
+          onDeny={() => { chat.pendingApproval?.approve(false).then(() => chat.setPendingApproval(null)) }}
+          toolCount={toolCount}
+          onOpenTools={() => { setSettingsTab('tools'); setShowSettings(true) }}
           onEditMessage={forkAtMessage}
           onRetryBefore={retryBefore}
         />
@@ -422,27 +422,11 @@ export default function ChatPage() {
         </div>
       </div>
 
-      {/* ── Right: Activity panel ─────────────────────────────────────────── */}
+      {/* ── Right: Artifacts panel (viewable output only — agent activity is
+          inline per turn, audit P1/P2). ─────────────────────────────────── */}
       <AnimatePresence initial={false}>
-        {panels.artifactsOpen && !panels.computerOpen && (
+        {panels.artifactsOpen && (
           <ArtifactsPanel artifacts={allArtifacts} onClose={() => panels.setArtifactsOpen(false)} />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence initial={false}>
-        {panels.computerOpen && (
-          <ActivityPanel
-            running={chat.running}
-            status={chat.statusMsg}
-            steps={chat.liveSteps}
-            artifacts={chat.liveArtifacts}
-            toolCount={toolCount}
-            pendingApproval={chat.pendingApproval}
-            onApprove={() => { chat.pendingApproval?.approve(true).then(() => chat.setPendingApproval(null)) }}
-            onDeny={() => { chat.pendingApproval?.approve(false).then(() => chat.setPendingApproval(null)) }}
-            onClose={() => panels.setComputerOpen(false)}
-            onOpenTools={() => { setSettingsTab('tools'); setShowSettings(true) }}
-          />
         )}
       </AnimatePresence>
 
