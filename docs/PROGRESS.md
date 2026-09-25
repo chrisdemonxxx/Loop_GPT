@@ -454,6 +454,40 @@ UI/UX rebuild (audit §6 P1–P6 + 2.7) is live; next per plan: Phase 3
   forks are separate conversations today. Schema design + confirmation
   required before implementation (flagged NEEDS CONFIRMATION).
 
+## Phase 3 — Composer toggles + KaTeX (audit §8-25..27) — SHIPPED (2026-09-26, commit `141a601`)
+
+- **Web-search toggle (§8-25)**: new `webSearch` flag on the stream input,
+  applied server-side in agent mode only (chat has no tools; research
+  already enforces web tools). `true` forces web_search+web_fetch into the
+  run even when the per-chat tool selection excluded them; `false` strips
+  them from the default selection. Orthogonal to tool selection by design.
+- **Extended-thinking toggle (§8-26)**: `thinking` flag threads through
+  `runAgent` and overrides the `QWEN_THINKING` env default per run —
+  explicit on → `/think`, explicit off → `/no_think`, omitted → operator
+  default. The §2.5 thinking display already renders the deltas.
+- **Composer UI**: two tri-state toggles (Globe / Brain icons) beside the
+  run-mode picker — Auto (server default, no flag sent) / On / Off with
+  distinct visual states (terracotta active, struck-through off),
+  aria-pressed, tap targets. State is page-owned; only explicit choices send
+  flags so the untouched default preserves existing behavior.
+- **KaTeX (§8-27)**: `remark-math` + `rehype-katex` + KaTeX CSS in
+  Markdown — inline (`$…$`) and block (`$$…$$`) math render in chat, the
+  artifacts panel, and the share viewer.
+- **Tests**: 3 backend integration E2Es (webSearch=false strips from the
+  default set; webSearch=true forces past an excluding selection; thinking
+  override beats the env default in both directions), 2 composer tests
+  (Auto→On→Off cycling, explicit-state visuals), 3 math tests (inline,
+  block display, single-`$` stays text — the two-`$` currency case is
+  genuinely ambiguous under remark-math pairing, so the guarantee tested
+  is the single-`$` one). **Flake found + fixed**: SSE tests must drain
+  the stream (`await response.text()`) before asserting on the dispatched
+  model call — the run is still in flight when response headers arrive, so
+  undrained streams shifted mock-call indices across tests.
+- **Gates**: backend unit **1142/5**, integration **465/3**, lint 0, tsc
+  clean; frontend **83/83**, Playwright **12/12**, build green. Deployed on
+  `141a601`; all four CI workflows green; live bundle carries all three
+  signatures; live stream accepts both flags (200); healthz 200.
+
 ## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
 
 - **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
