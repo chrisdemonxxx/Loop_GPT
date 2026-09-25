@@ -189,6 +189,68 @@ gated by the full suites.
   backend `tsc` + 1128 tests + lint 0 errors. Both commits pushed and
   deployed via the branch (`db08c53`, `22a7443`).
 
+## Phase 2.2 — Right-hand panel is the artifact surface (audit P2) — SHIPPED (2026-09-26, commits `84ae3be`/`a1e249e`/`32960e4`)
+
+- **Card → panel flow**: artifact cards (stored + live) open the
+  `ArtifactsPanel` focused via page-owned `focusId` threaded through
+  MessageList/MessageBubble; the inline `ArtifactViewer` modal is deleted;
+  "Back to list" header state added. The panel is now exclusively for
+  viewable output (the P1 mutex removal completed the hand-off).
+- **Panel chrome** (all previously absent): persisted draggable resize
+  (localStorage `artifactsPanelWidth`, 320–720px, lg+ handle), fullscreen
+  toggle, device-size toggle (desktop/tablet/mobile widths) for HTML
+  sandbox previews, Refresh (iframe nonce), and the **Fix error** flow —
+  the sandbox srcDoc carries an error bridge reporting uncaught
+  errors/rejections to the panel, which pre-fills the composer with the
+  error + artifact source for regeneration.
+- **In-panel viewers**: PDF (native-engine blob iframe), xlsx/csv (dynamic
+  SheetJS table), Mermaid (dynamic mermaid render — `.mmd` artifacts and
+  ```mermaid fences in Markdown, previously absent entirely).
+- **"Open in new tab" for private artifacts** (previously 401-only for
+  non-published): `POST /api/files/:id/signed-link` mints a 5-minute
+  HMAC link (owner+file+expiry bound, timing-safe compare —
+  `services/signedFileUrl.ts`); `GET /:id/content` accepts it without a
+  session and renders **inline** under a sandboxed renderable CSP. Unit
+  tests (round-trip, tamper, cross-file, expiry) + integration E2E
+  (owner-mints/foreign-404/tampered-401/cross-file-401/inline-vs-attachment).
+- **"Building…" per-artifact state**: in-flight
+  create_document/generate_image/generate_video/generate_style tool steps
+  render shimmer placeholders in the panel (page derives `buildingKinds`
+  from `useChatStream` steps) — replacing the generic status-only signal.
+- Focused image/video previews fixed to authed blob URLs (raw src 401s).
+- 5 new panel component tests; suite **45/45**, Playwright **12/12**,
+  build green (xlsx/mermaid are dynamic imports — initial bundle flat).
+
+## Backend integrity: chronic CI red discovered + resolved (2026-09-26)
+
+- **Discovery**: Backend validation CI had been **failing on every push since
+  2026-09-21** (15/15 runs red; Railway deploys don't run GitHub Actions, so
+  it went unnoticed — including by the 2026-09-22 readiness pass). Root
+  causes: (1) real migration/schema drift — FK ON DELETE semantics, 4 stale
+  indexes, SpendBudgetPolicy defaults edited in schema.prisma without
+  migrations; (2) the conditional pgvector migration guaranteed diff drift on
+  plain postgres CI images; (3) CI never reached `test:integration`, so 4
+  stale tests sat unexercised (catalog id `loop-chat-large` vs renamed
+  `loop-large`, `create_custom_tool`/`create_skill` now reviewed tools,
+  the 410 "retired" config verbs superseded by the live config-store routes).
+- **Fixes**: `20260926000000_schema_reconciliation` migration (verified by
+  fresh shadow replay → only the irreducible embeddingVec artifacts remain);
+  CI postgres image → `pgvector/pgvector:pg16` (pinned) so the vector path
+  applies; the diff gate allowlists exactly the two embeddingVec artifacts;
+  the 4 stale tests refreshed to pin the current contract. **First green
+  backend CI run since 09-21** on `a1e249e`.
+- **Production incident during rollout** (caught + fixed same day): the
+  reconciliation failed on prod with FK 23503 — `Memory.projectId` had 5
+  orphaned references (of 35) because the FK was never live, so Project
+  deletes left dangling pointers. Fix: the migration now nullifies orphans
+  first (exactly what `ON DELETE SET NULL` would have done). Applied to
+  prod via `migrate resolve --rolled-back` + `migrate deploy` through a
+  temporary (since-removed) TCP proxy; prod diff now shows only the
+  expected pgvector-conditional column. Backend redeployed healthy; all CI
+  workflows green on `32960e4`.
+- Gates: backend unit **1132/5**, integration **457/3** (incl. signed-link
+  E2E), lint 0 errors, tsc clean; frontend 45/45 + 12/12 Playwright + build.
+
 ## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
 
 - **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
