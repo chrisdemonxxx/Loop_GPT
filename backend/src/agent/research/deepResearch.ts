@@ -20,13 +20,32 @@ import { fetchReadable } from '../tools/webFetch'
 import type { ChatMessage, ToolContext } from '../types'
 import { agentConfig } from '../config'
 import { assertRunAccess } from '../runAuthorization'
+import { resolveChatTarget, smartRouteTask } from '../../services/chatModels'
+import { loadScratchpad, saveScratchpad } from '../../services/researchScratchpad'
 import {
   CONFIDENTIALITY_PROMPT,
   sanitizeText,
   sanitizeMetadata,
   makeStreamSanitizer,
-  guardrailsEnabled,
 } from '../guardrails'
+
+// ---------------------------------------------------------------------------
+// Multi‑model fleet: fast tier (Qwen3.8‑Cyber) for search & fetch —
+// flagship tier (DeepSeek V4.1 Flash) for planning & synthesis.
+// When the large tier is unconfigured, the standard tier is used for both.
+// ---------------------------------------------------------------------------
+function fleetClients() {
+  const fastTarget = smartRouteTask(0, 'chat', false, [])
+  const flagshipTarget = smartRouteTask(10_000, 'research', false, ['web_search', 'web_fetch'])
+
+  const fastClient = createClient('huggingface', undefined, fastTarget.baseUrl)
+  const flagshipClient = createClient('huggingface', undefined, flagshipTarget.baseUrl)
+
+  return {
+    fast: { client: fastClient, model: fastTarget.model },
+    flagship: { client: flagshipClient, model: flagshipTarget.model },
+  }
+}
 
 export interface DeepResearchOptions {
   query: string
@@ -313,7 +332,7 @@ async function synthesizePhase(
       : ''
 
   const systemPrompt =
-    (guardrailsEnabled ? CONFIDENTIALITY_PROMPT + '\n\n' : '') +
+    CONFIDENTIALITY_PROMPT + '\n\n' +
     `You are an expert research analyst. Write a comprehensive, well-structured deep-research report answering the user's query.
 
 REQUIREMENTS:
@@ -357,51 +376,71 @@ export async function runDeepResearch(opts: DeepResearchOptions): Promise<DeepRe
   const { ctx, query } = opts
   await assertRunAccess(ctx, 'web_search')
   await assertRunAccess(ctx, 'web_fetch')
-  const model = resolveModel(opts.provider, opts.model)
-  const client = createClient(opts.provider, opts.apiKey, opts.baseUrl)
+  // Multi‑model fleet: fast tier for search/fetch, flagship for synthesis.
+  const fleet = fleetClients()
+  const fastClient = fleet.fast.client
+  const fastModel = fleet.fast.model
+  const flagshipClient = fleet.flagship.client
+  const flagshipModel = fleet.flagship.model
   const maxQueries = opts.maxQueries ?? agentConfig.research.maxQueries
   const maxSources = opts.maxSources ?? agentConfig.research.maxSources
   const perSourceChars = agentConfig.research.perSourceChars
 
   let step = 0
 
-  // ── Phase 1: Plan ──────────────────────────────────────────────────────────
-  ctx.emit({ type: 'warming', message: 'Planning research angles…' })
-  // Outside planQueries' fallback so failed accounting cannot continue into search.
-  if (ctx.signal?.aborted) throw new Error('Research cancelled')
-  await opts.beforeDispatch?.()
-  const queries = await planQueries(client, model, query, maxQueries, ctx.signal)
+  // Scratchpad (GAP-046): resume interrupted runs from the last completed
+  // phase instead of re-running (and re-paying for) searches and fetches.
+  const scratch = await loadScratchpad(ctx.userId, query)
+
+  // ── Phase 1: Plan (flagship/DeepSeek → better reasoning for diverse angles) ──
+  let queries = scratch?.queries
+  if (queries?.length) {
+    ctx.emit({ type: 'warming', message: 'Resuming from saved research plan (scratchpad)…' })
+  } else {
+    ctx.emit({ type: 'warming', message: 'Planning research angles (flagship model)…' })
+    if (ctx.signal?.aborted) throw new Error('Research cancelled')
+    await opts.beforeDispatch?.()
+    queries = await planQueries(flagshipClient, flagshipModel, query, maxQueries, ctx.signal)
+    await saveScratchpad(ctx.userId, query, 'queries', queries)
+  }
 
   ctx.emit({
     type: 'tool_call',
     step,
     name: 'plan',
-    args: { queries },
+    args: { model: 'flagship', queries },
   })
   ctx.emit({
     type: 'tool_result',
     step,
     name: 'plan',
-    content: `Planned ${queries.length} diverse search angles:\n${queries.map((q) => '• ' + q).join('\n')}`,
+    content: `Planned ${queries.length} diverse search angles via flagship model:\n${queries.map((q) => '• ' + q).join('\n')}`,
   })
   step++
 
-  // ── Phase 2: Search ─────────────────────────────────────────────────────────
-  ctx.emit({ type: 'warming', message: `Searching across ${queries.length} angles…` })
-  const resultsPerQuery = Math.ceil(maxSources / queries.length) + 2 // overshoot for dedup loss
-  const hits = await runSearchPhase(queries, Math.min(resultsPerQuery, 8), step, ctx)
-  step += queries.length
+  // ── Phase 2: Search (fast tier → multiple parallel sub‑agents) ───────────────
+  let hits = scratch?.hits
+  if (hits?.length) {
+    ctx.emit({ type: 'warming', message: `Resuming with ${hits.length} cached search results…` })
+  } else {
+    ctx.emit({ type: 'warming', message: `Deploying ${queries.length} sub‑agents across search angles…` })
+    const resultsPerQuery = Math.ceil(maxSources / queries.length) + 2
+    hits = await runSearchPhase(queries, Math.min(resultsPerQuery, 8), step, ctx)
+    await saveScratchpad(ctx.userId, query, 'hits', hits)
+    step += queries.length
 
-  // ── Follow-up search if initial hits are thin ───────────────────────────────
-  if (hits.length < 6) {
-    ctx.emit({ type: 'warming', message: 'Initial results sparse — running targeted follow-up searches…' })
-    const followUps = [`"${query}" site:wikipedia.org OR site:britannica.com`, `${query} analysis report 2024 2025`]
-    const extras = await runSearchPhase(followUps, 5, step, ctx)
-    const seen = new Set(hits.map((h) => h.url))
-    for (const r of extras) {
-      if (!seen.has(r.url)) { seen.add(r.url); hits.push(r) }
+    // ── Follow-up search if initial hits are thin ─────────────────────────────
+    if (hits.length < 6) {
+      ctx.emit({ type: 'warming', message: 'Initial results sparse — deploying additional parallel sub‑agents…' })
+      const followUps = [`"${query}" site:wikipedia.org OR site:britannica.com`, `${query} analysis report 2024 2025`]
+      const extras = await runSearchPhase(followUps, 5, step, ctx)
+      const seen = new Set(hits.map((h) => h.url))
+      for (const r of extras) {
+        if (!seen.has(r.url)) { seen.add(r.url); hits.push(r) }
+      }
+      await saveScratchpad(ctx.userId, query, 'hits', hits)
+      step += followUps.length
     }
-    step += followUps.length
   }
 
   // ── Phase 3: Fetch sources ──────────────────────────────────────────────────
@@ -421,19 +460,25 @@ export async function runDeepResearch(opts: DeepResearchOptions): Promise<DeepRe
     return { content: msg, sources: [] }
   }
 
-  ctx.emit({ type: 'warming', message: `Reading top ${Math.min(hits.length, maxSources)} sources…` })
-  const sources = await fetchPhase(hits, maxSources, perSourceChars, step, ctx)
+  let sources = scratch?.sources
+  if (sources?.length) {
+    ctx.emit({ type: 'warming', message: `Resuming with ${sources.length} cached sources…` })
+  } else {
+    ctx.emit({ type: 'warming', message: `Reading top ${Math.min(hits.length, maxSources)} sources…` })
+    sources = await fetchPhase(hits, maxSources, perSourceChars, step, ctx)
+    await saveScratchpad(ctx.userId, query, 'sources', sources)
+  }
   step += sources.length
 
-  // ── Phase 4: Claim verification ─────────────────────────────────────────────
-  ctx.emit({ type: 'warming', message: 'Extracting and cross-verifying claims…' })
-  const claims = await extractAndVerifyClaims(client, model, query, sources, step, ctx)
+  // ── Phase 4: Claim verification (flagship model — needs strong reasoning) ──
+  ctx.emit({ type: 'warming', message: 'Cross‑verifying claims (flagship model)…' })
+  const claims = await extractAndVerifyClaims(flagshipClient, flagshipModel, query, sources, step, ctx)
   step++
 
-  // ── Phase 5: Synthesis ──────────────────────────────────────────────────────
+  // ── Phase 5: Synthesis (flagship model — writes the final cited report) ──
   const finalContent = await synthesizePhase(
-    client,
-    model,
+    flagshipClient,
+    flagshipModel,
     query,
     sources,
     claims,

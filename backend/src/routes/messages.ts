@@ -56,6 +56,76 @@ router.get('/:conversationId/messages', authenticateToken, validate(validationSc
   }
 })
 
+// Fork a conversation at a message (brief §2.5 — message branching): copy
+// every message up to AND INCLUDING the target into a NEW conversation, so
+// the user can edit and continue on a fresh branch. The original stays intact.
+router.post('/:conversationId/fork', authenticateToken, async (req, res) => {
+  try {
+    const userId = (req as any).userId
+    const { conversationId } = req.params
+    const messageId = String(req.body?.messageId || '')
+    if (!messageId) return res.status(400).json({ error: 'messageId is required' })
+    if (USE_MEMORY_STORE) return res.status(501).json({ error: 'Forking requires a database.' })
+    const conversation = await prisma!.conversation.findFirst({ where: { id: conversationId, userId } })
+    if (!conversation) return res.status(404).json({ error: 'Conversation not found' })
+    const target = await prisma!.message.findFirst({ where: { id: messageId, conversationId } })
+    if (!target) return res.status(404).json({ error: 'Message not found' })
+    const history = await prisma!.message.findMany({
+      where: { conversationId, createdAt: { lte: target.createdAt } },
+      orderBy: { createdAt: 'asc' },
+      take: 200,
+    })
+    const branch = await prisma!.conversation.create({
+      data: {
+        userId,
+        workspaceId: conversation.workspaceId,
+        projectId: conversation.projectId,
+        incognito: conversation.incognito,
+        title: `${conversation.title} (branch)`.slice(0, 60),
+      },
+    })
+    await prisma!.message.createMany({
+      data: history.map((m) => ({
+        role: m.role, content: m.content, conversationId: branch.id,
+        messageType: m.messageType, imageUrl: m.imageUrl, toolUsed: m.toolUsed,
+      })),
+    })
+    res.status(201).json({ ok: true, conversationId: branch.id, copied: history.length })
+  } catch {
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// Rewind a conversation to a message: delete everything AFTER it (keeping the
+// target, so the client can re-send). Used by the chat "retry/rewind" action
+// so a re-answer replaces the old branch instead of appending below it.
+router.post('/:conversationId/rewind', authenticateToken, async (req, res) => {  try {
+    const userId = (req as any).userId
+    const { conversationId } = req.params
+    const messageId = String(req.body?.messageId || '')
+    if (!messageId) return res.status(400).json({ error: 'messageId is required' })
+    if (USE_MEMORY_STORE) {
+      const conversation = memoryStore.getConversation(conversationId)
+      if (!conversation || conversation.userId !== userId) return res.status(404).json({ error: 'Conversation not found' })
+      const msgs = memoryStore.getMessages(conversationId)
+      const target = msgs.find((m: any) => m.id === messageId)
+      if (!target) return res.status(404).json({ error: 'Message not found' })
+      const after = msgs.filter((m: any) => m.createdAt > target.createdAt)
+      for (const m of after) (memoryStore as any).deleteMessage?.(m.id)
+      return res.json({ ok: true, deleted: after.length })
+    }
+    const conversation = await prisma!.conversation.findFirst({ where: { id: conversationId, userId } })
+    if (!conversation) return res.status(404).json({ error: 'Conversation not found' })
+    const target = await prisma!.message.findFirst({ where: { id: messageId, conversationId } })
+    if (!target) return res.status(404).json({ error: 'Message not found' })
+    const result = await prisma!.message.deleteMany({ where: { conversationId, createdAt: { gt: target.createdAt } } })
+    await prisma!.conversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } })
+    res.json({ ok: true, deleted: result.count })
+  } catch {
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
 // Inspect raw JSON BEFORE validation strips unknown fields such as baseUrl.
 router.post('/:conversationId/messages', authenticateToken, (req, res, next) => {
   try { res.locals.hostedTarget = resolveHostedModelRequest(req.body) }

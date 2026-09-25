@@ -1,0 +1,148 @@
+name: loop-media-stack
+
+# NSFW Media Stack — three-model sidecar for loop-gpt backend
+# GPU: 2× H200 (141 GB) for premium H3, or 1× H200 for media-only
+# Default: single-H200 media profile (Chroma1-HD + WAN 2.2 I2V, no H3)
+
+networks:
+  loop-internal:
+    driver: bridge
+    internal: false  # Railway private networking covers internal; public for debug
+
+services:
+  # Media gateway: CPU-only, FastAPI. The ONLY service loop-gpt talks to.
+  # No GPU required.
+  media-gateway:
+    image: ghcr.io/red-kit/nsfw-media-stack:gateway
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    environment:
+      MEDIA_URL: http://media-worker:8001
+      H3_CONDITIONER_URL: http://h3-conditioner:8002
+      H3_DENOISER_URL: http://h3-denoiser:8003
+      H3_VENDOR_SPACE: observantdistressed/minimax-h3
+    ports:
+      - "8000:8000"
+    networks:
+      - loop-internal
+    depends_on:
+      - media-worker
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Media worker: Chroma1-HD + WAN 2.2 I2V 14B Lightning
+  # Requires GPU with compute capability >= 9.0 (H200 / RTX PRO 6000)
+  media-worker:
+    image: ghcr.io/red-kit/nsfw-media-stack:media
+    build:
+      context: .
+      dockerfile: Dockerfile.media
+    environment:
+      SERVICE: media
+      AOTI_MODE: eager
+      CHROMA_BF16: "0"
+      HF_TOKEN: ${HF_TOKEN:?HF_TOKEN required for model downloads}
+      WAN_MODEL_REPO: thornmaze/WAMU_v3_WAN2.2_I2V_LIGHTNING
+      IMAGE_MODEL_REPO: lodestones/Chroma1-HD
+      WAN_VENDOR_SPACE: observantdistressed/wan2-2-i2v-v3
+    ports:
+      - "8001:8001"
+    networks:
+      - loop-internal
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+      - hf-cache-media:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+
+  # H3 Conditioner: Qwen3-VL 33B (text+vision encoder for H3)
+  # Requires GPU with >= 48 GB VRAM
+  h3-conditioner:
+    image: ghcr.io/red-kit/nsfw-media-stack:h3-conditioner
+    build:
+      context: .
+      dockerfile: Dockerfile.h3
+    environment:
+      SERVICE: h3-conditioner
+      H3_FP8: "1"
+      H3_MODEL_REPO: MiniMaxAI/MiniMax-H3
+      H3_VENDOR_SPACE: observantdistressed/minimax-h3
+      HF_TOKEN: ${HF_TOKEN:?HF_TOKEN required for model downloads}
+    ports:
+      - "8002:8002"
+    networks:
+      - loop-internal
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']
+              capabilities: [gpu]
+    volumes:
+      - hf-cache-h3:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+
+  # H3 Denoiser: MiniMax-H3 195.9 GiB video+audio DiT
+  # Requires GPU with >= 80 GB VRAM (shared with conditioner on 2-H200 setup)
+  h3-denoiser:
+    image: ghcr.io/red-kit/nsfw-media-stack:h3-denoiser
+    build:
+      context: .
+      dockerfile: Dockerfile.h3
+    environment:
+      SERVICE: h3-denoiser
+      H3_FP8: "1"
+      H3_COMPILE: "0"
+      H3_MODEL_REPO: MiniMaxAI/MiniMax-H3
+      H3_VENDOR_SPACE: observantdistressed/minimax-h3
+      HF_TOKEN: ${HF_TOKEN:?HF_TOKEN required for model downloads}
+    ports:
+      - "8003:8003"
+    networks:
+      - loop-internal
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    volumes:
+      - hf-cache-h3:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+
+volumes:
+  hf-cache:
+  hf-cache-media:
+  hf-cache-h3:

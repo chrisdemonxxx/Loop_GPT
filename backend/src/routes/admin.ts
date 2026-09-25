@@ -6,6 +6,7 @@ import express from 'express'
 import { asyncHandler } from '../middleware/errorLogger'
 import { authenticateToken, requireAdmin } from './auth'
 import { prisma, hasDb } from '../services/prisma'
+import { recentRequests, metricsSummary, activeStreamCount } from '../middleware/requestLog'
 
 const router = express.Router()
 
@@ -15,6 +16,18 @@ router.use(authenticateToken, requireAdmin)
 function noDb(res: express.Response) {
   return res.json({ hasDb: false, message: 'Admin analytics require a database (DATABASE_URL).' })
 }
+
+/** GET /api/admin/metrics/summary — request observability (ring-based, admin-only). */
+router.get('/metrics/summary', asyncHandler(async (req, res) => {
+  const windowSeconds = Number(req.query.window) || 3600
+  return res.json(metricsSummary(windowSeconds))
+}))
+
+/** GET /api/admin/metrics/requests — bounded recent-request tail; no bodies/headers. */
+router.get('/metrics/requests', asyncHandler(async (req, res) => {
+  const limit = Number(req.query.limit) || 100
+  return res.json({ requests: recentRequests(limit), activeStreams: activeStreamCount() })
+}))
 
 /** GET /api/admin/stats — headline counters + last-24h activity + token totals. */
 router.get('/stats', asyncHandler(async (_req, res) => {
@@ -236,6 +249,15 @@ router.post('/payments', asyncHandler(async (req, res) => {
     data: { userId, amount: Math.floor(amount), currency, status, provider, reference: reference || null, note: note || null },
   })
   res.json({ ok: true, payment })
+}))
+
+/** POST /api/admin/memory-synthesis/run — trigger the nightly memory
+ * synthesis pass immediately (verification/ops tool). */
+router.post('/memory-synthesis/run', asyncHandler(async (_req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { runMemorySynthesis } = await import('../services/memorySynthesis')
+  const result = await runMemorySynthesis()
+  res.json({ ok: true, result })
 }))
 
 export default router

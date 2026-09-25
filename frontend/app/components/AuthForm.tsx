@@ -29,6 +29,9 @@ export default function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
   const [name, setName] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  // TOTP MFA: shown when the backend reports the account has two-factor.
+  const [totpRequired, setTotpRequired] = useState(false)
+  const [totp, setTotp] = useState('')
 
   const isSignup = mode === 'signup'
 
@@ -69,15 +72,29 @@ export default function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
       const res = await fetch(`${API_URL}/api/auth/${isSignup ? 'register' : 'login'}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(isSignup ? { email, password, name } : { email, password }),
+        body: JSON.stringify(isSignup ? { email, password, name } : { email, password, ...(totp ? { totp } : {}) }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
+        // Two-factor: password was right, but the 6-digit code is required.
+        if (data.totpRequired) { setTotpRequired(true); setError(data.error || 'Enter your authenticator code.'); setLoading(false); return }
         setError(data.error || `Request failed (${res.status})`)
         setLoading(false)
         return
       }
-      if (data.token) setAuth(data.token, data.user)
+      // Sign-up completes by logging in with the same credentials. Never trust
+      // register's token field: it is the email-verification token, not a
+      // session JWT (the hardened backend issues sessions only at login).
+      if (isSignup) {
+        const loginRes = await fetch(`${API_URL}/api/auth/login`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, ...(totp ? { totp } : {}) }),
+        })
+        const loginData = await loginRes.json()
+        if (loginData.totpRequired) { setTotpRequired(true); setError(loginData.error || 'Enter your authenticator code.'); setLoading(false); return }
+        if (!loginData.token) throw new Error(loginData.error || 'Sign-up succeeded but sign-in failed.')
+        setAuth(loginData.token, loginData.user || data.user)
+      } else if (data.token) setAuth(data.token, data.user)
       track(isSignup ? 'signed_up' : 'logged_in', { method: 'email' })
       router.push(data.user?.role === 'admin' ? '/admin' : '/chat')
     } catch (err: any) {
@@ -123,7 +140,19 @@ export default function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
             )}
             <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="w-full bg-ink-800 border border-white/10 rounded-lg px-3 py-2.5 text-slate-100 text-sm focus:outline-none focus:accent-ring placeholder-slate-600" />
             <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className="w-full bg-ink-800 border border-white/10 rounded-lg px-3 py-2.5 text-slate-100 text-sm focus:outline-none focus:accent-ring placeholder-slate-600" />
-            {!isSignup && (
+            {totpRequired && (
+              <input
+                inputMode="numeric"
+                autoFocus
+                maxLength={6}
+                value={totp}
+                onChange={(e) => setTotp(e.target.value.replace(/\D/g, ''))}
+                placeholder="6-digit authenticator code"
+                className="w-full bg-ink-800 border border-[#c96442]/40 rounded-lg px-3 py-2.5 text-slate-100 text-sm font-mono tracking-[0.3em] focus:outline-none focus:accent-ring placeholder-slate-600"
+                aria-label="Authenticator code"
+              />
+            )}
+            {!isSignup && !totpRequired && (
               <div className="text-right -mt-1"><Link href="/forgot" className="text-[12px] text-slate-500 hover:text-[#c96442] transition">Forgot password?</Link></div>
             )}
             {error && <div className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">{error}</div>}

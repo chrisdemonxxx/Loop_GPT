@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Loop GPT",
+    "slug": "loop-gpt",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#111113",
+    "splash": {
+      "backgroundColor": "#111113"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "platforms": ["android", "ios"]
+  }
+}

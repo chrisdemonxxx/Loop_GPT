@@ -1,5 +1,7 @@
 # Loop GPT build ledger
 
+> **Historical checkpoint log (GAP-062):** records build progress at the time of writing (03 series). Current state lives in `PROGRESS.md` + `GAP_REGISTER.md`. Route references like `/api/models/selection` describe retirements, not live endpoints.
+
 ## Confirmed scope
 
 - Owned React/TypeScript web application and iPhone-optimized PWA.

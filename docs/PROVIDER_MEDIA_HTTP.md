@@ -1,5 +1,7 @@
 # Provider, embedding and media transport (03i)
 
+> **SUPERSEDED (2026-09-22, GAP-062):** billing/retry notes moved to ACCOUNTING.md; media transport now lives in src/agent/httpClient.ts + MODEL_HTTP.md/PUBLIC_HTTP.md. Kept as a checkpoint record — do not follow its endpoint guidance for new work.
+
 **03j follow-up:** `ACCOUNTING.md` supersedes this checkpoint's billing and retry
 notes. Reviewed synchronous paths reserve before dispatch; uncertain image POSTs
 no longer retry automatically. Async-video creation and startup legacy-job

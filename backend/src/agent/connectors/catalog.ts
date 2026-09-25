@@ -303,28 +303,111 @@ const WORKING: CatalogConnector[] = [
       { suffix: 'search', description: '[SerpAPI] Google search. Args: q.', method: 'GET', path: '/search', query: ['q'], parameters: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] } },
     ],
   },
+  {
+    type: 'github',
+    name: 'GitHub',
+    description: 'GitHub API — search repos, list issues, read files and review PRs using a personal access token.',
+    category: 'Developer',
+    icon: '🐙',
+    auth: 'bearer',
+    authField: 'token',
+    baseUrl: 'https://api.github.com',
+    headers: { Accept: 'application/vnd.github.v3+json' },
+    fields: [{ key: 'token', label: 'GitHub personal access token (classic, with repo scope)', secret: true, required: true, placeholder: 'ghp_...' }],
+    tools: [
+      {
+        suffix: 'search_repos',
+        description: '[GitHub] Search repositories. Args: q (query), sort, order.',
+        method: 'GET', path: '/search/repositories', query: ['q', 'sort', 'order', 'per_page'],
+        parameters: { type: 'object', properties: { q: { type: 'string' }, sort: { type: 'string', enum: ['stars', 'forks', 'updated'] }, order: { type: 'string', enum: ['desc', 'asc'] }, per_page: { type: 'number' } }, required: ['q'] },
+      },
+      {
+        suffix: 'list_issues',
+        description: '[GitHub] List issues/PRs for a repo. Args: owner, repo, state, sort, per_page.',
+        method: 'GET', path: '/repos/{owner}/{repo}/issues', query: ['state', 'sort', 'per_page'],
+        parameters: { type: 'object', properties: { owner: { type: 'string' }, repo: { type: 'string' }, state: { type: 'string', enum: ['open', 'closed', 'all'] }, sort: { type: 'string', enum: ['created', 'updated', 'comments'] }, per_page: { type: 'number' } } },
+      },
+      {
+        suffix: 'get_repo',
+        description: '[GitHub] Get repository details. Args: owner, repo.',
+        method: 'GET', path: '/repos/{owner}/{repo}',
+        parameters: { type: 'object', properties: { owner: { type: 'string' }, repo: { type: 'string' } }, required: ['owner', 'repo'] },
+      },
+      {
+        suffix: 'list_files',
+        description: '[GitHub] List files in a repository path. Args: owner, repo, path, ref.',
+        method: 'GET', path: '/repos/{owner}/{repo}/contents/{path}', query: ['ref'],
+        parameters: { type: 'object', properties: { owner: { type: 'string' }, repo: { type: 'string' }, path: { type: 'string' }, ref: { type: 'string' } }, required: ['owner', 'repo', 'path'] },
+      },
+      {
+        suffix: 'get_file',
+        description: '[GitHub] Get a single file content. Args: owner, repo, path, ref.',
+        method: 'GET', path: '/repos/{owner}/{repo}/contents/{path}', query: ['ref'],
+        parameters: { type: 'object', properties: { owner: { type: 'string' }, repo: { type: 'string' }, path: { type: 'string' }, ref: { type: 'string' } }, required: ['owner', 'repo', 'path'] },
+      },
+      {
+        suffix: 'list_pull_requests',
+        description: '[GitHub] List PRs. Args: owner, repo, state, sort.',
+        method: 'GET', path: '/repos/{owner}/{repo}/pulls', query: ['state', 'sort', 'per_page'],
+        parameters: { type: 'object', properties: { owner: { type: 'string' }, repo: { type: 'string' }, state: { type: 'string', enum: ['open', 'closed', 'all'] }, sort: { type: 'string', enum: ['created', 'updated', 'popularity'] }, per_page: { type: 'number' } } },
+      },
+    ],
+  },
 ]
 
 // ---------------------------------------------------------------------------
-// Directory entries requiring OAuth (shown, but need OAuth wiring to activate)
+// Platform-managed OAuth connectors (Loop GPT's registered OAuth apps)
 // ---------------------------------------------------------------------------
 
-const OAUTH_DIRECTORY: CatalogConnector[] = [
+const PLATFORM_OAUTH: CatalogConnector[] = [
   { type: 'google_drive', name: 'Google Drive', description: 'Search and read files from Google Drive.', category: 'Productivity', icon: '📁', oauth: true },
   { type: 'gmail', name: 'Gmail', description: 'Read and send email from Gmail.', category: 'Communication', icon: '📧', oauth: true },
   { type: 'google_calendar', name: 'Google Calendar', description: 'Read and create calendar events.', category: 'Productivity', icon: '📅', oauth: true },
   { type: 'google_sheets', name: 'Google Sheets', description: 'Read and write spreadsheet data.', category: 'Data', icon: '📊', oauth: true },
-  { type: 'outlook', name: 'Microsoft Outlook', description: 'Email and calendar via Microsoft 365.', category: 'Communication', icon: '📨', oauth: true },
-  { type: 'onedrive', name: 'OneDrive', description: 'Files from Microsoft OneDrive.', category: 'Productivity', icon: '☁️', oauth: true },
-  { type: 'dropbox', name: 'Dropbox', description: 'Search and read files from Dropbox.', category: 'Productivity', icon: '📦', oauth: true },
-  { type: 'linear', name: 'Linear', description: 'Issues and projects from Linear.', category: 'Developer', icon: '📐', oauth: true },
-  { type: 'asana', name: 'Asana', description: 'Tasks and projects from Asana.', category: 'Productivity', icon: '🎯', oauth: true },
-  { type: 'salesforce', name: 'Salesforce', description: 'CRM records from Salesforce.', category: 'Marketing', icon: '⚡', oauth: true },
-  { type: 'figma', name: 'Figma', description: 'Read design files and comments.', category: 'Developer', icon: '🎨', oauth: true },
-  { type: 'zoom', name: 'Zoom', description: 'Meetings and recordings from Zoom.', category: 'Communication', icon: '🎥', oauth: true },
 ]
 
-export const CONNECTOR_CATALOG: CatalogConnector[] = [...WORKING, ...OAUTH_DIRECTORY]
+export const CONNECTOR_CATALOG: CatalogConnector[] = [...WORKING, ...PLATFORM_OAUTH]
+
+// ---------------------------------------------------------------------------
+// Connection probing / credential validation
+// ---------------------------------------------------------------------------
+
+export interface ProbeResult {
+  ok: boolean
+  /** 401/403 from the provider → the credential is definitely invalid. */
+  invalidCredentials: boolean
+  message: string
+  ms: number
+}
+
+/** Probe a stored connector credential by making one safe request with the
+ * connector's first tool (e.g. "list recent items"). A 401/403 marks the key
+ * invalid; other outcomes (400/404/network) may still be a working key. */
+export async function probeConnector(def: CatalogConnector, cfg: ConnectorConfig): Promise<ProbeResult> {
+  const started = Date.now()
+  if (def.oauth || !def.tools?.length) {
+    return { ok: true, invalidCredentials: false, message: 'Authorized via provider sign-in.', ms: 0 }
+  }
+  const tools = buildCatalogTools(def, cfg)
+  if (!tools.length) return { ok: true, invalidCredentials: false, message: 'No probe available.', ms: 0 }
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 15000)
+    const ctx = { signal: ctrl.signal } as any
+    const result = await tools[0].handler({}, ctx).finally(() => clearTimeout(timer))
+    const content = String(result?.content || '')
+    const ms = Date.now() - started
+    if (result?.isError && /HTTP 40[13]/.test(content)) {
+      return { ok: false, invalidCredentials: true, message: content.slice(0, 300), ms }
+    }
+    if (result?.isError) {
+      return { ok: false, invalidCredentials: false, message: content.slice(0, 300), ms }
+    }
+    return { ok: true, invalidCredentials: false, message: 'Credential accepted.', ms }
+  } catch (e: any) {
+    return { ok: false, invalidCredentials: false, message: `Probe failed: ${e?.message || e}`, ms: Date.now() - started }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Factory: build working tools from a stored config + catalog definition

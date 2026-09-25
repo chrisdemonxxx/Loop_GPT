@@ -5,7 +5,10 @@ const nextConfig = {
   trailingSlash: true,
   images: { unoptimized: true },
   env: {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001',
+    // Empty by default => the client uses same-origin relative URLs and relies
+    // on the serving proxy (nginx `/api` upstream). Set an absolute URL only
+    // when the API lives on a different origin.
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || '',
   },
 }
 

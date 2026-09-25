@@ -33,6 +33,14 @@ model User {
   credits          Int      @default(30)     // remaining daily message credits
   imageCredits     Int      @default(5)      // remaining daily image credits
   creditsResetAt   DateTime @default(now())
+  // Master toggle: use memory across conversations (Settings → Memory).
+  memoryEnabled    Boolean  @default(true)
+  // TOTP MFA (brief P2): when enabled, login requires password + a 6-digit code.
+  totpEnabled     Boolean  @default(false)
+  totpSecret      String?
+  // Password-reset session invalidation: JWTs issued before this instant are
+  // rejected by authenticateToken ("old sessions invalidated on reset").
+  sessionInvalidatedAt DateTime?
   // Consent to use interactions for product improvement / model training.
   consentTraining  Boolean  @default(false)
 
@@ -59,6 +67,10 @@ model User {
   dailyReservations DailyReservation[]
   payments      Payment[]
   tokens        Token[]
+  memories      Memory[]
+  styles        UserStyle[]
+  researchScratchpads ResearchScratchpad[]
+  researchRuns  ResearchRun[]
   mediaJobs     MediaJob[]
   apiKeys       ApiKey[]
   apiUsage      ApiUsage[]
@@ -94,6 +106,27 @@ model ApiKey {
 }
 
 /// One row per billable developer API request.
+// Spend budget policy singleton: daily reservation count caps across all
+// product paths. DB admins update the row and increment revision; there is
+// deliberately no environment or per-worker override.
+model SpendBudgetPolicy {
+  id                          Int       @id
+  version                     Int
+  revision                    Int
+  perUserDailyReservationCap  BigInt
+  globalDailyReservationCap   BigInt
+}
+model StripeEventInbox {
+  id          String    @id @default(cuid())
+  eventId     String    @unique
+  type        String
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+  errorCount  Int       @default(0)
+  lastError   String?
+  payloadJson String
+}
+
 model ApiUsage {
   id         String   @id @default(cuid())
   userId     String
@@ -112,6 +145,115 @@ model ApiUsage {
 
   @@index([userId, createdAt])
   @@index([apiKeyId, createdAt])
+}
+
+model KnowledgeChunk {
+  id             String    @id @default(cuid())
+  projectId      String
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  content        String
+  embedding      Json?
+  /// pgvector column (1024-d, bge-m3). Present when the extension is enabled.
+  embeddingVec   Unsupported("vector(1024)")?
+  createdAt      DateTime  @default(now())
+
+  @@index([projectId])
+}
+
+model Project {
+  id          String    @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  instructions String    @default("")
+  role        ProjectRole @default(viewer)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  knowledgeChunks KnowledgeChunk[]
+  memories        Memory[]
+  conversations   Conversation[]
+
+  @@index([workspaceId])
+}
+
+enum ProjectRole {
+  owner
+  editor
+  viewer
+}
+
+/// User memory: explicit ("remember that...") and nightly-synthesized facts.
+/// source: 'user' = added from the Memory settings UI; 'agent' = saved by the
+/// assistant itself during a conversation (the `remember` tool).
+model Memory {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  kind      String   @default("explicit") // explicit | synthesized
+  source    String   @default("user") // user | agent
+  content   String
+  tags      String[] @default([])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([projectId])
+}
+
+/// User-defined writing styles: named presets with a system prompt snippet and
+/// optional temperature override. Styles are injected into the agent context
+/// when a conversation has an active style.
+model UserStyle {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  systemPrompt String  @default("")
+  temperature Float?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
+
+/// Research scratchpad (GAP-046): per-phase deep-research state keyed by
+/// normalized query, so interrupted runs resume from the last completed
+/// phase instead of re-running searches/fetches. Rows expire after 24h.
+model ResearchScratchpad {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  queryHash String
+  query     String
+  queries   Json?
+  hits      Json?
+  sources   Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, queryHash])
+}
+
+/// A durable deep-research run. The orchestrator persists progress and the final
+/// cited report so a run survives a client reload and can be resumed/replayed.
+model ResearchRun {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String
+  query          String
+  status         String   @default("running") // running | completed | failed
+  events         Json
+  report         String?
+  sources        Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId, conversationId])
 }
 
 /// Prepaid balance top-ups (Stripe payment-mode checkout, voucher, or admin grant).
@@ -221,6 +363,10 @@ model Conversation {
   privateFiles PrivateFile[]
   workspaceId String?
   workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  projectId String?
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  /// Incognito: excluded from the sidebar, memory synthesis, and memory injection.
+  incognito Boolean   @default(false)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -473,6 +619,7 @@ model Workspace {
   connections WorkspaceConnection[]
   conversations Conversation[]
   auditEvents WorkspaceAuditEvent[]
+  projects Project[]
 }
 
 enum WorkspaceRole {
@@ -530,6 +677,9 @@ model PrivateFile {
   size           Int
   sha256         String
   purpose        String   // upload | artifact
+  /// Set when the owner publishes a view-only public link (GAP-020).
+  publishToken   String?  @unique
+  publishedAt    DateTime?
   createdAt      DateTime @default(now())
   deletedAt      DateTime?
 

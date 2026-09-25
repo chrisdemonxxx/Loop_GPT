@@ -96,6 +96,8 @@ export function resolveModel(provider: AIProvider, model?: string): string {
 /** Accumulated result of one streamed model turn. */
 export interface StreamTurnResult {
   content: string
+  /** Reasoning-model chain (empty unless the model streams reasoning_content). */
+  reasoning: string
   toolCalls: Array<{ id: string; name: string; arguments: string }>
   finishReason: string | null
 }
@@ -110,6 +112,53 @@ export interface StreamTurnOptions {
   signal?: AbortSignal
   /** Called for every text delta as it streams in. */
   onDelta?: (text: string) => void
+  /** Called for every REASONING delta (reasoning models, e.g. DeepSeek R1). */
+  onReasoning?: (text: string) => void
+  /** Called while waiting for a cold-starting endpoint to become ready. */
+  onWarming?: (message: string) => void
+}
+
+const RETRYABLE_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504])
+const COLD_START_HINT = /cold|loading|initializ|no replicas|unavailable|overloaded|timed? ?out|ECONNRESET|ECONNREFUSED|fetch failed|socket hang up/i
+
+function isColdStartError(error: any): boolean {
+  const status = Number(error?.status ?? error?.response?.status ?? error?.cause?.status ?? 0)
+  if (RETRYABLE_STATUS.has(status)) return true
+  return COLD_START_HINT.test(String(error?.message || error?.cause?.message || ''))
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error('aborted'))
+    const t = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve() }, ms)
+    const onAbort = () => { clearTimeout(t); reject(new Error('aborted')) }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/**
+ * Retry an inference call while a dedicated endpoint cold-starts. HF Endpoints
+ * scaled to zero (or initializing) answer 503 for up to a couple of minutes;
+ * without this the very first turn after idle fails. Bounded, abort-aware.
+ */
+async function withColdStartRetry<T>(
+  fn: () => Promise<T>,
+  opts: { signal?: AbortSignal; onWarming?: (message: string) => void; attempts?: number },
+): Promise<T> {
+  const attempts = opts.attempts ?? 14
+  const start = Date.now()
+  let delayMs = 1500
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn()
+    } catch (error: any) {
+      const elapsed = Date.now() - start
+      if (attempt >= attempts - 1 || opts.signal?.aborted || !isColdStartError(error) || elapsed > 180_000) throw error
+      opts.onWarming?.(attempt === 0 ? 'The model is starting up (cold start) — this can take a minute…' : 'Still waiting for the model…')
+      await sleep(delayMs, opts.signal)
+      delayMs = Math.min(Math.round(delayMs * 1.5), 20_000)
+    }
+  }
 }
 
 /**
@@ -117,7 +166,7 @@ export interface StreamTurnOptions {
  * Throws on API errors so the caller can decide on a fallback.
  */
 export async function streamTurn(opts: StreamTurnOptions): Promise<StreamTurnResult> {
-  const { client, model, messages, tools, onDelta, signal } = opts
+  const { client, model, messages, tools, onDelta, onReasoning, signal, onWarming } = opts
 
   const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
     model,
@@ -138,9 +187,13 @@ export async function streamTurn(opts: StreamTurnOptions): Promise<StreamTurnRes
     params.tool_choice = 'auto'
   }
 
-  const stream = await client.chat.completions.create(params, { signal })
+  const stream = await withColdStartRetry(
+    () => client.chat.completions.create(params, { signal }),
+    { signal, onWarming },
+  )
 
   let content = ''
+  let reasoning = ''
   const toolCallsAcc: Array<{ id: string; name: string; arguments: string }> = []
   let finishReason: string | null = null
 
@@ -148,9 +201,21 @@ export async function streamTurn(opts: StreamTurnOptions): Promise<StreamTurnRes
     const choice = chunk.choices?.[0]
     if (!choice) continue
     const delta = choice.delta as any
-    if (delta?.content) {
-      content += delta.content
-      onDelta?.(delta.content)
+    // Reasoning models (e.g. the flagship DeepSeek tier) stream their chain in
+    // `reasoning_content`/`reasoning` SEPARATELY from `content`. Surface it as
+    // a distinct "thinking" stream (collapsible Claude-style UI) instead of
+    // concatenating it into the answer.
+    if (delta?.reasoning_content) {
+      reasoning += delta.reasoning_content
+      onReasoning?.(delta.reasoning_content)
+    } else if (delta?.reasoning) {
+      reasoning += delta.reasoning
+      onReasoning?.(delta.reasoning)
+    }
+    const piece: string | undefined = delta?.content
+    if (piece) {
+      content += piece
+      onDelta?.(piece)
     }
     if (delta?.tool_calls) {
       for (const tc of delta.tool_calls) {
@@ -166,7 +231,7 @@ export async function streamTurn(opts: StreamTurnOptions): Promise<StreamTurnRes
     if (choice.finish_reason) finishReason = choice.finish_reason
   }
 
-  return { content, toolCalls: toolCallsAcc.filter(Boolean), finishReason }
+  return { content, reasoning, toolCalls: toolCallsAcc.filter(Boolean), finishReason }
 }
 
 /** Non-streaming single call (used for internal sub-agent steps). */
@@ -176,13 +241,18 @@ export async function completeOnce(
   messages: ChatMessage[],
   temperature = 0.5,
   maxTokens = 2000,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onWarming?: (message: string) => void
 ): Promise<string> {
-  const completion = await client.chat.completions.create({
-    model,
-    messages: messages as any,
-    temperature,
-    max_tokens: maxTokens,
-  }, { signal })
-  return completion.choices[0]?.message?.content || ''
+  const completion = await withColdStartRetry(
+    () => client.chat.completions.create({
+      model,
+      messages: messages as any,
+      temperature,
+      max_tokens: maxTokens,
+    }, { signal }),
+    { signal, onWarming },
+  )
+  const msg: any = completion.choices[0]?.message
+  return msg?.content ?? msg?.reasoning_content ?? msg?.reasoning ?? ''
 }

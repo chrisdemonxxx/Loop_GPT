@@ -30,6 +30,9 @@ beforeEach(() => {
   vi.stubEnv('HF_IMAGE_ENDPOINT_URL', endpoint)
   vi.stubEnv('HF_IMAGE_PROVIDER', '')
   vi.stubEnv('HF_IMAGE_MODEL', 'fixture-model')
+  // Keep the original 5-minute budget in tests regardless of prod defaults.
+  vi.stubEnv('HF_IMAGE_MAX_WAIT_MS', '300000')
+  vi.stubEnv('HF_VIDEO_MAX_WAIT_MS', '300000')
   vi.stubEnv('IMAGE_API_URL', '')
   vi.stubEnv('VIDEO_API_URL', endpoint)
   vi.stubEnv('HF_VIDEO_ENDPOINT_URL', '')

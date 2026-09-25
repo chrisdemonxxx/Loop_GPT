@@ -47,7 +47,7 @@ router.post('/register', validate(validationSchemas.register), async (req, res) 
     welcomeEmail(user.email, user.name).catch(() => {})
     createToken(user.id, 'verify')
       .then((t) => {
-        if (t) return verifyEmail(user.email, user.name, `${(process.env.FRONTEND_URL || 'http://localhost:3000').split(',')[0].trim().replace(/\/+$/, '')}/verify?token=${t}`)
+        if (t) return verifyEmail(user.email, user.name, `${(process.env.FRONTEND_URL || 'http://localhost:3000').split(',')[0].trim().replace(/\/+$/, '')}/verify/?token=${t}`)
       })
       .catch(() => {})
 
@@ -70,7 +70,7 @@ router.post('/register', validate(validationSchemas.register), async (req, res) 
 router.post('/login', validate(validationSchemas.login), async (req, res) => {
   try {
     if (!prisma) return res.status(503).json({ error: 'Login requires a database (set DATABASE_URL).' })
-    const { email, password } = req.body
+    const { email, password, totp } = req.body
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' })
@@ -88,6 +88,17 @@ router.post('/login', validate(validationSchemas.login), async (req, res) => {
 
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid credentials' })
+    }
+
+    // TOTP MFA (brief P2): valid password alone is not enough when enabled.
+    if (user.totpEnabled && user.totpSecret) {
+      const { verifySync } = await import('otplib')
+      if (!totp || !/^\d{6}$/.test(String(totp))) {
+        return res.status(401).json({ error: 'Enter your 6-digit authenticator code.', totpRequired: true })
+      }
+      if (!verifySync({ token: String(totp), secret: user.totpSecret, epochTolerance: 30 }).valid) {
+        return res.status(401).json({ error: 'That authenticator code is not valid.', totpRequired: true })
+      }
     }
 
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' })
@@ -112,7 +123,7 @@ export const authenticateToken = (req: express.Request, res: express.Response, n
   const authHeader = req.headers.authorization
   const token = typeof authHeader === 'string' ? /^Bearer ([^\s]+)$/i.exec(authHeader)?.[1] : undefined
   const isDevMode = process.env.NODE_ENV === 'development' && process.env.ENABLE_DEV_MODE === 'true'
-  
+
   if (isDevMode && authHeader === undefined) {
     // Use a default test user ID for development
     ;(req as any).userId = 'dev-user-123'
@@ -123,14 +134,30 @@ export const authenticateToken = (req: express.Request, res: express.Response, n
     return res.status(401).json({ error: 'No token provided' })
   }
 
-  jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }, (err: any, decoded: any) => {
+  jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }, async (err: any, decoded: any) => {
     if (err || !decoded || typeof decoded === 'string' || typeof decoded.userId !== 'string' ||
         decoded.userId.trim().length === 0 || decoded.userId.length > 128) {
       return res.status(401).json({ error: 'Invalid token' })
     }
     ;(req as any).userId = decoded.userId
+    // Password-reset invalidation: reject tokens issued before the user's
+    // last reset. One indexed read; fail-open on DB errors (the signature is
+    // already verified) so a transient DB blip doesn't lock users out.
+    if (prisma && typeof decoded.iat === 'number') {
+      try {
+        const user = await prisma.user.findUnique({ where: { id: decoded.userId }, select: { sessionInvalidatedAt: true } })
+        if (user?.sessionInvalidatedAt && tokenPredatesReset(decoded.iat, user.sessionInvalidatedAt)) {
+          return res.status(401).json({ error: 'Session expired after a password reset. Please sign in again.' })
+        }
+      } catch { /* fail open */ }
+    }
     next()
   })
+}
+
+/** True when a JWT's issued-at (seconds) predates the reset instant. */
+export function tokenPredatesReset(iatSeconds: number, sessionInvalidatedAt: Date): boolean {
+  return iatSeconds * 1000 < sessionInvalidatedAt.getTime()
 }
 
 /**

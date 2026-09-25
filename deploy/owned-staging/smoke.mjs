@@ -88,7 +88,10 @@ await withSmokeCleanup({ run: async () => {
   assert.equal(html.headers.get('x-content-type-options'), 'nosniff')
   assert.ok(html.headers.get('content-security-policy').includes("connect-src 'self'"))
   const text = await html.text()
-  const asset = text.match(/src="(\/assets\/[^" ]+\.js)"/)[1]
+  // The product UI is the Next.js static export; hashed immutable chunks.
+  const asset = text.match(/src="(\/_next\/static\/[^" ]+\.js)"/)?.[1]
+    || text.match(/src="(\/assets\/[^" ]+\.js)"/)?.[1]
+  assert.ok(asset, 'no hashed static entry script found')
   assert.match((await response(base + asset)).headers.get('cache-control'), /immutable/)
   assert.equal((await response(`${base}/assets/missing.js`)).status, 404)
   assert.equal((await response(`${base}/sw.js`)).headers.get('cache-control'), 'no-cache')

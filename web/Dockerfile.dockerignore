@@ -1,17 +1,8 @@
 # Root-context ignore for web/Dockerfile (BuildKit per-Dockerfile ignore).
-# Recursive allowlist first, then sensitive-name exclusions.
+# Ignore everything, re-include the build inputs, then exclude sensitive names.
 **
-!frontend
-!frontend/app
-!frontend/build
-!frontend/public
-!frontend/package.json
-!frontend/package-lock.json
-!frontend/next.config.js
-!frontend/postcss.config.js
-!frontend/tailwind.config.js
-!frontend/tsconfig.json
-!frontend/.eslintrc.json
+!frontend/**
+!web
 !web/nginx.template.conf
 **/*env*
 **/*secret*

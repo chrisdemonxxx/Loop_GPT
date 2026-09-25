@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Sparkles, Ticket, Zap, ImageIcon, ArrowLeft, Loader2, CheckCircle2, Infinity as InfinityIcon } from 'lucide-react'
+import { Sparkles, Ticket, Zap, ImageIcon, ArrowLeft, Loader2, CheckCircle2, Infinity as InfinityIcon, ShieldCheck, ShieldOff } from 'lucide-react'
+import QRCode from 'qrcode'
 import { apiFetch, clearAuth } from '../lib/api'
 
 interface Account {
@@ -36,6 +37,44 @@ export default function AccountPage() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [billing, setBilling] = useState<{ enabled: boolean; plans: { pro: boolean; gold: boolean } } | null>(null)
   const [checkingOut, setCheckingOut] = useState(false)
+
+  // TOTP MFA state.
+  const [mfa, setMfa] = useState<{ enabled: boolean; secret?: string; uri?: string } | null>(null)
+  const [mfaBusy, setMfaBusy] = useState(false)
+  const [mfaCode, setMfaCode] = useState('')
+  const [mfaQr, setMfaQr] = useState('')
+  const [mfaMsg, setMfaMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    apiFetch<any>('/api/account/me').then((a) => setMfa({ enabled: !!a.totpEnabled })).catch(() => setMfa(null))
+  }, [])
+
+  async function startMfaSetup() {
+    setMfaBusy(true); setMfaMsg(null); setMfaCode('')
+    try {
+      const d = await apiFetch<{ secret: string; uri: string }>('/api/account/totp/setup', { method: 'POST' })
+      setMfa((p) => ({ ...(p || { enabled: false }), enabled: false, secret: d.secret, uri: d.uri }))
+      setMfaQr(await QRCode.toDataURL(d.uri, { margin: 1, width: 200, color: { dark: '#e2e8f0', light: '#111113' } }))
+    } catch (e: any) { setMfaMsg({ ok: false, text: e?.message || 'Setup failed.' }) } finally { setMfaBusy(false) }
+  }
+
+  async function confirmMfa() {
+    setMfaBusy(true); setMfaMsg(null)
+    try {
+      await apiFetch('/api/account/totp/verify', { method: 'POST', body: JSON.stringify({ token: mfaCode }) })
+      setMfa({ enabled: true }); setMfaQr(''); setMfaCode('')
+      setMfaMsg({ ok: true, text: 'Two-factor is on. Keep your authenticator app — you will need it at every login.' })
+    } catch (e: any) { setMfaMsg({ ok: false, text: e?.message || 'That code was not accepted.' }) } finally { setMfaBusy(false) }
+  }
+
+  async function disableMfa() {
+    setMfaBusy(true); setMfaMsg(null)
+    try {
+      await apiFetch('/api/account/totp/disable', { method: 'POST', body: JSON.stringify({ token: mfaCode }) })
+      setMfa({ enabled: false }); setMfaQr(''); setMfaCode('')
+      setMfaMsg({ ok: true, text: 'Two-factor is off.' })
+    } catch (e: any) { setMfaMsg({ ok: false, text: e?.message || 'Enter your current code to disable.' }) } finally { setMfaBusy(false) }
+  }
 
   useEffect(() => {
     apiFetch<{ enabled: boolean; plans: any }>('/api/billing/config').then(setBilling).catch(() => setBilling(null))
@@ -141,6 +180,63 @@ export default function AccountPage() {
             {msg && (
               <div className={`mt-3 text-xs rounded-lg px-3 py-2 flex items-center gap-2 ${msg.ok ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20' : 'text-rose-400 bg-rose-500/10 border border-rose-500/20'}`}>
                 {msg.ok && <CheckCircle2 size={13} />} {msg.text}
+              </div>
+            )}
+          </div>
+
+          {/* Two-factor authentication (TOTP MFA) */}
+          <div className="glass-strong rounded-2xl p-5 mb-6">
+            <div className="flex items-center gap-2 mb-1 text-slate-100 font-medium">
+              {mfa?.enabled ? <ShieldCheck size={16} className="text-emerald-400" /> : <ShieldOff size={16} className="text-slate-500" />}
+              Two-factor authentication
+            </div>
+            <p className="text-xs text-slate-500 mb-3">
+              {mfa?.enabled
+                ? 'On — every login also asks for a 6-digit code from your authenticator app.'
+                : 'Add a second factor: scan the QR with Google Authenticator, 1Password, Authy, or any TOTP app.'}
+            </p>
+
+            {mfa?.enabled ? (
+              <div className="flex gap-2 max-w-xs">
+                <input
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ''))}
+                  inputMode="numeric" maxLength={6} placeholder="Current code"
+                  className="flex-1 bg-ink-800 border border-white/10 rounded-lg px-3 py-2.5 text-slate-100 text-sm font-mono tracking-[0.25em] focus:outline-none focus:accent-ring placeholder-slate-600"
+                  aria-label="Current authenticator code"
+                />
+                <button onClick={disableMfa} disabled={mfaBusy || mfaCode.length !== 6} className="px-4 rounded-lg text-rose-300 border border-rose-500/30 hover:bg-rose-500/10 disabled:opacity-40 transition text-sm">
+                  {mfaBusy ? <Loader2 size={14} className="animate-spin" /> : 'Disable'}
+                </button>
+              </div>
+            ) : mfa?.secret && mfa.uri ? (
+              <div className="flex flex-col sm:flex-row gap-4 items-start">
+                {mfaQr && <img src={mfaQr} alt="TOTP QR code" className="rounded-xl border border-white/10" width={160} height={160} />}
+                <div className="flex-1 space-y-2 min-w-0">
+                  <p className="text-[11px] text-slate-500">Can&apos;t scan? Enter this key manually:</p>
+                  <code className="block text-[12px] font-mono text-slate-300 bg-ink-800 border border-white/10 rounded-lg px-2.5 py-1.5 break-all select-all">{mfa.secret}</code>
+                  <div className="flex gap-2">
+                    <input
+                      value={mfaCode}
+                      onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ''))}
+                      inputMode="numeric" maxLength={6} placeholder="6-digit code"
+                      className="flex-1 bg-ink-800 border border-white/10 rounded-lg px-3 py-2.5 text-slate-100 text-sm font-mono tracking-[0.25em] focus:outline-none focus:accent-ring placeholder-slate-600"
+                      aria-label="Verification code"
+                    />
+                    <button onClick={confirmMfa} disabled={mfaBusy || mfaCode.length !== 6} className="px-4 rounded-lg text-white bg-[#c96442] hover:bg-[#b5593a] disabled:opacity-40 transition text-sm font-medium">
+                      {mfaBusy ? <Loader2 size={14} className="animate-spin" /> : 'Verify & enable'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <button onClick={startMfaSetup} disabled={mfaBusy} className="px-4 py-2 rounded-lg text-white bg-[#c96442] hover:bg-[#b5593a] disabled:opacity-40 transition text-sm font-medium">
+                {mfaBusy ? <Loader2 size={14} className="animate-spin" /> : 'Set up two-factor'}
+              </button>
+            )}
+            {mfaMsg && (
+              <div className={`mt-3 text-xs rounded-lg px-3 py-2 ${mfaMsg.ok ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20' : 'text-rose-400 bg-rose-500/10 border border-rose-500/20'}`}>
+                {mfaMsg.text}
               </div>
             )}
           </div>

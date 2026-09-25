@@ -1,15 +1,21 @@
 /**
  * web_search tool: search the web.
  *
- * Priority order:
- *  1. Tavily    — when TAVILY_API_KEY is set (highest quality, structured)
- *  2. Brave     — when BRAVE_API_KEY is set (free 2k/mo tier, reliable)
- *  3. DuckDuckGo HTML — no key, best-effort scrape
- *  4. Bing HTML  — no key fallback (scrapes bing.com)
+ * Priority order (per the platform spec):
+ *  1. SearXNG    — the org's self-hosted metasearch Space (SEARXNG_URL)
+ *  2. HF Search  — HF Inference Endpoint (HF_SEARCH_ENDPOINT_URL, structured JSON)
+ *  3. Brave      — when BRAVE_API_KEY is set (reliable fallback)
+ *  4. Tavily     — when TAVILY_API_KEY is set (structured fallback)
+ *  5. DuckDuckGo HTML — no key, best-effort scrape
+ *  6. Bing HTML  — no key fallback (scrapes bing.com)
+ *
+ * Candidate passages are reranked with bge-reranker-v2-m3 when available
+ * (fail-open), matching the spec's search pipeline.
  */
 import { JSDOM } from 'jsdom'
 import type { ToolDefinition } from '../types'
 import { postPublicForm as postForm, postPublicJson as postJson, getPublicJson, fetchPublicText, PublicHttpError, validatePublicUrl } from '../../services/publicHttp'
+import { rerank } from '../../services/embeddingStore'
 
 export interface SearchResult {
   title: string
@@ -35,9 +41,9 @@ export async function searchWeb(query: string, maxResults = 6, signal?: AbortSig
         bounded.push({ url, title: typeof result.title === 'string' ? result.title.slice(0, 500) : url,
           snippet: typeof result.snippet === 'string' ? result.snippet.slice(0, 8000) : '' })
       } catch { continue }
-      if (bounded.length >= maxResults) break
+      if (bounded.length >= 50) break
     }
-    return bounded
+    return await refineResults(query, bounded, maxResults)
   }
   finally { clearTimeout(timer); signal?.removeEventListener('abort', cancel) }
 }
@@ -46,7 +52,133 @@ function checkCancelled(signal: AbortSignal) {
   if (signal.aborted) throw signal.reason
 }
 
+/**
+ * Rerank candidate results against the query with bge-reranker-v2-m3.
+ * Fail-open: if the reranker is unavailable, keep provider order.
+ */
+const STOPWORDS = new Set(['the', 'a', 'an', 'of', 'to', 'in', 'for', 'and', 'or', 'on', 'with', 'is', 'are',
+  'was', 'be', 'at', 'by', 'from', 'as', 'it', 'its', 'this', 'that', 'what', 'how', 'why', 'when', 'who',
+  'best', 'vs', 'into', 'over', 'about', 'after', 'before', 'than', 'then', 'you', 'your'])
+
+function queryTokens(query: string): string[] {
+  return (query.toLowerCase().match(/[a-z0-9][a-z0-9.+#-]{1,}/g) || [])
+    .filter((t) => t.length >= 3 && !STOPWORDS.has(t))
+}
+
+/**
+ * Deterministic lexical relevance: keep results whose title/snippet share query
+ * terms, ranked by overlap. Prevents loosely-matching engine noise (e.g. "hug"
+ * for "Hugging Face") when the reranker is unavailable. Never empties the set.
+ */
+function lexicalFilter(query: string, candidates: SearchResult[]): SearchResult[] {
+  const tokens = queryTokens(query)
+  if (tokens.length === 0) return candidates
+  const scored = candidates.map((c) => {
+    const hay = `${c.title} ${c.snippet} ${c.url}`.toLowerCase()
+    let hits = 0
+    for (const t of tokens) if (hay.includes(t)) hits++
+    return { c, hits }
+  })
+  const matched = scored.filter((s) => s.hits > 0).sort((a, b) => b.hits - a.hits).map((s) => s.c)
+  return matched.length > 0 ? matched : candidates
+}
+
+async function refineResults(query: string, candidates: SearchResult[], maxResults: number): Promise<SearchResult[]> {
+  const filtered = lexicalFilter(query, candidates)
+  if (process.env.SEARCH_RERANK === 'false' || filtered.length <= maxResults) return filtered.slice(0, maxResults)
+  try {
+    const docs = filtered.map((c) => `${c.title}\n${c.snippet}`.slice(0, 2000))
+    const scored = await rerank(query, docs)
+    if (!Array.isArray(scored) || scored.length === 0) return filtered.slice(0, maxResults)
+    const ordered = scored
+      .filter((s) => Number.isInteger(s.index) && filtered[s.index])
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+      .map((s) => filtered[s.index])
+    const seen = new Set(ordered.map((r) => r.url))
+    for (const c of filtered) if (!seen.has(c.url)) ordered.push(c)
+    return ordered.slice(0, maxResults)
+  } catch {
+    return filtered.slice(0, maxResults)
+  }
+}
+
+/** The org's self-hosted SearXNG metasearch endpoint. */
+function searxngBase(): string {
+  if (process.env.SEARXNG_ENABLED === 'false') return ''
+  return (process.env.SEARXNG_URL || process.env.SEARXNG_ENDPOINT_URL || '').replace(/\/+$/, '')
+}
+
+async function searxngSearch(query: string, maxResults: number, signal: AbortSignal): Promise<SearchResult[]> {
+  const base = searxngBase()
+  if (!base) return []
+  const origin = new URL(base).origin
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  const token = process.env.SEARXNG_TOKEN || process.env.SEARXNG_API_TOKEN
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+    headers['X-API-Key'] = token
+  }
+  const url = `${base}/search?q=${encodeURIComponent(query)}&format=json&safesearch=0`
+  const data = await getPublicJson<any>(url, { signal, maxBytes: 1024 * 1024, allowedOrigins: [origin], headers })
+  const rows = Array.isArray(data?.results) ? data.results : []
+  return rows
+    .map((r: any) => ({ title: String(r.title || r.url || ''), url: String(r.url || ''), snippet: String(r.content || '') }))
+    .filter((r: SearchResult) => r.url.startsWith('http'))
+}
+
+/**
+ * HF Inference Endpoint search provider — structured results via a dedicated
+ * search endpoint. Returns title/url/snippet triples from a managed pipeline.
+ */
+async function hfSearch(query: string, maxResults: number, signal: AbortSignal): Promise<SearchResult[]> {
+  const endpoint = process.env.HF_SEARCH_ENDPOINT_URL || ''
+  const token = process.env.HF_TOKEN || ''
+  if (!endpoint) return []
+  const data = await postJson<any>(
+    endpoint,
+    { inputs: query, parameters: {} },
+    { signal, maxBytes: 512 * 1024, allowedOrigins: [new URL(endpoint).origin],
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) } }
+  )
+  const rows = Array.isArray(data?.results) ? data.results : []
+  return rows
+    .map((r: any) => ({ title: String(r.title || r.url || ''), url: String(r.url || ''), snippet: String(r.snippet || '') }))
+    .filter((r: SearchResult) => r.url.startsWith('http'))
+    .slice(0, maxResults)
+}
+
 async function searchWithProviders(query: string, maxResults: number, signal: AbortSignal): Promise<SearchResult[]> {
+  // 1. SearXNG (self-hosted HF Space) — primary.
+  checkCancelled(signal)
+  if (searxngBase()) {
+    try {
+      const res = await searxngSearch(query, maxResults, signal)
+      if (res.length > 0) return res
+    } catch { /* fall through */ }
+  }
+
+  // 2. HF Search endpoint — dedicated structured search pipeline.
+  checkCancelled(signal)
+  if (process.env.HF_SEARCH_ENDPOINT_URL) {
+    try {
+      const res = await hfSearch(query, maxResults, signal)
+      if (res.length > 0) return res
+    } catch { /* fall through */ }
+  }
+
+  // 3. Brave — reliable keyed fallback.
+  checkCancelled(signal)
+  const braveKey = process.env.BRAVE_API_KEY
+  if (braveKey) {
+    try {
+      const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`
+      const data = await getPublicJson(url, { signal, maxBytes: 512 * 1024, allowedOrigins: ['https://api.search.brave.com'], headers: { Accept: 'application/json', 'X-Subscription-Token': braveKey } })
+      const items = (data.web?.results || []).map((r: any) => ({ title: r.title, url: r.url, snippet: r.description || '' }))
+      if (items.length > 0) return items
+    } catch { /* fall through */ }
+  }
+
+  // 3. Tavily — structured keyed fallback.
   checkCancelled(signal)
   const tavilyKey = process.env.TAVILY_API_KEY
   if (tavilyKey) {
@@ -61,18 +193,7 @@ async function searchWithProviders(query: string, maxResults: number, signal: Ab
     } catch { /* fall through */ }
   }
 
-  checkCancelled(signal)
-  const braveKey = process.env.BRAVE_API_KEY
-  if (braveKey) {
-    try {
-      const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`
-      const data = await getPublicJson(url, { signal, maxBytes: 512 * 1024, allowedOrigins: ['https://api.search.brave.com'], headers: { Accept: 'application/json', 'X-Subscription-Token': braveKey } })
-      const items = (data.web?.results || []).map((r: any) => ({ title: r.title, url: r.url, snippet: r.description || '' }))
-      if (items.length > 0) return items
-    } catch { /* fall through */ }
-  }
-
-  // DuckDuckGo HTML scrape — try first, Bing as fallback
+  // 4. DuckDuckGo HTML scrape — no key; 5. Bing HTML fallback.
   checkCancelled(signal)
   try {
     const results = await duckDuckGoSearch(query, maxResults, signal)
@@ -138,6 +259,22 @@ async function duckDuckGoSearch(query: string, maxResults: number, signal: Abort
   } finally { dom.window.close() }
 }
 
+/**
+ * Bing wraps some results in /ck/a?...&u=a1<base64url>. Decode back to the
+ * real destination so citations are clean.
+ */
+function decodeBingRedirect(href: string): string {
+  try {
+    if (!href.includes('bing.com/ck/a')) return href
+    const u = new URL(href).searchParams.get('u')
+    if (!u || !u.startsWith('a1')) return href
+    const b64 = u.slice(2).replace(/-/g, '+').replace(/_/g, '/')
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4)
+    const decoded = Buffer.from(padded, 'base64').toString('utf-8')
+    return decoded.startsWith('http') ? decoded : href
+  } catch { return href }
+}
+
 async function bingSearch(query: string, maxResults: number, signal: AbortSignal): Promise<SearchResult[]> {
   const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&count=${maxResults}`
   const html = await fetchPublicText(url, {
@@ -158,7 +295,7 @@ async function bingSearch(query: string, maxResults: number, signal: AbortSignal
       const a = item.querySelector('h2 a') as HTMLAnchorElement | null
       const snippetEl = item.querySelector('.b_caption p') || item.querySelector('p')
       if (!a) return
-      const href = a.getAttribute('href') || ''
+      const href = decodeBingRedirect(a.getAttribute('href') || '')
       if (!href.startsWith('http')) return
       results.push({ title: a.textContent?.trim() || href, url: href, snippet: snippetEl?.textContent?.trim() || '' })
     })

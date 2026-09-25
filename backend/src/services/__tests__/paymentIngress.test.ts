@@ -13,11 +13,13 @@ import * as payments from '../stripe'
 const effects = vi.hoisted(() => ({
   findUser: vi.fn(), updateUser: vi.fn(), payment: vi.fn(), transaction: vi.fn(),
   addBalance: vi.fn(), email: vi.fn(),
+  inboxFind: vi.fn(), inboxCreate: vi.fn(), inboxUpdate: vi.fn(),
 }))
 vi.mock('../prisma', () => ({
   hasDb: true,
   prisma: {
     user: { findUnique: effects.findUser, findFirst: effects.findUser, update: effects.updateUser },
+    stripeEventInbox: { findUnique: effects.inboxFind, create: effects.inboxCreate, update: effects.inboxUpdate },
     payment: { create: effects.payment }, $transaction: effects.transaction,
   },
 }))
@@ -52,13 +54,17 @@ beforeEach(() => {
   vi.spyOn(https, 'request').mockImplementation(() => { throw new Error('Network forbidden') })
   vi.spyOn(globalThis, 'fetch').mockImplementation(() => { throw new Error('Network forbidden') })
 })
+let allowEffects = false
 afterEach(() => {
   try {
-    for (const effect of Object.values(effects)) expect(effect).not.toHaveBeenCalled()
+    if (!allowEffects) {
+      for (const effect of Object.values(effects)) expect(effect).not.toHaveBeenCalled()
+    }
     expect(http.request).not.toHaveBeenCalled()
     expect(https.request).not.toHaveBeenCalled()
     expect(globalThis.fetch).not.toHaveBeenCalled()
   } finally {
+    allowEffects = false
     vi.restoreAllMocks()
     vi.unstubAllEnvs()
   }
@@ -89,13 +95,13 @@ function response() {
   return res
 }
 
-async function deliver(body: unknown, signature: unknown, expected: number, extraHeaders = {}) {
+async function deliver(body: unknown, signature: unknown, expected: number, jsonExpected: unknown = expected === 400 ? invalid : unavailable, extraHeaders = {}) {
   const res = response()
   await stripeWebhook({ body, headers: { 'stripe-signature': signature, ...extraHeaders } } as any, res)
   expect(res.status).toHaveBeenCalledTimes(1)
   expect(res.status).toHaveBeenCalledWith(expected)
   expect(res.json).toHaveBeenCalledTimes(1)
-  expect(res.json).toHaveBeenCalledWith(expected === 400 ? invalid : unavailable)
+  expect(res.json).toHaveBeenCalledWith(jsonExpected)
   if (expected === 503) expect(res.set).toHaveBeenCalledWith('Retry-After', '60')
   return res
 }
@@ -165,10 +171,12 @@ describe('payment ingress authentication and fail-closed configuration', () => {
   })
 
   it('binds connected-account events to configured signed account, never request headers', async () => {
+    allowEffects = true
+    effects.inboxFind.mockResolvedValue(null); effects.inboxCreate.mockResolvedValue({}); effects.inboxUpdate.mockResolvedValue({})
     vi.stubEnv('STRIPE_WEBHOOK_ACCOUNT', 'acct_expected')
     for (const account of [undefined, 'acct_other']) {
       const input = signed(event({ account }))
-      await deliver(input.body, input.signature, 400, { 'stripe-account': 'acct_expected' })
+      await deliver(input.body, input.signature, 400, undefined, { 'stripe-account': 'acct_expected' })
     }
     const input = signed(event({ account: 'acct_expected' }))
     expect(payments.verifyPaymentIngress(input.body, input.signature).status).toBe('verified')
@@ -176,6 +184,8 @@ describe('payment ingress authentication and fail-closed configuration', () => {
   })
 
   it('checks both directions of livemode using synthetic offline keys', async () => {
+    allowEffects = true
+    effects.inboxFind.mockResolvedValue(null); effects.inboxCreate.mockResolvedValue({}); effects.inboxUpdate.mockResolvedValue({})
     vi.stubEnv('STRIPE_MODE', 'live'); vi.stubEnv('STRIPE_SECRET_KEY', 'sk_live_localFixtureOnly')
     const wrong = signed(event({ livemode: false }))
     await deliver(wrong.body, wrong.signature, 400)
@@ -185,40 +195,105 @@ describe('payment ingress authentication and fail-closed configuration', () => {
   })
 })
 
-describe('retired fulfillment and separate feature gates', () => {
-  it.each([
-    [undefined, undefined], ['false', 'false'], ['true', 'false'], ['false', 'true'], ['true', 'true'],
-  ])('cannot activate old fulfillment with checkout=%s fulfillment=%s', async (checkout, fulfillment) => {
-    vi.stubEnv('STRIPE_CHECKOUT_ENABLED', checkout); vi.stubEnv('STRIPE_FULFILLMENT_ENABLED', fulfillment)
-    const input = signed()
-    expect(payments.verifyPaymentIngress(input.body, input.signature).status).toBe('verified')
-    expect(payments.paymentGates()).toEqual({ checkoutEnabled: false, fulfillmentEnabled: false, fulfillmentImplemented: false })
-    await deliver(input.body, input.signature, 503)
-    // Retrying the same event must not get a silent 2xx or be marked processed.
-    await deliver(input.body, input.signature, 503)
-    expect(() => payments.stripe()).toThrow('Payments are temporarily unavailable.')
-  })
+describe('durable inbox and transactional fulfillment', () => {
+  beforeEach(() => { allowEffects = true })
 
-  it.each(['checkout.session.completed', 'invoice.paid', 'customer.subscription.updated',
-    'customer.subscription.deleted', 'charge.refunded', 'refund.updated', 'charge.dispute.created', 'unhandled.event'])('never acknowledges or mutates from %s metadata', async type => {
+  it('stores the inbox row before processing and fulfills a chat-plan checkout exactly once', async () => {
     vi.stubEnv('STRIPE_CHECKOUT_ENABLED', 'true'); vi.stubEnv('STRIPE_FULFILLMENT_ENABLED', 'true')
-    for (const metadata of [undefined, { userId: 'victim' }, { userId: 'victim', kind: 'chat', plan: 'gold' },
-      { userId: 'victim', kind: 'api_plan', plan: 'scale' }, { userId: 'victim', kind: 'api_topup', amountUsd: '999999' }]) {
-      const input = signed(event({ type, data: { object: {
-        id: 'in_localFixture', metadata, client_reference_id: 'victim',
-        subscription_details: { metadata: { userId: 'victim', kind: 'api_plan', plan: 'scale' } },
-        amount_total: 999999, amount_paid: -10000, currency: 'usd', status: 'canceled',
-        customer: 'cus_localFixture', subscription: 'sub_localFixture',
-      } } }))
-      await deliver(input.body, input.signature, 503)
-    }
+    effects.inboxFind.mockResolvedValueOnce(null).mockResolvedValueOnce({ eventId: 'evt_localFixture', processedAt: new Date() })
+    effects.inboxCreate.mockResolvedValue({})
+    effects.inboxUpdate.mockResolvedValue({})
+    effects.findUser.mockResolvedValue({ id: 'victim' })
+    effects.updateUser.mockResolvedValue({})
+    const input = signed(event({ data: { object: { id: 'cs_localFixture', object: 'checkout.session', mode: 'subscription', payment_status: 'paid', metadata: { userId: 'victim', kind: 'chat', plan: 'gold' }, customer: 'cus_localFixture', subscription: 'sub_localFixture', client_reference_id: 'victim' } } } ))
+    await deliver(input.body, input.signature, 200, { received: true })
+    expect(effects.inboxCreate).toHaveBeenCalledTimes(1)
+    expect(effects.updateUser).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'victim' },
+      data: expect.objectContaining({ plan: 'gold', unlimited: true, stripeSubId: 'sub_localFixture' }),
+    }))
+    // Duplicate delivery replays 200 without reprocessing.
+    await deliver(input.body, input.signature, 200, { received: true })
+    expect(effects.updateUser).toHaveBeenCalledTimes(1)
   })
 
-  it.each(['/checkout', '/api-checkout', '/topup'])('blocks %s before DB or Stripe client/API access', async path => {
+  it('fulfills an api_topup by exact integer micro-USD increment only within bounds', async () => {
+    vi.stubEnv('STRIPE_CHECKOUT_ENABLED', 'true'); vi.stubEnv('STRIPE_FULFILLMENT_ENABLED', 'true')
+    effects.inboxFind.mockResolvedValue(null)
+    effects.inboxCreate.mockResolvedValue({})
+    effects.inboxUpdate.mockResolvedValue({})
+    effects.findUser.mockResolvedValue({ id: 'victim', apiBalanceMicros: 0n })
+    effects.updateUser.mockResolvedValue({})
+    const ok = signed(event({ data: { object: { metadata: { userId: 'victim', kind: 'api_topup', amountUsd: '25' } } } }))
+    await deliver(ok.body, ok.signature, 200, { received: true })
+    expect(effects.updateUser).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'victim' },
+      data: { apiBalanceMicros: { increment: 25_000_000 } },
+    }))
+    const oversize = signed(event({ id: 'evt_oversize', data: { object: { metadata: { userId: 'victim', kind: 'api_topup', amountUsd: '999999' } } } }))
+    await deliver(oversize.body, oversize.signature, 503)
+    expect(effects.inboxUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { eventId: 'evt_oversize' },
+      data: expect.objectContaining({ errorCount: { increment: 1 } }),
+    }))
+  })
+
+  it('stores and acknowledges unknown event types without touching users', async () => {
+    vi.stubEnv('STRIPE_CHECKOUT_ENABLED', 'true'); vi.stubEnv('STRIPE_FULFILLMENT_ENABLED', 'true')
+    effects.inboxFind.mockResolvedValue(null)
+    effects.inboxCreate.mockResolvedValue({})
+    effects.inboxUpdate.mockResolvedValue({})
+    const input = signed(event({ type: 'unhandled.event' }))
+    await deliver(input.body, input.signature, 200, { received: true })
+    expect(effects.inboxCreate).toHaveBeenCalledTimes(1)
+    expect(effects.findUser).not.toHaveBeenCalled()
+    expect(effects.updateUser).not.toHaveBeenCalled()
+  })
+
+  it('suspends entitlements on dispute creation and reverses refunds without going negative', async () => {
+    vi.stubEnv('STRIPE_CHECKOUT_ENABLED', 'true'); vi.stubEnv('STRIPE_FULFILLMENT_ENABLED', 'true')
+    effects.inboxFind.mockResolvedValue(null)
+    effects.inboxCreate.mockResolvedValue({})
+    effects.inboxUpdate.mockResolvedValue({})
+    effects.findUser.mockResolvedValue({ id: 'victim', apiBalanceMicros: 10_000_000n })
+    effects.updateUser.mockResolvedValue({})
+    const dispute = signed(event({ id: 'evt_dispute', type: 'charge.dispute.created', data: { object: { metadata: { userId: 'victim', kind: 'api_topup' } } } }))
+    await deliver(dispute.body, dispute.signature, 200, { received: true })
+    expect(effects.updateUser).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'victim' },
+      data: expect.objectContaining({ plan: 'free', unlimited: false, apiPlan: null }),
+    }))
+    const refund = signed(event({ id: 'evt_refund', type: 'charge.refunded', data: { object: { metadata: { userId: 'victim', kind: 'api_topup', amountUsd: '50' } } } }))
+    await deliver(refund.body, refund.signature, 200, { received: true })
+    expect(effects.updateUser).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'victim' },
+      data: { apiBalanceMicros: { decrement: 10_000_000 } },
+    }))
+  })
+})
+
+describe('environment-driven feature gates', () => {
+  it.each([
+    ['', ''], ['false', ''], ['true', ''], ['', 'true'],
+  ])('keeps checkout disabled unless both flags and valid config are set (%s/%s)', async (checkout, fulfillment) => {
+    vi.stubEnv('STRIPE_CHECKOUT_ENABLED', checkout); vi.stubEnv('STRIPE_FULFILLMENT_ENABLED', fulfillment)
+    const expectedFulfillment = fulfillment === 'true'
+    expect(payments.paymentGates()).toEqual({ checkoutEnabled: false, fulfillmentEnabled: expectedFulfillment, fulfillmentImplemented: true })
+    if (!expectedFulfillment) expect(() => payments.stripe()).toThrow('Payments are temporarily unavailable.')
+  })
+
+  it('enables checkout and fulfillment together with valid config and both flags', () => {
+    vi.stubEnv('STRIPE_CHECKOUT_ENABLED', 'true'); vi.stubEnv('STRIPE_FULFILLMENT_ENABLED', 'true')
+    const gates = payments.paymentGates()
+    expect(gates).toEqual({ checkoutEnabled: true, fulfillmentEnabled: true, fulfillmentImplemented: true })
+    expect(payments.stripeEnabled()).toBe(true)
+  })
+
+  it.each(['/checkout', '/api-checkout', '/topup'])('blocks %s before DB or Stripe client/API access while disabled', async path => {
     const client = vi.spyOn(payments, 'stripe').mockImplementation(() => { throw new Error('Stripe client forbidden') })
     const layer = (router as any).stack.find((entry: any) => entry.route?.path === path)
     expect(layer).toBeDefined()
-    for (const [checkout, fulfillment] of [['', ''], ['true', 'false'], ['false', 'true'], ['true', 'true']]) {
+    for (const [checkout, fulfillment] of [['', ''], ['true', 'false']]) {
       vi.stubEnv('STRIPE_CHECKOUT_ENABLED', checkout); vi.stubEnv('STRIPE_FULFILLMENT_ENABLED', fulfillment)
       const req: any = { body: { plan: 'scale', amountUsd: 100, metadata: { userId: 'victim' } } }
       const res = response()
@@ -234,18 +309,20 @@ describe('retired fulfillment and separate feature gates', () => {
     expect(client).not.toHaveBeenCalled()
   })
 
-  it('advertises no purchasable plans or topups with keys/prices and both flags set', () => {
+  it('advertises purchasable plans and topups with keys/prices and both flags set', () => {
     vi.stubEnv('STRIPE_CHECKOUT_ENABLED', 'true'); vi.stubEnv('STRIPE_FULFILLMENT_ENABLED', 'true')
     expect(payments.publicConfig()).toEqual({
-      enabled: false, checkoutEnabled: false, fulfillmentEnabled: false, fulfillmentImplemented: false,
-      publishableKey: null, plans: { pro: false, gold: false },
-      apiPlans: { developer: false, growth: false, scale: false }, topUps: false,
+      enabled: true, checkoutEnabled: true, fulfillmentEnabled: true, fulfillmentImplemented: true,
+      publishableKey: 'pk_test_localFixtureOnly', plans: { pro: true, gold: true },
+      apiPlans: { developer: true, growth: true, scale: true }, topUps: true,
     })
   })
 })
 
 describe('raw-body mounting contract without a listening server', () => {
   it('preserves original bytes through the actual raw middleware; parsed JSON is rejected', async () => {
+    allowEffects = true
+    effects.inboxFind.mockResolvedValue(null); effects.inboxCreate.mockResolvedValue({}); effects.inboxUpdate.mockResolvedValue({})
     const input = signed(JSON.stringify(event(), null, 2))
     for (const raw of [true, false]) {
       const req: any = Readable.from([input.body])

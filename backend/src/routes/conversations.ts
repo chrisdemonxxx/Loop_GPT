@@ -24,7 +24,9 @@ router.get('/', authenticateToken, async (req, res) => {
     }
 
     const conversations = await prisma!.conversation.findMany({
-      where: { userId },
+      // Incognito conversations stay out of the sidebar (brief §2.5); they
+      // remain reachable by id while active.
+      where: { userId, incognito: false },
       orderBy: { updatedAt: 'desc' },
       select: {
         id: true,

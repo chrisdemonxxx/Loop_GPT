@@ -1,21 +1,29 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { PanelLeft, FileDown, Cpu, Sparkles } from 'lucide-react'
+import { PanelLeft, FileDown, Cpu, Sparkles, FlaskConical, Ghost } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 
-import { API_URL, authHeaders, getProviderSettings, getStoredUser, getToken, type AgentMode } from '../lib/api'
+import { API_URL, authHeaders, getStoredUser, getToken, getModelTier, setModelTier, type AgentMode } from '../lib/api'
 import { runAgentStream, type ArtifactRef } from '../lib/stream'
+import { getDraft, setDraft, deleteDraft } from '../lib/drafts'
 import SettingsPanel from '../components/SettingsPanel'
 import { track } from '../components/Analytics'
 import type { LiveStep } from '../components/AgentComputer'
+import { CommandPalette } from '../components/CommandPalette'
+import { ShortcutSheet } from '../components/ShortcutSheet'
+import ModelSelector from '../components/ModelSelector'
 
 import Sidebar from '../components/chat/Sidebar'
 import Composer from '../components/chat/Composer'
 import MessageList from '../components/chat/MessageList'
 import ActivityPanel from '../components/chat/ActivityPanel'
+import ArtifactsPanel from '../components/chat/ArtifactsPanel'
+import { parseCommand, SLASH_COMMANDS } from '../lib/commands'
+import ProjectsPanel, { type Project } from '../components/ProjectsPanel'
+import ResearchPanel from '../components/ResearchPanel'
 
 interface Message {
   id: string
@@ -24,24 +32,18 @@ interface Message {
   createdAt: string
   messageType?: string
   imageUrl?: string
-  imagePath?: string
+  attachmentId?: string
   toolUsed?: string
   metadata?: any
 }
 interface Conversation { id: string; title: string; createdAt: string; updatedAt: string }
 
-function parseCommand(input: string): { mode: AgentMode; text: string } {
-  const m = input.match(/^\/(research|chat|agent)\b[ \t]*/i)
-  if (m) {
-    const c = m[1].toLowerCase()
-    return { mode: c === 'research' ? 'research' : c === 'chat' ? 'chat' : 'agent', text: input.slice(m[0].length) }
-  }
-  return { mode: 'agent', text: input }
-}
+// slash commands live in ../lib/commands (registry + parseCommand)
 
 export default function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [computerOpen, setComputerOpen] = useState(false)
+  const [artifactsOpen, setArtifactsOpen] = useState(false)
   const [isDesktop, setIsDesktop] = useState(false)
 
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
@@ -50,18 +52,34 @@ export default function ChatPage() {
   const [showSlash, setShowSlash] = useState(false)
   const [showPlus, setShowPlus] = useState(false)
   const [showModeMenu, setShowModeMenu] = useState(false)
-  const [runMode, setRunMode] = useState<'auto' | 'plan' | 'accept'>('auto')
+  const [runMode, setRunMode] = useState<'auto' | 'plan' | 'accept' | 'step'>('auto')
+  const [incognito, setIncognito] = useState(false)
+  const [draftReady, setDraftReady] = useState(false)
+  const [modelTier, setModelTierState] = useState('')
   const [showSettings, setShowSettings] = useState(false)
   const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined)
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
 
-  const [selectedImage, setSelectedImage] = useState<File | null>(null)
-  const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [selectedImages, setSelectedImages] = useState<File[]>([])
+  const [imagePreviews, setImagePreviews] = useState<string[]>([])
+  const [selectedDocs, setSelectedDocs] = useState<File[]>([])
+  // null = all tools (server default); a set = an explicit per-chat selection.
+  const [selectedTools, setSelectedTools] = useState<Set<string> | null>(null)
+  // Projects
+  const [projectsOpen, setProjectsOpen] = useState(false)
+  const [researchOpen, setResearchOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null)
+  const [projects, setProjects] = useState<Project[]>([])
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
 
   const [running, setRunning] = useState(false)
   const [statusMsg, setStatusMsg] = useState('')
-  const [liveUser, setLiveUser] = useState<{ content: string; image?: string } | null>(null)
+  const [liveUser, setLiveUser] = useState<{ content: string; image?: string; images?: string[]; docs?: string[] } | null>(null)
   const [liveSteps, setLiveSteps] = useState<LiveStep[]>([])
+  const [pendingApproval, setPendingApproval] = useState<{ toolName: string; approve: (ok: boolean) => Promise<any> } | null>(null)
   const [liveArtifacts, setLiveArtifacts] = useState<ArtifactRef[]>([])
+  const [liveThinking, setLiveThinking] = useState('')
   const [toolCount, setToolCount] = useState(0)
 
   const autoOpenedRef = useRef(false)
@@ -109,6 +127,40 @@ export default function ChatPage() {
   }, [])
 
   useEffect(() => {
+    const saved = getModelTier()
+    if (saved) { setModelTierState(saved); return }
+    // Default to the flagship Looper.
+    setModelTier('loop-large'); setModelTierState('loop-large')
+  }, [])
+
+  async function refreshProjects() {
+    if (!workspaceId) return
+    try {
+      const pr = await axios.get(`${API_URL}/api/workspaces/${workspaceId}/projects`, { headers: authHeaders() })
+      setProjects(Array.isArray(pr.data) ? pr.data : [])
+    } catch { /* ignore */ }
+  }
+
+  // Load the personal workspace + its projects once authenticated.
+  useEffect(() => {
+    if (!getToken()) return
+    ;(async () => {
+      try {
+        await axios.post(`${API_URL}/api/workspaces/personal`, {}, { headers: authHeaders() })
+        const res = await axios.get(`${API_URL}/api/workspaces`, { headers: authHeaders() })
+        const ws = res.data?.workspaces || []
+        const mine = ws.find((w: any) => w.personalOwnerId) || ws[0]
+        if (!mine?.id) return
+        setWorkspaceId(mine.id)
+        const pr = await axios.get(`${API_URL}/api/workspaces/${mine.id}/projects`, { headers: authHeaders() })
+        setProjects(Array.isArray(pr.data) ? pr.data : [])
+        const saved = localStorage.getItem('activeProjectId')
+        if (saved) setActiveProjectId(saved)
+      } catch { /* not critical */ }
+    })()
+  }, [])
+
+  useEffect(() => {
     const hasActivity = liveSteps.some((s) => s.kind === 'tool') || liveArtifacts.length > 0
     if (hasActivity && !autoOpenedRef.current) { autoOpenedRef.current = true; setComputerOpen(true) }
   }, [liveSteps, liveArtifacts])
@@ -132,13 +184,29 @@ export default function ChatPage() {
   }, [])
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-  const openComputer = () => { setComputerOpen(true); if (!isDesktop) setSidebarOpen(false) }
-  const closeOverlays = () => { if (!isDesktop) { setSidebarOpen(false); setComputerOpen(false) } }
+  const openComputer = () => { setComputerOpen(true); setArtifactsOpen(false); if (!isDesktop) setSidebarOpen(false) }
+  const closeOverlays = () => { if (!isDesktop) { setSidebarOpen(false); setComputerOpen(false); setArtifactsOpen(false) } }
 
   function selectConversation(id: string | null) {
+    // Drafts (§2.5): stash the in-progress text for the outgoing chat, then
+    // restore whatever was in progress for the incoming one.
+    if (typeof window !== 'undefined') {
+      const prevKey = `draft:${currentConversationId || 'new'}`
+      const nextKey = `draft:${id || 'new'}`
+      if (input.trim()) setDraft(prevKey, input)
+      else deleteDraft(prevKey)
+      getDraft(nextKey).then((saved) => { if (saved && typeof saved === 'string') setInput(saved) })
+    }
     setCurrentConversationId(id)
-    setLiveUser(null); setLiveSteps([]); setLiveArtifacts([]); setStatusMsg('')
+    setLiveUser(null); setLiveSteps([]); setLiveArtifacts([]); setStatusMsg(''); setLiveThinking('')
+    setArtifactsOpen(false)
   }
+
+  // Every artifact from the loaded conversation plus the live run.
+  const allArtifacts = [
+    ...messages.flatMap((m) => (m.metadata?.artifacts as ArtifactRef[] | undefined) || []),
+    ...liveArtifacts,
+  ]
 
   function stopRun() { abortRef.current?.abort(); setRunning(false) }
 
@@ -164,32 +232,69 @@ export default function ChatPage() {
     const fd = new FormData()
     fd.append('image', file)
     try {
-      return (await axios.post(`${API_URL}/api/conversations/${convId}/upload-image`, fd, { headers: authHeaders(false) })).data.imagePath
+      return (await axios.post(`${API_URL}/api/conversations/${convId}/upload-image`, fd, { headers: authHeaders(false) })).data.attachmentId
     } catch { return undefined }
+  }
+
+  /** Documents (PDF/DOCX/XLSX/CSV/TXT/MD) — extracted server-side; the
+   * returned attachment id inlines the text into the prompt. */
+  async function uploadDocument(convId: string, file: File): Promise<string | undefined> {
+    const fd = new FormData()
+    fd.append('document', file)
+    try {
+      const res = await axios.post(`${API_URL}/api/conversations/${convId}/upload-document`, fd, { headers: authHeaders(false) })
+      return res.data.attachmentId
+    } catch (e: any) {
+      setStatusMsg(`⚠️ ${file.name}: ${e?.response?.data?.error || 'could not read this document'}`)
+      return undefined
+    }
+  }
+
+  /** Message branching (§2.5): editing an earlier user message forks the
+   * conversation at that point into a new branch and loads the text. */
+  async function forkAtMessage(messageId: string, content: string) {
+    if (!currentConversationId) { setInput(content); return }
+    try {
+      const res = await fetch(`${API_URL}/api/conversations/${currentConversationId}/fork`, {
+        method: 'POST', headers: authHeaders(), body: JSON.stringify({ messageId }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok || !d.conversationId) { setInput(content); return }
+      setCurrentConversationId(d.conversationId)
+      setLiveUser(null); setLiveSteps([]); setLiveArtifacts([]); setStatusMsg(''); setLiveThinking(''); setArtifactsOpen(false)
+      queryClient.invalidateQueries({ queryKey: ['conversations'] })
+      setInput(content)
+      requestAnimationFrame(() => document.querySelector('textarea')?.focus())
+    } catch { setInput(content) }
   }
 
   async function handleSend(e?: React.FormEvent) {
     e?.preventDefault()
-    if ((!input.trim() && !selectedImage) || running) return
-    const { mode: sendMode, text: content } = parseCommand(input.trim())
-    if (!content && !selectedImage) return
+    if ((!input.trim() && !selectedImages.length && !selectedDocs.length) || running) return
+    const { mode: sendMode, text: content, tools: commandTools } = parseCommand(input.trim())
+    if (!content && !selectedImages.length && !selectedDocs.length) return
 
     setMode(sendMode)
     setShowSlash(false); setShowPlus(false); setShowModeMenu(false)
-    const image = selectedImage
-    const preview = imagePreview
-    setInput(''); setSelectedImage(null); setImagePreview(null)
-    setRunning(true); setStatusMsg(''); setLiveSteps([]); setLiveArtifacts([])
+    // Surface deep-research runs in the side panel so the user can watch
+    // progress and read the cited report instead of it living only in chat.
+    if (sendMode === 'research') setResearchOpen(true)
+    const images = selectedImages
+    const docs = selectedDocs
+    const previews = imagePreviews
+    setInput(''); setSelectedImages([]); setImagePreviews([]); setSelectedDocs([])
+    if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
+    setRunning(true); setStatusMsg(''); setLiveSteps([]); setLiveArtifacts([]); setLiveThinking('')
     autoOpenedRef.current = false
-    setLiveUser({ content, image: preview || undefined })
+    setLiveUser({ content, image: previews[0], images: previews, docs: docs.map((d) => d.name) })
     track('message_sent', { mode: sendMode })
 
     let convId: string | null = null
     try {
       convId = await ensureConversation(content)
-      let imagePath: string | undefined
-      if (image) imagePath = await uploadImage(convId, image)
-      const { provider, model, apiKey } = getProviderSettings()
+      const imageIds = (await Promise.all(images.map((f) => uploadImage(convId!, f)))).filter(Boolean) as string[]
+      const docIds = (await Promise.all(docs.map((f) => uploadDocument(convId!, f)))).filter(Boolean) as string[]
+      const attachmentIds = [...imageIds, ...docIds]
       const abort = new AbortController()
       abortRef.current = abort
 
@@ -197,7 +302,15 @@ export default function ChatPage() {
         ? `Plan first: briefly outline the steps you'll take, then carry them out.\n\n${content}`
         : content
 
-      await runAgentStream(convId, { content: sendContent, imagePath, mode: sendMode, provider, model, apiKey }, {
+      await runAgentStream(convId, {
+        content: sendContent, attachmentIds, mode: sendMode,
+        model: modelTier || undefined,
+        toolNames: commandTools || (selectedTools ? Array.from(selectedTools) : undefined),
+        autoApprove: runMode === 'accept',
+        stepMode: runMode === 'step',
+        incognito,
+        projectId: activeProjectId || undefined,
+      }, {
         onStatus: (m) => { if (!m.startsWith('conversation:')) setStatusMsg(m) },
         onWarming: (m) => setStatusMsg(m),
         onDelta: (step, text) => {
@@ -205,16 +318,19 @@ export default function ChatPage() {
           setLiveSteps((prev) => {
             const next = [...prev]
             const i = next.findIndex((s) => s.index === step)
-            if (i === -1) next.push({ index: step, kind: 'text', text })
+            if (i === -1) next.push({ index: step, kind: 'text', text, ts: Date.now() })
             else if (next[i].kind === 'text') next[i] = { ...next[i], text: next[i].text + text }
             return next
           })
+        },
+        onThinking: (step, text) => {
+          setLiveThinking((prev) => (prev + text).slice(0, 20_000))
         },
         onToolCall: (step, name, args, source) => {
           setLiveSteps((prev) => {
             const next = [...prev]
             const i = next.findIndex((s) => s.index === step)
-            const t: LiveStep = { index: step, kind: 'tool', text: '', tool: { name, args, source } }
+            const t: LiveStep = { index: step, kind: 'tool', text: '', ts: Date.now(), tool: { name, args, source } }
             if (i === -1) next.push(t); else next[i] = t
             return next
           })
@@ -225,6 +341,19 @@ export default function ChatPage() {
           )
         },
         onArtifact: (a) => setLiveArtifacts((prev) => [...prev, a]),
+        onPendingApproval: (toolName, args, _prompt) => {
+          // Build the approval fetch URL with the current conversation id.
+          const approve = (approved: boolean) =>
+            axios.post(`${API_URL}/api/agent/${convId}/approve`, { toolName, approved }, { headers: authHeaders(false) }).catch(() => undefined)
+          setLiveSteps((prev) => {
+            const idx = Date.now()
+            const next = [...prev]
+            next.push({ index: idx, kind: 'tool', text: '', tool: { name: toolName, args, source: 'approval' } })
+            return next
+          })
+          // Store the resolve function for the approval UI to call.
+          setPendingApproval({ toolName, approve })
+        },
         onError: (m) => setStatusMsg(`⚠️ ${m}`),
         onFinal: () => {},
         onDone: () => {},
@@ -240,11 +369,27 @@ export default function ChatPage() {
     }
   }
 
-  function handleImageSelected(file: File) {
-    setSelectedImage(file)
-    const r = new FileReader()
-    r.onloadend = () => setImagePreview(r.result as string)
-    r.readAsDataURL(file)
+  /** Add up to four attachments at once. Images preview locally; documents
+   * (PDF/DOCX/XLSX/CSV/TXT/MD) show as chips and are extracted server-side. */
+  function handleImagesSelected(files: File[]) {
+    const images = files.filter((f) => f.type.startsWith('image/'))
+    const docs = files.filter((f) => !f.type.startsWith('image/') && /\.(pdf|docx|xlsx|csv|txt|md|markdown)$/i.test(f.name))
+    const slots = Math.max(0, 4 - selectedImages.length - selectedDocs.length)
+    if (images.length) {
+      setSelectedImages((prev) => [...prev, ...images].slice(0, 4))
+      for (const file of images.slice(0, slots)) {
+        const r = new FileReader()
+        r.onloadend = () => setImagePreviews((prev) => (prev.length >= 4 ? prev : [...prev, r.result as string]))
+        r.readAsDataURL(file)
+      }
+    }
+    if (docs.length) {
+      setSelectedDocs((prev) => [...prev, ...docs.slice(0, Math.max(0, 4 - prev.length))].slice(0, 4))
+    }
+  }
+
+  function removeDoc(index: number) {
+    setSelectedDocs((prev) => prev.filter((_, i) => i !== index))
   }
 
   function handleInputChange(value: string) {
@@ -252,9 +397,26 @@ export default function ChatPage() {
     setShowSlash(value.startsWith('/') && !/\s/.test(value))
   }
 
-  function exportConversation() {
+  function exportConversation(format: 'md' | 'pdf' = 'md') {
     const title = conversations.find((c) => c.id === currentConversationId)?.title || 'conversation'
     const md = messages.map((m) => `**${m.role === 'user' ? 'You' : 'Loop GPT'}**\n\n${m.content}`).join('\n\n---\n\n')
+    if (format === 'pdf') {
+      // Print-to-PDF: a clean transcript stylesheet + the browser print dialog.
+      const w = window.open('', '_blank', 'width=800,height=900')
+      if (!w) return
+      w.document.write(`<!doctype html><html><head><title>${title}</title><style>
+        body{font:13px/1.65 -apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1e;max-width:720px;margin:32px auto;padding:0 24px}
+        h1{font-size:22px;margin-bottom:4px} .meta{color:#888;font-size:12px;margin-bottom:28px}
+        .msg{margin:18px 0;padding:14px;border-left:3px solid #c96442;background:#faf9f8;border-radius:6px;white-space:pre-wrap;word-break:break-word}
+        .user{border-left-color:#1a1a1e;background:#f4f4f5} .who{font-weight:600;font-size:12px;color:#777;margin-bottom:6px}
+      </style></head><body><h1>${title}</h1><div class="meta">Loop GPT transcript · ${new Date().toLocaleString()}</div>
+      ${messages.map((m) => `<div class="msg ${m.role === 'user' ? 'user' : ''}"><div class="who">${m.role === 'user' ? 'You' : 'Loop GPT'}</div>${m.content.replace(/</g, '&lt;')}</div>`).join('')}
+      </body></html>`)
+      w.document.close()
+      w.focus()
+      setTimeout(() => w.print(), 250)
+      return
+    }
     const blob = new Blob([`# ${title}\n\n${md}`], { type: 'text/markdown' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -262,19 +424,70 @@ export default function ChatPage() {
     URL.revokeObjectURL(url)
   }
 
-  function retryBefore(beforeIndex: number) {
-    const userMsgs = messages.slice(0, beforeIndex).filter((m) => m.role === 'user')
-    const last = userMsgs[userMsgs.length - 1]
-    if (last?.content) setInput(last.content)
+  /**
+   * Rewind to the user prompt that precedes the given assistant message:
+   * truncate the conversation after that prompt, put it back in the composer,
+   * and scroll up — so re-sending replaces the branch instead of appending.
+   */
+  async function retryBefore(index: number) {
+    let userIdx = index - 1
+    while (userIdx >= 0 && messages[userIdx]?.role !== 'user') userIdx--
+    const userMsg = messages[userIdx]
+    if (!userMsg) return
+    setInput(userMsg.content)
+    if (currentConversationId && userMsg.id) {
+      try {
+        await axios.post(`${API_URL}/api/conversations/${currentConversationId}/rewind`,
+          { messageId: userMsg.id }, { headers: authHeaders() })
+        await queryClient.invalidateQueries({ queryKey: ['messages', currentConversationId] })
+        await queryClient.invalidateQueries({ queryKey: ['conversations'] })
+      } catch { /* offline: the prompt is still in the composer */ }
+    }
+    requestAnimationFrame(() => {
+      document.querySelector('textarea')?.focus()
+    })
+  }
+
+  /** Slash-command dispatch (Claude/Copilot-style). Mode commands insert the
+   * command text; action commands run immediately. */
+  function handleSlashCommand(cmd: string) {
+    setShowSlash(false)
+    const def = SLASH_COMMANDS.find((d) => d.cmd === cmd.trim())
+    if (!def) { setInput(cmd); return }
+    if (def.kind === 'mode') { setInput(def.cmd + ' '); return }
+    // Actions
+    switch (def.cmd) {
+      case '/new': selectConversation(null); break
+      case '/export': exportConversation('md'); break
+      case '/settings': setSettingsTab(undefined); setShowSettings(true); break
+      case '/skills': setSettingsTab('skills'); setShowSettings(true); break
+      case '/plugins': setSettingsTab('plugins'); setShowSettings(true); break
+      case '/connectors': setSettingsTab('connectors'); setShowSettings(true); break
+      case '/projects': setProjectsOpen(true); break
+      case '/model': (document.querySelector('button[title="Choose model"]') as HTMLElement | null)?.click(); break
+      case '/undo': retryBefore(messages.length - 1); break
+      case '/retry': {
+        const last = [...messages].reverse().find((m) => m.role === 'user')
+        if (last) { retryBefore(messages.indexOf(last)) }
+        break
+      }
+      case '/stop': stopRun(); break
+      case '/help': window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' })); break
+      default: setInput(def.cmd + ' ')
+    }
   }
 
   const liveAnswer = liveSteps.filter((s) => s.kind === 'text').map((s) => s.text).join('')
   const convTitle = conversations.find((c) => c.id === currentConversationId)?.title
+  // Context meter (§2.5): honest estimate — chars/4 over the conversation,
+  // against the standard 32k window (the large tier has more headroom).
+  const contextTokens = Math.ceil((messages.reduce((n, m) => n + (m.content?.length || 0), 0) + liveAnswer.length) / 4)
+  const contextPct = Math.min(100, Math.round((contextTokens / 32_768) * 100))
 
   return (
     <div className="flex h-[100dvh] overflow-hidden text-slate-200 bg-[#111113]">
       {/* Mobile backdrop */}
-      {(sidebarOpen || computerOpen) && !isDesktop && (
+      {(sidebarOpen || computerOpen || artifactsOpen) && !isDesktop && (
         <div
           className="fixed inset-0 bg-black/50 backdrop-blur-sm z-30 lg:hidden"
           onClick={closeOverlays}
@@ -295,14 +508,36 @@ export default function ChatPage() {
               conversations={conversations}
               currentConversationId={currentConversationId}
               user={user}
+              projects={projects}
+              activeProjectId={activeProjectId}
               onSelectConversation={(id) => { selectConversation(id); closeOverlays() }}
               onClose={() => setSidebarOpen(false)}
               onOpenSettings={() => setShowSettings(true)}
               onLogout={logout}
               onRenameConversation={(id, title) => updateConv.mutate({ id, title })}
               onDeleteConversation={(id) => deleteConv.mutate(id)}
+              onOpenProjects={() => setProjectsOpen(true)}
+              onSelectProject={(id) => { setActiveProjectId(id); if (id) localStorage.setItem('activeProjectId', id); else localStorage.removeItem('activeProjectId') }}
+              activeProjectName={activeProjectId ? (projects.find((p) => p.id === activeProjectId)?.name || undefined) : undefined}
             />
           </motion.aside>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {projectsOpen && (
+          <ProjectsPanel
+            workspaceId={workspaceId}
+            activeProjectId={activeProjectId}
+            onSelect={(id) => { setActiveProjectId(id); if (id) localStorage.setItem('activeProjectId', id); else localStorage.removeItem('activeProjectId') }}
+            onClose={() => { setProjectsOpen(false); refreshProjects() }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {researchOpen && (
+          <ResearchPanel conversationId={currentConversationId} onClose={() => setResearchOpen(false)} />
         )}
       </AnimatePresence>
 
@@ -327,13 +562,72 @@ export default function ChatPage() {
             {convTitle || 'New session'}
           </span>
           <div className="ml-auto flex items-center gap-1">
+            <ModelSelector value={modelTier} onChange={(id) => { setModelTier(id); setModelTierState(id) }} />
+            <button
+              onClick={() => {
+                const next = !incognito
+                setIncognito(next)
+                // Toggling applies to the next conversation — leave the current one.
+                if (currentConversationId) { setCurrentConversationId(null); setLiveSteps([]); setLiveArtifacts([]); setLiveUser(null); setInput('') }
+              }}
+              title={incognito ? 'Incognito on — new chats are private and use no memory. Click to turn off.' : 'Incognito — private chat, no memory, hidden from history'}
+              aria-pressed={incognito}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] border transition ${
+                incognito
+                  ? 'border-[#c96442]/40 text-[#e79d7f] bg-[#c96442]/[0.07]'
+                  : 'border-white/[0.06] text-slate-500 hover:bg-white/[0.05] hover:text-slate-300'
+              }`}
+            >
+              <Ghost size={13} />
+              <span className="hidden sm:inline">{incognito ? 'Incognito' : ''}</span>
+            </button>
             {messages.length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={() => setExportMenuOpen((v) => !v)}
+                  title="Export conversation"
+                  aria-label="Export conversation"
+                  aria-haspopup="menu"
+                  aria-expanded={exportMenuOpen}
+                  className="p-1.5 rounded-lg hover:bg-white/[0.05] text-slate-500 hover:text-slate-300 transition"
+                >
+                  <FileDown size={15} />
+                </button>
+                {exportMenuOpen && (
+                  <div role="menu" className="absolute right-0 top-full mt-1.5 w-40 glass rounded-xl border border-white/[0.08] overflow-hidden z-30 shadow-panel">
+                    <button role="menuitem" onClick={() => { setExportMenuOpen(false); exportConversation('md') }} className="w-full text-left px-3 py-2 text-[13px] text-slate-200 hover:bg-white/[0.05] transition">Markdown (.md)</button>
+                    <button role="menuitem" onClick={() => { setExportMenuOpen(false); exportConversation('pdf') }} className="w-full text-left px-3 py-2 text-[13px] text-slate-200 hover:bg-white/[0.05] transition">PDF (print)</button>
+                  </div>
+                )}
+              </div>
+            )}
+            {allArtifacts.length > 0 && (
               <button
-                onClick={exportConversation}
-                title="Export conversation"
-                className="p-1.5 rounded-lg hover:bg-white/[0.05] text-slate-500 hover:text-slate-300 transition"
+                onClick={() => { setArtifactsOpen((v) => !v); setComputerOpen(false) }}
+                title="Toggle artifacts panel"
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] border transition ${
+                  artifactsOpen
+                    ? 'border-white/15 text-slate-200 bg-white/[0.08]'
+                    : 'border-white/[0.06] text-slate-500 hover:bg-white/[0.05] hover:text-slate-300'
+                }`}
               >
-                <FileDown size={15} />
+                <FileDown size={13} />
+                <span className="hidden sm:inline">Files</span>
+                <span className="text-slate-600">{allArtifacts.length}</span>
+              </button>
+            )}
+            {currentConversationId && (
+              <button
+                onClick={() => setResearchOpen((v) => !v)}
+                title="Research runs"
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] border transition ${
+                  researchOpen
+                    ? 'border-white/15 text-slate-200 bg-white/[0.08]'
+                    : 'border-white/[0.06] text-slate-500 hover:bg-white/[0.05] hover:text-slate-300'
+                }`}
+              >
+                <FlaskConical size={13} />
+                <span className="hidden sm:inline">Research</span>
               </button>
             )}
             <button
@@ -357,13 +651,15 @@ export default function ChatPage() {
           liveUser={liveUser}
           liveSteps={liveSteps}
           liveAnswer={liveAnswer}
+          liveThinking={liveThinking}
           liveArtifacts={liveArtifacts}
+          onStartPrompt={(prompt) => { setInput(prompt); setTimeout(() => document.querySelector('textarea')?.focus(), 100) }}
           running={running}
           statusMsg={statusMsg}
           mode={mode}
           computerOpen={computerOpen}
           onOpenComputer={openComputer}
-          onEditMessage={(content) => setInput(content)}
+          onEditMessage={forkAtMessage}
           onRetryBefore={retryBefore}
         />
 
@@ -372,30 +668,46 @@ export default function ChatPage() {
           <div className="max-w-[48rem] mx-auto">
             <Composer
               input={input}
-              imagePreview={imagePreview}
+              imagePreviews={imagePreviews}
+              docNames={selectedDocs.map((d) => d.name)}
               running={running}
               runMode={runMode}
+              contextPct={contextPct}
+              contextTokens={contextTokens}
+              incognito={incognito}
               showSlash={showSlash}
               showPlus={showPlus}
               showModeMenu={showModeMenu}
               onInputChange={handleInputChange}
-              onSelectSlashCommand={(cmd) => { setInput(cmd); setShowSlash(false) }}
+              onSelectSlashCommand={handleSlashCommand}
               onSend={handleSend}
               onStop={stopRun}
-              onImageSelected={handleImageSelected}
-              onRemoveImage={() => { setSelectedImage(null); setImagePreview(null) }}
+               onImagesSelected={handleImagesSelected}
+               onRemoveImage={(i) => {
+                 setSelectedImages((prev) => prev.filter((_, idx) => idx !== i))
+                 setImagePreviews((prev) => prev.filter((_, idx) => idx !== i))
+               }}
+               onRemoveDoc={removeDoc}
               onTogglePlus={() => setShowPlus((v) => !v)}
               onClosePlus={() => setShowPlus(false)}
               onToggleModeMenu={() => setShowModeMenu((v) => !v)}
               onCloseModeMenu={() => setShowModeMenu(false)}
               onRunModeChange={setRunMode}
               onOpenConnectors={() => { setShowPlus(false); setSettingsTab('connectors'); setShowSettings(true) }}
+              onOpenSettingsTab={(tab) => { setShowPlus(false); setSettingsTab(tab); setShowSettings(true) }}
+              toolSelectionCount={selectedTools ? selectedTools.size : null}
             />
           </div>
         </div>
       </div>
 
       {/* ── Right: Activity panel ─────────────────────────────────────────── */}
+      <AnimatePresence initial={false}>
+        {artifactsOpen && !computerOpen && (
+          <ArtifactsPanel artifacts={allArtifacts} onClose={() => setArtifactsOpen(false)} />
+        )}
+      </AnimatePresence>
+
       <AnimatePresence initial={false}>
         {computerOpen && (
           <ActivityPanel
@@ -404,7 +716,11 @@ export default function ChatPage() {
             steps={liveSteps}
             artifacts={liveArtifacts}
             toolCount={toolCount}
+            pendingApproval={pendingApproval}
+            onApprove={() => { pendingApproval?.approve(true).then(() => setPendingApproval(null)) }}
+            onDeny={() => { pendingApproval?.approve(false).then(() => setPendingApproval(null)) }}
             onClose={() => setComputerOpen(false)}
+            onOpenTools={() => { setSettingsTab('tools'); setShowSettings(true) }}
           />
         )}
       </AnimatePresence>
@@ -412,9 +728,28 @@ export default function ChatPage() {
       {showSettings && (
         <SettingsPanel
           initialTab={settingsTab}
+          workspaceId={workspaceId}
           onClose={() => { setShowSettings(false); setSettingsTab(undefined) }}
         />
       )}
+
+      <CommandPalette
+onNewSession={() => { setCurrentConversationId(null); setSidebarOpen(false) }}
+onToggleSidebar={() => setSidebarOpen((s) => !s)}
+        onOpenSettings={() => { setSettingsTab(undefined); setShowSettings(true) }}
+        onLogout={() => { logout(); setSidebarOpen(false) }}
+      />
+      <ShortcutSheet open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      <button
+        type="button"
+        aria-label="Keyboard shortcuts"
+        onClick={() => setShortcutsOpen(true)}
+        className="fixed bottom-4 right-4 z-30 p-2 rounded-lg text-slate-600 hover:text-slate-400 hover:bg-white/[0.04] transition text-[12px] font-mono"
+        title="Keyboard shortcuts (?)"
+      >
+        ⌘K ?
+      </button>
     </div>
   )
 }
+

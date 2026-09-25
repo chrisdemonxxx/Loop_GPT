@@ -21,6 +21,24 @@
   ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.26); background-clip: padding-box; }
 
   ::selection { background: rgba(201, 100, 66, 0.22); }
+
+  /* Consistent keyboard focus ring across the app. */
+  :focus-visible {
+    outline: 2px solid rgba(201, 100, 66, 0.65);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /* Respect reduced-motion for CSS-driven animation. Framer-motion
+     transitions are handled by <MotionConfig reducedMotion="user">. */
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 }
 
 @layer components {
@@ -67,6 +85,15 @@
     background: linear-gradient(90deg, rgba(148,163,184,0.04) 25%, rgba(148,163,184,0.12) 37%, rgba(148,163,184,0.04) 63%);
     background-size: 200% 100%;
     animation: shimmer 1.6s linear infinite;
+  }
+
+  /* Streaming reasoning text (extended-thinking block, §2.5) */
+  .shimmer-text {
+    animation: shimmer-text-fade 1.4s ease-in-out infinite;
+  }
+  @keyframes shimmer-text-fade {
+    0%, 100% { opacity: 0.75; }
+    50% { opacity: 1; }
   }
 }
 

@@ -13,7 +13,10 @@ import { createToken, consumeToken } from '../services/tokens'
 import { authenticateToken } from './auth'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production'
-const FRONTEND = () => (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '')
+// FRONTEND_URL may be a comma-separated allow-list of origins (for CORS); the
+// first entry is the canonical app origin used for redirects.
+const FRONTEND = () => (process.env.FRONTEND_URL || 'http://localhost:3000')
+  .split(',')[0].trim().replace(/\/+$/, '')
 
 export const oauthRouter = express.Router()
 export const mailRouter = express.Router()
@@ -50,9 +53,9 @@ oauthRouter.get('/providers', (_req, res) => {
 oauthRouter.get('/oauth/:provider', (req, res) => {
   const provider = req.params.provider as OAuthProvider
   if (!['google', 'github', 'apple'].includes(provider) || !providerEnabled(provider)) {
-    return res.redirect(`${FRONTEND()}/login?error=provider_unavailable`)
+    return res.redirect(`${FRONTEND()}/login/?error=provider_unavailable`)
   }
-  if (!hasDb) return res.redirect(`${FRONTEND()}/login?error=db_required`)
+  if (!hasDb) return res.redirect(`${FRONTEND()}/login/?error=db_required`)
   const state = jwt.sign({ provider }, JWT_SECRET, { expiresIn: '10m' })
   res.redirect(authorizeUrl(provider, callbackUrl(reqBase(req), provider), state))
 })
@@ -109,10 +112,10 @@ async function handleCallback(req: express.Request, res: express.Response) {
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' })
     const dest = new URLSearchParams({ token, name: user.name, email: user.email, role: user.role })
     if (isNew) dest.set('welcome', '1')
-    res.redirect(`${FRONTEND()}/login?${dest.toString()}`)
+    res.redirect(`${FRONTEND()}/login/?${dest.toString()}`)
   } catch (e: any) {
     console.error(`[oauth:${provider}] callback error:`, e?.message)
-    res.redirect(`${FRONTEND()}/login?error=${encodeURIComponent(e?.message || 'oauth_failed')}`)
+    res.redirect(`${FRONTEND()}/login/?error=${encodeURIComponent(e?.message || 'oauth_failed')}`)
   }
 }
 
@@ -138,7 +141,7 @@ oauthRouter.post('/resend-verification', authenticateToken, asyncHandler(async (
   if (!user) return res.status(404).json({ error: 'User not found.' })
   if (user.emailVerified) return res.json({ ok: true, alreadyVerified: true })
   const token = await createToken(user.id, 'verify')
-  if (token) verifyEmail(user.email, user.name, `${FRONTEND()}/verify?token=${token}`).catch(() => {})
+  if (token) verifyEmail(user.email, user.name, `${FRONTEND()}/verify/?token=${token}`).catch(() => {})
   res.json({ ok: true })
 }))
 
@@ -151,7 +154,7 @@ oauthRouter.post('/forgot', asyncHandler(async (req, res) => {
     const user = await prisma.user.findUnique({ where: { email } })
     if (user) {
       const token = await createToken(user.id, 'reset')
-      if (token) resetPasswordEmail(user.email, user.name, `${FRONTEND()}/reset?token=${token}`).catch(() => {})
+      if (token) resetPasswordEmail(user.email, user.name, `${FRONTEND()}/reset/?token=${token}`).catch(() => {})
     }
   }
   // Don't leak whether the email exists.
@@ -165,7 +168,8 @@ oauthRouter.post('/reset', asyncHandler(async (req, res) => {
   const userId = await consumeToken(String(token || ''), 'reset')
   if (!userId || !prisma) return res.status(400).json({ error: 'Invalid or expired reset link.' })
   const hashed = await bcrypt.hash(String(password), 10)
-  await prisma.user.update({ where: { id: userId }, data: { password: hashed } })
+  // Stamp the invalidation instant: every JWT issued before now is rejected.
+  await prisma.user.update({ where: { id: userId }, data: { password: hashed, sessionInvalidatedAt: new Date() } })
   res.json({ ok: true })
 }))
 

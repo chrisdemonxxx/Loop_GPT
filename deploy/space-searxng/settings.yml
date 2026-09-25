@@ -1,0 +1,50 @@
+﻿# Loop GPT SearXNG configuration — JSON output for the backend's webSearch tool.
+# Reference: https://docs.searxng.org/admin/settings/
+#
+# use_default_settings MUST be true so SearXNG merges this file on top of its
+# bundled defaults; otherwise required keys (e.g. default_doi_resolver) are
+# missing and every request raises KeyError -> HTTP 500.
+use_default_settings: true
+
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  secret_key: "change-me-please"    # override in env/secrets
+  base_url: "$SEARXNG_BASE_URL"
+  limiter: false                    # internal access only -> no public rate limit
+
+search:
+  safe_search: 0                    # no filtering (Direct edition service)
+  autocomplete: ""
+  formats:
+    - html
+    - json                          # Loop GPT backend sends ?format=json
+
+# Minimal engine set (merged with defaults; only these are enabled).
+engines:
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    disabled: false
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+  - name: bing
+    engine: bing
+    shortcut: b
+    disabled: false
+  - name: startpage
+    engine: startpage
+    shortcut: sp
+    disabled: true
+  - name: brave
+    engine: brave
+    shortcut: br
+    api_key: "$BRAVE_API_KEY"
+    disabled: true
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 20.0
+  useragent_suffix: ""

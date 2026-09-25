@@ -20,11 +20,11 @@ const FEATURES = [
 
 const PLANS = [
   {
-    name: 'Free', price: '$0', period: 'forever', cta: 'Start free', href: '/signup', highlight: false,
+    name: 'Free', price: '$0', period: 'forever', cta: 'Start free', href: '/signup', highlight: true,
     features: ['~30 messages/day', 'Chat + web search + calculator', '3 images/day', '1 deep-research/day', 'PDF export', 'Community support'],
   },
   {
-    name: 'Pro', price: '$15', period: '/mo', cta: 'Go Pro', href: '/signup?plan=pro', highlight: true,
+    name: 'Pro', price: 'Soon', period: '', cta: 'Join the waitlist', href: '/signup', highlight: false,
     features: ['High daily limits', 'All tools + deep research', 'Vision + unlimited docs', 'MCP, connectors, skills, builders', 'Priority (warm) model', 'No image watermark'],
   },
 ]
@@ -103,8 +103,8 @@ export default function Landing() {
 
       {/* Pricing */}
       <section id="pricing" className="max-w-4xl mx-auto px-5 py-16">
-        <h2 className="text-3xl font-semibold text-center mb-2 text-slate-100">Simple pricing</h2>
-        <p className="text-slate-500 text-center mb-10">Start free. Upgrade when you need more.</p>
+        <h2 className="text-3xl font-semibold text-center mb-2 text-slate-100">Free during launch</h2>
+        <p className="text-slate-500 text-center mb-10">Everything is free (metered) while we&apos;re in early access. Paid plans are coming soon.</p>
         <div className="grid sm:grid-cols-2 gap-5">
           {PLANS.map((p) => (
             <div
@@ -144,7 +144,7 @@ export default function Landing() {
           ))}
         </div>
         <p className="text-center text-[12px] text-slate-600 mt-6">
-          AI usage is metered with credits so the free tier stays sustainable. Cancel anytime.
+          AI usage is metered with credits so the free tier stays sustainable. Have a team voucher? Redeem it in Account for unlimited access.
         </p>
       </section>
 

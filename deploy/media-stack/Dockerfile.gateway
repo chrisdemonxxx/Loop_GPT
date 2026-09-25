@@ -1,0 +1,18 @@
+# Media Stack Gateway — CPU-only FastAPI proxy
+# Context: deploy/media-stack/
+FROM python:3.10-slim
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir fastapi==0.115.6 uvicorn[standard]==0.34.0 \
+        python-multipart requests huggingface-hub
+
+COPY services/gateway.py /app/services/gateway.py
+COPY --chmod=644 /app/services/gateway.py /app/services/gateway.py
+
+WORKDIR /app
+EXPOSE 8000
+CMD ["uvicorn", "services.gateway:app", "--host", "0.0.0.0", "--port", "8000"]

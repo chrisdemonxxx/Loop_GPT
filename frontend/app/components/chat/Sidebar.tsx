@@ -3,34 +3,45 @@
 import { useState } from 'react'
 import {
   Plus, PanelLeft, Search, MessageSquare, Edit2, Trash2,
-  Settings, CreditCard, ShieldCheck, LogOut, ChevronDown, Sparkles,
+  Settings, CreditCard, ShieldCheck, LogOut, ChevronDown, Sparkles, FolderOpen, Terminal,
 } from 'lucide-react'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useI18n, locales, localeNames, type Locale } from '../../lib/i18n'
 
 interface Conversation { id: string; title: string; createdAt: string; updatedAt: string }
+interface SidebarProject { id: string; name: string; _count?: { knowledgeChunks: number; conversations: number } }
 
 interface SidebarProps {
   conversations: Conversation[]
   currentConversationId: string | null
   user: any
+  projects: SidebarProject[]
+  activeProjectId: string | null
   onSelectConversation: (id: string | null) => void
   onClose: () => void
   onOpenSettings: () => void
   onLogout: () => void
   onRenameConversation: (id: string, title: string) => void
   onDeleteConversation: (id: string) => void
+  onOpenProjects: () => void
+  onSelectProject: (id: string | null) => void
+  activeProjectName?: string
 }
 
 export default function Sidebar({
   conversations, currentConversationId, user,
+  projects, activeProjectId,
   onSelectConversation, onClose, onOpenSettings, onLogout,
   onRenameConversation, onDeleteConversation,
+  onOpenProjects, onSelectProject, activeProjectName,
 }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [showUserMenu, setShowUserMenu] = useState(false)
+  const [projectsOpen, setProjectsOpen] = useState(false)
+  const { locale, setLocale, t } = useI18n()
 
   const filtered = conversations.filter((c) =>
     !searchQuery || (c.title || '').toLowerCase().includes(searchQuery.toLowerCase())
@@ -65,17 +76,57 @@ export default function Sidebar({
           onClick={() => { onSelectConversation(null); onClose() }}
           className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium text-white bg-[#c96442] hover:bg-[#b5593a] active:bg-[#a34e34] transition"
         >
-          <Plus size={17} strokeWidth={2.5} /> New session
+          <Plus size={17} strokeWidth={2.5} /> {t('newSession')}
         </button>
         <div className="relative">
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
           <input
             type="text"
-            placeholder="Search chats…"
+            placeholder={t('searchChats')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-7 pr-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-[13px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-white/12 focus:bg-white/[0.06] transition"
           />
+        </div>
+        {/* Projects — first-class section with inline recent projects */}
+        <div className="rounded-lg border border-white/[0.06] overflow-hidden">
+          <button
+            onClick={() => setProjectsOpen((v) => !v)}
+            aria-expanded={projectsOpen}
+            className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-[13px] font-medium text-slate-300 hover:bg-white/[0.05] hover:text-slate-100 transition"
+          >
+            <span className="flex items-center gap-2"><FolderOpen size={14} /> Projects</span>
+            <span className="flex items-center gap-1.5 min-w-0">
+              <span className="text-[11px] text-slate-600 truncate max-w-[90px]">{activeProjectName || (projects.length > 0 ? '' : 'none')}</span>
+              {projects.length > 0 && <span className="text-[11px] text-slate-600">{projects.length}</span>}
+              <ChevronDown size={12} className={`text-slate-600 transition-transform shrink-0 ${projectsOpen ? 'rotate-180' : ''}`} />
+            </span>
+          </button>
+          {projectsOpen && (
+            <div className="pb-1.5 space-y-0.5">
+              {projects.slice(0, 5).map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => onSelectProject(activeProjectId === p.id ? null : p.id)}
+                  className={`w-full text-left px-3 py-1.5 rounded-md text-[12.5px] flex items-center gap-2 transition ${
+                    activeProjectId === p.id ? 'bg-[#c96442]/15 text-[#e79d7f]' : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200'
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${activeProjectId === p.id ? 'bg-[#c96442]' : 'bg-slate-700'}`} />
+                  <span className="truncate flex-1">{p.name}</span>
+                  {typeof p._count?.conversations === 'number' && (
+                    <span className="text-[10px] text-slate-600">{p._count.conversations}</span>
+                  )}
+                </button>
+              ))}
+              <button
+                onClick={onOpenProjects}
+                className="w-full text-left px-3 py-1.5 rounded-md text-[12px] text-slate-500 hover:text-slate-300 hover:bg-white/[0.04] transition flex items-center gap-1.5"
+              >
+                <Plus size={11} /> {projects.length === 0 ? 'Create a project' : 'Manage projects'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -140,7 +191,7 @@ export default function Sidebar({
           </p>
         )}
         {!searchQuery && conversations.length === 0 && (
-          <p className="px-3 py-6 text-center text-[12px] text-slate-600">No sessions yet</p>
+          <p className="px-3 py-6 text-center text-[12px] text-slate-600">{t('noSessions')}</p>
         )}
       </div>
 
@@ -155,7 +206,7 @@ export default function Sidebar({
               {(user?.name?.[0] || user?.email?.[0] || 'U').toUpperCase()}
             </div>
             <div className="min-w-0 flex-1 text-left">
-              <div className="text-[13px] text-slate-200 truncate">{user?.name || user?.email || 'Anonymous'}</div>
+              <div className="text-[13px] text-slate-200 truncate">{user?.name || user?.email || t('anonymous')}</div>
               {user?.plan && (
                 <div className="text-[11px] text-slate-500 capitalize">{user.plan} plan</div>
               )}
@@ -186,6 +237,12 @@ export default function Sidebar({
                   href="/account"
                   onClick={() => setShowUserMenu(false)}
                 />
+                <MenuItem
+                  icon={Terminal}
+                  label="Developer API"
+                  href="/developer"
+                  onClick={() => setShowUserMenu(false)}
+                />
                 {user?.role === 'admin' && (
                   <MenuItem
                     icon={ShieldCheck}
@@ -196,7 +253,17 @@ export default function Sidebar({
                   />
                 )}
                 <div className="my-0.5 border-t border-white/[0.05]" />
-                <MenuItem icon={LogOut} label="Sign out" onClick={onLogout} danger />
+                <MenuItem icon={LogOut} label={t('signOut')} onClick={onLogout} danger />
+                <div className="px-3 py-2 border-t border-white/[0.06]">
+                  <label className="block text-[10px] uppercase tracking-widest text-slate-600 mb-1.5">{t('language')}</label>
+                  <select
+                    value={locale}
+                    onChange={(e) => setLocale(e.target.value as Locale)}
+                    className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-2 py-1.5 text-[12px] text-slate-200 focus:outline-none focus:border-white/12 transition"
+                  >
+                    {locales.map((l) => <option key={l} value={l} className="bg-[#1c1c1f]">{localeNames[l]}</option>)}
+                  </select>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>

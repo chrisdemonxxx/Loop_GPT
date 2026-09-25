@@ -167,6 +167,57 @@ export async function readOwnedImage(userId: string, conversationId: string, id:
   return { reference: fileReference(file), dataUri: `data:${mime};base64,${buffer.toString('base64')}` }
 }
 
+/** Read an owned extracted-text attachment (chat document upload companion). */
+export async function readOwnedDocumentText(userId: string, conversationId: string, id: string) {
+  const { file, buffer } = await readOwnedFile(userId, id, conversationId)
+  if (file.mimeType !== 'text/plain') throw new FileAccessError(415, 'Attachment is not an extracted text document')
+  return { name: file.name.replace(/\.extracted\.txt$/i, ''), text: buffer.toString('utf8') }
+}
+
+const PUBLISH_TOKEN = /^[a-f0-9]{32}$/
+
+/** Publish a view-only link. Idempotent: re-publishing keeps the same token. */
+export async function publishOwnedFile(userId: string, id: string): Promise<{ token: string }> {
+  if (!userId || !FILE_ID.test(id)) throw new FileAccessError(404, 'File not found')
+  const db = database()
+  const row = await db.privateFile.findFirst({ where: { id, userId, deletedAt: null } })
+  if (!row) throw new FileAccessError(404, 'File not found')
+  const token = row.publishToken || randomUUID().replace(/-/g, '')
+  await db.privateFile.update({ where: { id }, data: { publishToken: token, publishedAt: row.publishedAt || new Date() } })
+  return { token }
+}
+
+export async function unpublishOwnedFile(userId: string, id: string): Promise<void> {
+  if (!userId || !FILE_ID.test(id)) throw new FileAccessError(404, 'File not found')
+  const db = database()
+  const row = await db.privateFile.findFirst({ where: { id, userId } })
+  if (!row) throw new FileAccessError(404, 'File not found')
+  await db.privateFile.update({ where: { id }, data: { publishToken: null, publishedAt: null } })
+}
+
+/** Anonymous read of a published file by its token. */
+export async function readPublishedFile(token: string) {
+  if (!PUBLISH_TOKEN.test(token)) throw new FileAccessError(404, 'File not found')
+  const row = await database().privateFile.findFirst({ where: { publishToken: token, deletedAt: null } })
+  if (!row) throw new FileAccessError(404, 'File not found')
+  return withPrivateStorage(async namespace => {
+    try {
+      const handle = await namespace.open(row.id, constants.O_RDONLY | (constants.O_NONBLOCK || 0))
+      try {
+        const buffer = await readBoundedFile(handle, row.size)
+        if (buffer.length !== row.size || createHash('sha256').update(buffer).digest('hex') !== row.sha256) {
+          throw new FileAccessError(409, 'File integrity check failed')
+        }
+        return { file: row, buffer }
+      } finally { await handle.close() }
+    } catch (error: any) {
+      if (error?.code === 'ENOENT' || error?.code === 'ELOOP') throw new FileAccessError(404, 'File not found')
+      if (error instanceof FileAccessError) throw error
+      throw new PrivateStorageError()
+    }
+  })
+}
+
 export async function deleteOwnedFile(userId: string, id: string) {
   if (!userId || !FILE_ID.test(id)) throw new FileAccessError(404, 'File not found')
   return withPrivateStorage(async namespace => {

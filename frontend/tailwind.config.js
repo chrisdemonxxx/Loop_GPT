@@ -53,7 +53,10 @@ module.exports = {
           700: '#1c1c2b',
           600: '#262637',
         },
-        // Calm, Claude-aligned accents (was neon). Terracotta primary + soft neutrals.
+        // Calm, Claude-aligned accents. NOTE: the `neon-*` CLASS NAMES are
+        // legacy aliases kept for compatibility — their VALUES are the single
+        // terracotta accent system (#c96442 family), not neon colors. Do not
+        // add new usages; prefer the hex/accent utilities in new code.
         neon: {
           violet: '#c96442',
           indigo: '#b5593a',

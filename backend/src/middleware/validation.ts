@@ -49,6 +49,8 @@ export const validationSchemas = {
     body: z.object({
       email: z.string().email('Invalid email format'),
       password: z.string().min(1, 'Password is required'),
+      // Optional TOTP code (required only when the account has MFA enabled).
+      totp: z.string().regex(/^\d{6}$/).optional(),
     }),
   }),
 

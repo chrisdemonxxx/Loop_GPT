@@ -5,6 +5,7 @@
  */
 import express from 'express'
 import { z } from 'zod'
+import { generateSecret, generateURI, verifySync } from 'otplib'
 import { asyncHandler } from '../middleware/errorLogger'
 import { authenticateToken } from './auth'
 import { prisma, hasDb } from '../services/prisma'
@@ -69,4 +70,54 @@ router.post('/redeem', authenticateToken, asyncHandler(async (req, res) => {
   res.json({ ...result, account: acct })
 }))
 
+// ---- TOTP MFA (brief P2) ------------------------------------------------------
+
+const totpBody = z.object({ token: z.string().regex(/^\d{6}$/) }).strict()
+
+/** POST /api/account/totp/setup — generate a secret + otpauth URI (QR-encodable). */
+router.post('/totp/setup', authenticateToken, asyncHandler(async (req, res) => {
+  const userId = (req as any).userId
+  if (!hasDb || !prisma) return res.status(503).json({ error: 'MFA requires a database.' })
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, totpEnabled: true } })
+  if (!user) return res.status(404).json({ error: 'User not found.' })
+  if (user.totpEnabled) return res.status(400).json({ error: 'Two-factor is already enabled. Disable it first to re-enroll.' })
+  const secret = generateSecret()
+  await prisma.user.update({ where: { id: userId }, data: { totpSecret: secret, totpEnabled: false } })
+  const uri = generateURI({ issuer: 'Loop GPT', label: user.email, secret })
+  res.json({ secret, uri })
+}))
+
+/** POST /api/account/totp/verify { token } — confirm and enable. */
+router.post('/totp/verify', authenticateToken, asyncHandler(async (req, res) => {
+  const userId = (req as any).userId
+  if (!hasDb || !prisma) return res.status(503).json({ error: 'MFA requires a database.' })
+  const parsed = totpBody.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'token must be a 6-digit code.' })
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { totpSecret: true, totpEnabled: true } })
+  if (!user?.totpSecret) return res.status(400).json({ error: 'Run setup first.' })
+  if (user.totpEnabled) return res.json({ ok: true, alreadyEnabled: true })
+  if (!verifySync({ token: parsed.data.token, secret: user.totpSecret, epochTolerance: 30 }).valid) {
+    return res.status(400).json({ error: 'That code is not valid. Try the next one.' })
+  }
+  await prisma.user.update({ where: { id: userId }, data: { totpEnabled: true } })
+  res.json({ ok: true, enabled: true })
+}))
+
+/** POST /api/account/totp/disable { token } — disable (requires a valid code). */
+router.post('/totp/disable', authenticateToken, asyncHandler(async (req, res) => {
+  const userId = (req as any).userId
+  if (!hasDb || !prisma) return res.status(503).json({ error: 'MFA requires a database.' })
+  const parsed = totpBody.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'token must be a 6-digit code.' })
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { totpSecret: true, totpEnabled: true } })
+  if (!user?.totpEnabled || !user.totpSecret) return res.status(400).json({ error: 'Two-factor is not enabled.' })
+  if (!verifySync({ token: parsed.data.token, secret: user.totpSecret, epochTolerance: 30 }).valid) {
+    return res.status(400).json({ error: 'That code is not valid.' })
+  }
+  await prisma.user.update({ where: { id: userId }, data: { totpEnabled: false, totpSecret: null } })
+  res.json({ ok: true, enabled: false })
+}))
+
 export default router
+
+

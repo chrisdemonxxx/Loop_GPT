@@ -1,0 +1,39 @@
+# H3 Tier — MiniMax-H3 video+audio generation
+# Multi-target: h3-conditioner (Qwen3-VL 33B) or h3-denoiser (195.9 GiB DiT)
+# Context: deploy/media-stack/
+FROM nvidia/cuda:13.0.1-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TOKENIZERS_PARALLELISM=true
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.10 python3.10-venv python3-pip \
+        ffmpeg wget unzip git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# CUDA 13 torch — base layer
+RUN pip3 install --upgrade pip && \
+    pip3 install torch==2.11.0 torchvision==0.26.0 \
+        --extra-index-url https://download.pytorch.org/whl/cu130
+
+# H3 venv (transformers 5.x — separate from media tier)
+RUN python3.10 -m venv --system-site-packages /opt/venv-h3
+
+COPY requirements-h3.txt ./
+RUN /opt/venv-h3/bin/pip install --upgrade pip && \
+    /opt/venv-h3/bin/pip install -r requirements-h3.txt
+
+COPY services/h3_conditioner.py /app/services/
+COPY services/h3_denoiser.py /app/services/
+
+ENV SERVICE=h3-denoiser \
+    H3_FP8=1 \
+    H3_COMPILE=0
+
+EXPOSE 8002 8003
+CMD ["/opt/venv-h3/bin/python", "-m", "uvicorn", "services.h3_conditioner:app", \
+     "--host", "0.0.0.0", "--port", "8002", "--app-dir", "/app"]

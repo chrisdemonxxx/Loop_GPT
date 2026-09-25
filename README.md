@@ -37,15 +37,26 @@ reviewed migration release step; read the runbook before deploying this revision
 
 ## Live architecture
 
+**The rebuilt owned platform is now live.** `loop-gpt.cyou` serves the product
+UI from `frontend/` (Next static export) via the `web` service, which proxies
+`/api` and `/v1` to the `backend` service. Verified 2026-09-21:
+
 | Surface | URL | Served by |
 |---|---|---|
-| Landing page | https://loop-gpt.cyou | `gateway/` (nginx, static mirror + reverse proxy) |
-| Chat app (LibreChat) | https://loop-gpt.cyou/* and https://chat.loop-gpt.cyou | Railway service `librechat`, built from `deploy/librechat/spike/` |
-| Public API (OpenAI-compatible) | https://api.loop-gpt.cyou/v1 | Railway service `backend`, built from `backend/` via git push to `main` |
-| Legacy media CDN | https://api.loop-gpt.cyou/uploads/* | Existing deployment only; rebuilt source returns authenticated `/api/files/:id/content` URLs |
+| Product UI (app + API, same-origin) | https://loop-gpt.cyou | Railway service `web` (builds `frontend/` → static export; nginx proxies `/api`, `/v1`) |
+| Aliases | https://app.loop-gpt.cyou, https://chat.loop-gpt.cyou, https://www.loop-gpt.cyou | same `web` service |
+| Public API (OpenAI-compatible) | https://api.loop-gpt.cyou/v1 | same `web` service → `backend.railway.internal:3001` |
 
-Railway project: `loop-gpt` (id `c4381399-65b9-4998-8716-b1d5b71c802f`, production env `78eea8e7-c69e-427d-bcee-57b33cb88f9c`).
-Services: `frontend` (= the gateway, snapshot-deployed), `backend` (git-deployed), `librechat` (snapshot-deployed), `librechat-rag` (image `ghcr.io/danny-avila/librechat-rag-api:latest`), `cf-tunnel`, `Postgres`, `MongoDB`.
+Railway project (active): `loop-gpt-owned-staging-20260917`
+(id `8584f5ac-2000-4311-9dae-ae283b70216f`, production env `2faec73c-12aa-47c9-9a6c-94a9276eb6d5`).
+Services: `web` (product UI), `backend` (Express + agent runtime), `postgres`
+(`loop_staging`), `cf-tunnel` (Cloudflare connector, spare path). The legacy
+`loop-gpt` project (`c4381399-…`, services `frontend`/`librechat`/`backend`)
+is the older topology and no longer owns the apex domains.
+
+Deploy: `railway up --ci -s backend -p 8584f5ac-… -e production` (repo root) and
+`railway up --ci -s web -p 8584f5ac-… -e production` (repo root). Migrations are
+a separate release step: `DATABASE_URL=<public> npx prisma migrate deploy`.
 
 Model endpoints (Hugging Face, namespace `red-kit`, OAuth token via `hf auth token`): chat `qwen3-8-27b-cyber` (vision + tools + reasoning), large-context `glm53-ablit-*` / `vu3pi203abtenqrc`, image `loop-gpt-image` (GLM image handler), video `loop-gpt-video-14b` (SkyReels, scale-to-zero — first request takes minutes).
 
@@ -94,4 +105,8 @@ Google/GitHub apps whitelist only `https://api.loop-gpt.cyou/api/auth/oauth/<pro
 
 ## Removed on purpose (do not resurrect)
 
-The old Next.js portal (`frontend/`), its docs, `docs/`, `database/`, `.github/` CI, railpack configs, and all standalone backend copies (`deploy-backend*`, `Loop_GPT_*` variants) are gone from the working tree. The product frontend is the gateway + LibreChat. History preserves everything in git.
+`database/`, railpack configs, and all standalone backend copies
+(`deploy-backend*`, `Loop_GPT_*` variants) are gone from the working tree.
+`frontend/` and `docs/` were later restored and are the live product UI and
+plan docs (`docs/AUDIT.md`, `GAP_REGISTER.md`, `PROGRESS.md`, `DECISIONS.md`).
+History preserves everything in git.

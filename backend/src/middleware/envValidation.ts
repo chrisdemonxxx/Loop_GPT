@@ -23,6 +23,9 @@ const envSchema = z.object({
   TAVILY_API_KEY: z.string().optional(),
   REDIS_URL: z.string().optional(),
 
+  // HF Search endpoint (dedicated search pipeline)
+  HF_SEARCH_ENDPOINT_URL: z.string().url().optional(),
+
   // OpenAI
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().optional(),

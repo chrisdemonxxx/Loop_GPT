@@ -1,28 +1,24 @@
-# Loop GPT tunnel ingress — mirrors the legacy home-bridge config, plus the
-# new chat.<brand> surface (LibreChat) and apex/www safety nets.
-# Hostnames -> Railway public URLs (intra-cloud once private ports land).
+# Loop GPT tunnel ingress.
+# Hostnames -> Railway PRIVATE service URLs inside the same project.
+#   web.railway.internal:8080   — the owned product UI (frontend/ static export
+#                                 via nginx) which also proxies /api and /v1
+#                                 to backend.railway.internal:3001.
+# One hostname set serves the app and the API (same-origin), matching the
+# client's `connect-src 'self'` CSP.
 tunnel: bc0a90c0-e120-44ba-99ea-15a6d138619b
 
 ingress:
-  # Backend API
-  - hostname: api.loop-gpt.cyou
-    service: https://backend-production-4d0d6.up.railway.app
-    httpHostHeader: backend-production-4d0d6.up.railway.app
-
-  # Marketing/app surface (apex + www + legacy alias)
+  # App + API on the apex (and aliases).
   - hostname: loop-gpt.cyou
-    service: https://frontend-production-868b.up.railway.app
-    httpHostHeader: frontend-production-868b.up.railway.app
+    service: http://web.railway.internal:8080
   - hostname: www.loop-gpt.cyou
-    service: https://frontend-production-868b.up.railway.app
-    httpHostHeader: frontend-production-868b.up.railway.app
+    service: http://web.railway.internal:8080
   - hostname: app.loop-gpt.cyou
-    service: https://frontend-production-868b.up.railway.app
-    httpHostHeader: frontend-production-868b.up.railway.app
-
-  # LibreChat (new chat surface)
+    service: http://web.railway.internal:8080
+  - hostname: api.loop-gpt.cyou
+    service: http://web.railway.internal:8080
+  # Chat alias (served by the same product surface).
   - hostname: chat.loop-gpt.cyou
-    service: https://librechat-production-6215.up.railway.app
-    httpHostHeader: librechat-production-6215.up.railway.app
+    service: http://web.railway.internal:8080
 
   - service: http_status:404

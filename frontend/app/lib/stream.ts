@@ -20,9 +20,11 @@ export interface StreamHandlers {
   onStatus?: (message: string) => void
   onWarming?: (message: string) => void
   onDelta?: (step: number, text: string) => void
+  onThinking?: (step: number, text: string) => void
   onToolCall?: (step: number, name: string, args: any, source?: string) => void
   onToolResult?: (step: number, name: string, content: string, data: any, isError?: boolean) => void
   onArtifact?: (artifact: ArtifactRef) => void
+  onPendingApproval?: (tool_name: string, args: any, prompt: string) => void
   onFinal?: (content: string, metadata: any) => void
   onError?: (message: string) => void
   onDone?: () => void
@@ -30,7 +32,15 @@ export interface StreamHandlers {
 
 export interface StreamBody {
   content: string
-  imagePath?: string
+  attachmentId?: string
+  attachmentIds?: string[]
+  toolNames?: string[]
+  autoApprove?: boolean
+  /** "Ask first": pause for approval before every tool call. */
+  stepMode?: boolean
+  /** Incognito: no sidebar entry, no memory read/write, excluded from synthesis. */
+  incognito?: boolean
+  projectId?: string
   mode?: string
   provider?: string
   model?: string
@@ -49,8 +59,23 @@ export async function runAgentStream(
 ): Promise<void> {
   // LOCAL PREVIEW ADAPTATION: the hardened backend serves the SSE stream at
   // /api/agent/:id/stream and rejects BYOK fields (provider/model/apiKey) and
-  // server file paths (imagePath). Send only the hosted contract.
-  const safeBody = { content: body.content, mode: body.mode || 'chat' }
+  // server file paths (imagePath). Send only the hosted contract, including the
+  // attachmentId so image attachments actually reach the vision path.
+  const safeBody: { content: string; mode: string; attachmentId?: string; attachmentIds?: string[]; toolNames?: string[]; autoApprove?: boolean; stepMode?: boolean; incognito?: boolean; projectId?: string; model?: string } = {
+    content: body.content,
+    mode: body.mode || 'chat',
+  }
+  if (body.attachmentId) safeBody.attachmentId = body.attachmentId
+  if (body.attachmentIds?.length) safeBody.attachmentIds = body.attachmentIds
+  // Per-chat tool selection + run mode ("Accept edits" auto-approves;
+  // "Ask first" pauses before every tool call; incognito skips memory).
+  if (body.toolNames?.length) safeBody.toolNames = body.toolNames
+  if (body.autoApprove) safeBody.autoApprove = true
+  if (body.stepMode) safeBody.stepMode = true
+  if (body.incognito) safeBody.incognito = true
+  if (body.projectId) safeBody.projectId = body.projectId
+  // Hosted model tier selection (the server rejects provider/apiKey/baseUrl).
+  if (body.model) safeBody.model = body.model
   const res = await fetch(`${API_URL}/api/agent/${conversationId}/stream`, {
     method: 'POST',
     headers: authHeaders(),
@@ -111,8 +136,14 @@ function dispatch(event: any, h: StreamHandlers) {
     case 'delta':
       h.onDelta?.(event.step, event.text)
       break
+    case 'thinking':
+      h.onThinking?.(event.step, event.text)
+      break
     case 'tool_call':
       h.onToolCall?.(event.step, event.name, event.args, event.source)
+      break
+    case 'pending_approval':
+      h.onPendingApproval?.(event.tool_name, event.args, event.prompt)
       break
     case 'tool_result':
       h.onToolResult?.(event.step, event.name, event.content, event.data, event.isError)
