@@ -97,7 +97,15 @@ export default function TurnActivity({
   if (stepCount === 0 && !pendingApproval) return null
 
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
+    // The block eases in (150ms fade — no scale pop, audit P5); individual
+    // step cards crossfade separately below. MotionConfig reducedMotion="user"
+    // makes this instant for reduced-motion users.
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.15 }}
+      className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden"
+    >
       {/* Summary line — one row per turn; click to expand/collapse. */}
       <button
         type="button"
@@ -209,7 +217,7 @@ export default function TurnActivity({
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </motion.div>
   )
 }
 

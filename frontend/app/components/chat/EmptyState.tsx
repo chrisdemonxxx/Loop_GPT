@@ -51,17 +51,23 @@ export function EmptyState({ onStartPrompt }: { onStartPrompt?: (p: string) => v
   )
 }
 
-/** Three-dot "waiting for the model" indicator shown pre-first-token. */
+/** Lightweight "Thinking…" pulse shown in the assistant turn before the first
+ * token/tool call lands — closes the dead gap between send and activity
+ * (audit P5). Under prefers-reduced-motion the CSS pulse is disabled by the
+ * global media-query block; the label stays as plain text. */
 export function ThinkingDots() {
   return (
-    <div className="flex gap-1.5 py-2" role="status" aria-label="Thinking">
-      {[0, 150, 300].map((d) => (
-        <span
-          key={d}
-          className="w-1.5 h-1.5 rounded-full bg-slate-500/60 animate-bounce"
-          style={{ animationDelay: `${d}ms` }}
-        />
-      ))}
+    <div className="flex items-center gap-2 py-2" role="status" aria-label="Thinking">
+      <span className="flex gap-1" aria-hidden="true">
+        {[0, 150, 300].map((d) => (
+          <span
+            key={d}
+            className="w-1.5 h-1.5 rounded-full bg-[#c96442]/70 animate-bounce"
+            style={{ animationDelay: `${d}ms` }}
+          />
+        ))}
+      </span>
+      <span className="text-[13px] text-slate-500 shimmer-text">Thinking…</span>
     </div>
   )
 }
