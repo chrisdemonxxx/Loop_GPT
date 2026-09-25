@@ -21,6 +21,7 @@ vi.mock('../imageApi', () => ({ imageApiService: { generateImage: model.image } 
 import { prisma } from '../prisma'
 import authRouter from '../../routes/auth'
 import conversationsRouter from '../../routes/conversations'
+import { shareRouter } from '../../routes/share'
 import messagesRouter from '../../routes/messages'
 import agentRouter from '../../routes/agent'
 import v1Router from '../../routes/v1'
@@ -71,6 +72,7 @@ beforeAll(async () => {
 app.use('/api/files', publicFilesRouter)
 app.use('/api/files', filesRouter)
   app.use('/api/conversations', imageUploadRouter, conversationsRouter, messagesRouter, agentRouter)
+app.use('/api/share', shareRouter) // unauthenticated; token-gated transcript reads
   app.use('/api/agent', agentRouter)
   app.use('/v1', v1Router)
   app.use('/uploads', rejectLegacyUploads)
@@ -186,6 +188,64 @@ describe('private file and account isolation over HTTP/PostgreSQL', () => {
     expect((await fetch(`${base}/api/files/${file.id}/content`, { headers })).status).toBe(200)
     await revokeApiKey(alice.id, key.id)
     expect((await fetch(`${base}/api/files/${file.id}/content`, { headers })).status).toBe(401)
+  })
+
+  it('pins conversations to the top without bumping recency (audit §8-13)', async () => {
+    const older = await db.conversation.create({ data: { userId: alice.id, title: 'Pinned target' } })
+    const newer = await db.conversation.create({ data: { userId: alice.id, title: 'Fresh chat' } })
+    const before = (await (await fetch(`${base}/api/conversations`, { headers: bearer(alice.id) })).json()) as any[]
+    // Pin the OLDER one: it must float to the top ahead of the newer chat.
+    expect((await fetch(`${base}/api/conversations/${older.id}`, { method: 'PATCH', headers: { ...bearer(alice.id), 'Content-Type': 'application/json' }, body: JSON.stringify({ pinned: true }) })).status).toBe(200)
+    const after = (await (await fetch(`${base}/api/conversations`, { headers: bearer(alice.id) })).json()) as any[]
+    expect(after.find((c) => c.id === older.id).pinned).toBe(true)
+    expect(after.find((c) => c.id === newer.id).pinned).toBe(false)
+    expect(after[0].id).toBe(older.id)
+    // Pinning must not rewrite updatedAt (date groups stay stable).
+    expect(new Date(after.find((c) => c.id === older.id).updatedAt).getTime())
+      .toBe(new Date(before.find((c) => c.id === older.id).updatedAt).getTime())
+    // Ownership: another user cannot pin or read.
+    expect((await fetch(`${base}/api/conversations/${older.id}`, { method: 'PATCH', headers: { ...bearer(bob.id), 'Content-Type': 'application/json' }, body: JSON.stringify({ pinned: true }) })).status).toBe(404)
+  })
+
+  it('creates, reads, and revokes public read-only share links (audit §8-15)', async () => {
+    const shared = await db.conversation.create({ data: { userId: alice.id, title: 'Share me' } })
+    await db.message.create({ data: { conversationId: shared.id, role: 'user', content: 'Shared question' } })
+    await db.message.create({ data: { conversationId: shared.id, role: 'assistant', content: 'Shared answer' } })
+    // Only the owner can mint; the token is idempotent.
+    expect((await fetch(`${base}/api/conversations/${shared.id}/share`, { method: 'POST', headers: bearer(bob.id) })).status).toBe(404)
+    const mint = await (await fetch(`${base}/api/conversations/${shared.id}/share`, { method: 'POST', headers: bearer(alice.id) })).json()
+    const remint = await (await fetch(`${base}/api/conversations/${shared.id}/share`, { method: 'POST', headers: bearer(alice.id) })).json()
+    expect(mint.token).toBe(remint.token)
+    // Anonymous transcript read: roles/content only, never user ids or file paths.
+    const publicRead = await fetch(`${base}/api/share/${mint.token}`)
+    expect(publicRead.status).toBe(200)
+    const body = await publicRead.json()
+    expect(body.title).toBe('Share me')
+    expect(body.messages).toEqual([
+      expect.objectContaining({ role: 'user', content: 'Shared question' }),
+      expect.objectContaining({ role: 'assistant', content: 'Shared answer' }),
+    ])
+    expect(JSON.stringify(body)).not.toContain(alice.id)
+    // Malformed tokens never leak whether a share exists.
+    expect((await fetch(`${base}/api/share/${'0'.repeat(32)}`)).status).toBe(404)
+    // Revoking kills the public read; the owner can mint a new token later.
+    expect((await fetch(`${base}/api/conversations/${shared.id}/share`, { method: 'DELETE', headers: bearer(alice.id) })).status).toBe(200)
+    expect((await fetch(`${base}/api/share/${mint.token}`)).status).toBe(404)
+  })
+
+  it('searches message bodies, not just titles (audit §8-16)', async () => {
+    const searchable = await db.conversation.create({ data: { userId: alice.id, title: 'Boring title' } })
+    await db.message.create({ data: { conversationId: searchable.id, role: 'assistant', content: 'The zebra runs at midnight across the plain.' } })
+    const incognito = await db.conversation.create({ data: { userId: alice.id, title: 'Hidden', incognito: true } })
+    await db.message.create({ data: { conversationId: incognito.id, role: 'assistant', content: 'zebra in a private den' } })
+    const hits = (await (await fetch(`${base}/api/conversations/search?q=zebra`, { headers: bearer(alice.id) })).json()) as any[]
+    expect(hits).toHaveLength(1)
+    expect(hits[0].conversationId).toBe(searchable.id)
+    expect(hits[0].snippet).toContain('zebra')
+    // Ownership: bob sees no hits in alice's messages.
+    expect(((await (await fetch(`${base}/api/conversations/search?q=zebra`, { headers: bearer(bob.id) })).json()) as any[]).length).toBe(0)
+    // Short queries are a no-op, and the route is not shadowed by /:id.
+    expect(((await (await fetch(`${base}/api/conversations/search?q=z`, { headers: bearer(alice.id) })).json()) as any[]).length).toBe(0)
   })
 
   it('mints short-lived signed links that render inline without a session (open in new tab)', async () => {

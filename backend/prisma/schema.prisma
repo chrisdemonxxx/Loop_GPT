@@ -367,6 +367,11 @@ model Conversation {
   project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
   /// Incognito: excluded from the sidebar, memory synthesis, and memory injection.
   incognito Boolean   @default(false)
+  /// Pinned to the top of the sidebar (audit §8-13).
+  pinned    Boolean   @default(false)
+  /// Public read-only share token (null = not shared). Grants transcript
+  /// reads via /api/share/:token only.
+  shareToken String?  @unique
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 

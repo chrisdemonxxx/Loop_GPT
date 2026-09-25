@@ -19,7 +19,7 @@ import type { Conversation, Message } from '../components/chat/types'
 import { parseCommand, SLASH_COMMANDS } from '../lib/commands'
 import ProjectsPanel, { type Project } from '../components/ProjectsPanel'
 import ResearchPanel from '../components/ResearchPanel'
-import { usePanels, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom, useAttachments } from './hooks'
+import { usePanels, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom, useAttachments, useConversationSearch } from './hooks'
 
 // slash commands live in ../lib/commands (registry + parseCommand)
 
@@ -63,6 +63,9 @@ export default function ChatPage() {
   const { conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages } =
     useConversationsData(currentConversationId, (id) => { if (currentConversationId === id) setCurrentConversationId(null) })
   const chat = useChatStream()
+  // ── Sidebar search: title filter locally + server-side message-body hits
+  const [sidebarSearch, setSidebarSearch] = useState('')
+  const messageHits = useConversationSearch(sidebarSearch)
 
   useEffect(() => {
     fetch(`${API_URL}/api/agent/tools`, { headers: authHeaders() })
@@ -213,7 +216,18 @@ export default function ChatPage() {
     })
   }
 
-  // ── Export / slash dispatch ─────────────────────────────────────────────────
+  /** Mint + copy a public read-only share link (audit §8-15). */
+  async function handleShareConversation(id: string): Promise<string | null> {
+    try {
+      const res = await axios.post(`${API_URL}/api/conversations/${id}/share`, {}, { headers: authHeaders() })
+      if (!res.data?.url) return null
+      const link = `${window.location.origin}${res.data.url}`
+      await navigator.clipboard?.writeText(link)
+      return link
+    } catch { return null }
+  }
+
+  // -- Export / slash dispatch ---------------------------------------------
   function exportConversation(format: 'md' | 'pdf' = 'md') {
     const title = (conversations as Conversation[]).find((c) => c.id === currentConversationId)?.title || 'conversation'
     const md = (messages as Message[]).map((m) => `**${m.role === 'user' ? 'You' : 'Loop GPT'}**\n\n${m.content}`).join('\n\n---\n\n')
@@ -339,6 +353,11 @@ export default function ChatPage() {
               onLogout={logout}
               onRenameConversation={(id, title) => updateConv.mutate({ id, title })}
               onDeleteConversation={(id) => deleteConv.mutate(id)}
+              onPinConversation={(id, pinned) => updateConv.mutate({ id, pinned })}
+              onShareConversation={handleShareConversation}
+              searchQuery={sidebarSearch}
+              onSearchChange={setSidebarSearch}
+              messageHits={messageHits}
               onOpenProjects={() => setProjectsOpen(true)}
               onSelectProject={(id) => { setActiveProjectId(id); if (id) localStorage.setItem('activeProjectId', id); else localStorage.removeItem('activeProjectId') }}
               activeProjectName={activeProjectId ? (projects.find((p) => p.id === activeProjectId)?.name || undefined) : undefined}

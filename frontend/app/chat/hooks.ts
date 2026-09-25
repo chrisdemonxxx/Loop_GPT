@@ -150,8 +150,8 @@ export function useConversationsData(
   })
 
   const updateConv = useMutation({
-    mutationFn: async ({ id, title }: { id: string; title: string }) =>
-      (await axios.patch(`${API_URL}/api/conversations/${id}`, { title }, { headers: authHeaders() })).data,
+    mutationFn: async ({ id, title, pinned }: { id: string; title?: string; pinned?: boolean }) =>
+      (await axios.patch(`${API_URL}/api/conversations/${id}`, title !== undefined ? { title } : { pinned }, { headers: authHeaders() })).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['conversations'] }),
   })
 
@@ -169,6 +169,34 @@ export function useConversationsData(
     id ? queryClient.invalidateQueries({ queryKey: ['messages', id] }) : Promise.resolve()
 
   return { conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages }
+}
+
+export interface ConversationSearchHit {
+  conversationId: string
+  title: string
+  updatedAt: string
+  pinned: boolean
+  snippet: string
+  matches: number
+}
+
+/**
+ * Message-body search for the sidebar (audit §8-16: search previously
+ * matched titles only). Debounced; disabled below 2 characters.
+ */
+export function useConversationSearch(q: string) {
+  const [debounced, setDebounced] = useState('')
+  useEffect(() => {
+    const handle = setTimeout(() => setDebounced(q), 250)
+    return () => clearTimeout(handle)
+  }, [q])
+  const { data: hits = [] } = useQuery<ConversationSearchHit[]>({
+    queryKey: ['conversation-search', debounced],
+    queryFn: async () =>
+      (await axios.get(`${API_URL}/api/conversations/search`, { params: { q: debounced }, headers: authHeaders(false) }).catch(() => ({ data: [] }))).data,
+    enabled: debounced.trim().length >= 2,
+  })
+  return hits
 }
 
 // ---------------------------------------------------------------------------

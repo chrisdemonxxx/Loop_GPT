@@ -1,16 +1,24 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
-  Plus, PanelLeft, Search, MessageSquare, Edit2, Trash2,
+  Plus, PanelLeft, Search, MessageSquare, Edit2, Trash2, Star, Share2, Check,
   Settings, CreditCard, ShieldCheck, LogOut, ChevronDown, Sparkles, FolderOpen, Terminal,
 } from 'lucide-react'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useI18n, locales, localeNames, type Locale } from '../../lib/i18n'
+import type { Conversation } from './types'
 
-interface Conversation { id: string; title: string; createdAt: string; updatedAt: string }
 interface SidebarProject { id: string; name: string; _count?: { knowledgeChunks: number; conversations: number } }
+export interface ConversationSearchHit {
+  conversationId: string
+  title: string
+  updatedAt: string
+  pinned: boolean
+  snippet: string
+  matches: number
+}
 
 interface SidebarProps {
   conversations: Conversation[]
@@ -24,28 +32,82 @@ interface SidebarProps {
   onLogout: () => void
   onRenameConversation: (id: string, title: string) => void
   onDeleteConversation: (id: string) => void
+  /** Pin/unpin (audit §8-13). */
+  onPinConversation: (id: string, pinned: boolean) => void
+  /** Mint + copy a share link; resolves with the copied URL (audit §8-15). */
+  onShareConversation: (id: string) => Promise<string | null>
+  /** Search box (page-owned so the message-body search hook shares it). */
+  searchQuery: string
+  onSearchChange: (v: string) => void
+  /** Server-side message-body hits for the current search (audit §8-16). */
+  messageHits?: ConversationSearchHit[]
   onOpenProjects: () => void
   onSelectProject: (id: string | null) => void
   activeProjectName?: string
 }
 
+/** Bucket a conversation by recency (audit §8-13: grouped history render). */
+function dateBucket(updatedAt: string): 'Today' | 'Yesterday' | 'Previous 7 days' | 'Older' {
+  const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const t = new Date(updatedAt).getTime()
+  if (t >= startOfToday) return 'Today'
+  if (t >= startOfToday - 86_400_000) return 'Yesterday'
+  if (t >= startOfToday - 7 * 86_400_000) return 'Previous 7 days'
+  return 'Older'
+}
+
+const BUCKET_ORDER = ['Today', 'Yesterday', 'Previous 7 days', 'Older'] as const
+
 export default function Sidebar({
   conversations, currentConversationId, user,
   projects, activeProjectId,
   onSelectConversation, onClose, onOpenSettings, onLogout,
-  onRenameConversation, onDeleteConversation,
+  onRenameConversation, onDeleteConversation, onPinConversation, onShareConversation,
+  searchQuery, onSearchChange, messageHits = [],
   onOpenProjects, onSelectProject, activeProjectName,
 }: SidebarProps) {
-  const [searchQuery, setSearchQuery] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [projectsOpen, setProjectsOpen] = useState(false)
+  const [sharedId, setSharedId] = useState<string | null>(null)
   const { locale, setLocale, t } = useI18n()
 
-  const filtered = conversations.filter((c) =>
-    !searchQuery || (c.title || '').toLowerCase().includes(searchQuery.toLowerCase())
+  const q = searchQuery.trim().toLowerCase()
+  const titleMatches = useMemo(
+    () => conversations.filter((c) => !q || (c.title || '').toLowerCase().includes(q)),
+    [conversations, q],
   )
+  /** Conversations found by message content only (not already in titleMatches). */
+  const bodyOnly = useMemo(() => {
+    const titleIds = new Set(titleMatches.map((c) => c.id))
+    return messageHits.filter((h) => !titleIds.has(h.conversationId))
+  }, [messageHits, titleMatches])
+
+  /** Grouping by pinned, then date bucket (server already orders each list). */
+  const groups = useMemo(() => {
+    const pinned = titleMatches.filter((c) => c.pinned)
+    const rest = titleMatches.filter((c) => !c.pinned)
+    const byBucket = new Map<string, Conversation[]>()
+    for (const c of rest) {
+      const bucket = dateBucket(c.updatedAt)
+      if (!byBucket.has(bucket)) byBucket.set(bucket, [])
+      byBucket.get(bucket)!.push(c)
+    }
+    return [
+      ...(pinned.length ? [{ label: 'Pinned' as const, items: pinned }] : []),
+      ...BUCKET_ORDER.filter((b) => byBucket.has(b)).map((b) => ({ label: b, items: byBucket.get(b)! })),
+    ]
+  }, [titleMatches])
+
+  async function handleShare(id: string) {
+    const url = await onShareConversation(id)
+    if (url) {
+      setSharedId(id)
+      setTimeout(() => setSharedId((v) => (v === id ? null : v)), 1600)
+    }
+  }
 
   function commitEdit() {
     if (editingId && editingTitle.trim()) {
@@ -84,7 +146,8 @@ export default function Sidebar({
             type="text"
             placeholder={t('searchChats')}
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => onSearchChange(e.target.value)}
+            aria-label={t('searchChats')}
             className="w-full pl-7 pr-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-[13px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-white/12 focus:bg-white/[0.06] transition"
           />
         </div>
@@ -130,62 +193,55 @@ export default function Sidebar({
         </div>
       </div>
 
-      {/* Conversation list */}
-      <div className="flex-1 overflow-y-auto py-1.5 px-2 mt-1 space-y-0.5 min-h-0">
-        {filtered.map((c) => (
-          <div
-            key={c.id}
-            className={`group rounded-lg transition-colors ${
-              currentConversationId === c.id
-                ? 'bg-white/[0.07]'
-                : 'hover:bg-white/[0.04]'
-            }`}
-          >
-            {editingId === c.id ? (
-              <input
-                value={editingTitle}
-                onChange={(e) => setEditingTitle(e.target.value)}
-                autoFocus
-                onBlur={commitEdit}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                  if (e.key === 'Escape') setEditingId(null)
-                }}
-                className="w-full m-1 px-2 py-1 text-[13px] bg-ink-800 border border-white/10 rounded text-slate-100 focus:outline-none"
+      {/* Conversation list — grouped: Pinned, then date buckets (audit §8-13). */}
+      <div className="flex-1 overflow-y-auto py-1.5 px-2 mt-1 space-y-2 min-h-0">
+        {groups.map((group) => (
+          <div key={group.label} className="space-y-0.5">
+            <div className="px-2.5 pt-1 pb-0.5 text-[10px] uppercase tracking-widest text-slate-500 font-medium">{group.label}</div>
+            {group.items.map((c) => (
+              <ConversationRow
+                key={c.id}
+                conversation={c}
+                active={currentConversationId === c.id}
+                editing={editingId === c.id}
+                editingTitle={editingTitle}
+                shared={sharedId === c.id}
+                onStartEdit={() => { setEditingId(c.id); setEditingTitle(c.title || '') }}
+                onEditChange={setEditingTitle}
+                onCommitEdit={commitEdit}
+                onCancelEdit={() => setEditingId(null)}
+                onSelect={() => { onSelectConversation(c.id); onClose() }}
+                onPin={() => onPinConversation(c.id, !c.pinned)}
+                onShare={() => handleShare(c.id)}
+                onDelete={() => { if (confirm('Delete this session?')) onDeleteConversation(c.id) }}
               />
-            ) : (
-              <button
-                onClick={() => { onSelectConversation(c.id); onClose() }}
-                className="w-full text-left px-2.5 py-2 text-[13px] text-slate-300 flex items-center gap-2"
-              >
-                <MessageSquare size={13} className="text-slate-500 shrink-0" />
-                <span className="truncate flex-1">{c.title || 'New session'}</span>
-                <span className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 shrink-0 transition-opacity">
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setEditingId(c.id)
-                      setEditingTitle(c.title || '')
-                    }}
-                    className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-slate-300"
-                  >
-                    <Edit2 size={12} />
-                  </span>
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (confirm('Delete this session?')) onDeleteConversation(c.id)
-                    }}
-                    className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-rose-400"
-                  >
-                    <Trash2 size={12} />
-                  </span>
-                </span>
-              </button>
-            )}
+            ))}
           </div>
         ))}
-        {searchQuery && filtered.length === 0 && (
+
+        {/* Message-body hits (audit §8-16) — conversations whose MESSAGES
+            matched but whose title did not. */}
+        {bodyOnly.length > 0 && (
+          <div className="space-y-0.5">
+            <div className="px-2.5 pt-1 pb-0.5 text-[10px] uppercase tracking-widest text-slate-500 font-medium">Matching messages</div>
+            {bodyOnly.map((h) => (
+              <button
+                key={h.conversationId}
+                onClick={() => { onSelectConversation(h.conversationId); onClose() }}
+                className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-white/[0.04] transition"
+              >
+                <span className="flex items-center gap-2 text-[13px] text-slate-300">
+                  <MessageSquare size={13} className="text-slate-500 shrink-0" />
+                  <span className="truncate flex-1">{h.title || 'New session'}</span>
+                  <span className="text-[10px] text-slate-500 shrink-0">{h.matches}×</span>
+                </span>
+                <span className="block text-[11.5px] text-slate-500 truncate mt-0.5 pl-[21px]">{h.snippet}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {searchQuery && titleMatches.length === 0 && bodyOnly.length === 0 && (
           <p className="px-3 py-6 text-center text-[12px] text-slate-400">
             No chats match &quot;{searchQuery}&quot;
           </p>
@@ -270,6 +326,84 @@ export default function Sidebar({
         </div>
       </div>
     </div>
+  )
+}
+
+/** One conversation row: title, star/pin, share, rename, delete. */
+function ConversationRow({
+  conversation: c, active, editing, editingTitle, shared,
+  onStartEdit, onEditChange, onCommitEdit, onCancelEdit, onSelect, onPin, onShare, onDelete,
+}: {
+  conversation: Conversation
+  active: boolean
+  editing: boolean
+  editingTitle: string
+  shared: boolean
+  onStartEdit: () => void
+  onEditChange: (v: string) => void
+  onCommitEdit: () => void
+  onCancelEdit: () => void
+  onSelect: () => void
+  onPin: () => void
+  onShare: () => void
+  onDelete: () => void
+}) {
+  if (editing) {
+    return (
+      <input
+        value={editingTitle}
+        onChange={(e) => onEditChange(e.target.value)}
+        autoFocus
+        onBlur={onCommitEdit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          if (e.key === 'Escape') onCancelEdit()
+        }}
+        className="w-full m-1 px-2 py-1 text-[13px] bg-ink-800 border border-white/10 rounded text-slate-100 focus:outline-none"
+      />
+    )
+  }
+  return (
+    <div className={`group rounded-lg transition-colors ${active ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]'}`}>
+      <div className="w-full text-left px-2.5 py-2 text-[13px] text-slate-300 flex items-center gap-2 cursor-pointer" onClick={onSelect}>
+        <MessageSquare size={13} className="text-slate-500 shrink-0" />
+        <span className="truncate flex-1">{c.title || 'New session'}</span>
+        <span className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 flex items-center gap-0.5 shrink-0 transition-opacity">
+          <RowAction title={c.pinned ? 'Unpin' : 'Pin to top'} onClick={onPin} className={c.pinned ? 'text-[#c96442]' : undefined}>
+            <Star size={12} fill={c.pinned ? 'currentColor' : 'none'} />
+          </RowAction>
+          <RowAction title={shared ? 'Link copied' : 'Share public link'} onClick={onShare}>
+            {shared ? <Check size={12} className="text-emerald-400" /> : <Share2 size={12} />}
+          </RowAction>
+          <RowAction title="Rename" onClick={onStartEdit}><Edit2 size={12} /></RowAction>
+          <RowAction title="Delete" onClick={onDelete} danger><Trash2 size={12} /></RowAction>
+        </span>
+        {/* Pinned conversations keep a visible star outside hover too. */}
+        {c.pinned && (
+          <Star size={11} className="text-[#c96442] shrink-0 group-hover:hidden" fill="currentColor" aria-label="Pinned" />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function RowAction({ title, onClick, children, danger, className }: {
+  title: string
+  onClick: (e: React.MouseEvent) => void
+  children: React.ReactNode
+  danger?: boolean
+  className?: string
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onClick={(e) => { e.stopPropagation(); onClick(e) }}
+      className={`tap-target p-1 hover:bg-white/10 rounded ${danger ? 'text-slate-400 hover:text-rose-400' : 'text-slate-400 hover:text-slate-300'} ${className || ''}`}
+    >
+      {children}
+    </button>
   )
 }
 

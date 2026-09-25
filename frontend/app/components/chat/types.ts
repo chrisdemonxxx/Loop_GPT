@@ -16,6 +16,8 @@ export interface Conversation {
   title: string
   createdAt: string
   updatedAt: string
+  /** Pinned to the top of the sidebar (audit §8-13). */
+  pinned?: boolean
 }
 
 /** One streamed agent step (tool call or text delta group) in the live turn. */

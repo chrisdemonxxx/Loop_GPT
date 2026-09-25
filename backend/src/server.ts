@@ -38,6 +38,7 @@ import settingsRoutes from './routes/settings'
 import modelsRoutes from './routes/models'
 import agentRoutes from './routes/agent'
 import telemetryRoutes from './routes/telemetry'
+import { shareRouter } from './routes/share'
 import accountRoutes from './routes/account'
 import adminRoutes from './routes/admin'
 import { oauthRouter, mailRouter, oauthRelayRouter } from './routes/oauth'
@@ -119,6 +120,7 @@ app.use('/api/conversations', messageRoutes)
 app.use('/api/conversations', agentRoutes)
 app.use('/api/agent', agentRoutes)
 app.use('/api/telemetry', telemetryRoutes)
+app.use('/api/share', rateLimiter(15 * 60 * 1000, 100), shareRouter) // unauthenticated; token-gated transcript reads
 app.use('/api/account', accountRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/billing', billingRoutes)

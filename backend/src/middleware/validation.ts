@@ -66,7 +66,10 @@ export const validationSchemas = {
       id: z.string().min(1, 'Conversation ID is required'),
     }),
     body: z.object({
-      title: z.string().max(200, 'Title must be less than 200 characters'),
+      title: z.string().max(200, 'Title must be less than 200 characters').optional(),
+      pinned: z.boolean().optional(),
+    }).refine((v) => v.title !== undefined || v.pinned !== undefined, {
+      message: 'Provide a title or a pinned flag',
     }),
   }),
 
