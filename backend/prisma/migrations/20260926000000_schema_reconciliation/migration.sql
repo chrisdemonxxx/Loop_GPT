@@ -25,6 +25,14 @@ DROP INDEX "ResearchScratchpad_userId_idx";
 ALTER TABLE "SpendBudgetPolicy" ALTER COLUMN "perUserDailyReservationCap" DROP DEFAULT;
 ALTER TABLE "SpendBudgetPolicy" ALTER COLUMN "globalDailyReservationCap" DROP DEFAULT;
 
+-- The Memory.projectId FK was never applied on live databases (the schema's
+-- ON DELETE SET NULL behavior could not run), so deleted Projects left
+-- dangling references behind. Applying the FK validates existing rows, so
+-- detach the orphans first — exactly what SET NULL would have done.
+UPDATE "Memory" SET "projectId" = NULL
+WHERE "projectId" IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM "Project" p WHERE p.id = "Memory"."projectId");
+
 ALTER TABLE "KnowledgeChunk" ADD CONSTRAINT "KnowledgeChunk_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "Project" ADD CONSTRAINT "Project_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "Memory" ADD CONSTRAINT "Memory_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
