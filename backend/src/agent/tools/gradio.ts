@@ -66,7 +66,7 @@ export function pickApi(info: any, mode: 'image' | 'video' | 'edit' = 'video', h
 }
 
 export function buildArgs(params: GradioParam[], prompt: string, imageBase64?: string,
-  opts: { strength?: number; faceSwap?: boolean } = {}): any[] {
+  opts: { strength?: number; faceSwap?: boolean; negativePrompt?: string } = {}): any[] {
   let promptUsed = false
   return params.map((p) => {
     const comp = String(p?.component || '')
@@ -79,7 +79,9 @@ export function buildArgs(params: GradioParam[], prompt: string, imageBase64?: s
       return { url: uri, orig_name: 'reference.png', meta: { _type: 'gradio.FileData' } }
     }
     if (/Textbox/i.test(comp)) {
-      if (/neg/i.test(label)) return ''
+      // A negative prompt falls back to the endpoint's own default (the media
+      // Space ships the model card's quality negative) instead of forcing "".
+      if (/neg/i.test(label)) return opts.negativePrompt !== undefined ? opts.negativePrompt : (p?.parameter_default ?? '')
       if (!promptUsed) { promptUsed = true; return prompt }
       return /prompt|motion|video/i.test(label) ? prompt : ''
     }
@@ -103,7 +105,7 @@ export function buildArgs(params: GradioParam[], prompt: string, imageBase64?: s
 export async function gradioCallSpace(
   base: string,
   prompt: string,
-  opts: { imageBase64?: string; signal?: AbortSignal; timeoutMs?: number; mode?: 'image' | 'video' | 'edit'; strength?: number; faceSwap?: boolean },
+  opts: { imageBase64?: string; signal?: AbortSignal; timeoutMs?: number; mode?: 'image' | 'video' | 'edit'; strength?: number; faceSwap?: boolean; negativePrompt?: string },
 ): Promise<GradioMedia> {
   const root = mediaUrl(base).replace(/\/+$/, '')
   const auth = mediaAuth(root)
@@ -115,7 +117,7 @@ export async function gradioCallSpace(
   const chosen = pickApi(info, opts.mode, !!opts.imageBase64)
   if (!chosen) throw new Error('No usable Gradio endpoint')
 
-  const data = buildArgs(chosen.params, prompt, opts.imageBase64, { strength: opts.strength, faceSwap: opts.faceSwap })
+  const data = buildArgs(chosen.params, prompt, opts.imageBase64, { strength: opts.strength, faceSwap: opts.faceSwap, negativePrompt: opts.negativePrompt })
   const callRes = await providerRequest(`${root}/gradio_api/call${chosen.api}`, {
     ...auth, method: 'POST',
     headers: { ...auth.headers, 'Content-Type': 'application/json' },
