@@ -101,6 +101,14 @@ the exact figures are not.
 - **E17** `npm run test:browser` → `npx playwright test` → `20 passed (4.5s)`. `vitest run` → `23 files / 150 tests passed`.
   `npm run build` → `BUILD_EXIT=0`, `19 routes`, `find out -name '*.html' | wc -l` → `18`.
 
+- **E18** live `/chat/` vs a fresh build — 18 served chunk names, 114 built; **8 served names absent** from the
+  build; `webpack-12ed1796ffdc89d3.js` served vs `webpack-bfdd25fdbe871018.js` built. The served chat
+  chunk (214,400 B) does contain the P0 markers (`ttsEngine` 1×, `hands-free` 1×, `Appearance` 1×) — so
+  live is *near* P0, not older; live == `7540a3d` is still **unproven**. `POST https://api.loop-gpt.cyou/api/tts`
+  (no auth) → `504` once (cold start, first hit) then `401` in `0.849 s`; with a bogus bearer →
+  `{"error":"Invalid token"}` `401 0.876 s`; `GET /api/models/catalog` → `200 0.879 s`. Full probes:
+  `team/P1_FINDINGS.md`. exit 0.
+
 ## 5. Next owner + exact artifact (the hand-off)
 
 **Next owner: `perf-eng`, `ops-release`, `qa-verify`, `research-scout` — in parallel, one artifact each**
