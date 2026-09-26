@@ -600,6 +600,70 @@ first); §8-22 branch-version arrows (awaiting schema sign-off).
 shape to be proposed first); §8-22 branch-version arrows (awaiting schema
 sign-off).
 
+## Phase 3 — Extraction-defense enforcement (audit §8-34) — SHIPPED (2026-09-26, commit `962c187`)
+
+- **Enforcement shape (proposed → implemented)**: per-run system-prompt
+  hardening + an audit entry — NOT a hard refusal. The patterns include
+  benign phrasings ("what model are you") that users legitimately ask; a
+  400 would block honest questions AND leak that pattern detection exists.
+  The run proceeds, with the model explicitly on notice for that turn.
+- **Code**: `guardrails.ts` gains `EXTRACTION_DEFENSE_PROMPT` — a targeted
+  hardening block (decline reveal/quote/summarize/paraphrase/reconstruct in
+  any framing; never acknowledge the detection itself). `agentStream.ts`
+  appends it to the run's system prompt at the chat/agent/research assembly
+  site when `detectExtractionAttempt` fires, and writes
+  `system:extraction_attempt / denied` to the tool audit log with the
+  resolved conversation id (audit is best-effort; the defense prompt is the
+  enforcement).
+- **Test**: integration E2E — a hostile message runs (HTTP 200, no hard
+  fail) with the ACTIVE THREAT NOTICE in the dispatched system prompt + the
+  audit entry present; a benign message carries no notice.
+- **Deploy + live E2E (production)**: deployed on `962c187` (backend
+  deployment `16ba682a`, 2026-09-25T21:31Z); all three CI workflows green;
+  `healthz` 200. Live: fresh signup → extraction-shaped agent stream →
+  HTTP 200 (`run` event, runId minted) → `GET /api/agent/audit` shows
+  `system:extraction_attempt / denied` for the run; the operator's own
+  post-deploy probes (21:36/21:37Z) produced the same entry shape.
+- Gates: backend unit **1152/5**, integration **470/3** (one known flake in
+  the video-recovery timing tests on the first pass — green on rerun), lint
+  0, tsc clean. Frontend untouched.
+
+## Security — tool audit log was a cross-tenant leak (found live, fixed) (2026-09-26, commit `53aba87`)
+
+- **Found during the §8-34 live verification**: `GET /api/agent/audit`
+  returned the GLOBAL tool audit log to ANY authenticated user. The fresh
+  E2E account received **42 entries belonging to three other users** —
+  their document contents (a registry-extract PDF), search queries, fetch
+  URLs, conversation ids and userIds.
+- **Fix**: `configStore.listToolAudit` gains `{ userId }` scoping, with the
+  filter applied BEFORE the cap so a user's own older entries can't be
+  crowded out by other users' activity. The route resolves the caller's
+  role: non-admins read only their own entries; admins keep the full
+  operational log. Fail closed on DB errors (stays user-scoped). Settings →
+  Tools now shows each user their own activity; provisioned admins retain
+  the global view.
+- **Tests**: the loose route test upgraded to pin the scoped contract (own
+  visible, foreign absent); new integration E2E — alice/bob entries seeded,
+  alice's read excludes bob's, a provisioned admin sees both. Gates: backend
+  unit **1152/5**, integration **471/3**, lint 0, tsc clean.
+- **Deploy + live E2E (production)**: deployed on `53aba87`; the same fresh
+  E2E account re-reads the audit after a fresh extraction-shaped run and
+  receives **exactly its own single entry** — versus the 42 mixed entries
+  (three other users' document contents, queries, userIds) the same account
+  received on the pre-fix build. `healthz` 200; CI green.
+- **Observation (pre-existing, not a regression)**: `AGENT_DATA_DIR` is unset
+  in the prod backend env, so the configStore audit log is
+  **container-local** (`backend/data` inside the image) — it survives the
+  process but resets on each deploy. Fine for a bounded ops surface (the
+  §8-34 probe entries from the previous container went with it); set
+  `AGENT_DATA_DIR` under the volume if deploy-surviving audit history is
+  ever required.
+
+**Phase 3 remaining**: §8-22 branch-version arrows — needs a message-branch
+data model (sibling groups / parentId) that does not exist; forks are
+separate conversations today. Schema design + operator sign-off required
+(NEEDS CONFIRMATION).
+
 ## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
 
 - **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
