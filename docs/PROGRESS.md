@@ -664,6 +664,64 @@ data model (sibling groups / parentId) that does not exist; forks are
 separate conversations today. Schema design + operator sign-off required
 (NEEDS CONFIRMATION).
 
+## Phase 3 — Branch-version arrows: full message tree (audit §8-22) — SHIPPED (2026-09-26, commit `c8220af`)
+
+Operator "proceed" = the schema sign-off the ledger was waiting on.
+
+- **Data model (additive + backfilled)**: `Message.parentId` (the row each
+  message follows in its branch; existing rows chained chronologically via a
+  LAG-window backfill — the linear history they already represent) +
+  `Conversation.activeLeafId` (tip of the active path; every save extends
+  it). Deliberately no FK on parentId (rows are only removed in bulk).
+- **Branch-aware context everywhere**: `chatStore.getHistory` walks
+  leaf→root (light skeleton pass + window fetch) instead of a flat
+  chronological mix — off-path versions can never leak into model context;
+  the existing `.slice(0, -1)`-style call sites keep their exact semantics.
+  No active leaf → legacy flat read (memory store stays flat, same boundary
+  as /fork).
+- **Stream branch inputs**: `regenerateOf` (retry — re-answer a stored user
+  row; the STORED prompt is the source of truth, the client copy ignored;
+  no new user row: the new answer is a sibling of the old one) and
+  `parentMessageId` (edit — new prompt sibling under the edited turn's
+  predecessor; explicit null = root sibling). Mutually exclusive; both need
+  an existing conversation + a database; ownership is part of the anchor
+  lookups; image turns fall back to edit-resend client-side.
+- **Routes**: `GET /messages?branch=1` → `{ activeLeafId, messages }`
+  envelope (legacy flat array still served without the flag — mobile
+  untouched); `POST /branch-select` switches the active path, descending to
+  the subtree tip along newest children ("the branch as you left it").
+  Share links + nightly memory synthesis now serve the active path
+  (synthesis also fixed: the old asc+take read the OLDEST 20 per
+  conversation; now the newest window).
+- **Frontend**: the transcript renders the ACTIVE PATH (`lib/branch.ts` —
+  pure walk + version-group derivation, cycle-guarded, legacy fallback);
+  `<2/3>` arrows on user AND assistant bubbles flip versions via
+  branch-select; Retry = immediate non-destructive regenerate; Edit =
+  in-place sibling version with a visible pending-branch banner (the old
+  fork-to-new-conversation UI is retired; endpoint kept for mobile/compat);
+  `/undo` loads the prompt as a branch edit; while a branched run streams,
+  the transcript truncates at its anchor and the new turn renders in place.
+- **Tests**: 7 integration E2Es (sibling creation + context isolation,
+  tip-descent switch, edit anchoring incl. root edit, envelope vs legacy
+  shapes, foreign-anchor rejection, mutual exclusion + 'new' guard),
+  chatStore path-walk unit, 6 branch-view + 3 component tests. Gates:
+  backend unit **1153/5**, integration **478/3**, lint 0, tsc clean;
+  frontend **107/107**, Playwright **12/12**, build green. All four CI
+  workflows green on `c8220af`; the CI drift gate shows only the two
+  allowlisted pgvector artifacts.
+- **Deploy note**: the first backend deploy failed on the supervisor's
+  `prisma migrate status` preflight gate — the supervisor never applies
+  migrations (it only verifies), so every new migration must be applied
+  out-of-band. Applied `20260926120000_message_branching` to prod via a
+  temporary (since-removed) postgres TCP proxy — first try, backfills
+  included — and the redeploy came up healthy. Same playbook as the
+  pinned-migration incident; `docs/RUNBOOK.md` covers it.
+
+**Phase 3 COMPLETE: every §8 "Important" item is now shipped.** What
+remains on the audit list is Nice-to-have tier only (§8-35..47: theme
+switcher, PIP, queueing, connectors chip, mobile parity, native signing,
+voice mode, backend TTS — several already satisfied incidentally).
+
 ## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
 
 - **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
