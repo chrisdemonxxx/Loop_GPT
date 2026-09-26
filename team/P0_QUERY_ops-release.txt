@@ -1,0 +1,1 @@
+You are on the Loop GPT team. Working directory is the project root C:\Users\chris\Desktop\Workspace\dev-projects\loop-gpt. Read team/P0_KICKOFF_ops-release.md and do EXACTLY the bounded task in it. Then stop. Report in at most 4 lines: what you wrote (path + byte size) and the raw command results you observed. Do not start any other work.
