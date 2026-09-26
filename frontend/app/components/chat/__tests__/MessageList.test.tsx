@@ -152,3 +152,85 @@ describe('history virtualization (§8-33)', () => {
     expect(container.querySelector('[data-index="0"]')).not.toBeNull()
   })
 })
+
+describe('branch version arrows (§8-22)', () => {
+  const liveProps = {
+    liveUser: null, liveSteps: [] as any[], liveAnswer: '', liveArtifacts: [] as any[],
+    running: false, statusMsg: '', mode: 'agent' as const,
+    onEditMessage: () => {}, onRetryBefore: () => {},
+  }
+
+  const branchedRows: Message[] = [
+    msg({ id: 'u1', role: 'user', content: 'the prompt', parentId: null }),
+    msg({ id: 'a-old', content: 'first answer', parentId: 'u1' }),
+    msg({ id: 'a-new', content: 'regenerated answer', parentId: 'u1' }),
+  ]
+  const versions = {
+    'a-new': { index: 2, count: 2, prev: branchedRows[1], next: undefined },
+  }
+
+  it('renders <2/3> arrows on a versioned row and flips on click', () => {
+    const select = vi.fn()
+    render(
+      <MessageList
+        messages={[branchedRows[0], branchedRows[2]]}
+        versions={versions as any}
+        onSelectVersion={select}
+        {...liveProps}
+      />,
+    )
+    expect(screen.getByTestId('version-arrows')).toBeInTheDocument()
+    expect(screen.getByLabelText('Version 2 of 2')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /show previous version/i }))
+    expect(select).toHaveBeenCalledWith('a-old')
+  })
+
+  it('hides the arrows on singleton rows', () => {
+    render(
+      <MessageList
+        messages={[branchedRows[0], branchedRows[1]]}
+        versions={{}}
+        onSelectVersion={() => {}}
+        {...liveProps}
+      />,
+    )
+    expect(screen.queryByTestId('version-arrows')).not.toBeInTheDocument()
+  })
+
+  it('truncates the transcript at the live anchor while a branched run streams', () => {
+    const messages: Message[] = [
+      msg({ id: 'u1', role: 'user', content: 'the prompt', parentId: null }),
+      msg({ id: 'a-old', content: 'first answer', parentId: 'u1' }),
+    ]
+    const { rerender } = render(
+      <MessageList
+        messages={messages}
+        liveReplaceAfterId={null}
+        {...liveProps}
+      />,
+    )
+    expect(screen.getByText('first answer')).toBeInTheDocument()
+    // A retry streams in place of the old answer: rows after the anchor
+    // (the re-answered user row) are hidden while the run is live.
+    rerender(
+      <MessageList
+        messages={messages}
+        liveReplaceAfterId="u1"
+        liveUser={{ content: 'the prompt' }}
+        liveSteps={[]}
+        liveAnswer="regenerating…"
+        liveArtifacts={[]}
+        running
+        statusMsg=""
+        mode="agent"
+        onEditMessage={() => {}}
+        onRetryBefore={() => {}}
+      />,
+    )
+    expect(screen.queryByText('first answer')).not.toBeInTheDocument()
+    // The anchor row stays (inclusive) — the stored prompt AND the live echo
+    // of the same text both render, so assert presence, not uniqueness.
+    expect(screen.getAllByText('the prompt').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('regenerating…')).toBeInTheDocument()
+  })
+})

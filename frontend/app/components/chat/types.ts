@@ -9,6 +9,9 @@ export interface Message {
   attachmentId?: string
   toolUsed?: string
   metadata?: any
+  /** Branch tree (§8-22): the row this message follows in its branch.
+   *  Versions of a turn (retries / edits) share the same parentId. */
+  parentId?: string | null
 }
 
 export interface Conversation {

@@ -372,6 +372,10 @@ model Conversation {
   /// Public read-only share token (null = not shared). Grants transcript
   /// reads via /api/share/:token only.
   shareToken String?  @unique
+  /// Leaf of the active branch path (audit §8-22): the tip the transcript
+  /// shows and runs read as context. Null = no messages yet (or the legacy
+  /// memory store, which stays flat).
+  activeLeafId String?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -543,7 +547,16 @@ model Message {
   toolUsed       String?      // Tool used: 'generate-image', 'analyze-image', 'vision-chat', 'mcp', etc.
   metadata       Json?        // Additional metadata as JSON
 
+  /// Branch tree (audit §8-22): id of the row this message follows within
+  /// its branch. Regenerated answers and edited prompts become siblings —
+  /// versions of a turn share the same parentId. Deliberately not an FK
+  /// relation: rows are only removed in bulk (conversation cascade, rewind
+  /// ranges), and a self-FK would add delete-ordering constraints with no
+  /// product value here.
+  parentId       String?
+
   @@index([conversationId])
+  @@index([parentId])
 }
 
 

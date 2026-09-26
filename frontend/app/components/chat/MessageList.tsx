@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { type AgentMode } from '../../lib/api'
 import { type ArtifactRef } from '../../lib/stream'
+import { type BranchVersionInfo } from '../../lib/branch'
 import Markdown from './Markdown'
 import type { LiveStep, Message, PendingApproval } from './types'
 import { MessageBubble } from './MessageBubble'
@@ -30,6 +31,13 @@ interface MessageListProps {
   /** Extended thinking (§2.5): reasoning stream for the live assistant turn. */
   liveThinking?: string
   liveArtifacts: ArtifactRef[]
+  /** §8-22: while a retry/edit run streams, the stored transcript truncates
+   * at this row (inclusive) and the live turn renders in its place. */
+  liveReplaceAfterId?: string | null
+  /** §8-22 version-arrow data per displayed row (rows with siblings only). */
+  versions?: Record<string, BranchVersionInfo>
+  /** §8-22: switch the active path to a sibling version row. */
+  onSelectVersion?: (messageId: string) => void
   running: boolean
   statusMsg: string
   mode: AgentMode
@@ -53,21 +61,26 @@ interface MessageListProps {
  * Auto-scroll only while the reader is at the bottom (scroll-fight
  * protection, audit §8-18); otherwise a floating jump-to-bottom button. */
 export default function MessageList({
-  messages, conversationId, liveUser, liveSteps, liveAnswer, liveThinking, liveArtifacts,
+  messages, conversationId, liveUser, liveSteps, liveAnswer, liveThinking, liveArtifacts, liveReplaceAfterId,
+  versions, onSelectVersion,
   running, statusMsg, mode, pendingApproval, onApprove, onDeny, toolCount, onOpenTools,
   onOpenArtifact, onOpenArtifactByName, onEditMessage, onRetryBefore, onStartPrompt,
 }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [atBottom, setAtBottom] = useState(true)
-  const showEmpty = messages.length === 0 && !liveUser
-  const virtualize = messages.length > VIRTUALIZE_ABOVE
+  // §8-22: a branched (retry/edit) live run replaces everything after its
+  // anchor — the old version swaps out while the new one streams in place.
+  const anchorIndex = liveReplaceAfterId ? messages.findIndex((m) => m.id === liveReplaceAfterId) : -1
+  const visible = anchorIndex >= 0 ? messages.slice(0, anchorIndex + 1) : messages
+  const showEmpty = visible.length === 0 && !liveUser
+  const virtualize = visible.length > VIRTUALIZE_ABOVE
 
   // Virtualized window over the stored history (§8-33): dynamic row
   // measurement (ResizeObserver via measureElement), overscan keeps scroll-up
   // smooth. The live turn + the end sentinel stay OUTSIDE the window.
   const virtualizer = useVirtualizer({
-    count: virtualize ? messages.length : 0,
+    count: virtualize ? visible.length : 0,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 220,
     overscan: 10,
@@ -110,7 +123,7 @@ export default function MessageList({
               style={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}
             >
               {virtualizer.getVirtualItems().map((vi) => {
-                const m = messages[vi.index]
+                const m = visible[vi.index]
                 return (
                   <div
                     key={m.id}
@@ -124,6 +137,8 @@ export default function MessageList({
                       conversationId={conversationId}
                       onOpenArtifact={onOpenArtifact}
                       onOpenArtifactByName={onOpenArtifactByName}
+                      version={versions?.[m.id]}
+                      onSelectVersion={onSelectVersion}
                       onEdit={m.role === 'user' ? () => onEditMessage(m.id, m.content) : undefined}
                       onRetry={m.role === 'assistant' ? () => onRetryBefore(vi.index) : undefined}
                     />
@@ -132,13 +147,15 @@ export default function MessageList({
               })}
             </div>
           ) : (
-            messages.map((m, idx) => (
+            visible.map((m, idx) => (
               <MessageBubble
                 key={m.id}
                 message={m}
                 conversationId={conversationId}
                 onOpenArtifact={onOpenArtifact}
                 onOpenArtifactByName={onOpenArtifactByName}
+                version={versions?.[m.id]}
+                onSelectVersion={onSelectVersion}
                 onEdit={m.role === 'user' ? () => onEditMessage(m.id, m.content) : undefined}
                 onRetry={m.role === 'assistant' ? () => onRetryBefore(idx) : undefined}
               />

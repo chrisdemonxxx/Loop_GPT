@@ -1,10 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { Copy, Check, Edit2, RotateCcw, Sparkles, Volume2, Pause, Square, Brain, ThumbsUp, ThumbsDown, Loader2 } from 'lucide-react'
+import { Copy, Check, ChevronLeft, ChevronRight, Edit2, RotateCcw, Sparkles, Volume2, Pause, Square, Brain, ThumbsUp, ThumbsDown, Loader2 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { API_URL, authHeaders } from '../../lib/api'
 import { type ArtifactRef } from '../../lib/stream'
+import { type BranchVersionInfo } from '../../lib/branch'
 import type { Message, StoredStep } from './types'
 import Markdown from './Markdown'
 import { useAttachmentUrl } from './artifactUrl'
@@ -16,12 +17,37 @@ import { useToast } from '../../lib/toast'
 /** Long user messages truncate with an inline expander (audit §8-20). */
 const USER_TRUNCATE = 420
 
+/** <2/3> version arrows (audit §8-22): retries and edits are sibling
+ * versions of a turn; the arrows flip the transcript between them. */
+function VersionArrows({ info, onSelect }: { info: BranchVersionInfo; onSelect?: (messageId: string) => void }) {
+  const pick = (row?: Message) => row && onSelect?.(row.id)
+  return (
+    <span className="inline-flex items-center gap-0.5" data-testid="version-arrows">
+      <ActionBtn
+        onClick={() => pick(info.prev)}
+        title="Previous version"
+        ariaLabel={`Show previous version (${info.index - 1} of ${info.count})`}
+        icon={<ChevronLeft size={14} />}
+      />
+      <span className="text-[11px] text-slate-400 tabular-nums px-0.5 select-none" aria-label={`Version ${info.index} of ${info.count}`}>
+        {info.index}/{info.count}
+      </span>
+      <ActionBtn
+        onClick={() => pick(info.next)}
+        title="Next version"
+        ariaLabel={`Show next version (${info.index + 1} of ${info.count})`}
+        icon={<ChevronRight size={14} />}
+      />
+    </span>
+  )
+}
+
 /** One chat row: user bubble (right, editable, truncated when long) or
  * assistant turn (markdown, artifacts, sources, read-aloud, retry, and
  * thumbs feedback wired to POST /api/telemetry/feedback — audit §8-21).
  * Artifact cards open the right-hand artifacts panel. */
 export function MessageBubble({
-  message, conversationId, onEdit, onRetry, onOpenArtifact, onOpenArtifactByName,
+  message, conversationId, onEdit, onRetry, onOpenArtifact, onOpenArtifactByName, version, onSelectVersion,
 }: {
   message: Message
   conversationId?: string | null
@@ -30,6 +56,10 @@ export function MessageBubble({
   onOpenArtifact?: (artifact: ArtifactRef) => void
   /** §8-28: per-step "View in panel" links resolve artifact names here. */
   onOpenArtifactByName?: (name: string) => void
+  /** §8-22: sibling-version info when this row has alternates. */
+  version?: BranchVersionInfo
+  /** §8-22: flip to a sibling version row. */
+  onSelectVersion?: (messageId: string) => void
 }) {
   const [copied, setCopied] = useState(false)
   const [showPrompt, setShowPrompt] = useState(false)
@@ -105,6 +135,7 @@ export function MessageBubble({
         </div>
         {onEdit && (
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity pr-1">
+            {version && <VersionArrows info={version} onSelect={onSelectVersion} />}
             <ActionBtn onClick={onEdit} title="Edit" icon={<Edit2 size={13} />} />
             <ActionBtn onClick={copy} title="Copy" icon={copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />} />
           </div>
@@ -188,6 +219,7 @@ export function MessageBubble({
       )}
 
       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity -ml-1">
+        {version && <VersionArrows info={version} onSelect={onSelectVersion} />}
         <ActionBtn onClick={copy} title="Copy" ariaLabel="Copy message" icon={copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />} />
         {speech.supported && message.content && (
           <>

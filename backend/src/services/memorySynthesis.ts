@@ -98,22 +98,43 @@ export async function runMemorySynthesis(signal?: AbortSignal): Promise<Synthesi
     try {
       const conversations = await prisma.conversation.findMany({
         where: { userId: user.id, updatedAt: { gte: since }, incognito: false },
-        select: { id: true },
+        select: { id: true, activeLeafId: true },
         orderBy: { updatedAt: 'desc' },
         take: MAX_CONVERSATIONS_PER_USER,
       })
       if (!conversations.length) continue
 
-      // Build a bounded transcript from recent messages.
+      // Build a bounded transcript from recent messages — the ACTIVE PATH
+      // (§8-22: what the user actually sees and continues), not a flat
+      // chronological mix that would synthesize memories from stale branch
+      // versions. Falls back to flat when the conversation has no active
+      // leaf (pre-migration edge); the window takes the NEWEST turns of the
+      // path (the old asc+take read the oldest 20 — fixed here).
       let transcript = ''
       for (const conv of conversations) {
-        const msgs = await prisma.message.findMany({
+        const rows = await prisma.message.findMany({
           where: { conversationId: conv.id, role: { in: ['user', 'assistant'] } },
-          select: { role: true, content: true },
-          orderBy: { createdAt: 'asc' },
-          take: 20,
+          select: { id: true, role: true, content: true, parentId: true },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         })
-        for (const m of msgs) {
+        let msgs: Array<{ role: string; content: string }> = rows.map((r) => ({ role: r.role, content: r.content }))
+        if (conv.activeLeafId) {
+          const byId = new Map(rows.map((r) => [r.id, r]))
+          const pathIds: string[] = []
+          const seen = new Set<string>()
+          let cursor: string | null | undefined = conv.activeLeafId
+          while (cursor && !seen.has(cursor)) {
+            seen.add(cursor)
+            const row = byId.get(cursor)
+            if (!row) break
+            pathIds.push(row.id)
+            cursor = row.parentId
+          }
+          pathIds.reverse()
+          const onPath = new Set(pathIds)
+          msgs = rows.filter((r) => onPath.has(r.id)).map((r) => ({ role: r.role, content: r.content }))
+        }
+        for (const m of msgs.slice(-20)) {
           const line = `${m.role === 'user' ? 'User' : 'Assistant'}: ${String(m.content || '').slice(0, 1500)}`
           if (transcript.length + line.length > MAX_TRANSCRIPT_CHARS) break
           transcript += `${line}\n`

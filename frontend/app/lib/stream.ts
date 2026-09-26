@@ -57,6 +57,12 @@ export interface StreamBody {
   webSearch?: boolean
   /** Extended-thinking override (§8-26): per-run CoT switch. */
   thinking?: boolean
+  /** Branch anchor (§8-22, edit flow): the row the new user message should
+   *  follow. Explicit null = a new root sibling (editing the first turn). */
+  parentMessageId?: string | null
+  /** Branch retry (§8-22): re-answer this stored user message — the new
+   *  answer becomes a sibling of the old one (<2/3> arrows). */
+  regenerateOf?: string
   mode?: string
   provider?: string
   model?: string
@@ -84,7 +90,7 @@ export async function runAgentStream(
   // /api/agent/:id/stream and rejects BYOK fields (provider/model/apiKey) and
   // server file paths (imagePath). Send only the hosted contract, including the
   // attachmentId so image attachments actually reach the vision path.
-  const safeBody: { content: string; mode: string; attachmentId?: string; attachmentIds?: string[]; toolNames?: string[]; autoApprove?: boolean; stepMode?: boolean; incognito?: boolean; projectId?: string; model?: string; webSearch?: boolean; thinking?: boolean } = {
+  const safeBody: { content: string; mode: string; attachmentId?: string; attachmentIds?: string[]; toolNames?: string[]; autoApprove?: boolean; stepMode?: boolean; incognito?: boolean; projectId?: string; model?: string; webSearch?: boolean; thinking?: boolean; parentMessageId?: string | null; regenerateOf?: string } = {
     content: body.content,
     mode: body.mode || 'chat',
   }
@@ -103,6 +109,11 @@ export async function runAgentStream(
   if (body.thinking !== undefined) safeBody.thinking = body.thinking
   // Hosted model tier selection (the server rejects provider/apiKey/baseUrl).
   if (body.model) safeBody.model = body.model
+  // Branch anchoring (§8-22): an explicit parentMessageId (string OR null —
+  // null edits the first turn) creates a sibling prompt version; regenerateOf
+  // re-answers a stored user message. Both must survive the safe-body trim.
+  if (body.parentMessageId !== undefined) safeBody.parentMessageId = body.parentMessageId
+  if (body.regenerateOf) safeBody.regenerateOf = body.regenerateOf
 
   // ── Resume bookkeeping ─────────────────────────────────────────────────
   let runId = ''

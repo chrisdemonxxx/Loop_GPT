@@ -1,12 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 
 import { API_URL, authHeaders, getToken, type AgentMode } from '../lib/api'
 import { runAgentStream, type ArtifactRef } from '../lib/stream'
 import { track } from '../components/Analytics'
+import { buildBranchView, type BranchVersionInfo } from '../lib/branch'
 import type { Project } from '../components/ProjectsPanel'
 import type { Conversation, Message, LiveStep, PendingApproval } from '../components/chat/types'
 // ---------------------------------------------------------------------------
@@ -140,13 +141,29 @@ export function useConversationsData(
     enabled: typeof window !== 'undefined',
   })
 
-  const { data: messages = [] } = useQuery<Message[]>({
+  // Branch envelope (§8-22): every row + the active leaf. The transcript
+  // renders the DERIVED active path (buildBranchView) so retries and edits
+  // become <2/3> version arrows instead of destructive rewrites.
+  const { data: branch = { activeLeafId: null, messages: [] } } = useQuery<{ activeLeafId: string | null; messages: Message[] }>({
     queryKey: ['messages', currentConversationId],
     queryFn: async () => {
-      if (!currentConversationId) return []
-      return (await axios.get(`${API_URL}/api/conversations/${currentConversationId}/messages`, { headers: authHeaders(false) }).catch(() => ({ data: [] }))).data
+      if (!currentConversationId) return { activeLeafId: null, messages: [] }
+      return (await axios.get(`${API_URL}/api/conversations/${currentConversationId}/messages?branch=1`, { headers: authHeaders(false) }).catch(() => ({ data: { activeLeafId: null, messages: [] } as { activeLeafId: string | null; messages: Message[] } }))).data
     },
     enabled: !!currentConversationId && typeof window !== 'undefined',
+  })
+  const branchView = useMemo(() => buildBranchView(branch.messages, branch.activeLeafId), [branch])
+
+  /** Version arrows (§8-22): switching persists the new active path
+   *  server-side (run context follows it), then updates the cached
+   *  envelope — the client already holds every row, no refetch needed. */
+  const selectVersion = useMutation({
+    mutationFn: async ({ conversationId, messageId }: { conversationId: string; messageId: string }) =>
+      (await axios.post(`${API_URL}/api/conversations/${conversationId}/branch-select`, { messageId }, { headers: authHeaders() })).data as { activeLeafId: string },
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData<{ activeLeafId: string | null; messages: Message[] }>(['messages', variables.conversationId], (old) =>
+        old ? { ...old, activeLeafId: data.activeLeafId } : old)
+    },
   })
 
   const updateConv = useMutation({
@@ -168,7 +185,18 @@ export function useConversationsData(
   const invalidateMessages = (id: string | null) =>
     id ? queryClient.invalidateQueries({ queryKey: ['messages', id] }) : Promise.resolve()
 
-  return { conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages }
+  // `messages` is the ACTIVE PATH — every existing consumer (transcript,
+  // export, context meter, retry indices) works on exactly what is displayed.
+  const messages = branchView.path
+  return {
+    conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages,
+    /** Version-arrow data per displayed row (§8-22). */
+    branchVersions: branchView.versions as Record<string, BranchVersionInfo>,
+    /** The conversation's active branch tip. */
+    activeLeafId: branch.activeLeafId,
+    /** Switch the active path to a version row (§8-22 arrows). */
+    selectVersion,
+  }
 }
 
 export interface ConversationSearchHit {
@@ -353,6 +381,11 @@ export interface ChatStreamSendOptions {
   /** Explicit per-run overrides (§8-25/26): undefined = server default. */
   webSearch?: boolean
   thinking?: boolean
+  /** Branch anchors (§8-22): an edit re-sends as a sibling prompt under
+   *  parentMessageId (explicit null = first turn); a retry re-answers the
+   *  stored user row regenerateOf. Mutually exclusive on the server. */
+  parentMessageId?: string | null
+  regenerateOf?: string
   /** Resolves (creating if needed) the conversation for this turn. */
   ensureConversation: (firstMessage: string) => Promise<string>
 }
@@ -371,6 +404,10 @@ export function useChatStream() {
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
   const [liveArtifacts, setLiveArtifacts] = useState<ArtifactRef[]>([])
   const [liveThinking, setLiveThinking] = useState('')
+  /** §8-22: while a branched run (retry/edit) streams, the transcript is
+   * truncated at this row and the live turn renders in its place — the
+   * Claude-style "the old version swaps out while the new one streams". */
+  const [liveAnchorId, setLiveAnchorId] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   /** The active durable run's id (§8-30) — the stop button cancels it. */
   const runIdRef = useRef<string | null>(null)
@@ -450,9 +487,12 @@ export function useChatStream() {
   }
 
   async function send(opts: ChatStreamSendOptions) {
-    const { content, sendMode, commandTools, attachmentIds, previews, docNames, runMode, modelTier, selectedTools, incognito, projectId, webSearch, thinking, ensureConversation } = opts
+    const { content, sendMode, commandTools, attachmentIds, previews, docNames, runMode, modelTier, selectedTools, incognito, projectId, webSearch, thinking, parentMessageId, regenerateOf, ensureConversation } = opts
     setRunning(true); setStatusMsg(''); setLiveSteps([]); setLiveArtifacts([]); setLiveThinking('')
     runIdRef.current = null
+    // §8-22: a retry anchors under the re-answered user row; an edit under
+    // the edited prompt's predecessor; a normal send appends (no truncation).
+    setLiveAnchorId(regenerateOf ?? (parentMessageId !== undefined ? parentMessageId : null))
     setLiveUser({ content, image: previews[0], images: previews, docs: docNames })
     track('message_sent', { mode: sendMode })
 
@@ -478,6 +518,9 @@ export function useChatStream() {
         // Explicit capability overrides — only present when chosen (§8-25/26).
         ...(webSearch !== undefined ? { webSearch } : {}),
         ...(thinking !== undefined ? { thinking } : {}),
+        // Branch anchoring (§8-22) — only present when retrying/editing.
+        ...(parentMessageId !== undefined ? { parentMessageId } : {}),
+        ...(regenerateOf ? { regenerateOf } : {}),
       }, {
         onStatus: (m) => { if (!m.startsWith('conversation:')) setStatusMsg(m) },
         onWarming: (m) => setStatusMsg(m),
@@ -566,13 +609,13 @@ export function useChatStream() {
       abortRef.current = null
       if (convId) await queryClient.invalidateQueries({ queryKey: ['messages', convId] })
       await queryClient.invalidateQueries({ queryKey: ['conversations'] })
-      setLiveUser(null); setStatusMsg('')
+      setLiveUser(null); setStatusMsg(''); setLiveAnchorId(null)
     }
   }
 
   return {
     running, statusMsg, liveUser, liveSteps, liveArtifacts, liveThinking, liveAnswer,
-    pendingApproval, setPendingApproval,
+    pendingApproval, setPendingApproval, liveAnchorId,
     stopRun, resetLive, clearTurn, send,
   }
 }

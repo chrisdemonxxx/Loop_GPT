@@ -63,12 +63,17 @@ export default function ChatPage() {
 
   // ── Data ──────────────────────────────────────────────────────────────────
   const { workspaceId, projects, activeProjectId, setActiveProjectId, refreshProjects } = useWorkspaceProjects()
-  const { conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages } =
+  const { conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages, branchVersions, selectVersion } =
     useConversationsData(currentConversationId, (id) => { if (currentConversationId === id) setCurrentConversationId(null) })
   const chat = useChatStream()
   // ── Sidebar search: title filter locally + server-side message-body hits
   const [sidebarSearch, setSidebarSearch] = useState('')
   const messageHits = useConversationSearch(sidebarSearch)
+  /** §8-22 pending branch edit: when set (string | null), the NEXT send
+   * becomes a sibling prompt version under this parent (null = first turn).
+   * undefined = a normal send. Set by the Edit action, cleared by send,
+   * conversation switch, or the banner's cancel. */
+  const [pendingBranch, setPendingBranch] = useState<string | null | undefined>(undefined)
 
   useEffect(() => {
     fetch(`${API_URL}/api/agent/tools`, { headers: authHeaders() })
@@ -105,49 +110,62 @@ export default function ChatPage() {
       getDraft(nextKey).then((saved) => { if (saved && typeof saved === 'string') setInput(saved) })
     }
     setCurrentConversationId(id)
+    setPendingBranch(undefined)
     chat.resetLive()
     panels.setArtifactsOpen(false)
   }
 
-  /** Message branching (§2.5): editing an earlier user message forks the
-   * conversation at that point into a new branch and loads the text. */
-  async function forkAtMessage(messageId: string, content: string) {
-    if (!currentConversationId) { setInput(content); return }
-    try {
-      const res = await fetch(`${API_URL}/api/conversations/${currentConversationId}/fork`, {
-        method: 'POST', headers: authHeaders(), body: JSON.stringify({ messageId }),
-      })
-      const d = await res.json().catch(() => ({}))
-      if (!res.ok || !d.conversationId) { setInput(content); return }
-      setCurrentConversationId(d.conversationId)
-      chat.resetLive()
-      panels.setArtifactsOpen(false)
-      invalidateConversations()
-      setInput(content)
-      requestAnimationFrame(() => document.querySelector('textarea')?.focus())
-    } catch { setInput(content) }
+  // ── Message branching (audit §8-22) ───────────────────────────────────────
+
+  /** Version arrows: switch the active path to a sibling version row. The
+   * server resolves + persists the new active leaf (run context follows);
+   * the cached envelope updates, so the derived transcript re-renders. */
+  function selectVersionRow(conversationId: string | null, messageId?: string) {
+    if (!conversationId || !messageId) return
+    selectVersion.mutate({ conversationId, messageId })
   }
 
-  /** Rewind to the user prompt that precedes the given assistant message:
-   * truncate after that prompt, put it back in the composer, and scroll up —
-   * so re-sending replaces the branch instead of appending. */
-  async function retryBefore(index: number) {
-    let userIdx = index - 1
-    while (userIdx >= 0 && messages[userIdx]?.role !== 'user') userIdx--
-    const userMsg = messages[userIdx]
+  /** Re-answer a stored turn WITHOUT destroying the old answer (§8-22): the
+   * new response becomes a sibling — <2/3> arrows flip between versions.
+   * Text turns re-run immediately with the stored prompt; image/document
+   * turns fall back to the composer (the send then branches under the same
+   * parent). `beforeIndex` is a transcript index (the assistant row, or the
+   * row above a user row). */
+  function retryBefore(index: number) {
+    const pathMsgs = messages as Message[]
+    let userIdx = index >= pathMsgs.length ? pathMsgs.length - 1 : index
+    if (pathMsgs[userIdx]?.role === 'assistant') userIdx--
+    while (userIdx >= 0 && pathMsgs[userIdx]?.role !== 'user') userIdx--
+    const userMsg = pathMsgs[userIdx]
     if (!userMsg) return
-    setInput(userMsg.content)
-    if (currentConversationId && userMsg.id) {
-      try {
-        await axios.post(`${API_URL}/api/conversations/${currentConversationId}/rewind`,
-          { messageId: userMsg.id }, { headers: authHeaders() })
-        await invalidateMessages(currentConversationId)
-        await invalidateConversations()
-      } catch { /* offline: the prompt is still in the composer */ }
+    if (!currentConversationId || chat.running) return
+    if (userMsg.messageType && userMsg.messageType !== 'text') {
+      // Image turns can't be replayed from the stored row (their attachments
+      // live in the private store): edit-resend creates the version.
+      setPendingBranch(userMsg.parentId ?? null)
+      setInput(userMsg.content)
+      requestAnimationFrame(() => document.querySelector('textarea')?.focus())
+      return
     }
-    requestAnimationFrame(() => {
-      document.querySelector('textarea')?.focus()
-    })
+    const sendMode = (['chat', 'agent', 'research'].includes(String(userMsg.toolUsed)) ? userMsg.toolUsed : 'agent') as import('../lib/api').AgentMode
+    void chat.send({
+      content: userMsg.content, sendMode,
+      attachmentIds: [], previews: [], docNames: [],
+      runMode, modelTier, selectedTools: null, incognito,
+      projectId: activeProjectId || undefined,
+      regenerateOf: userMsg.id,
+      ensureConversation: async () => currentConversationId!,
+    }).then(() => invalidateConversations())
+  }
+
+  /** Edit a prompt in place (§8-22): the composer loads the stored text and
+   * the NEXT send becomes a sibling version under the same parent — the old
+   * prompt + answer stay reachable through the arrows. */
+  function editMessageAt(messageId: string, content: string) {
+    const row = (messages as Message[]).find((m) => m.id === messageId)
+    setPendingBranch(row ? (row.parentId ?? null) : null)
+    setInput(content)
+    requestAnimationFrame(() => document.querySelector('textarea')?.focus())
   }
 
   // ── Composer / send ────────────────────────────────────────────────────────
@@ -208,6 +226,10 @@ export default function ChatPage() {
     setInput('')
     uploads.reset()
     if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
+    // §8-22: an edit-in-flight re-sends as a sibling version under the
+    // remembered parent; the intent is consumed by this send.
+    const branchParent = pendingBranch
+    setPendingBranch(undefined)
 
     await chat.send({
       content, sendMode, commandTools,
@@ -218,6 +240,7 @@ export default function ChatPage() {
       // Explicit overrides only (§8-25/26): undefined keeps the server default.
       webSearch: webSearch === 'auto' ? undefined : webSearch === 'on',
       thinking: thinking === 'auto' ? undefined : thinking === 'on',
+      ...(branchParent !== undefined ? { parentMessageId: branchParent } : {}),
       ensureConversation,
     })
   }
@@ -278,10 +301,19 @@ export default function ChatPage() {
       case '/connectors': setSettingsTab('connectors'); setShowSettings(true); break
       case '/projects': setProjectsOpen(true); break
       case '/model': (document.querySelector('button[title="Choose model"]') as HTMLElement | null)?.click(); break
-      case '/undo': retryBefore((messages as Message[]).length - 1); break
+      case '/undo': {
+        // Non-destructive (§8-22): the last prompt goes back in the composer
+        // as a pending branch edit — re-sending keeps the old turn as a
+        // version instead of deleting it.
+        const pathMsgs = messages as Message[]
+        const lastUser = [...pathMsgs].reverse().find((m) => m.role === 'user')
+        if (lastUser) editMessageAt(lastUser.id, lastUser.content)
+        break
+      }
       case '/retry': {
-        const last = [...(messages as Message[])].reverse().find((m) => m.role === 'user')
-        if (last) { retryBefore((messages as Message[]).indexOf(last)) }
+        const pathMsgs = messages as Message[]
+        const lastUser = [...pathMsgs].reverse().find((m) => m.role === 'user')
+        if (lastUser) retryBefore(pathMsgs.indexOf(lastUser))
         break
       }
       case '/stop': chat.stopRun(); break
@@ -429,6 +461,12 @@ export default function ChatPage() {
           liveAnswer={chat.liveAnswer}
           liveThinking={chat.liveThinking}
           liveArtifacts={chat.liveArtifacts}
+          /** §8-22: while a retry/edit run streams, the transcript truncates
+           * at this row and the live turn renders in its place. */
+          liveReplaceAfterId={chat.liveAnchorId}
+          /** §8-22 version arrows: per-row sibling info + the switch handler. */
+          versions={branchVersions}
+          onSelectVersion={(messageId) => selectVersionRow(currentConversationId, messageId)}
           onStartPrompt={(prompt) => { setInput(prompt); setTimeout(() => document.querySelector('textarea')?.focus(), 100) }}
           running={chat.running}
           statusMsg={chat.statusMsg}
@@ -440,7 +478,7 @@ export default function ChatPage() {
           onOpenTools={() => { setSettingsTab('tools'); setShowSettings(true) }}
           onOpenArtifact={openArtifact}
           onOpenArtifactByName={openArtifactByName}
-          onEditMessage={forkAtMessage}
+          onEditMessage={editMessageAt}
           onRetryBefore={retryBefore}
         />
 
@@ -448,6 +486,14 @@ export default function ChatPage() {
             --kb-offset variable from useKeyboardSafeBottom (audit P6). */}
         <div className="border-t border-white/[0.05] px-3 sm:px-4 py-3 sm:py-4 pb-[max(0.75rem,calc(env(safe-area-inset-bottom)+var(--kb-offset)))] bg-[#111113]">
           <div className="max-w-[48rem] mx-auto">
+            {/* §8-22 pending-branch banner: an edited prompt is loaded and the
+                next send starts a new version — visible + cancellable. */}
+            {pendingBranch !== undefined && (
+              <div data-testid="branch-edit-banner" className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-[#c96442]/30 bg-[#c96442]/[0.07] px-3 py-2 text-[12.5px] text-[#e79d7f]">
+                <span>Editing a message — your next send starts a new version of this turn.</span>
+                <button type="button" onClick={() => setPendingBranch(undefined)} className="shrink-0 rounded-md px-1.5 py-0.5 hover:bg-white/[0.06] transition" aria-label="Cancel edit">✕</button>
+              </div>
+            )}
             <Composer
               input={input}
               attachments={uploads.attachments}

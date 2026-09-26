@@ -6,7 +6,7 @@ import { imageApiService } from '../services/imageApi'
 import { ToolDetector } from '../services/toolDetector'
 import { memoryStore } from '../services/memoryStore'
 import { validate, validationSchemas } from '../middleware/validation'
-import { getOrCreateConversation, getHistory } from '../services/chatStore'
+import { getOrCreateConversation, getHistory, listBranchMessages, selectBranch } from '../services/chatStore'
 import { readOwnedImage, FileAccessError } from '../services/privateFiles'
 import { fileErrorResponse } from './files'
 import { createClient } from '../agent/llmClient'
@@ -37,6 +37,10 @@ async function hostedAnswer(target: HostedTarget, messages: OpenAI.Chat.Completi
 }
 
 // Get messages for an owned conversation; legacy workspace lifecycle is unchanged.
+// `?branch=1` (audit §8-22) returns the branch envelope: every row with its
+// parentId plus the conversation's activeLeafId, so the client renders the
+// active path with <2/3> version arrows. Without the flag the legacy flat
+// array is served (mobile + older clients).
 router.get('/:conversationId/messages', authenticateToken, validate(validationSchemas.getMessages), async (req, res) => {
   try {
     const userId = (req as any).userId
@@ -44,13 +48,43 @@ router.get('/:conversationId/messages', authenticateToken, validate(validationSc
     if (USE_MEMORY_STORE) {
       const conversation = memoryStore.getConversation(conversationId)
       if (!conversation || conversation.userId !== userId) return res.status(404).json({ error: 'Conversation not found' })
-      return res.json(memoryStore.getMessages(conversationId).map(msg => ({ ...msg, imagePath: null, createdAt: msg.createdAt.toISOString() })))
+      const messages = memoryStore.getMessages(conversationId).map(msg => ({ ...msg, imagePath: null, createdAt: msg.createdAt.toISOString() }))
+      if (req.query.branch === '1') return res.json({ activeLeafId: null, messages })
+      return res.json(messages)
     }
     const conversation = await prisma!.conversation.findFirst({ where: { id: conversationId, userId } })
     if (!conversation) return res.status(404).json({ error: 'Conversation not found' })
+    if (req.query.branch === '1') {
+      const envelope = await listBranchMessages(conversationId)
+      return res.json({ ...envelope, messages: envelope.messages.map((m) => ({ ...m, imagePath: null })) })
+    }
     const messages = await prisma!.message.findMany({ where: { conversationId }, orderBy: { createdAt: 'asc' },
-      select: { id: true, role: true, content: true, createdAt: true, messageType: true, imageUrl: true, imagePath: false, toolUsed: true, metadata: true } })
+      select: { id: true, role: true, content: true, createdAt: true, messageType: true, imageUrl: true, imagePath: false, toolUsed: true, metadata: true, parentId: true } })
     res.json(messages)
+  } catch {
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// Switch the conversation's active branch (audit §8-22 arrows): selecting a
+// version row re-roots the visible path (and all future run context) to
+// that version's subtree. The new tip is the deepest newest-descendant of
+// the selected row — see chatStore.selectBranch.
+router.post('/:conversationId/branch-select', authenticateToken, async (req, res) => {
+  try {
+    const userId = (req as any).userId
+    const { conversationId } = req.params
+    const messageId = String(req.body?.messageId || '')
+    if (!messageId) return res.status(400).json({ error: 'messageId is required' })
+    if (USE_MEMORY_STORE) return res.status(501).json({ error: 'Branching requires a database.' })
+    const conversation = await prisma!.conversation.findFirst({ where: { id: conversationId, userId } })
+    if (!conversation) return res.status(404).json({ error: 'Conversation not found' })
+    try {
+      const activeLeafId = await selectBranch(conversationId, messageId)
+      res.json({ ok: true, activeLeafId })
+    } catch {
+      return res.status(404).json({ error: 'Message not found' })
+    }
   } catch {
     res.status(500).json({ error: 'Internal server error' })
   }

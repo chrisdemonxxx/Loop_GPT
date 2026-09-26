@@ -11,7 +11,8 @@ import { z } from 'zod'
 import { readOwnedImage, readOwnedDocumentText, FileAccessError } from '../services/privateFiles'
 import { documentInline } from '../services/documentText'
 import { fileErrorResponse } from '../routes/files'
-import { getHistory, saveMessage } from '../services/chatStore'
+import { getHistory, getHistoryFromLeaf, saveMessage, USE_MEMORY_STORE } from '../services/chatStore'
+import { prisma } from '../services/prisma'
 import { prepareRunConversation } from '../services/runWorkspace'
 import { WorkspaceError } from '../services/workspaces'
 import { authorizeRunContext } from '../agent/runAuthorization'
@@ -124,9 +125,19 @@ const streamInput = z.object({
   /** Extended-thinking override (audit §8-26): per-run CoT switch for
    * thinking-capable models (e.g. Qwen /think vs /no_think). */
   thinking: z.boolean().optional(),
+  /** Branch parent (§8-22, edit flow): the row the new user message should
+   * follow — the predecessor of the prompt being edited. Explicit null =
+   * a new root sibling (editing the first turn of the conversation). */
+  parentMessageId: z.string().min(1).max(64).nullable().optional(),
+  /** Regenerate (§8-22, retry flow): re-answer this stored user message; the
+   * new assistant row becomes a sibling of the old answer (version arrows). */
+  regenerateOf: z.string().min(1).max(64).optional(),
 }).refine(
   (value) => value.content || value.attachmentId || (value.attachmentIds?.length ?? 0) > 0,
   'Message content or attachment is required',
+).refine(
+  (value) => value.parentMessageId === undefined || !value.regenerateOf,
+  'Retry (regenerateOf) and edit (parentMessageId) are mutually exclusive',
 )
 
 /**
@@ -144,7 +155,35 @@ export async function streamAgentRun(req: Request, res: Response) {
   clearApproval(conversationId)
   const input = streamInput.safeParse(req.body)
   if (!input.success) return res.status(400).json({ error: 'Invalid message; use attachmentId instead of server file paths' })
-  const { content: rawContent, attachmentId, mode } = input.data
+  const { attachmentId, mode } = input.data
+  // Branch anchoring (§8-22): retries (regenerateOf) and edits
+  // (parentMessageId) require an existing conversation and a database
+  // (the memory store stays flat — same boundary as /fork).
+  const branchRequested = input.data.regenerateOf !== undefined || input.data.parentMessageId !== undefined
+  if (branchRequested && conversationId === 'new') return res.status(400).json({ error: 'Branching requires an existing conversation' })
+  if (branchRequested && USE_MEMORY_STORE) return res.status(501).json({ error: 'Branching requires a database.' })
+  // Regenerate (§8-22): the STORED prompt is the turn's source of truth —
+  // re-run it verbatim instead of trusting the client's copy. Ownership is
+  // part of the lookup so a foreign anchor can never be probed this way.
+  let rawContent = input.data.content
+  if (input.data.regenerateOf) {
+    const anchor = await prisma?.message.findFirst({
+      where: { id: input.data.regenerateOf, conversationId, role: 'user', conversation: { userId } },
+      select: { content: true, messageType: true },
+    })
+    // Image/document turns are out of scope for one-click retry (their
+    // attachments live in the private store, not on the row): the client
+    // falls back to a manual edit-resend for those.
+    if (!anchor || anchor.messageType !== 'text') return res.status(400).json({ error: 'Cannot regenerate this turn' })
+    rawContent = anchor.content
+  } else if (input.data.parentMessageId != null) {
+    // Edit: the anchor (the edited prompt's predecessor) must exist here.
+    const anchor = await prisma?.message.findFirst({
+      where: { id: input.data.parentMessageId, conversationId, conversation: { userId } },
+      select: { id: true },
+    })
+    if (!anchor) return res.status(400).json({ error: 'Branch anchor not found' })
+  }
   // Up to four images per turn (a single `attachmentId` is also accepted).
   const attachmentIds = [...(attachmentId ? [attachmentId] : []), ...(input.data.attachmentIds || [])].slice(0, 4)
   const reviewed = availableTools()
@@ -276,14 +315,21 @@ export async function streamAgentRun(req: Request, res: Response) {
           })
         } catch { /* audit is best-effort; the defense prompt is the enforcement */ }
       }
-      await saveMessage(conversation.id, {
-        role: 'user',
-        content: raw || '',
-        messageType: hasImage ? 'mixed' : 'text',
-        imageUrl: image?.reference.url || null,
-        toolUsed: mode,
-        ...(dims ? { metadata: { imageWidth: dims.width, imageHeight: dims.height } } : {}),
-      })
+      // §8-22: a retry re-answers the stored user row (no new user row is
+      // saved — the new answer becomes a sibling of the old one); an edit
+      // parents the new prompt to the edited turn's predecessor (explicit
+      // null = root sibling). A normal send appends (undefined parent).
+      if (!input.data.regenerateOf) {
+        await saveMessage(conversation.id, {
+          role: 'user',
+          content: raw || '',
+          messageType: hasImage ? 'mixed' : 'text',
+          imageUrl: image?.reference.url || null,
+          toolUsed: mode,
+          ...(dims ? { metadata: { imageWidth: dims.width, imageHeight: dims.height } } : {}),
+          ...(input.data.parentMessageId !== undefined ? { parentId: input.data.parentMessageId } : {}),
+        })
+      }
     } catch (err: any) {
       if (lifecycle.disconnected()) return
       // Preserve the setup-error contract: allowance is restored before the
@@ -334,7 +380,14 @@ export async function streamAgentRun(req: Request, res: Response) {
         // when no explicit reference args are given.
         scratch: images.length ? { referenceImages: images.map((img) => img.dataUri) } : {} }
       // Build message history + current turn (conversation memory window).
-      const history = await getHistory(conversation.id, agentConfig.historyWindow)
+      // §8-22: a retry walks the path that ENDS at the anchor user row (the
+      // old answer is a child of it — never on the ancestry path, so the
+      // regenerating model never sees its own previous attempt); every
+      // other run reads the active path. Both windows end with the user
+      // turn being answered, which slice(0,-1) below removes.
+      const history = input.data.regenerateOf
+        ? await getHistoryFromLeaf(input.data.regenerateOf, agentConfig.historyWindow)
+        : await getHistory(conversation.id, agentConfig.historyWindow)
       lifecycle.check()
       const priorTurns: ChatMessage[] = history
         .filter((m) => m.role === 'user' || m.role === 'assistant')
@@ -448,6 +501,9 @@ export async function streamAgentRun(req: Request, res: Response) {
           // so the collapsible "Thoughts" block survives reloads.
           ...(reasoningCapture ? { reasoning: reasoningCapture } : {}),
         }),
+        // §8-22 retry: the regenerated answer hangs directly under the
+        // re-answered user row (sibling of the previous attempt).
+        ...(input.data.regenerateOf ? { parentId: input.data.regenerateOf } : {}),
       })
 
       if (finalEvent) emit(finalEvent)
@@ -465,6 +521,8 @@ export async function streamAgentRun(req: Request, res: Response) {
         content: `⚠️ ${message}`,
         toolUsed: mode,
         metadata: { error: true },
+        // §8-22 retry: an error result still occupies the version slot.
+        ...(input.data.regenerateOf ? { parentId: input.data.regenerateOf } : {}),
       }).catch(() => {})
     }
   } finally {
