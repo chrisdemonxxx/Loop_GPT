@@ -1,13 +1,14 @@
 'use client'
 
 import { useState } from 'react'
-import { PanelLeft, FileDown, Sparkles, FlaskConical, Ghost } from 'lucide-react'
+import { PanelLeft, FileDown, Sparkles, FlaskConical, Ghost, Sun, Moon, Monitor } from 'lucide-react'
 import ModelSelector from '../ModelSelector'
+import type { ThemeChoice } from '../../lib/theme'
 
 /** The top bar: sidebar toggle, session title, model selector, incognito,
- * export menu, Files/Research toggles. Pure presentational; every behavior is
- * delegated through props. (Agent activity is inline per turn — there is no
- * Activity panel toggle anymore.) */
+ * export menu, Files/Research toggles, and the light/dark/system theme
+ * switch (§8-35). Pure presentational; every behavior is delegated through
+ * props. (Agent activity is inline per turn — no Activity panel toggle.) */
 export default function ChatHeader({
   sidebarOpen, convTitle, modelTier, onModelChange,
   incognito, onToggleIncognito,
@@ -15,6 +16,7 @@ export default function ChatHeader({
   artifactCount, artifactsOpen, onToggleArtifacts,
   hasConversation, researchOpen, onToggleResearch,
   onOpenSidebar,
+  theme, onCycleTheme,
 }: {
   sidebarOpen: boolean
   convTitle?: string
@@ -31,14 +33,22 @@ export default function ChatHeader({
   researchOpen: boolean
   onToggleResearch: () => void
   onOpenSidebar: () => void
+  /** §8-35: current theme choice (drives the toggle icon + label). */
+  theme?: ThemeChoice
+  /** §8-35: cycle light → dark → system. */
+  onCycleTheme?: () => void
 }) {
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  const themeLabel = theme === 'light' ? 'Light' : theme === 'dark' ? 'Dark' : 'System'
+  const ThemeIcon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor
 
   return (
     <div className="flex items-center gap-2 px-3 sm:px-4 h-12 border-b border-white/[0.05] shrink-0 bg-[#111113]">
       {!sidebarOpen && (
         <button
           onClick={onOpenSidebar}
+          title="Open sidebar"
+          aria-label="Open sidebar"
           className="p-1.5 rounded-lg hover:bg-white/[0.05] text-slate-400 hover:text-slate-300 transition"
         >
           <PanelLeft size={17} />
@@ -54,6 +64,17 @@ export default function ChatHeader({
       </span>
       <div className="ml-auto flex items-center gap-1">
         <ModelSelector value={modelTier} onChange={onModelChange} />
+        {onCycleTheme && (
+          <button
+            onClick={onCycleTheme}
+            title={`Theme: ${themeLabel} — click to switch`}
+            aria-label={`Theme: ${themeLabel}. Click to switch theme`}
+            data-testid="theme-toggle"
+            className="p-1.5 rounded-lg hover:bg-white/[0.05] text-slate-400 hover:text-slate-300 transition"
+          >
+            <ThemeIcon size={15} />
+          </button>
+        )}
         <button
           onClick={onToggleIncognito}
           title={incognito ? 'Incognito on — new chats are private and use no memory. Click to turn off.' : 'Incognito — private chat, no memory, hidden from history'}

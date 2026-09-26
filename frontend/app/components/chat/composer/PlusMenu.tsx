@@ -31,6 +31,8 @@ export function PlusMenu({
         onClick={() => { onToggle(); onCloseOther() }}
         aria-haspopup="menu"
         aria-expanded={open}
+        title="Add attachments and actions"
+        aria-label="Add attachments and actions"
         className={`tap-target w-8 h-8 flex items-center justify-center rounded-lg border transition ${
           open
             ? 'border-white/20 bg-white/10 text-slate-100'

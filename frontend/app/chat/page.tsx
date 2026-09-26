@@ -21,6 +21,7 @@ import ProjectsPanel, { type Project } from '../components/ProjectsPanel'
 import ResearchPanel from '../components/ResearchPanel'
 import { usePanels, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom, useAttachments, useConversationSearch, useMessageQueue } from './hooks'
 import { useToast } from '../lib/toast'
+import { useTheme } from '../lib/theme'
 import type { QueuedMessage } from '../components/chat/types'
 
 // slash commands live in ../lib/commands (registry + parseCommand)
@@ -367,6 +368,13 @@ export default function ChatPage() {
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const user = getStoredUser()
+  const theme = useTheme()
+  /** §8-35: cycle light → dark → system from the header. */
+  const cycleTheme = () => {
+    const next = theme.choice === 'light' ? 'dark' : theme.choice === 'dark' ? 'system' : 'light'
+    theme.setChoice(next)
+    toast.push('info', `Theme: ${next === 'system' ? 'System' : next === 'light' ? 'Light' : 'Dark'}`)
+  }
   const logout = () => {
     localStorage.removeItem('token'); localStorage.removeItem('user')
     window.location.href = '/login'
@@ -493,6 +501,8 @@ export default function ChatPage() {
           researchOpen={researchOpen}
           onToggleResearch={() => setResearchOpen((v) => !v)}
           onOpenSidebar={() => panels.setSidebarOpen(true)}
+          theme={theme.choice}
+          onCycleTheme={cycleTheme}
         />
 
         {/* Messages */}

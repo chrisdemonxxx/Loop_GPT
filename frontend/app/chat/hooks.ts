@@ -136,8 +136,12 @@ export function useConversationsData(
 
   const { data: conversations = [] } = useQuery<Conversation[]>({
     queryKey: ['conversations'],
-    queryFn: async () =>
-      (await axios.get(`${API_URL}/api/conversations`, { headers: authHeaders(false) }).catch(() => ({ data: [] }))).data,
+    queryFn: async () => {
+      // Normalize: a non-array payload (proxy error page, shape change)
+      // degrades to an empty list instead of crashing the page.
+      const d = (await axios.get(`${API_URL}/api/conversations`, { headers: authHeaders(false) }).catch(() => ({ data: [] }))).data
+      return Array.isArray(d) ? d : []
+    },
     enabled: typeof window !== 'undefined',
   })
 
@@ -148,7 +152,9 @@ export function useConversationsData(
     queryKey: ['messages', currentConversationId],
     queryFn: async () => {
       if (!currentConversationId) return { activeLeafId: null, messages: [] }
-      return (await axios.get(`${API_URL}/api/conversations/${currentConversationId}/messages?branch=1`, { headers: authHeaders(false) }).catch(() => ({ data: { activeLeafId: null, messages: [] } as { activeLeafId: string | null; messages: Message[] } }))).data
+      const fallback = { activeLeafId: null, messages: [] } as { activeLeafId: string | null; messages: Message[] }
+      const d = (await axios.get(`${API_URL}/api/conversations/${currentConversationId}/messages?branch=1`, { headers: authHeaders(false) }).catch(() => ({ data: fallback }))).data
+      return d && typeof d === 'object' && Array.isArray(d.messages) ? d : fallback
     },
     enabled: !!currentConversationId && typeof window !== 'undefined',
   })

@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { MotionConfig } from 'framer-motion'
 import { I18nProvider } from './lib/i18n'
 import { ToastProvider } from './lib/toast'
+import { ThemeProvider } from './lib/theme'
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -30,9 +31,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <MotionConfig reducedMotion="user">
-        <I18nProvider>
-          <ToastProvider>{children}</ToastProvider>
-        </I18nProvider>
+        <ThemeProvider>
+          <I18nProvider>
+            <ToastProvider>{children}</ToastProvider>
+          </I18nProvider>
+        </ThemeProvider>
       </MotionConfig>
     </QueryClientProvider>
   )

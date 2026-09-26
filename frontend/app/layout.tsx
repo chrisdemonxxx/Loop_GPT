@@ -4,6 +4,7 @@ import './globals.css'
 import { Providers } from './providers'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import Analytics from './components/Analytics'
+import { THEME_BOOT_SCRIPT } from './lib/theme'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -32,8 +33,12 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" suppressHydrationWarning>
       <body className={inter.className}>
+        {/* No-flash theme bootstrap (§8-35): applies the stored choice before
+            first paint. Default is dark (no attribute) — zero change for
+            existing users until they opt in. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
         <Analytics />
         <ErrorBoundary>
           <Providers>{children}</Providers>

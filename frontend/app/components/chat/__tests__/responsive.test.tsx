@@ -91,8 +91,7 @@ describe('44px tap targets', () => {
     )
     const send = screen.getByRole('button', { name: 'Send message' })
     expect(send.className).toContain('tap-target')
-    const plus = screen.getByRole('button', { name: '' }) // the + attach trigger has no label
-    expect(plus.textContent).toBe('')
+    const plus = screen.getByRole('button', { name: 'Add attachments and actions' })
     expect(plus.className).toContain('tap-target')
   })
 })

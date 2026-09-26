@@ -126,6 +126,8 @@ export default function Sidebar({
         <span className="font-semibold text-slate-100 text-[15px]">Loop GPT</span>
         <button
           onClick={onClose}
+          title="Close sidebar"
+          aria-label="Close sidebar"
           className="ml-auto p-1.5 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-300 transition"
         >
           <PanelLeft size={16} />
