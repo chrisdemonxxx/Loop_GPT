@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Feather, Loader2, PenLine, Sparkles, Trash2, Volume2 } from 'lucide-react'
 import { API_URL, authHeaders } from '../../lib/api'
-import { loadTtsEngine, saveTtsEngine, type TtsEngine } from '../../lib/voice'
+import { KOKORO_VOICES, loadServerVoice, loadTtsEngine, saveServerVoice, saveTtsEngine, type TtsEngine } from '../../lib/voice'
 import { Badge, btnGhost, btnPrimary, Card, EmptyState, inputCls, SectionHeader } from '../ui/primitives'
 
 interface StyleRow { id: string; name: string; systemPrompt: string; isDefault: boolean }
@@ -41,6 +41,8 @@ export default function PersonalizationTab() {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
   /** Read-aloud engine (§8-45): server Kokoro (default) vs browser. */
   const [engine, setEngine] = useState<TtsEngine>('auto')
+  /** The server engine's Kokoro voice. */
+  const [serverVoice, setServerVoice] = useState('af_heart')
 
   const load = () =>
     fetch(`${API_URL}/api/styles`, { headers: authHeaders() }).then((r) => r.json()).then((d) => setStyles(Array.isArray(d) ? d : [])).catch(() => {})
@@ -53,6 +55,7 @@ export default function PersonalizationTab() {
       setRate(Number(localStorage.getItem('voiceRate')) || 1)
     } catch { /* ignore */ }
     setEngine(loadTtsEngine())
+    setServerVoice(loadServerVoice())
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       const update = () => setVoices(loadVoices().filter((v) => v.lang.startsWith('en') || v.lang.startsWith('fr')))
       update()
@@ -239,6 +242,20 @@ export default function PersonalizationTab() {
             The server voice (Kokoro) sounds more natural; the built-in engine is the browser&rsquo;s own and works offline.
           </span>
         </label>
+        {engine !== 'browser' && (
+          <label className="block">
+            <span className="text-xs text-slate-400">Server voice</span>
+            <select
+              value={serverVoice}
+              onChange={(e) => { setServerVoice(e.target.value); saveServerVoice(e.target.value) }}
+              className={inputCls}
+              aria-label="Server read-aloud voice"
+              data-testid="server-voice"
+            >
+              {KOKORO_VOICES.map((v) => <option key={v.id} value={v.id} className="bg-ink-800">{v.label}</option>)}
+            </select>
+          </label>
+        )}
         <label className="block">
           <span className="text-xs text-slate-400">Built-in voice</span>
           <select

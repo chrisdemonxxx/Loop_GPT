@@ -96,6 +96,39 @@ function loadVoicePrefs(): { voiceName: string; rate: number } {
  *  Kokoro-only; 'browser' is speechSynthesis-only. */
 export type TtsEngine = 'auto' | 'server' | 'browser'
 const TTS_ENGINE_KEY = 'ttsEngine'
+const SERVER_VOICE_KEY = 'serverVoice'
+
+/** The server engine's voice catalogue (Kokoro-82M on the TTS Space). */
+export const KOKORO_VOICES = [
+  { id: 'af_heart', label: 'Heart (US female)' },
+  { id: 'af_bella', label: 'Bella (US female)' },
+  { id: 'af_nicole', label: 'Nicole (US female)' },
+  { id: 'af_aoede', label: 'Aoede (US female)' },
+  { id: 'af_kore', label: 'Kore (US female)' },
+  { id: 'af_sarah', label: 'Sarah (US female)' },
+  { id: 'af_nova', label: 'Nova (US female)' },
+  { id: 'af_sky', label: 'Sky (US female)' },
+  { id: 'af_alloy', label: 'Alloy (US female)' },
+  { id: 'af_jessica', label: 'Jessica (US female)' },
+  { id: 'af_river', label: 'River (US female)' },
+  { id: 'am_michael', label: 'Michael (US male)' },
+  { id: 'am_fenrir', label: 'Fenrir (US male)' },
+  { id: 'am_puck', label: 'Puck (US male)' },
+  { id: 'am_echo', label: 'Echo (US male)' },
+  { id: 'am_eric', label: 'Eric (US male)' },
+  { id: 'am_liam', label: 'Liam (US male)' },
+  { id: 'am_onyx', label: 'Onyx (US male)' },
+  { id: 'am_santa', label: 'Santa (US male)' },
+  { id: 'am_adam', label: 'Adam (US male)' },
+  { id: 'bf_emma', label: 'Emma (UK female)' },
+  { id: 'bf_isabella', label: 'Isabella (UK female)' },
+  { id: 'bf_alice', label: 'Alice (UK female)' },
+  { id: 'bf_lily', label: 'Lily (UK female)' },
+  { id: 'bm_george', label: 'George (UK male)' },
+  { id: 'bm_fable', label: 'Fable (UK male)' },
+  { id: 'bm_lewis', label: 'Lewis (UK male)' },
+  { id: 'bm_daniel', label: 'Daniel (UK male)' },
+] as const
 
 export function loadTtsEngine(): TtsEngine {
   if (typeof window === 'undefined') return 'auto'
@@ -107,6 +140,19 @@ export function loadTtsEngine(): TtsEngine {
 
 export function saveTtsEngine(engine: TtsEngine) {
   try { localStorage.setItem(TTS_ENGINE_KEY, engine) } catch { /* private mode */ }
+}
+
+/** The saved server-voice id (Kokoro); falls back to af_heart. */
+export function loadServerVoice(): string {
+  if (typeof window === 'undefined') return 'af_heart'
+  try {
+    const v = localStorage.getItem(SERVER_VOICE_KEY)
+    return KOKORO_VOICES.some((voice) => voice.id === v) ? v! : 'af_heart'
+  } catch { return 'af_heart' }
+}
+
+export function saveServerVoice(id: string) {
+  try { localStorage.setItem(SERVER_VOICE_KEY, id) } catch { /* private mode */ }
 }
 
 /** The backend route's hard text cap (prisma-free contract, routes/tts.ts). */
@@ -159,7 +205,8 @@ export function useSpeech() {
     try {
       const { API_URL, authHeaders } = await import('./api')
       const res = await fetch(`${API_URL}/api/tts`, {
-        method: 'POST', headers: authHeaders(), body: JSON.stringify({ text: clean.slice(0, SERVER_TTS_MAX) }),
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ text: clean.slice(0, SERVER_TTS_MAX), voice: loadServerVoice() }),
       })
       if (!res.ok) return false
       const contentType = res.headers.get('content-type') || ''
