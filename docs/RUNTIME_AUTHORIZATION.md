@@ -1,5 +1,13 @@
 # Workspace-bound agent execution (through foundation 03h)
 
+> **Historical checkpoint record (audit §8-47):** the authorization model this
+> document describes is still live (workspace-bound stream routes, no dev
+> bypass), but newer fields and flows have been added since — branch anchoring
+> (`regenerateOf`/`parentMessageId`, §8-22), durable replay runs (§8-30),
+> per-run capability toggles (§8-25/26). Current state lives in
+> `docs/PROGRESS.md` + `docs/GAP_REGISTER.md`; treat this as the 03h snapshot.
+
+
 ## Supported scope
 
 Streaming routes at both `/api/agent/:conversationId/stream` and

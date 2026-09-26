@@ -19,7 +19,9 @@ import type { Conversation, Message } from '../components/chat/types'
 import { parseCommand, SLASH_COMMANDS } from '../lib/commands'
 import ProjectsPanel, { type Project } from '../components/ProjectsPanel'
 import ResearchPanel from '../components/ResearchPanel'
-import { usePanels, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom, useAttachments, useConversationSearch } from './hooks'
+import { usePanels, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom, useAttachments, useConversationSearch, useMessageQueue } from './hooks'
+import { useToast } from '../lib/toast'
+import type { QueuedMessage } from '../components/chat/types'
 
 // slash commands live in ../lib/commands (registry + parseCommand)
 
@@ -66,6 +68,10 @@ export default function ChatPage() {
   const { conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages, branchVersions, selectVersion } =
     useConversationsData(currentConversationId, (id) => { if (currentConversationId === id) setCurrentConversationId(null) })
   const chat = useChatStream()
+  // §8-39: messages sent while a run is active queue up instead of being
+  // dropped; the drain fires on every run completion (FIFO).
+  const toast = useToast()
+  const messageQueue = useMessageQueue(chat.running, (entry) => { void dispatchSend(entry) })
   // ── Sidebar search: title filter locally + server-side message-body hits
   const [sidebarSearch, setSidebarSearch] = useState('')
   const messageHits = useConversationSearch(sidebarSearch)
@@ -111,6 +117,8 @@ export default function ChatPage() {
     }
     setCurrentConversationId(id)
     setPendingBranch(undefined)
+    // §8-39: queued messages belong to the conversation they were typed in.
+    messageQueue.clear()
     chat.resetLive()
     panels.setArtifactsOpen(false)
   }
@@ -203,10 +211,36 @@ export default function ChatPage() {
     return res.data.id
   }
 
+  /** The actual dispatch: one run, from either the composer or the queue
+   *  drain (§8-39). `snapshot` carries the full send intent as captured at
+   *  enqueue/send time — the run config it was sent with, not whatever the
+   *  toggles say now. */
+  async function dispatchSend(snapshot: QueuedMessage) {
+    setMode(snapshot.sendMode)
+    setShowSlash(false); setShowPlus(false); setShowModeMenu(false)
+    // Surface deep-research runs in the side panel so the user can watch
+    // progress and read the cited report instead of it living only in chat.
+    if (snapshot.sendMode === 'research') setResearchOpen(true)
+    if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
+
+    await chat.send({
+      content: snapshot.content, sendMode: snapshot.sendMode, commandTools: snapshot.commandTools,
+      attachmentIds: snapshot.attachmentIds, previews: snapshot.previews, docNames: snapshot.docNames,
+      runMode: snapshot.runMode, modelTier: snapshot.modelTier,
+      selectedTools: snapshot.selectedTools, incognito: snapshot.incognito,
+      projectId: snapshot.projectId,
+      // Explicit overrides only (§8-25/26): undefined keeps the server default.
+      webSearch: snapshot.webSearch === 'auto' ? undefined : snapshot.webSearch === 'on',
+      thinking: snapshot.thinking === 'auto' ? undefined : snapshot.thinking === 'on',
+      ...(snapshot.branchParent !== undefined ? { parentMessageId: snapshot.branchParent } : {}),
+      ensureConversation,
+    })
+  }
+
   async function handleSend(e?: React.FormEvent) {
     e?.preventDefault()
     const hasAttachments = uploads.attachments.length > 0
-    if ((!input.trim() && !hasAttachments) || chat.running) return
+    if (!input.trim() && !hasAttachments) return
     // While a chip is still uploading, wait — its id is what the stream
     // inlines; sending early would silently drop the attachment.
     if (uploads.uploading) return
@@ -217,31 +251,40 @@ export default function ChatPage() {
     const readyIds = uploads.readyIds
     const previews = uploads.attachments.filter((a) => a.kind === 'image' && a.previewUrl).map((a) => a.previewUrl!)
     const docNames = uploads.attachments.filter((a) => a.kind === 'doc' && a.status === 'done').map((a) => a.name)
-
-    setMode(sendMode)
-    setShowSlash(false); setShowPlus(false); setShowModeMenu(false)
-    // Surface deep-research runs in the side panel so the user can watch
-    // progress and read the cited report instead of it living only in chat.
-    if (sendMode === 'research') setResearchOpen(true)
-    setInput('')
-    uploads.reset()
-    if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
     // §8-22: an edit-in-flight re-sends as a sibling version under the
     // remembered parent; the intent is consumed by this send.
     const branchParent = pendingBranch
     setPendingBranch(undefined)
 
-    await chat.send({
-      content, sendMode, commandTools,
+    // §8-39: while a run is active the message is QUEUED (full intent
+    // snapshotted), not dropped — it auto-sends when the run completes.
+    if (chat.running) {
+      messageQueue.enqueue({
+        id: `queued-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        content, sendMode, commandTools,
+        attachmentIds: readyIds, previews, docNames,
+        runMode, modelTier, selectedTools, incognito,
+        projectId: activeProjectId || undefined,
+        webSearch, thinking,
+        ...(branchParent !== undefined ? { branchParent } : {}),
+      })
+      setInput('')
+      uploads.reset()
+      if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
+      toast.push('info', 'Added to queue — it sends when the current run finishes')
+      return
+    }
+
+    setInput('')
+    uploads.reset()
+    if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
+    await dispatchSend({
+      id: 'direct', content, sendMode, commandTools,
       attachmentIds: readyIds, previews, docNames,
-      runMode, modelTier,
-      selectedTools, incognito,
+      runMode, modelTier, selectedTools, incognito,
       projectId: activeProjectId || undefined,
-      // Explicit overrides only (§8-25/26): undefined keeps the server default.
-      webSearch: webSearch === 'auto' ? undefined : webSearch === 'on',
-      thinking: thinking === 'auto' ? undefined : thinking === 'on',
-      ...(branchParent !== undefined ? { parentMessageId: branchParent } : {}),
-      ensureConversation,
+      webSearch, thinking,
+      ...(branchParent !== undefined ? { branchParent } : {}),
     })
   }
 
@@ -439,7 +482,7 @@ export default function ChatPage() {
             const next = !incognito
             setIncognito(next)
             // Toggling applies to the next conversation — leave the current one.
-            if (currentConversationId) { setCurrentConversationId(null); chat.clearTurn(); setInput('') }
+            if (currentConversationId) { setCurrentConversationId(null); setPendingBranch(undefined); messageQueue.clear(); chat.clearTurn(); setInput('') }
           }}
           hasMessages={messages.length > 0}
           onExport={exportConversation}
@@ -467,6 +510,9 @@ export default function ChatPage() {
           /** §8-22 version arrows: per-row sibling info + the switch handler. */
           versions={branchVersions}
           onSelectVersion={(messageId) => selectVersionRow(currentConversationId, messageId)}
+          /** §8-39: messages queued behind the active run (pending bubbles). */
+          queued={messageQueue.queue}
+          onRemoveQueued={messageQueue.remove}
           onStartPrompt={(prompt) => { setInput(prompt); setTimeout(() => document.querySelector('textarea')?.focus(), 100) }}
           running={chat.running}
           statusMsg={chat.statusMsg}

@@ -358,6 +358,53 @@ export function useAttachments(currentConversationId: string | null) {
 }
 
 // ---------------------------------------------------------------------------
+// Per-message queue: send while a run is active (audit §8-39)
+// ---------------------------------------------------------------------------
+
+/**
+ * Queues messages sent while a run is active instead of dropping them
+ * (audit §8-39 — the old send path returned early on `running` and the
+ * typed message was lost). When the run completes, the next entry
+ * auto-dispatches FIFO. Entries carry their full send intent as snapshotted
+ * at enqueue time (mode, tools, attachments, branch parent) so drain-time
+ * dispatch is exactly what the user sent.
+ */
+export function useMessageQueue(isRunning: boolean, dispatchNext: (entry: import('../components/chat/types').QueuedMessage) => void) {
+  const [queue, setQueue] = useState<import('../components/chat/types').QueuedMessage[]>([])
+  /** Last-seen running state — the drain fires only on a true→false edge. */
+  const prevRunningRef = useRef(isRunning)
+  /** Freshest queue for the drain effect (its dep is only `isRunning`). */
+  const queueRef = useRef(queue)
+  queueRef.current = queue
+  /** The dispatcher may change every render; the effect must not re-fire for that. */
+  const dispatchRef = useRef(dispatchNext)
+  dispatchRef.current = dispatchNext
+
+  const enqueue = useCallback((entry: import('../components/chat/types').QueuedMessage) => {
+    setQueue((prev) => [...prev, entry])
+  }, [])
+  const remove = useCallback((id: string) => {
+    setQueue((prev) => prev.filter((e) => e.id !== id))
+  }, [])
+  const clear = useCallback(() => setQueue([]), [])
+
+  useEffect(() => {
+    const wasRunning = prevRunningRef.current
+    prevRunningRef.current = isRunning
+    if (!wasRunning || isRunning) return
+    // A run just completed: hand the next queued message (if any) to the
+    // sender. The entry is removed before dispatch so it can never be
+    // double-sent, and the updater stays pure (the ref holds the queue).
+    const next = queueRef.current[0]
+    if (!next) return
+    setQueue((prev) => prev.filter((e) => e.id !== next.id))
+    dispatchRef.current(next)
+  }, [isRunning])
+
+  return { queue, enqueue, remove, clear }
+}
+
+// ---------------------------------------------------------------------------
 // The live agent run: streaming state machine + send pipeline
 // ---------------------------------------------------------------------------
 

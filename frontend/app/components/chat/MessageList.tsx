@@ -8,7 +8,7 @@ import { type AgentMode } from '../../lib/api'
 import { type ArtifactRef } from '../../lib/stream'
 import { type BranchVersionInfo } from '../../lib/branch'
 import Markdown from './Markdown'
-import type { LiveStep, Message, PendingApproval } from './types'
+import type { LiveStep, Message, PendingApproval, QueuedMessage } from './types'
 import { MessageBubble } from './MessageBubble'
 import { EmptyState, ThinkingDots } from './EmptyState'
 import { ArtifactCard } from './ArtifactCard'
@@ -38,6 +38,10 @@ interface MessageListProps {
   versions?: Record<string, BranchVersionInfo>
   /** §8-22: switch the active path to a sibling version row. */
   onSelectVersion?: (messageId: string) => void
+  /** §8-39: messages queued behind the active run — rendered as pending
+   *  bubbles so nothing typed is ever lost. */
+  queued?: QueuedMessage[]
+  onRemoveQueued?: (id: string) => void
   running: boolean
   statusMsg: string
   mode: AgentMode
@@ -62,7 +66,7 @@ interface MessageListProps {
  * protection, audit §8-18); otherwise a floating jump-to-bottom button. */
 export default function MessageList({
   messages, conversationId, liveUser, liveSteps, liveAnswer, liveThinking, liveArtifacts, liveReplaceAfterId,
-  versions, onSelectVersion,
+  versions, onSelectVersion, queued, onRemoveQueued,
   running, statusMsg, mode, pendingApproval, onApprove, onDeny, toolCount, onOpenTools,
   onOpenArtifact, onOpenArtifactByName, onEditMessage, onRetryBefore, onStartPrompt,
 }: MessageListProps) {
@@ -73,7 +77,7 @@ export default function MessageList({
   // anchor — the old version swaps out while the new one streams in place.
   const anchorIndex = liveReplaceAfterId ? messages.findIndex((m) => m.id === liveReplaceAfterId) : -1
   const visible = anchorIndex >= 0 ? messages.slice(0, anchorIndex + 1) : messages
-  const showEmpty = visible.length === 0 && !liveUser
+  const showEmpty = visible.length === 0 && !liveUser && !(queued?.length)
   const virtualize = visible.length > VIRTUALIZE_ABOVE
 
   // Virtualized window over the stored history (§8-33): dynamic row
@@ -255,6 +259,49 @@ export default function MessageList({
               </div>
             </>
           )}
+
+          {/* Queued messages (§8-39): pending bubbles below the live turn —
+              full send intent snapshotted, removable before they dispatch. */}
+          {queued?.map((q) => (
+            <div key={q.id} data-testid="queued-message" className="flex flex-col items-end gap-1">
+              <div className="relative max-w-[85%] rounded-2xl rounded-br-sm bg-[#1e1e21] border border-dashed border-white/[0.14] px-4 py-3 opacity-80">
+                <span className="absolute -top-2.5 right-3 inline-flex items-center gap-1 rounded-full bg-[#0f0f11] border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-400" aria-label="Queued message">
+                  <Loader2 size={9} className="animate-spin" /> Queued
+                </span>
+                {(q.previews?.length) && (
+                  <div className="flex flex-wrap gap-2 mb-2.5">
+                    {q.previews.map((src, i) => (
+                      <img key={i} src={src} alt={`queued upload ${i + 1}`} className="max-w-[180px] max-h-40 rounded-xl border border-white/10" />
+                    ))}
+                  </div>
+                )}
+                {q.docNames?.length ? (
+                  <div className="flex flex-wrap gap-1.5 mb-2.5">
+                    {q.docNames.map((name) => (
+                      <span key={name} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-white/10 bg-white/[0.04] text-[11px] text-slate-300">
+                        <FileText size={11} className="text-slate-400" /> {name}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                {q.content && (
+                  <div className="whitespace-pre-wrap text-slate-100 text-[15px] leading-relaxed">
+                    {q.content}
+                  </div>
+                )}
+              </div>
+              {onRemoveQueued && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveQueued(q.id)}
+                  className="pr-1 text-[12px] text-slate-400 hover:text-slate-200 transition"
+                  aria-label="Remove queued message"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          ))}
 
           {/* Floating jump-to-bottom (audit §8-18): visible while reading
               history; hidden at the bottom. */}

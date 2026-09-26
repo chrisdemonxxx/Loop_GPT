@@ -1,5 +1,13 @@
 # Reservation-linked prepaid and daily video jobs (through 03o)
 
+> **Historical checkpoint record (audit §8-47):** the default-off reservation
+> semantics and accounting evidence rules described here remain the reference
+> for daily settlement. The live deployment notes and current feature state
+> live in `docs/PROGRESS.md` + `docs/ACCOUNTING.md`; treat this as the 03o
+> snapshot. (The stray `backend/backend` migration tree referenced during
+> this checkpoint was moved into the real migrations directory on 2026-09-22.)
+
+
 **Default off; live provider qualification is not complete.** The developer API uses
 prepaid credit; the authenticated app API uses daily credits under an additional
 flag. Synchronous media tools remain separate. This is not a general durable task

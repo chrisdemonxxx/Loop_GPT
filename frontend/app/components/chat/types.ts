@@ -60,3 +60,28 @@ export interface PendingApproval {
   toolName: string
   approve: (ok: boolean) => Promise<any>
 }
+
+/** A message queued behind the active run (audit §8-39): the full send
+ *  intent is snapshotted at enqueue time and auto-dispatched when the run
+ *  completes. Never silently dropped. */
+export interface QueuedMessage {
+  id: string
+  content: string
+  /** Pre-uploaded server attachment ids + local previews captured at enqueue. */
+  attachmentIds: string[]
+  previews: string[]
+  docNames: string[]
+  sendMode: import('../../lib/api').AgentMode
+  commandTools?: string[]
+  /** Run config captured at enqueue — the queued message carries its full
+   *  intent; later toggles don't rewrite what was already queued. */
+  runMode: 'auto' | 'plan' | 'accept' | 'step'
+  modelTier: string
+  selectedTools?: Set<string> | null
+  incognito: boolean
+  projectId?: string
+  webSearch?: 'auto' | 'on' | 'off'
+  thinking?: 'auto' | 'on' | 'off'
+  /** §8-22: pending-branch parent, if the queued message was an edit. */
+  branchParent?: string | null
+}

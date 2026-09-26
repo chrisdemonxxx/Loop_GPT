@@ -153,6 +153,33 @@ describe('history virtualization (§8-33)', () => {
   })
 })
 
+describe('queued messages (§8-39)', () => {
+  const liveProps = {
+    liveUser: null, liveSteps: [] as any[], liveAnswer: '', liveArtifacts: [] as any[],
+    running: true, statusMsg: '', mode: 'agent' as const,
+    onEditMessage: () => {}, onRetryBefore: () => {},
+  }
+  const queued = {
+    id: 'q1', content: 'next question', attachmentIds: [], previews: [], docNames: [],
+    sendMode: 'agent' as const, runMode: 'auto' as const, modelTier: 'loop-large',
+    selectedTools: null, incognito: false,
+  }
+
+  it('renders a pending bubble with the Queued badge and content', () => {
+    render(<MessageList messages={[]} queued={[queued]} {...liveProps} />)
+    expect(screen.getByTestId('queued-message')).toBeInTheDocument()
+    expect(screen.getByText('next question')).toBeInTheDocument()
+    expect(screen.getByLabelText('Queued message')).toBeInTheDocument()
+  })
+
+  it('removes a queued message from the pending list', () => {
+    const remove = vi.fn()
+    render(<MessageList messages={[]} queued={[queued]} onRemoveQueued={remove} {...liveProps} />)
+    fireEvent.click(screen.getByRole('button', { name: /remove queued message/i }))
+    expect(remove).toHaveBeenCalledWith('q1')
+  })
+})
+
 describe('branch version arrows (§8-22)', () => {
   const liveProps = {
     liveUser: null, liveSteps: [] as any[], liveAnswer: '', liveArtifacts: [] as any[],
