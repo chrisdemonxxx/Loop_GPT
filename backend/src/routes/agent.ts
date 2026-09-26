@@ -7,6 +7,7 @@ import express from 'express'
 import { asyncHandler } from '../middleware/errorLogger'
 import { z } from 'zod'
 import { authenticateToken } from './auth'
+import { prisma } from '../services/prisma'
 import { availableTools } from '../agent'
 import { getAllSkills, createUserSkill, deleteUserSkill, getSkill, getSkillSource, updateUserSkill, listSkillVersions, revertSkill } from '../agent/skills/skillLoader'
 import { configStore } from '../agent/configStore'
@@ -295,11 +296,21 @@ router.post('/permissions', authenticateToken, (req, res) => {
   res.json({ ok: true, name, level })
 })
 
-router.get('/audit', authenticateToken, (req, res) => {
+router.get('/audit', authenticateToken, asyncHandler(async (req, res) => {
   noStore(res)
   const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500)
-  res.json(configStore.listToolAudit(limit))
-})
+  // Multi-tenant isolation (found live while verifying §8-34): this route
+  // previously returned the GLOBAL tool audit log — other users' tool args
+  // (search queries, document contents), conversation ids and userIds — to
+  // any authenticated caller. Non-admins now see only their own entries;
+  // admins keep the full operational log. Fail closed on DB errors.
+  let scope: string | undefined = (req as any).userId
+  try {
+    const caller = prisma ? await prisma.user.findUnique({ where: { id: scope }, select: { role: true } }) : null
+    if (caller?.role === 'admin') scope = undefined
+  } catch { /* stay user-scoped */ }
+  res.json(configStore.listToolAudit(limit, { userId: scope }))
+}))
 
 // ── Durable research runs ─────────────────────────────────────────────────────
 // The run survives a client reload; these read endpoints replay progress/report.

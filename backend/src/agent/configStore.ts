@@ -136,8 +136,14 @@ export const configStore = {
     log.push(entry)
     write('tool-audit', log.slice(-AUDIT_CAP))
   },
-  listToolAudit(limit = 100): ToolAuditEntry[] {
+  /**
+   * Most recent audit entries, newest first. With `opts.userId`, only that
+   * user's entries are returned (multi-tenant isolation — the filter applies
+   * BEFORE the cap so a user's older entries aren't crowded out by others').
+   */
+  listToolAudit(limit = 100, opts?: { userId?: string }): ToolAuditEntry[] {
     const log = read<ToolAuditEntry[]>('tool-audit', [])
-    return log.slice(-Math.min(Math.max(limit, 1), AUDIT_CAP)).reverse()
+    const entries = opts?.userId ? log.filter((e) => e.userId === opts.userId) : log
+    return entries.slice(-Math.min(Math.max(limit, 1), AUDIT_CAP)).reverse()
   },
 }

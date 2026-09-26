@@ -269,9 +269,15 @@ describe('agent extension configuration routes (previously 410)', () => {
     expect((await req('POST', '/api/agent/permissions', { name: 'web_search', level: 'nope' })).status).toBe(400)
   })
 
-  it('returns the tool-call audit log', async () => {
+  it('scopes the tool audit log to the caller (multi-tenant isolation)', async () => {
+    // No DB in unit tests → the route fails closed to user-scoped reads,
+    // so the dev-mode caller must not see another user's entries.
+    configStore.appendToolAudit({ at: new Date().toISOString(), userId: 'dev-user-123', conversationId: 'c-own', tool: 'web_search', args: '{}', outcome: 'ok', ms: 1 })
+    configStore.appendToolAudit({ at: new Date().toISOString(), userId: 'someone-else', conversationId: 'c-foreign', tool: 'web_fetch', args: '{"url":"https://other.example.test"}', outcome: 'ok', ms: 2 })
     const { status, json } = await req('GET', '/api/agent/audit')
     expect(status).toBe(200)
     expect(Array.isArray(json)).toBe(true)
+    expect(json.some((e: any) => e.userId === 'dev-user-123')).toBe(true)
+    expect(json.some((e: any) => e.userId === 'someone-else')).toBe(false)
   })
 })

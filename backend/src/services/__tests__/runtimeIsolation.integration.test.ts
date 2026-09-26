@@ -408,6 +408,30 @@ describe('workspace runtime authorization', () => {
     expect(String(remote.turn.mock.calls[1][0].messages[0].content)).not.toContain('ACTIVE THREAT NOTICE')
   })
 
+  it('scopes the tool audit log to the caller; admins keep the global view (multi-tenant isolation)', async () => {
+    // Found live while verifying §8-34: GET /api/agent/audit returned the
+    // GLOBAL log to any authenticated caller — other users' tool args,
+    // conversation ids and userIds. Pin the fixed contract end-to-end.
+    const admin = `${prefix}-admin`
+    await db.user.create({ data: { id: admin, email: `${admin}@example.test`, name: 'Audit admin', password: 'fixture-only', role: 'admin', credits: 500 } })
+    try {
+      configStore.appendToolAudit({ at: new Date().toISOString(), userId: alice, conversationId: 'c-alice', tool: 'web_search', args: '{"query":"alice"}', outcome: 'ok', ms: 1 })
+      configStore.appendToolAudit({ at: new Date().toISOString(), userId: bob, conversationId: 'c-bob', tool: 'web_fetch', args: '{"url":"https://bob.example.test"}', outcome: 'ok', ms: 2 })
+      const aliceRes = await request('/api/agent/audit?limit=500', alice)
+      expect(aliceRes.status).toBe(200)
+      const aliceJson: any[] = await aliceRes.json()
+      expect(aliceJson.some((e) => e.userId === alice)).toBe(true)
+      expect(aliceJson.some((e) => e.userId === bob)).toBe(false)
+      const adminRes = await request('/api/agent/audit?limit=500', admin)
+      expect(adminRes.status).toBe(200)
+      const adminJson: any[] = await adminRes.json()
+      expect(adminJson.some((e) => e.userId === alice)).toBe(true)
+      expect(adminJson.some((e) => e.userId === bob)).toBe(true)
+    } finally {
+      await db.user.delete({ where: { id: admin } }).catch(() => {})
+    }
+  })
+
   it('streams live tool output + progress stamped with the executing step (audit §8-28/29)', async () => {
     const f = await fixture()
     // A multi-phase fixture tool: emits live stdout/stderr + a checklist while
