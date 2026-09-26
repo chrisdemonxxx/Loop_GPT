@@ -722,6 +722,80 @@ remains on the audit list is Nice-to-have tier only (§8-35..47: theme
 switcher, PIP, queueing, connectors chip, mobile parity, native signing,
 voice mode, backend TTS — several already satisfied incidentally).
 
+## Nice-to-have tier — triage (audit §8-35..47) (2026-09-26)
+
+- **Already shipped before this pass**: §8-37/38 PiP + poster frame +
+  buffering indicator (Phase 2.3 `c670a8c` VideoPlayer), §8-42 branch
+  arrows (§8-22 work, `c8220af`), §8-46 neon-* cleanup (Phase 4),
+  §8-35–adjacent WCAG passes (P6 + §8-30). §8-36 settings tabs remain
+  intentionally on `/account` (product decision). §8-41 mobile parity,
+  §8-43 native mobile signing, §8-44 hands-free voice mode stay open
+  (large mobile/voice work).
+
+## Nice-to-have §8-39 — Per-message queue — SHIPPED (2026-09-26, commit `7d3016b`)
+
+- The old send path returned early on `chat.running` — a message typed
+  during an active run was **silently dropped**. Now: `useMessageQueue`
+  (hooks.ts) queues it FIFO with a true→false edge drain (the next entry
+  auto-dispatches when the run completes — including after an explicit
+  stop). Pure state updaters + a queue-ref mirror so a re-run effect can
+  never double-send. `QueuedMessage` snapshots the FULL send intent at
+  enqueue (mode, command tools, run config, attachments, §8-22 branch
+  parent) — later toggles never rewrite an already-queued message.
+- UI: pending bubbles (dashed border, Queued badge + spinner,
+  image/doc previews) render below the live turn, each removable; a
+  toast confirms enqueue; the queue clears on conversation switch and
+  incognito toggle. `handleSend` restructured into
+  `dispatchSend(snapshot)` shared by the composer path and the drain.
+- Tests: 5 hook (enqueue/remove, FIFO drain across run completions, no
+  drain while active or on false→false, clear, double-pass safety) + 2
+  component (pending bubble + badge, remove). Gates: tsc clean, lint 0,
+  unit **123/123**, Playwright 12/12, build green. CI green; deployed.
+
+## Nice-to-have §8-35 — Light/dark/system theme switcher — SHIPPED (2026-09-26, commit `4a792a4`)
+
+- **Architecture**: dark-first CSS override layer in `globals.css` keyed
+  on `<html data-theme="light">` — re-maps the utility classes
+  themselves (slate text 100–600 + hover/placeholder variants,
+  terracotta + status text darkened to AA on light, all neutral
+  surfaces, border-white + bg-white alpha scales incl. hover/focus,
+  glass/terminal/gradient/shimmer/prose-legal) with no churn across the
+  ~600 existing call sites. Unlayered CSS outranks Tailwind utilities;
+  no attribute = dark, so **existing users see zero change until they
+  opt in**. Terminal surface + dark scrims stay dark by design.
+- **Runtime**: `lib/theme.tsx` ThemeProvider (light/dark/system choice,
+  localStorage, live OS-follow via matchMedia, data-theme attribute +
+  theme-color meta sync) mounted in providers; a pre-paint
+  `THEME_BOOT_SCRIPT` in the layout body prevents a dark flash for
+  light users; ChatHeader cycles Light → Dark → System (Sun/Moon/
+  Monitor) with a toast.
+- **Hardening found during verification**: (1) the chat page could
+  whole-page crash on a non-array API payload (convTitle `.find` on a
+  string) — conversation/message queries now normalize shapes; in the
+  stubbed e2e environment this crash had been **masking the real chat
+  shell — the a11y gate had been passing against the crashed error
+  page**. (2) Three latent critical a11y violations the mask exposed
+  are fixed: the header sidebar toggle, sidebar close, and composer `+`
+  menu buttons now carry title + aria-label. (3) The pre-existing React
+  #418/#423 hydration warnings were verified NOT caused by this change
+  (identical on a stashed baseline build).
+- **Tests**: 9 ThemeProvider unit tests + 4 Playwright e2e × 2
+  viewports (boot script applies light before paint — computed body
+  bg rgb(250,250,250); light-theme axe critical gate; dark stays
+  default; system follows the OS live). Real-browser probe: **zero
+  dark-leftover / light-on-light elements** on login + chat surfaces.
+  Gates: tsc clean, lint 0, unit **123/123**, Playwright **20/20**
+  (the chat-shell a11y gate now runs against the genuinely rendered
+  shell), build green. CI green; deployed.
+
+## Nice-to-have §8-47 — Doc hygiene — SHIPPED (2026-09-26, commits `7d3016b`/`4a792a4`)
+
+- Currency banners added to `RUNTIME_AUTHORIZATION.md` (03h checkpoint;
+  authorization model live, newer fields documented in PROGRESS) and
+  `ACCOUNTED_VIDEO_JOBS.md` (03o checkpoint; backend/backend migration
+  tree note). `PROVIDER_MEDIA_HTTP.md` + `BUILD_PROGRESS.md` already
+  carried theirs. Closes the audit's stale-docs list.
+
 ## Phase 2.1 — Inline agent activity (audit P1) — SHIPPED (2026-09-26, commit `687abb4`)
 
 - **`TurnActivity.tsx` (new)** renders the per-turn activity inline, directly
