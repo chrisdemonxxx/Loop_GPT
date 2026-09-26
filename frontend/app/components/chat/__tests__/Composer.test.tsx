@@ -34,6 +34,13 @@ const base = {
   onOpenConnectors: () => {},
   onOpenSettingsTab: () => {},
   toolSelectionCount: null as number | null,
+  connections: undefined as Array<{ id: string; name: string; type: string }> | undefined,
+  pinnedConnectionId: undefined as string | null | undefined,
+  onTogglePinConnection: undefined as ((id: string) => void) | undefined,
+  voiceMode: undefined as boolean | undefined,
+  voiceModeSupported: undefined as boolean | undefined,
+  voiceModeListening: undefined as boolean | undefined,
+  onToggleVoiceMode: undefined as (() => void) | undefined,
 }
 
 // The i18n provider is required by the composer.
@@ -145,5 +152,63 @@ describe('Composer', () => {
     expect(web.getAttribute('aria-pressed')).toBe('true')
     expect(brain.getAttribute('aria-pressed')).toBe('true')
     expect(brain.className).toContain('line-through')
+  })
+})
+
+describe('workspace-connection chips (§8-40)', () => {
+  const connections = [
+    { id: 'conn-a', name: 'Acme CRM', type: 'http' },
+    { id: 'conn-b', name: 'Billing API', type: 'http' },
+  ]
+
+  it('renders the chips and toggles the pin', () => {
+    const onTogglePinConnection = vi.fn()
+    renderComposer({ connections, pinnedConnectionId: null, onTogglePinConnection })
+    expect(screen.getByTestId('connector-chips')).toBeInTheDocument()
+    // The chip's visible label is its accessible name; the title carries the hint.
+    const chip = screen.getByRole('button', { name: /Acme CRM/ })
+    expect(chip.getAttribute('aria-pressed')).toBe('false')
+    expect(chip.title).toContain('pin for the next run')
+    fireEvent.click(chip)
+    expect(onTogglePinConnection).toHaveBeenCalledWith('conn-a')
+  })
+
+  it('marks the pinned chip visually and lets clicking unpin', () => {
+    const onTogglePinConnection = vi.fn()
+    renderComposer({ connections, pinnedConnectionId: 'conn-a', onTogglePinConnection })
+    const chip = screen.getByRole('button', { name: /Acme CRM/ })
+    expect(chip.getAttribute('aria-pressed')).toBe('true')
+    expect(chip.className).toContain('text-[#e79d7f]')
+    expect(chip.title).toContain('pinned')
+    fireEvent.click(chip)
+    expect(onTogglePinConnection).toHaveBeenCalledWith('conn-a')
+  })
+
+  it('hides the chip row when there are no connections', () => {
+    renderComposer()
+    expect(screen.queryByTestId('connector-chips')).not.toBeInTheDocument()
+  })
+})
+
+describe('hands-free voice mode toggle (§8-44)', () => {
+  it('renders when supported and reflects the active state', () => {
+    const onToggleVoiceMode = vi.fn()
+    renderComposer({ voiceModeSupported: true, voiceMode: false, onToggleVoiceMode })
+    const btn = screen.getByTestId('voice-mode-toggle')
+    expect(btn.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(btn)
+    expect(onToggleVoiceMode).toHaveBeenCalled()
+  })
+
+  it('shows the listening state on the active toggle', () => {
+    renderComposer({ voiceModeSupported: true, voiceMode: true, voiceModeListening: true, onToggleVoiceMode: () => {} })
+    const btn = screen.getByTestId('voice-mode-toggle')
+    expect(btn.getAttribute('aria-pressed')).toBe('true')
+    expect(btn.title).toContain('listening')
+  })
+
+  it('is hidden on unsupported browsers (no Web Speech API)', () => {
+    renderComposer({ voiceModeSupported: false, onToggleVoiceMode: () => {} })
+    expect(screen.queryByTestId('voice-mode-toggle')).not.toBeInTheDocument()
   })
 })

@@ -2,13 +2,14 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { X, Wrench, Puzzle, Blocks, Cable, Brain, Palette } from 'lucide-react'
+import { X, Wrench, Puzzle, Blocks, Cable, Brain, Palette, SunMoon } from 'lucide-react'
 import MemoryTab from './settings/MemoryTab'
 import PersonalizationTab from './settings/PersonalizationTab'
 import SkillsTab from './settings/SkillsTab'
 import ConnectorsTab from './settings/ConnectorsTab'
 import PluginsTab from './settings/PluginsTab'
 import ToolsTab from './settings/ToolsTab'
+import AppearanceTab from './settings/AppearanceTab'
 
 interface Props { onClose: () => void; initialTab?: string; workspaceId?: string | null }
 
@@ -26,6 +27,7 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId }: Prop
     { id: 'plugins', label: 'Plugins', Icon: Puzzle },
     { id: 'memory', label: 'Memory', Icon: Brain },
     { id: 'personalization', label: 'Personalization', Icon: Palette },
+    { id: 'appearance', label: 'Appearance', Icon: SunMoon },
     { id: 'connectors', label: 'Connectors', Icon: Cable },
     { id: 'tools', label: 'Tools', Icon: Wrench },
   ]
@@ -62,6 +64,7 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId }: Prop
           {tab === 'plugins' && <PluginsTab />}
           {tab === 'memory' && <MemoryTab />}
           {tab === 'personalization' && <PersonalizationTab />}
+          {tab === 'appearance' && <AppearanceTab />}
           {tab === 'connectors' && <ConnectorsTab workspaceId={workspaceId} />}
           {tab === 'tools' && <ToolsTab />}
         </div>

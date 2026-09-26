@@ -7,6 +7,7 @@ import axios from 'axios'
 import { API_URL, authHeaders, getToken, type AgentMode } from '../lib/api'
 import { runAgentStream, type ArtifactRef } from '../lib/stream'
 import { track } from '../components/Analytics'
+import { useDictation } from '../lib/voice'
 import { buildBranchView, type BranchVersionInfo } from '../lib/branch'
 import type { Project } from '../components/ProjectsPanel'
 import type { Conversation, Message, LiveStep, PendingApproval } from '../components/chat/types'
@@ -411,6 +412,169 @@ export function useMessageQueue(isRunning: boolean, dispatchNext: (entry: import
 }
 
 // ---------------------------------------------------------------------------
+// Workspace connections: composer chip + pin-for-next-run (audit §8-40)
+// ---------------------------------------------------------------------------
+
+/** One pinnable workspace connection as shown in the composer chip row. */
+export interface WorkspaceConnectionChip { id: string; name: string; type: string }
+
+const RECENT_CONNECTIONS_CAP = 5
+
+/**
+ * The user's workspace connections for the composer chip (§8-40): lists
+ * them recent-use-first, tracks which were used by past runs, and owns the
+ * pin — the id whose reviewed tools join the NEXT agent run via
+ * `connectionIds`. Pinned state persists per workspace.
+ */
+export function useWorkspaceConnections(workspaceId: string | null) {
+  const { data } = useQuery<{ connections: WorkspaceConnectionChip[] }>({
+    queryKey: ['workspace-connections', workspaceId],
+    queryFn: async () => {
+      if (!workspaceId) return { connections: [] }
+      const d = (await axios.get(`${API_URL}/api/workspaces/${workspaceId}/connections`, { headers: authHeaders(false) }).catch(() => ({ data: { connections: [] } }))).data
+      return d && Array.isArray(d.connections) ? d : { connections: [] }
+    },
+    enabled: !!workspaceId && typeof window !== 'undefined',
+  })
+  const connections = data?.connections || []
+  const [pinnedId, setPinnedId] = useState<string | null>(null)
+  const [recentIds, setRecentIds] = useState<string[]>([])
+  /** The freshest lists for the persist helper (its deps are ids only). */
+  const stateRef = useRef({ pinnedId, recentIds })
+  stateRef.current = { pinnedId, recentIds }
+
+  // Adopt persisted state when the workspace changes.
+  useEffect(() => {
+    if (!workspaceId || typeof window === 'undefined') return
+    try {
+      setPinnedId(localStorage.getItem(`pinned-connection:${workspaceId}`))
+      setRecentIds(JSON.parse(localStorage.getItem(`recent-connections:${workspaceId}`) || '[]'))
+    } catch { /* fresh start */ }
+  }, [workspaceId])
+
+  const persist = useCallback((workspace: string, pinned: string | null, recent: string[]) => {
+    try {
+      if (pinned) localStorage.setItem(`pinned-connection:${workspace}`, pinned)
+      else localStorage.removeItem(`pinned-connection:${workspace}`)
+      localStorage.setItem(`recent-connections:${workspace}`, JSON.stringify(recent))
+    } catch { /* private mode */ }
+  }, [])
+
+  /** Pin/unpin a connection for the next run (§8-40). */
+  const togglePin = useCallback((id: string) => {
+    if (!workspaceId) return
+    const next = stateRef.current.pinnedId === id ? null : id
+    setPinnedId(next)
+    persist(workspaceId, next, stateRef.current.recentIds)
+  }, [workspaceId, persist])
+
+  /** Record connections a finished run actually used (most recent first). */
+  const markUsed = useCallback((ids: string[]) => {
+    if (!workspaceId || !ids.length) return
+    const next = [...new Set([...ids, ...stateRef.current.recentIds])].slice(0, RECENT_CONNECTIONS_CAP)
+    setRecentIds(next)
+    persist(workspaceId, stateRef.current.pinnedId, next)
+  }, [workspaceId, persist])
+
+  // Chips: recent-first, then the rest.
+  const byId = new Map(connections.map((c) => [c.id, c]))
+  const chips = [
+    ...recentIds.filter((id) => byId.has(id)).map((id) => byId.get(id)!),
+    ...connections.filter((c) => !recentIds.includes(c.id)),
+  ]
+  return { connections: chips, pinnedId, togglePin, markUsed }
+}
+
+// ---------------------------------------------------------------------------
+// Hands-free voice mode (audit §8-44)
+// ---------------------------------------------------------------------------
+
+/**
+ * Continuous conversation loop (§8-44): when active, each finished run is
+ * spoken aloud automatically, the mic re-opens when the speech ends, and a
+ * final transcript sends itself — speak → listen → send, hands-free. Built
+ * entirely on the existing primitives (per-message TTS + Web Speech
+ * dictation); a backend streaming-audio upgrade can replace `speak` later
+ * without touching this state machine.
+ */
+export function useVoiceMode({ running, answer, speak, stopSpeech, speakingId, onAutoSend }: {
+  /** Whether an agent run is in flight. */
+  running: boolean
+  /** The latest final answer text (read at the completion edge). */
+  answer: string
+  /** Speak a text (the page's useSpeech instance). */
+  speak: (text: string) => Promise<void> | void
+  /** Stop any in-flight speech (deactivate + bubble interactions). */
+  stopSpeech: () => void
+  /** The speech engine's active id (null = idle). */
+  speakingId: string | null
+  /** Auto-send a finalized transcript. */
+  onAutoSend: (text: string) => void
+}) {
+  const [active, setActive] = useState(false)
+  /** Set when the auto-speak starts — gates the mic re-open on its end. */
+  const expectListenRef = useRef(false)
+  const runningRef = useRef(running); runningRef.current = running
+  const answerRef = useRef(answer); answerRef.current = answer
+  const speakRef = useRef(speak); speakRef.current = speak
+  const onAutoSendRef = useRef(onAutoSend); onAutoSendRef.current = onAutoSend
+
+  const dictation = useDictation({
+    onText: (text, isFinal) => {
+      // Only a FINAL transcript auto-sends, and never mid-run.
+      if (isFinal && !runningRef.current) onAutoSendRef.current(text)
+    },
+  })
+
+  // Auto-speak the answer the moment a run completes.
+  const prevRunningRef = useRef(running)
+  useEffect(() => {
+    const was = prevRunningRef.current
+    prevRunningRef.current = running
+    if (!active) return
+    if (was && !running && answerRef.current.trim()) {
+      expectListenRef.current = true
+      void speakRef.current(answerRef.current)
+    }
+  }, [running, active])
+
+  // Re-open the mic when the auto-spoken answer finishes.
+  const prevSpeakingRef = useRef<string | null>(speakingId)
+  useEffect(() => {
+    const was = prevSpeakingRef.current
+    prevSpeakingRef.current = speakingId
+    if (!active) return
+    if (was && !speakingId && expectListenRef.current && !runningRef.current) {
+      expectListenRef.current = false
+      dictation.start()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [speakingId, active])
+
+  const toggle = useCallback(() => {
+    setActive((prev) => {
+      const next = !prev
+      if (!next) {
+        expectListenRef.current = false
+        dictation.stop()
+        stopSpeech()
+      }
+      return next
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stopSpeech])
+
+  return {
+    active,
+    toggle,
+    /** False on browsers without the Web Speech API (Firefox desktop). */
+    supported: dictation.supported,
+    /** True while the auto-listen mic is open. */
+    listening: dictation.recording,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The live agent run: streaming state machine + send pipeline
 // ---------------------------------------------------------------------------
 
@@ -434,6 +598,11 @@ export interface ChatStreamSendOptions {
   /** Explicit per-run overrides (§8-25/26): undefined = server default. */
   webSearch?: boolean
   thinking?: boolean
+  /** Pinned workspace connections (§8-40): their tools join this agent run. */
+  connectionIds?: string[]
+  /** The workspace a NEW conversation is created in (§8-40: only sent when
+   *  a connection is pinned — existing conversations resolve their own). */
+  workspaceId?: string
   /** Branch anchors (§8-22): an edit re-sends as a sibling prompt under
    *  parentMessageId (explicit null = first turn); a retry re-answers the
    *  stored user row regenerateOf. Mutually exclusive on the server. */
@@ -540,7 +709,7 @@ export function useChatStream() {
   }
 
   async function send(opts: ChatStreamSendOptions) {
-    const { content, sendMode, commandTools, attachmentIds, previews, docNames, runMode, modelTier, selectedTools, incognito, projectId, webSearch, thinking, parentMessageId, regenerateOf, ensureConversation } = opts
+    const { content, sendMode, commandTools, attachmentIds, previews, docNames, runMode, modelTier, selectedTools, incognito, projectId, webSearch, thinking, parentMessageId, regenerateOf, connectionIds, workspaceId, ensureConversation } = opts
     setRunning(true); setStatusMsg(''); setLiveSteps([]); setLiveArtifacts([]); setLiveThinking('')
     runIdRef.current = null
     // §8-22: a retry anchors under the re-answered user row; an edit under
@@ -568,10 +737,13 @@ export function useChatStream() {
         stepMode: runMode === 'step',
         incognito,
         projectId,
-        // Explicit capability overrides — only present when chosen (§8-25/26).
-        ...(webSearch !== undefined ? { webSearch } : {}),
-        ...(thinking !== undefined ? { thinking } : {}),
-        // Branch anchoring (§8-22) — only present when retrying/editing.
+      // Explicit capability overrides — only present when chosen (§8-25/26).
+      ...(webSearch !== undefined ? { webSearch } : {}),
+      ...(thinking !== undefined ? { thinking } : {}),
+      // Pinned connections (§8-40) + the workspace for a new conversation.
+      ...(connectionIds?.length ? { connectionIds } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
+      // Branch anchoring (§8-22) — only present when retrying/editing.
         ...(parentMessageId !== undefined ? { parentMessageId } : {}),
         ...(regenerateOf ? { regenerateOf } : {}),
       }, {

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Send, X, Mic, UploadCloud, Globe, Brain } from 'lucide-react'
+import { Send, X, Mic, UploadCloud, Globe, Brain, Plug, AudioLines } from 'lucide-react'
 import type { AgentMode } from '../../lib/api'
 import { SLASH_SECTIONS, filterCommands } from '../../lib/commands'
 import { useI18n } from '../../lib/i18n'
@@ -48,6 +48,16 @@ interface ComposerProps {
   onOpenSettingsTab: (tab: string) => void
   /** Per-chat tool selection count ("N tools" chip); null = all (server default). */
   toolSelectionCount: number | null
+  /** Workspace connections (§8-40): recent-use-first chips; clicking pins
+   *  one for the next run (its tools join via connectionIds). */
+  connections?: Array<{ id: string; name: string; type: string }>
+  pinnedConnectionId?: string | null
+  onTogglePinConnection?: (id: string) => void
+  /** Hands-free voice mode (§8-44): speak answers, re-listen, auto-send. */
+  voiceMode?: boolean
+  voiceModeSupported?: boolean
+  voiceModeListening?: boolean
+  onToggleVoiceMode?: () => void
 }
 
 /** Up to four attachments per turn. */
@@ -66,6 +76,8 @@ export default function Composer({
   onImagesSelected,
   onTogglePlus, onClosePlus, onToggleModeMenu, onCloseModeMenu,
   onRunModeChange, onOpenConnectors, onOpenSettingsTab, toolSelectionCount,
+  connections, pinnedConnectionId, onTogglePinConnection,
+  voiceMode, voiceModeSupported, voiceModeListening, onToggleVoiceMode,
 }: ComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
@@ -240,6 +252,33 @@ export default function Composer({
             el.style.height = Math.min(el.scrollHeight, 220) + 'px'
           }}
         />
+        {/* Workspace-connection chips (§8-40): recent-use-first; the pinned
+            one joins the next agent run. Hidden when none exist. */}
+        {(connections?.length ?? 0) > 0 && (
+          <div data-testid="connector-chips" className="flex flex-wrap items-center gap-1.5 px-3 pt-2.5">
+            <Plug size={11} className="text-slate-500 shrink-0" aria-hidden="true" />
+            {connections!.map((c) => {
+              const pinned = pinnedConnectionId === c.id
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => onTogglePinConnection?.(c.id)}
+                  aria-pressed={pinned}
+                  title={pinned ? `${c.name}: pinned — its tools join your next agent run. Click to unpin.` : `${c.name}: pin for the next run`}
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] transition ${
+                    pinned
+                      ? 'border-[#c96442]/50 bg-[#c96442]/[0.08] text-[#e79d7f]'
+                      : 'border-white/[0.08] text-slate-400 hover:text-slate-300 hover:bg-white/[0.04]'
+                  }`}
+                >
+                  {pinned && <span aria-hidden="true">●</span>}
+                  {c.name}
+                </button>
+              )
+            })}
+          </div>
+        )}
         <div className="flex items-center gap-1.5 px-3 pb-2.5 pt-1">
           {/* + attach menu — short and task-oriented */}
           <PlusMenu
@@ -291,6 +330,27 @@ export default function Composer({
                 ? 'Extended thinking: on — deeper reasoning for this run'
                 : 'Extended thinking: off — answer directly for this run'}
           />
+
+          {/* Hands-free voice mode (§8-44) — speak → listen → send loop. */}
+          {voiceModeSupported && onToggleVoiceMode && (
+            <button
+              type="button"
+              onClick={onToggleVoiceMode}
+              aria-pressed={!!voiceMode}
+              data-testid="voice-mode-toggle"
+              title={voiceMode
+                ? `Voice mode: on${voiceModeListening ? ' — listening…' : ''} — answers are spoken, the mic re-opens, and your speech sends. Click to turn off.`
+                : 'Voice mode — speak answers aloud and reply hands-free'}
+              aria-label={voiceMode ? 'Turn off hands-free voice mode' : 'Turn on hands-free voice mode'}
+              className={`tap-target p-1.5 rounded-lg border transition ${
+                voiceMode
+                  ? 'border-[#c96442]/50 text-[#e79d7f] bg-[#c96442]/[0.08]'
+                  : 'border-transparent text-slate-400 hover:text-slate-300 hover:bg-white/[0.05]'
+              }`}
+            >
+              <AudioLines size={15} className={voiceModeListening ? 'animate-pulse' : ''} />
+            </button>
+          )}
 
           {/* Mic (STT dictation) — hidden on unsupported browsers */}
           {micSupported && !recording && (

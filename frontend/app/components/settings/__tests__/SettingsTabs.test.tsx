@@ -18,7 +18,7 @@ describe('SettingsPanel shell', () => {
   it('has the frontier tab order and no Builder/Model tabs', () => {
     render(<SettingsPanel onClose={() => {}} />)
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.trim())
-    expect(tabs).toEqual(['Skills', 'Plugins', 'Memory', 'Personalization', 'Connectors', 'Tools'])
+    expect(tabs).toEqual(['Skills', 'Plugins', 'Memory', 'Personalization', 'Appearance', 'Connectors', 'Tools'])
     expect(tabs).not.toContain('Builder')
     expect(tabs).not.toContain('Model')
     expect(tabs).not.toContain('Styles')

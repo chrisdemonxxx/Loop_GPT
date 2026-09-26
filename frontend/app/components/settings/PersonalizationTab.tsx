@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Feather, Loader2, PenLine, Sparkles, Trash2, Volume2 } from 'lucide-react'
 import { API_URL, authHeaders } from '../../lib/api'
+import { loadTtsEngine, saveTtsEngine, type TtsEngine } from '../../lib/voice'
 import { Badge, btnGhost, btnPrimary, Card, EmptyState, inputCls, SectionHeader } from '../ui/primitives'
 
 interface StyleRow { id: string; name: string; systemPrompt: string; isDefault: boolean }
@@ -38,6 +39,8 @@ export default function PersonalizationTab() {
   const [voiceName, setVoiceName] = useState('')
   const [rate, setRate] = useState(1)
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
+  /** Read-aloud engine (§8-45): server Kokoro (default) vs browser. */
+  const [engine, setEngine] = useState<TtsEngine>('auto')
 
   const load = () =>
     fetch(`${API_URL}/api/styles`, { headers: authHeaders() }).then((r) => r.json()).then((d) => setStyles(Array.isArray(d) ? d : [])).catch(() => {})
@@ -49,6 +52,7 @@ export default function PersonalizationTab() {
       setVoiceName(localStorage.getItem('voiceName') || '')
       setRate(Number(localStorage.getItem('voiceRate')) || 1)
     } catch { /* ignore */ }
+    setEngine(loadTtsEngine())
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       const update = () => setVoices(loadVoices().filter((v) => v.lang.startsWith('en') || v.lang.startsWith('fr')))
       update()
@@ -219,7 +223,24 @@ export default function PersonalizationTab() {
       <div className="p-3.5 rounded-xl border border-white/[0.06] bg-white/[0.02] space-y-3">
         <div className="flex items-center gap-2 text-slate-300"><Volume2 size={15} className="text-slate-500" /> Read-aloud preferences</div>
         <label className="block">
-          <span className="text-xs text-slate-400">Voice</span>
+          <span className="text-xs text-slate-400">Engine</span>
+          <select
+            value={engine}
+            onChange={(e) => { const next = e.target.value as TtsEngine; setEngine(next); saveTtsEngine(next) }}
+            className={inputCls}
+            aria-label="Read-aloud engine"
+            data-testid="tts-engine"
+          >
+            <option value="auto" className="bg-ink-800">High quality (server) — falls back to built-in</option>
+            <option value="server" className="bg-ink-800">High quality (server) only</option>
+            <option value="browser" className="bg-ink-800">Built-in (browser) only</option>
+          </select>
+          <span className="block mt-1 text-[11px] text-slate-500">
+            The server voice (Kokoro) sounds more natural; the built-in engine is the browser&rsquo;s own and works offline.
+          </span>
+        </label>
+        <label className="block">
+          <span className="text-xs text-slate-400">Built-in voice</span>
           <select
             value={voiceName}
             onChange={(e) => { setVoiceName(e.target.value); saveVoicePrefs(e.target.value) }}

@@ -91,6 +91,27 @@ function loadVoicePrefs(): { voiceName: string; rate: number } {
   } catch { return { voiceName: '', rate: 1 } }
 }
 
+/** Read-aloud engine preference (§8-45): 'auto' (default) prefers the
+ *  backend Kokoro voice and falls back to the browser; 'server' is
+ *  Kokoro-only; 'browser' is speechSynthesis-only. */
+export type TtsEngine = 'auto' | 'server' | 'browser'
+const TTS_ENGINE_KEY = 'ttsEngine'
+
+export function loadTtsEngine(): TtsEngine {
+  if (typeof window === 'undefined') return 'auto'
+  try {
+    const v = localStorage.getItem(TTS_ENGINE_KEY)
+    return v === 'server' || v === 'browser' ? v : 'auto'
+  } catch { return 'auto' }
+}
+
+export function saveTtsEngine(engine: TtsEngine) {
+  try { localStorage.setItem(TTS_ENGINE_KEY, engine) } catch { /* private mode */ }
+}
+
+/** The backend route's hard text cap (prisma-free contract, routes/tts.ts). */
+const SERVER_TTS_MAX = 4000
+
 export function useSpeech() {
   const [hasBrowserTts] = useState(() => typeof window !== 'undefined' && !!window.speechSynthesis)
   const [speakingId, setSpeakingId] = useState<string | null>(null)
@@ -114,37 +135,33 @@ export function useSpeech() {
       .replace(/[#*_>|]/g, '')
       .slice(0, 12000)
 
-  const speak = useCallback(async (id: string, text: string) => {
-    if (typeof window === 'undefined') return
-    // Toggle off if this message is already playing.
-    if (speakingId === id) { stop(); return }
-    stop()
-    const clean = cleanForSpeech(text)
+  /** Browser speechSynthesis playback (the historical primary path). */
+  const speakWithBrowser = useCallback((id: string, clean: string) => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return false
+    const { voiceName, rate } = loadVoicePrefs()
+    const utter = new SpeechSynthesisUtterance(clean)
+    utter.rate = rate
+    const voices = window.speechSynthesis.getVoices()
+    const voice = voices.find((v) => v.name === voiceName)
+    if (voice) utter.voice = voice
+    utter.onend = () => { setSpeakingId(null); setPaused(false) }
+    utter.onerror = () => { setSpeakingId(null); setPaused(false) }
+    setSpeakingId(id)
+    setPaused(false)
+    window.speechSynthesis.speak(utter)
+    return true
+  }, [])
 
-    // Preferred path: browser speechSynthesis.
-    if (window.speechSynthesis) {
-      const { voiceName, rate } = loadVoicePrefs()
-      const utter = new SpeechSynthesisUtterance(clean)
-      utter.rate = rate
-      const voices = window.speechSynthesis.getVoices()
-      const voice = voices.find((v) => v.name === voiceName)
-      if (voice) utter.voice = voice
-      utter.onend = () => { setSpeakingId(null); setPaused(false) }
-      utter.onerror = () => { setSpeakingId(null); setPaused(false) }
-      setSpeakingId(id)
-      setPaused(false)
-      window.speechSynthesis.speak(utter)
-      return
-    }
-
-    // Fallback: backend Kokoro TTS (POST /api/tts → audio bytes) for browsers
-    // without speechSynthesis (e.g. Firefox).
+  /** Backend Kokoro playback (§8-45): POST /api/tts → audio bytes (or a
+   *  provider URL). Resolves false when the server path is unavailable so
+   *  the caller can fall back to the browser engine. */
+  const speakWithServer = useCallback(async (id: string, clean: string): Promise<boolean> => {
     try {
       const { API_URL, authHeaders } = await import('./api')
       const res = await fetch(`${API_URL}/api/tts`, {
-        method: 'POST', headers: authHeaders(), body: JSON.stringify({ text: clean }),
+        method: 'POST', headers: authHeaders(), body: JSON.stringify({ text: clean.slice(0, SERVER_TTS_MAX) }),
       })
-      if (!res.ok) return
+      if (!res.ok) return false
       const contentType = res.headers.get('content-type') || ''
       let src: string | null = null
       if (contentType.startsWith('audio/')) {
@@ -154,16 +171,36 @@ export function useSpeech() {
         const data = await res.json().catch(() => null)
         if (data?.url) src = data.url
       }
-      if (!src) return
+      if (!src) return false
       const audio = new Audio(src)
       audio.onended = () => { setSpeakingId(null); setPaused(false); URL.revokeObjectURL(src!) }
-      audio.onerror = () => { setSpeakingId(null); setPaused(false) }
+      audio.onerror = () => { setSpeakingId(null); setPaused(false); URL.revokeObjectURL(src!) }
       audioRef.current = audio
       setSpeakingId(id)
       setPaused(false)
       await audio.play()
-    } catch { /* silent */ }
-  }, [speakingId, stop])
+      return true
+    } catch { return false }
+  }, [])
+
+  const speak = useCallback(async (id: string, text: string) => {
+    if (typeof window === 'undefined') return
+    // Toggle off if this message is already playing.
+    if (speakingId === id) { stop(); return }
+    stop()
+    const clean = cleanForSpeech(text)
+    const engine = loadTtsEngine()
+
+    // §8-45: the backend Kokoro voice is the preferred engine (quality);
+    // 'browser' opts out, and 'auto' falls back to speechSynthesis when
+    // the server path fails (offline, provider down, non-audio response).
+    if (engine !== 'browser') {
+      const played = await speakWithServer(id, clean)
+      if (played) return
+      if (engine === 'server') return
+    }
+    speakWithBrowser(id, clean)
+  }, [speakingId, stop, speakWithServer, speakWithBrowser])
 
   const pauseOrResume = useCallback(() => {
     if (typeof window === 'undefined') return

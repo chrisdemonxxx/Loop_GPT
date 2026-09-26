@@ -82,6 +82,8 @@ export interface QueuedMessage {
   projectId?: string
   webSearch?: 'auto' | 'on' | 'off'
   thinking?: 'auto' | 'on' | 'off'
+  /** Pinned workspace connections (§8-40): their tools join this agent run. */
+  connectionIds?: string[]
   /** §8-22: pending-branch parent, if the queued message was an edit. */
   branchParent?: string | null
 }

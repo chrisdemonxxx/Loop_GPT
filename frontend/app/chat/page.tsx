@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import axios from 'axios'
 
@@ -19,9 +19,10 @@ import type { Conversation, Message } from '../components/chat/types'
 import { parseCommand, SLASH_COMMANDS } from '../lib/commands'
 import ProjectsPanel, { type Project } from '../components/ProjectsPanel'
 import ResearchPanel from '../components/ResearchPanel'
-import { usePanels, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom, useAttachments, useConversationSearch, useMessageQueue } from './hooks'
+import { usePanels, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom, useAttachments, useConversationSearch, useMessageQueue, useWorkspaceConnections, useVoiceMode } from './hooks'
 import { useToast } from '../lib/toast'
 import { useTheme } from '../lib/theme'
+import { useSpeech } from '../lib/voice'
 import type { QueuedMessage } from '../components/chat/types'
 
 // slash commands live in ../lib/commands (registry + parseCommand)
@@ -69,6 +70,27 @@ export default function ChatPage() {
   const { conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages, branchVersions, selectVersion } =
     useConversationsData(currentConversationId, (id) => { if (currentConversationId === id) setCurrentConversationId(null) })
   const chat = useChatStream()
+  // §8-40: workspace-connection chips — recent-use-first, pin for next run.
+  const workspaceConnections = useWorkspaceConnections(workspaceId)
+  /** Freshest live steps for post-run bookkeeping (the hook object in a
+   *  closure goes stale across an await; the ref never does). */
+  const liveStepsRef = useRef(chat.liveSteps)
+  liveStepsRef.current = chat.liveSteps
+  // §8-44 hands-free voice mode: speak each answer, re-listen, auto-send.
+  const autoSpeech = useSpeech()
+  const voiceMode = useVoiceMode({
+    running: chat.running,
+    answer: chat.liveAnswer,
+    speak: (text) => autoSpeech.speak('voice-mode', text),
+    stopSpeech: autoSpeech.stop,
+    speakingId: autoSpeech.speakingId,
+    onAutoSend: (text) => {
+      setInput(text)
+      // The state flushes before the frame callback runs (same pattern as
+      // the composer's stop-and-send).
+      requestAnimationFrame(() => { void handleSend() })
+    },
+  })
   // §8-39: messages sent while a run is active queue up instead of being
   // dropped; the drain fires on every run completion (FIFO).
   const toast = useToast()
@@ -224,6 +246,12 @@ export default function ChatPage() {
     if (snapshot.sendMode === 'research') setResearchOpen(true)
     if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
 
+    // §8-40: a pinned connection joins agent runs. workspaceId rides ONLY a
+    // NEW conversation (existing conversations resolve their own workspace
+    // server-side; sending a mismatched one would 409 the run).
+    const pinnedForRun = snapshot.connectionIds?.length ? snapshot.connectionIds : undefined
+    const newConversation = !conversationForSend()
+
     await chat.send({
       content: snapshot.content, sendMode: snapshot.sendMode, commandTools: snapshot.commandTools,
       attachmentIds: snapshot.attachmentIds, previews: snapshot.previews, docNames: snapshot.docNames,
@@ -234,8 +262,19 @@ export default function ChatPage() {
       webSearch: snapshot.webSearch === 'auto' ? undefined : snapshot.webSearch === 'on',
       thinking: snapshot.thinking === 'auto' ? undefined : snapshot.thinking === 'on',
       ...(snapshot.branchParent !== undefined ? { parentMessageId: snapshot.branchParent } : {}),
+      ...(pinnedForRun ? { connectionIds: pinnedForRun } : {}),
+      ...(pinnedForRun && newConversation && workspaceId ? { workspaceId } : {}),
       ensureConversation,
     })
+
+    // §8-40: remember which connections this run actually used (their tools
+    // carry source "connection:<id>") so the chip row orders by recent use.
+    const used = new Set<string>()
+    for (const s of liveStepsRef.current) {
+      const source = s.kind === 'tool' ? s.tool?.source : undefined
+      if (source?.startsWith('connection:')) used.add(source.slice('connection:'.length))
+    }
+    if (used.size) workspaceConnections.markUsed([...used])
   }
 
   async function handleSend(e?: React.FormEvent) {
@@ -259,6 +298,8 @@ export default function ChatPage() {
 
     // §8-39: while a run is active the message is QUEUED (full intent
     // snapshotted), not dropped — it auto-sends when the run completes.
+    // §8-40: the pinned connection (agent runs only) rides the snapshot.
+    const connectionIds = workspaceConnections.pinnedId && sendMode === 'agent' ? [workspaceConnections.pinnedId] : undefined
     if (chat.running) {
       messageQueue.enqueue({
         id: `queued-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -267,6 +308,7 @@ export default function ChatPage() {
         runMode, modelTier, selectedTools, incognito,
         projectId: activeProjectId || undefined,
         webSearch, thinking,
+        ...(connectionIds ? { connectionIds } : {}),
         ...(branchParent !== undefined ? { branchParent } : {}),
       })
       setInput('')
@@ -285,6 +327,7 @@ export default function ChatPage() {
       runMode, modelTier, selectedTools, incognito,
       projectId: activeProjectId || undefined,
       webSearch, thinking,
+      ...(connectionIds ? { connectionIds } : {}),
       ...(branchParent !== undefined ? { branchParent } : {}),
     })
   }
@@ -580,6 +623,13 @@ export default function ChatPage() {
               onOpenConnectors={() => { setShowPlus(false); setSettingsTab('connectors'); setShowSettings(true) }}
               onOpenSettingsTab={(tab) => { setShowPlus(false); setSettingsTab(tab); setShowSettings(true) }}
               toolSelectionCount={selectedTools ? selectedTools.size : null}
+              connections={workspaceConnections.connections}
+              pinnedConnectionId={workspaceConnections.pinnedId}
+              onTogglePinConnection={workspaceConnections.togglePin}
+              voiceMode={voiceMode.active}
+              voiceModeSupported={voiceMode.supported}
+              voiceModeListening={voiceMode.listening}
+              onToggleVoiceMode={voiceMode.toggle}
             />
           </div>
         </div>
