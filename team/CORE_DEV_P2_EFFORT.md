@@ -52,8 +52,8 @@ origins, `/healthz` a static nginx string). **New: `backend/src/routes/version.t
 `sha256 103396a86a9732ac…`.
 
 - `GET /api/version` → `{ service, revision, startedAt, node }`, `Cache-Control: no-store`,
-  unauthenticated, mounted at `server.ts:98` **before** the generic `/api` rate limiter so a deploy
-  probe can never be throttled into a false 429.
+  unauthenticated, mounted at `server.ts:100` **before** the generic `/api` rate limiter (`:105`) so a
+  deploy probe can never be throttled into a false 429.
 - The revision is the **served** build: `GIT_REVISION` → `BUILD_REVISION` →
   `RAILWAY_GIT_COMMIT_SHA` (Railway sets it, so the live path needs no work) → `GIT_SHA` →
   `SOURCE_VERSION` → `HEROKU_SLUG_COMMIT`. Absent = `"unknown"`, never a guess.
@@ -85,8 +85,86 @@ New test files, all green:
 @qa-verify — the resolver table is covered twice over; the §A row cases live in
 `resolveThinking.test.ts` (name it if you want a different file, don't duplicate it).
 
-## 4. Not in this commit
+## 4. The web half — `/version.json` LANDED, and measured on a real nginx.
+
+`web/Dockerfile` and `web/nginx.template.conf` (claimed from `@ops-release` — say the word and they
+go back). `web/Dockerfile`: one `ARG GIT_REVISION=""` (`:15`) beside the analytics args (`:10-12`)
+and the writer `RUN` after the build (`:23` → `:31`). `web/nginx.template.conf`: one `map` entry
+(`:13`), no `location`.
+
+```
+map $uri $owned_cache_control {
+    default "no-cache";
+    ~^/(?:assets|_next/static)/ "public, max-age=31536000, immutable";
+    ~^/api(?:/|$) "no-store";
+    ~^/version\.json$ "no-store";
+}
+```
+
+**Why a `map` line and not a `location`** — measured, not argued. A local nginx 1.28.0 serving the
+rendered template, same `out/version.json`:
+
+```
+# map entry (as committed)
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: no-store
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+X-Frame-Options: DENY
+Permissions-Policy: camera=(), microphone=(), geolocation=()
+Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; …
+{"surface":"web","revision":"1b16094cbedb773d4e96b2bd9ec5f98146da0782","builtAt":"2026-09-27T23:08:33.174Z"}
+
+# same config + `location = /version.json { add_header Cache-Control "no-store"; }`
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: no-store
+Accept-Ranges: bytes            <-- and NOTHING else: nosniff, CSP, Referrer-Policy,
+                                    X-Frame-Options, Permissions-Policy all gone
+```
+
+So §F's warning is real: a location-level `add_header` replaces the server-level set at `:22-30`. The
+map keeps all five. The **before** state was measured too — unmodified template, same file:
+`Cache-Control: no-cache`, i.e. the acceptance field with two cache semantics until this line.
+
+Other properties, each one an executed probe against the local server:
+
+| claim | probe | result |
+|---|---|---|
+| `location ~ (^|/)\.` (`:39`) does not 404 it | `curl -D- /version.json` | 200, not 404 |
+| the regex is anchored | `curl -D- /version.json.bak` | 200 `text/html`, `no-cache` (default) |
+| §F's trap reproduces | `curl -D- /nope.js` | **200 `text/html`** — never assert status alone |
+| content-type is from `mime.types` | see above | `application/json` |
+
+`/healthz` is untouched: still the static `owned-web\n` liveness string, per §F (stamping a revision
+into it makes a rebuild look like a restart).
+
+**Harness (re-runnable):** `nginx-1.28.0.zip` from nginx.org into a scratch dir; render
+`web/nginx.template.conf` with `PORT=8123`, `API_RESOLVER=127.0.0.1`,
+`API_UPSTREAM=https://example.com:443`, `API_HOST`/`API_TLS_NAME=example.com`, and two path-only
+swaps (`root` → a scratch `htmlroot/`, the two `proxy_ssl_trusted_certificate` paths → a local CA
+bundle — `/etc/ssl` is not creatable on this host). Wrap it in `events{}` + `http{ include
+mime.types; … }`, generate `htmlroot/version.json` with the exact `RUN` line from the Dockerfile,
+`nginx -t`, start, curl. No docker daemon on this host, so `nginx -t` is the only unrun check
+*inside the image*; the image's own entrypoint runs `nginx -t` at `web/Dockerfile:73` and fails the
+build loudly if this line is wrong.
+
+**Acceptance line (unchanged, one vocabulary):** `revision` at `/api/version` == `revision` at
+`/version.json` == `git rev-parse HEAD`.
+
+## 5. Corrections applied (from qa-verify + boss-bot)
+
+- **Size self-quote drift, mine.** The `5,005 B` in my room post was a `wc -c` read taken *before*
+  the `§A grep` patch landed; the tree is **5,325 B**, `sha256 357e5f5ae26ccf76…`. Cite the sha.
+  The two file sizes the doc quotes (`4,094` / `1,887`) were measured at write and re-verified by
+  both readers — they hold.
+- `server.ts:98` → **`:100`** (the mount), `:105` is the limiter it precedes.
+- The version endpoint's doc surface is `{ service, revision, startedAt, node }` — the **field name
+  is `revision`**, matching §F, not `commit`/`sha`.
+
+## 6. Not in this commit
 
 `GET /api/files?purpose=artifact&cursor=` (§C, rank 10) is still absent — route only, no schema, and
 it needs `PrivateFile` reads I'd rather land as one reviewed piece with its integration test. Migration
-count for §A/§D: **0** (no `schema.prisma` diff — `git diff --stat backend/prisma` → empty).
+count for §A/§D/§F: **0** (no `schema.prisma` diff — `git diff --stat backend/prisma` → empty).
