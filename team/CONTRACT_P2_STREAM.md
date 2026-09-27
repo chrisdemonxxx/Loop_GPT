@@ -19,11 +19,11 @@ Everything below is a decision; the implementer does not get to re-open it, only
 One field, widened. `thinking` stays the name; a second `effort` field is rejected (two fields =
 ambiguity whenever both are set, and `safeBody` at `stream.ts:98` already has to hand-copy each one).
 
-**Wire (`StreamBody`, `frontend/app/lib/stream.ts:58`; zod, `backend/src/controllers/agentStream.ts:127`):**
+**Wire (`StreamBody`, `frontend/app/lib/stream.ts:59`; zod, `backend/src/controllers/agentStream.ts:129`):**
 ```
 thinking?: boolean | 'low' | 'medium' | 'high' | 'xhigh'
 ```
-zod: `z.union([z.boolean(), z.enum(['low','medium','high','xhigh'])]).optional()`.
+zod: `z.union([z.boolean(), z.enum(THINKING_EFFORTS)]).optional()`.
 
 **Frozen legacy aliases (this is the whole back-compat story):** `true ≡ 'medium'`, `false ≡ off`,
 omitted ≡ server default. Every shipped client — `mobile/src/lib/stream.ts`, any stale static bundle —
@@ -34,13 +34,12 @@ keeps a 200. There is no deprecation window and none is needed.
 `page.tsx:263`. `QueuedMessage.thinking` (`frontend/app/components/chat/types.ts:84`) takes the same
 union, so a queued send keeps the effort it was captured with.
 
-**Resolver — one function, one owner (`core-dev`), new file `backend/src/agent/thinking.ts`:**
-```
-resolveThinking(v: boolean | Effort | undefined, family: 'qwen'|'other', env) 
-  → { suffix: '/think' | '/no_think' | '', enableThinking?: boolean, cotCap?: number }
-```
+**Resolver — one function, one owner (`core-dev`), `backend/src/agent/thinking.ts`:**
+`resolveThinking(v: ThinkingInput, family: ThinkingFamily) → ResolvedThinking`, plus the
+`thinkingFamily(model)` classifier and `THINKING_EFFORTS` (`thinking.ts:24-58`). Signature as landed,
+not as sketched: `ThinkingInput = boolean | ThinkingEffort | undefined` (`thinking.ts:29`).
 Today there are exactly **three** knobs and no more — do not invent a fourth:
-the prompt suffix (`agentRuntime.ts:214-217`), `enable_thinking` (`llmClient.ts:180-184`), `max_tokens`.
+the prompt suffix (`agentRuntime.ts:226`), `enable_thinking` (`llmClient.ts:188-189`), `max_tokens`.
 
 | input | suffix | `enable_thinking` sent | `cotCap` in system prompt |
 |---|---|---|---|
@@ -54,11 +53,10 @@ Named limit, stated up front so nobody calls it a bug: above `'high'` the only l
 prompt-level cap, because no provider on our two live endpoints exposes a numeric reasoning budget.
 `'xhigh'` ≠ `'high'` is therefore a **prompt** difference, not a transport one.
 
-**Divergence this closes (real, file:line).** `agentRuntime.ts:214` honors the per-run override for the
-suffix, but `llmClient.ts:180-184` reads **only** `process.env.QWEN_THINKING` for `enable_thinking`.
-So today `thinking:true` appends `/think` while the transport still says `enable_thinking:false` unless
-the env is set — the override half-works. The resolver is imported by **both** call sites; neither
-reads env directly afterwards.
+**Divergence this closed — CLOSED at `3a43db8`.** `QWEN_THINKING` now has exactly one reader in
+`src/` (`thinking.ts:63`); both call sites resolve (`agentRuntime.ts:215`, `llmClient.ts:187`;
+imports `:30` / `:18`) and neither reads env. The old half-working state — suffix honored per run while
+`enable_thinking` came from the env — is gone.
 
 **Seam + ordering.** `ui-visual` must not ship the selector before `core-dev`'s zod accepts the union:
 a bool-only server 400s a string body. Land zod first (backend deployable alone, accepts both), then the
@@ -73,7 +71,8 @@ UI, then one `ops-release` redeploy of both — the static export and the API ar
   on `StreamHandlers` (`stream.ts:25`).
 - **The load-bearing rule:** a retryable 429 must **not** emit `error` while the run is still
   retryable. `error` is terminal in three places — `stream.ts:134`, `:140`, `:156-162` — and the
-  auto-resume path (`stream.ts:168-196`) is gated on "no terminal event". Emitting `error` for a
+ auto-resume path (`stream.ts:170-196`; comment at `:168`) is gated on "no terminal event".
+ Emitting `error` for a
   429 kills the self-resume we already built. The run stays durable; the client reconnects with
   `after=<lastSeq>`; `onRetry` only drives the wait card copy.
 
@@ -122,3 +121,45 @@ tool itself is `core-dev`'s, one file in `backend/src/agent/tools/`.
 | tests for the resolver table | `qa-verify` | one case per (tier, family) row in §A |
 
 Ranks 1, 2, 5, 6, 8 in `FRONTIER_RECON.md` §2 need no contract — `ui-visual` may start them now.
+
+## F. The web/nginx served marker — **the last unmet acceptance line, and it crosses an owner seam.**
+
+`GET /api/version` proves the API half only. The static half needs its own marker, and two owners touch
+it: `core-dev` owns the `revision` value's semantics; `ops-release` owns `web/Dockerfile` +
+`web/nginx.template.conf`. One path, one field name, or the probe compares two vocabularies.
+
+**Path: `/version.json` at the web origin.** Confirmed against the config, not assumed: `location /`
+(`web/nginx.template.conf:102`) is `try_files $uri $uri/ /index.html`, so a **real file** at
+`/usr/share/nginx/html/version.json` is served; the dotfile rule `location ~ (^|/)\.` (`:39`) does
+not match it (`/version.json` has no `.` at a path boundary); and nginx's `.json` → `application/json`
+from `mime.types` means no `types{}` block. It must be a **build artifact**, written in the build
+stage (`web/Dockerfile:20`, after `npm run build`) into `frontend/out/`, never at container start — a
+runtime-written file can disagree with the bundle in the same layer.
+
+**Shape (mirrors the API's field name exactly):**
+```
+{"surface":"web","revision":"<40-hex|unknown>","builtAt":"<ISO-8601Z>"}
+```
+
+**One nginx line, and it is not a `location`:** the `map` at `web/nginx.template.conf:2-6` defaults
+to `no-cache`, so `/version.json` would revalidate while the API answers `no-store` — two different
+cache semantics for the same acceptance field. Add one entry: `~^/version\.json$ "no-store";`. Do
+**not** instead put `add_header Cache-Control no-store;` in a new `location` block: a location-level
+`add_header` **replaces** the server-level set (`:22-30`), silently dropping `nosniff`, CSP,
+`Referrer-Policy`, `X-Frame-Options` and `Permissions-Policy` on that path. `map` keeps them.
+
+**Revision source:** build arg, declared and exported the way the analytics keys already are
+(`web/Dockerfile:10-15`). `RAILWAY_GIT_COMMIT_SHA`, then `GIT_SHA`/`SOURCE_VERSION`/`GIT_REVISION`;
+empty → the literal `"unknown"`, never a guess — same rule and the same token `core-dev` used in
+`routes/version.ts`, so a probe can tell "same revision" from "both unknown".
+
+**The probe, and the trap it must not fall into:** assert `Content-Type: application/json` and parse
+`revision` — never the status code. The `:102` catch-all answers `200 text/html` for **any** path that
+does not exist, so a status-only probe passes on a page that says nothing. (Same hazard the chunk check
+already hit.)
+
+**`/healthz` stays liveness-only.** It is `:32` and the container `HEALTHCHECK` (`web/Dockerfile:67`);
+a revision stamped into it would make a rebuild look like a restart. Two facts, two endpoints.
+
+Acceptance becomes: `revision` at `/api/version` == `revision` at `/version.json` == `git rev-parse HEAD`.
+Until `/version.json` exists, "deployed" is unprovable on the web half no matter what the chunk diff says.
