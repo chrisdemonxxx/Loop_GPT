@@ -2,6 +2,7 @@
  * Shared types for the agent runtime.
  */
 import type { AIProvider } from '../services/aiProviders'
+import type { ThinkingInput } from './thinking'
 
 /** OpenAI-style content part for multimodal (vision) messages. */
 export type ContentPart =
@@ -84,7 +85,7 @@ export type AgentEvent =
 
 export interface ArtifactRef {
   id: string
-  kind: 'image' | 'video' | 'pdf' | 'docx' | 'xlsx' | 'pptx' | 'csv' | 'file'
+  kind: 'image' | 'video' | 'pdf' | 'docx' | 'xlsx' | 'pptx' | 'csv' | 'html' | 'file'
   name: string
   url?: string
   mimeType?: string
@@ -118,10 +119,11 @@ export interface RunAgentOptions {
     /** Incognito: skip memory injection and block the remember tool. */
     useMemory?: boolean
     /**
-     * Extended-thinking override (audit §8-26): per-run CoT switch for
-     * thinking-capable models. `true` forces thinking on (e.g. Qwen /think),
-     * `false` forces it off (/no_think); omitted keeps the operator env
-     * default (QWEN_THINKING).
+     * Extended-thinking override (audit §8-26), widened to effort tiers
+     * (contract §A): `true` ≡ `'medium'`, `false` forces thinking off
+     * (`/no_think`), a tier picks a level, omitted keeps the operator env
+     * default (`QWEN_THINKING`). Resolved by `agent/thinking.ts` — the single
+     * reader of that env.
      */
-    thinking?: boolean
+    thinking?: ThinkingInput
   }

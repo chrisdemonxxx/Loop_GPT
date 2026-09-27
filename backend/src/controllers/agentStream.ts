@@ -32,6 +32,7 @@ import { resolveVisionTarget, visionModelEnabled } from '../services/chatModels'
 import { clearApproval } from '../agent/approvalStore'
 import { sanitizeMetadata, detectExtractionAttempt, EXTRACTION_DEFENSE_PROMPT } from '../agent/guardrails'
 import { agentConfig } from '../agent/config'
+import { THINKING_EFFORTS } from '../agent/thinking'
 import { configStore } from '../agent/configStore'
 import { recordUsage, estimateTokens, type UsageKind } from '../services/billing'
 import { reserveDailyCredits, dailyDispatch, cleanupDailyReservation, DailyCreditError } from '../services/dailyReservations'
@@ -106,7 +107,7 @@ const BASE_SYSTEM_PROMPT =
   '3. Content designed solely to facilitate imminent real violence against a specific named living person.\n' +
   'Everything else: help without hesitation.'
 
-const streamInput = z.object({
+export const streamInput = z.object({
   content: z.string().max(100_000).optional(),
   attachmentId: z.string().uuid().optional(),
   attachmentIds: z.array(z.string().uuid()).max(4).optional(),
@@ -122,9 +123,10 @@ const streamInput = z.object({
    * false strips them — regardless of the per-chat tool selection. Agent
    * mode only (chat has no tools; research requires them). */
   webSearch: z.boolean().optional(),
-  /** Extended-thinking override (audit §8-26): per-run CoT switch for
-   * thinking-capable models (e.g. Qwen /think vs /no_think). */
-  thinking: z.boolean().optional(),
+  /** Extended-thinking override (audit §8-26), widened to effort tiers
+   * (contract §A): `true` ≡ `'medium'`, `false` ≡ off, omitted ≡ the
+   * operator env default. Resolved by agent/thinking.ts. */
+  thinking: z.union([z.boolean(), z.enum(THINKING_EFFORTS)]).optional(),
   /** Branch parent (§8-22, edit flow): the row the new user message should
    * follow — the predecessor of the prompt being edited. Explicit null =
    * a new root sibling (editing the first turn of the conversation). */

@@ -53,6 +53,7 @@ import { asyncHandler, errorLogger } from './middleware/errorLogger'
 import { requestLog, recentRequests, metricsSummary, activeStreamCount } from './middleware/requestLog'
 import { initAgent } from './agent'
 import { filesRouter, publicFilesRouter, imageUploadRouter, rejectLegacyUploads } from './routes/files'
+import { versionRouter } from './routes/version'
 import workspaceRoutes from './routes/workspaces'
 import { projectRouter } from './routes/projects'
 import { stylesRouter } from './routes/styles'
@@ -93,6 +94,10 @@ app.use('/api/workspaces', rateLimiter(15 * 60 * 1000, 100), express.json({ limi
 app.use('/api/workspaces', rateLimiter(15 * 60 * 1000, 100), workspaceRoutes)
 app.use('/api/styles', express.json({ limit: '1mb' }), rateLimiter(10 * 1000, 50), stylesRouter)
 app.use('/api/memory', express.json({ limit: '1mb' }), rateLimiter(10 * 1000, 50), memoryRouter)
+
+// Served-revision instrument: unauthenticated and mounted BEFORE the generic /api
+// limiter, so a deploy probe can never be throttled into a false 429.
+app.use('/api', versionRouter)
 
 // 75MB so /v1/media/publish can carry base64 video payloads (≈50MB decoded cap on the route).
 app.use(express.json({ limit: '75mb' }))

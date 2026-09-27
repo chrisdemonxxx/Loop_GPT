@@ -15,6 +15,7 @@ import { getHFBaseUrl, getHFModel } from '../services/aiProviders'
 import type { ChatMessage } from './types'
 import { agentConfig } from './config'
 import { guardedModelFetch, modelBaseUrl, modelCredential, ModelTransportError } from '../services/modelTransport'
+import { resolveThinking, thinkingFamily, type ThinkingInput } from './thinking'
 
 export interface OpenAITargetConfig {
   baseURL: string
@@ -109,6 +110,9 @@ export interface StreamTurnOptions {
   tools?: OpenAI.Chat.Completions.ChatCompletionTool[]
   temperature?: number
   maxTokens?: number
+  /** Reasoning-effort tier (contract §A). The transport half is resolved here
+   * by `resolveThinking`, so the flag can't drift from the prompt suffix. */
+  thinking?: ThinkingInput
   signal?: AbortSignal
   /** Called for every text delta as it streams in. */
   onDelta?: (text: string) => void
@@ -176,10 +180,13 @@ export async function streamTurn(opts: StreamTurnOptions): Promise<StreamTurnRes
     stream: true,
   } as any
 
-  // Qwen 3 thinking mode: set QWEN_THINKING=true to enable chain-of-thought
-  // (slower but better for hard reasoning). Default: disabled (faster).
-  if (process.env.QWEN_THINKING !== 'true') {
-    (params as any).enable_thinking = false
+  // Reasoning effort (contract §A) — the ONE place the transport flag is
+  // decided. Legacy callers pass no tier and get today's exact behaviour
+  // (env unset → enable_thinking:false); a resolved tier may leave it unset
+  // so the provider default wins.
+  const thinking = resolveThinking(opts.thinking, thinkingFamily(model))
+  if (thinking.enableThinking !== undefined) {
+    (params as any).enable_thinking = thinking.enableThinking
   }
 
   if (tools && tools.length > 0) {

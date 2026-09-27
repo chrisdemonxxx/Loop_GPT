@@ -27,6 +27,7 @@ import type {
   ToolDefinition,
 } from './types'
 import { agentConfig } from './config'
+import { resolveThinking, thinkingFamily } from './thinking'
 import { assertRunAccess, grantedTools, restrictRunContext } from './runAuthorization'
 import { CONFIDENTIALITY_PROMPT, sanitizeText, sanitizeMetadata, makeStreamSanitizer, guardrailsEnabled } from './guardrails'
 import { storeApproval, waitForApproval, clearApproval } from './approvalStore'
@@ -208,14 +209,10 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
   // confidentiality rules, then tool guide. An UNRESTRICTED_PREAMBLE can be
   // injected via env to help uncensored models stay on-task.
   const preamble = process.env.UNRESTRICTED_PREAMBLE || ''
-  // Qwen 3: append /no_think unless QWEN_THINKING=true (controls CoT budget).
-  // A per-run thinking override (audit §8-26) wins over the env default:
-  // explicit on → /think, explicit off → /no_think.
-  const qwenSuffix = opts.thinking === true
-    ? '/think'
-    : opts.thinking === false
-      ? '/no_think'
-      : process.env.QWEN_THINKING === 'true' ? '/think' : (process.env.QWEN_THINKING === undefined ? '/no_think' : '')
+  // Reasoning effort (contract §A): one resolver owns the prompt suffix, the
+  // transport flag and the CoT cap, so the two can no longer disagree. A
+  // per-run override (audit §8-26) wins over the operator env default.
+  const thinking = resolveThinking(opts.thinking, thinkingFamily(model))
   const working: ChatMessage[] = []
   const sys = [
     preamble,
@@ -223,7 +220,10 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
     opts.style,
     guardrailsEnabled ? CONFIDENTIALITY_PROMPT : '',
     hasTools ? buildToolGuide(tools) : '',
-    qwenSuffix,
+    // 'high'/'xhigh': the only lever above 'medium' is a prompt-level cap —
+    // no endpoint on our fleet exposes a numeric reasoning budget.
+    thinking.cotCap ? `Reasoning budget: keep your private reasoning under ${thinking.cotCap} tokens.` : '',
+    thinking.suffix,
   ]
     .filter(Boolean)
     .join('\n\n')
@@ -264,6 +264,8 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
         model,
         messages: working,
         tools: useNative ? openaiTools : undefined,
+        // The same resolved tier drives the transport (contract §A).
+        thinking: opts.thinking,
         signal: ctx.signal,
         onDelta: (text) => sanitizer.push(text),
         onReasoning: (text) => ctx.emit({ type: 'thinking', step: stepIndex, text }),

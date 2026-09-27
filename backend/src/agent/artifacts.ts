@@ -26,6 +26,9 @@ const EXT_KIND: Record<string, ArtifactRef['kind']> = {
   png: 'image', jpg: 'image', jpeg: 'image', webp: 'image',
   mp4: 'video', webm: 'video',
   pdf: 'pdf', docx: 'docx', xlsx: 'xlsx', pptx: 'pptx', csv: 'csv',
+  // `html` is in EXT_MIME above but was missing here, so an .html artifact
+  // silently degraded to kind:'file' (contract §D — reuse the kind, no new member).
+  html: 'html',
 }
 
 function sanitize(name: string): string {
