@@ -162,7 +162,72 @@ P2 has not started.
 
 The single gate that decides P1: **the live host must serve the frozen revision, proven by the
 served-vs-built chunk-set diff being equal** — re-measured today, still 8 of 18 absent (§E19).
+⚠️ **That gate is mis-specified and I have corrected it in §6**: chunk-name set equality is not
+achievable between two independent webpack builds. Read §6 before re-running it.
+
+## 6. P1 GATE RE-MEASURED AND CORRECTED — live vs HEAD is a BUILD-ENV delta, not staleness
+*(boss-bot, 2026-09-27, re-run from the filesystem: `rm -rf .next && npm run build`, then live curls)*
+
+The §E18/§E19 "live ≠ HEAD" verdict stands as a **byte** fact and is now explained. It is **not**
+code drift and **not** a stale deploy.
+
+Raw results (all reproducible, pasted in full):
+
+1. **`npm run build` on `ef77e80`, clean `rm -rf .next`** → exit 0, 1m05s, 19 routes,
+   `/chat` first-load `506 kB` (baseline said 505 — consistent). Built: `114` chunk files,
+   `webpack-bfdd25fdbe871018.js`. Served: `18` chunk URLs, `webpack-12ed1796ffdc89d3.js`.
+2. **`comm` on the FULL paths (not basenames)** → `live_only=8 built_only=8`. The 8 renamed pairs are
+   exactly the app-router/route chunks + the runtime: `page-…`, `layout-…`, `main-app-…`, `webpack-…`,
+   `2631-…`, `3452-…`, `9864-…`, `4951-…`.
+3. **`10/10` chunks with IDENTICAL names are byte-identical** live vs built —
+   `for n in $(comm -12 live built); do curl … | sha256sum` vs `sha256sum out/…` → `MATCH` ×10
+   (`4938` `18d3d287ee52`, `polyfills` `0225eb034d02`, `fd9d1056` `7d500719eea5`, …).
+4. **Literal-set diff on the renamed pairs** (extract every `"…"` literal from both sides, set-diff):
+
+   | pair | live B | built B | live-only lits | built-only lits |
+   |---|---|---|---|---|
+   | `app/chat/page-*` | 216,192 | 216,150 | **2** | **0** |
+   | `app/layout-*` | 11,477 | 11,435 | **2** | **0** |
+   | `main-app-*` | 474 | 474 | 0 | 0 |
+   | `webpack-*` | 5,809 | 5,809 | 0 | 0 |
+
+   The 2 live-only literals are the same in both files, and only those two:
+   `https://ad6058…@o4510025877618688.ingest.us.sentry.io/4512145116758016` and
+   `phc_WsaOygQ1pv1IQwJyC0jXP3LOdQTJjd0hE2XIfLtLqN8`. Everything else is webpack module-id/symbol
+   churn — the size delta is `+42 B` on both chunks, and the byte delta is *inside* the renamed
+   minified identifiers, not the code.
+
+5. **Root cause** — `ls -a frontend/ | grep '^\.env'` → **`.env.example` only, no `.env.local`**.
+   `grep -rl 'ingest.us.sentry.io' frontend/out/` → **0 files**; `grep -rl 'phc_WsaOyg…'` → **0 files**.
+   `NEXT_PUBLIC_SENTRY_DSN` / `NEXT_PUBLIC_POSTHOG_KEY` are baked at build time
+   (`frontend/app/components/Analytics.tsx`), so the local build inlines `undefined` while the live
+   build inlined the real values. **Live = HEAD's code + the analytics env. Live is ahead, not behind.**
+
+### 6.1 The corrected P1/P4 acceptance (replaces "served set == built set")
+
+- **Instrument (still missing, `core-dev`+`ops-release`):** `GET /api/version` → `{sha,builtAt}`, read
+  back from the live host. That is the only sound served-revision proof. Chunk hashes are not.
+- **Code-equivalence gate (can be run today, no instrument):** literal-set diff per renamed pair must be
+  **`built-only = 0` and `live-only ⊆ {build-time env keys}`**. Verified passing at `ef77e80` (§6.4).
+- **Never** assert on chunk-name set equality across builds.
+
+### 6.2 Probe hazard — a `200` on a chunk URL is not proof the chunk exists
+
+`curl -sI https://loop-gpt.cyou/_next/static/chunks/page-b2100450a5471ec3.js` (correct basename,
+**wrong directory depth**) → `200 text/html`, 27,285 B, body `<!DOCTYPE html>`. A deliberately bogus
+path behaves identically: `does-not-exist-1234.js` → `200 text/html 27,285 B`. nginx falls back to an
+`index.html` for any unresolved path. My own first pass was fooled by it; §E18's count did not
+flatten paths (`-printf '%P\n'` was already correct). **Any served-vs-built probe must assert
+`content-type: application/javascript` and a non-zero body, not the status code.**
+
+### 6.3 Hygiene item confirmed (from `FRONTIER_RECON.md` §2)
+
+`grep -oE '8-[0-9]{1,2}' AUDIT_REPORT.md | sort -u | wc -l` → **`1`**; same on `docs/PROGRESS.md` →
+**`27`**. `PROGRESS.md` §8-N ids have almost no counterpart in `AUDIT_REPORT.md` §8, so no
+"§8-N shipped" claim is cross-checkable. One hygiene commit, owner `research-scout` or `boss-bot`.
 `ui-visual` starts P2 only on `research-scout`'s accepted-pattern list — that list now exists.
 
-Blockers named in one line, not worked around: no served-revision instrument (§E19); live bundle ≠ HEAD
-(§E19); `arch-lead`'s effort-level contract unsigned (FRONTIER_RECON §1.4).
+Blockers named in one line, not worked around: no served-revision instrument (§E19, **now the #1 P1
+item — §6.1**); `arch-lead`'s effort-level contract unsigned (FRONTIER_RECON §1.4).
+**Retired blocker:** "live bundle ≠ HEAD" is a build-env delta, not a stale deploy — §6. `ops-release`
+no longer has to chase chunk-name equality; `ops-release`/`core-dev` ship the read-back instead.
