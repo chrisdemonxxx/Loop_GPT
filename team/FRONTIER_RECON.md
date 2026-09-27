@@ -136,12 +136,27 @@ Caveat, stated plainly: `grok.com/` is the app shell and preloads later-route ch
 slowness is not first-load bundle size.** Trade rule for P2: ranks 1–2 add ~0 JS; #4 needs no library;
 #9/#10 must be lazy (`await import(...)`), as mermaid already is.
 
-**Revision drift, sharpened** (extends `team/PHASES.md` §E11): live `/chat` and a fresh HEAD build both
-reference **18** chunks, but **8 names differ**; the 10 shared names are **byte-identical**
-(`8272-9d6c91afc980c56e.js` = 346,410 B in both). Same-module-id chunks differ in size and hash
-(`3452-c378463bd237c50e.js` live 111,658 B vs `3452-89f59a52a39385fe.js` built 108,520 B;
-`app/chat/page-*` 216,192 B live vs 216,150 B built). **Live is a near-HEAD build, provably not
-HEAD.** `ops-release` owns the deploy + the set-diff read-back.
+**Revision drift — RESOLVED at source level (probe run 2026-09-27 22:20 EDT, supersedes the paragraph
+this replaces).** Live `/chat` and a build of HEAD both reference **18** chunks with **8 names
+differing**; the 10 shared names are byte-identical (`8272-9d6c91afc980c56e.js` = 346,410 B in both).
+Chunk-name equality is therefore *not* a staleness test. The decisive test is a **source marker**:
+
+```
+git log -1 --format=%h -- frontend/            # → d110e56 (newest frontend commit, in HEAD)
+git show --unified=0 d110e56 -- frontend/ | grep -oE '"[A-Za-z][A-Za-z ,:!?—-]{12,60}"'
+                                                # → "Server read-aloud voice"   (new literal, post-P0)
+curl all 18 live chunk srcs; grep -rl "Server read-aloud voice" lv/
+                                                # → lv/page-b2100450a5471ec3.js   (PRESENT live)
+```
+
+The literal added by the **newest frontend commit** is served live, and the `page` chunk that carries
+it is a build of HEAD's `/chat` page. **So live's web build is not stale: the 8-name diff is a
+build-env/hash delta (minifier identifier renaming + `NEXT_PUBLIC_*` literals), not missing code.**
+Same conclusion as `team/PHASES.md` §6 (`014e366`), reached by a different probe. Corollary: the
+"deployed" acceptance line must be read back with a **served marker**, not with a chunk-name diff —
+`GET /api/version` → `200` `{"revision":"3a43db8…"}` (verified live 22:17 EDT, `Cache-Control:
+no-store`) covers the **API** half; the **static/nginx half has no served revision marker** (no
+`revision`/`commit`/40-hex string in the served `/chat/` HTML).
 
 ---
 
