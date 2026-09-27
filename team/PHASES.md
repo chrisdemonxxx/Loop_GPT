@@ -345,3 +345,73 @@ Blockers, one line each: (a) web/nginx served marker missing — `core-dev`+`ops
 `team/PERF_P1.md`, `team/RELEASE_P1.md`, `team/A11Y_AXE.md` absent — `perf-eng`/`ops-release`/
 `qa-verify`; (c) doc self-quote drift in `CORE_DEV_P2_EFFORT.md` (5,005 → 5,325) — `core-dev`, one
 line.
+
+## 8. FIFTH REVISION — the revision moved past §7, the web half has a fingerprint but no lookup, and "both origins" is one front
+
+*(boss-bot, 2026-09-27, re-probed from this box minutes after §7. §7's `3a43db8` readings are **one
+revision stale**; nothing in §7 is wrong, it is superseded.)*
+
+### 8.1 `GET /api/version` now reports a NEWER revision than §7.3
+
+```
+$ for u in https://loop-gpt.cyou/api/version https://api.loop-gpt.cyou/api/version; do curl -s -w " [%{http_code} %{content_type} %{size_download}B]\n" "$u"; done
+{"service":"loop-gpt-backend","revision":"2e74b58863e0b5c6b234e5df59163faec1275899",
+ "startedAt":"2026-09-27T22:26:59.330Z","node":"v22.23.2"} [200 application/json; charset=utf-8 141B]
+{"service":"loop-gpt-backend","revision":"2e74b58863e0b5c6b234e5df59163faec1275899",
+ "startedAt":"2026-09-27T22:26:59.330Z","node":"v22.23.2"} [200 application/json; charset=utf-8 141B]
+```
+
+`git ls-remote origin refs/heads/release/owned-staging-20260917` → `2e74b588…`; `git branch -r
+--contains HEAD` → `origin/release/…`; `git status -sb` → no ahead marker. So the served backend
+revision == the current release tip, and §7.5's "unpushed" line is closed at the new tip. **A
+read-back is a point-in-time measurement, not a fact about the deployment** — it has to be re-run
+after every deploy, and §7's line was already stale when this pass started.
+
+### 8.2 `loop-gpt.cyou` and `api.loop-gpt.cyou` are ONE nginx front — §7.3's two curls are one proof
+
+```
+https://loop-gpt.cyou/chat/      → 200 text/html 21,400  sha256 4231b6e4d0ec36a…
+https://api.loop-gpt.cyou/chat/ → 200 text/html 21,400  sha256 4231b6e4d0ec36a…   ← identical
+https://loop-gpt.cyou/nope-123      → 200 text/html 27,285  sha256 1067e0b66dab12…
+https://api.loop-gpt.cyou/nope-123  → 200 text/html 27,285  sha256 1067e0b66dab12…  ← identical
+https://loop-gpt.cyou/healthz     → 200 text/plain 10B  "owned-web"
+https://api.loop-gpt.cyou/healthz → 200 text/plain 10B  "owned-web"   (`nginx.template.conf:32`)
+```
+
+Same bytes, same content-types on both hostnames, including the SPA fallback. The `api.` host is an
+alias of the web container, not a second deployment — **it proves nothing twice.** One read-back, one
+line.
+
+### 8.3 The web half: a fingerprint exists, the *lookup* does not
+
+§7.3 is right that no 40-hex and no `revision` token is served on the web side. It missed this: the
+static export **does** carry Next's per-build `buildId` in the flight payload.
+
+```
+live  /chat/            →  \"buildId\":\"mhr0BN00hXHVQ3yAVEqSP\"
+fresh build of 2e74b58  →  \"buildId\":\"mzHvB4EpeIcPlU98UyNVq\"    (frontend/.next/BUILD_ID)
+```
+
+That is a *fingerprint with no lookup table*: it is random per `next build`, so it can distinguish
+"the web did not redeploy" (live's `buildId` and all 18 chunk URLs are unchanged from the 21:32Z
+probe) from "it did" — but it cannot name a commit. The web half needs a SHA, not a nonce.
+
+**Fix, and it needs no nginx change:** emit `out/version.json` at build (the SHA already reaches the
+backend; reuse it). `web/nginx.template.conf:102` is `location / { try_files $uri $uri/ /index.html; }`
+— **a real file wins over the fallback** — and `:38 location ^~ /assets/ { try_files $uri =404; }` is
+the same pattern already shipped. Probe it with `%{content_type}` and a non-zero size, never the
+status code (§6.2). This is the whole of P1's remaining defect, and it is ~3 lines in `web/Dockerfile`
+plus one line in `frontend/`'s build.
+
+### 8.4 Fifth-revision board effect
+
+- **P1** — decider is now: backend read-back **PASS at `2e74b58`** (re-run after each deploy), web
+  served marker **OPEN** (8.3). Three artifacts still absent (`PERF_P1.md`, `RELEASE_P1.md`,
+  `A11Y_AXE.md`).
+- **P2** — unblocked and in flight on `ui-visual`'s tree (4 files, 1 new, uncommitted).
+- **P3/P4** — the read-back is two lines: `GET /api/version` (both hosts are one host, 8.2) plus
+  `GET /version.json` on the web front (8.3, to be built).
+
+**Ownership note:** `team/PHASES.md` is `boss-bot`'s file; §7 landed in it attributed to me from
+another seat. Both revisions now reconcile — §7 = `3a43db8`, §8 = `2e74b58` and the web fix. No
+further writes to this file from other lanes; route additions through a `team/` note or ping me.
