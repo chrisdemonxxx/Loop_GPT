@@ -1,6 +1,15 @@
 # team/PHASES.md — Loop GPT phase ledger (owner: boss-bot)
 
-ROOM POST (boss-bot, 2026-09-27, third revision): **P1-d is SHIPPED** — `research-scout`'s
+ROOM POST (boss-bot, 2026-09-27, fourth revision): **the read-back instrument EXISTS and answers.** Live
+`GET /api/version` → `200 {"revision":"3a43db8…"}` with `no-store` on both origins, so the API half of
+P4's acceptance is provable today. `arch-lead`'s `team/CONTRACT_P2_STREAM.md` (`350ad4d`, 8,023 B) and
+`core-dev`'s resolver (`3a43db8`, `thinking.ts` 4,094 B) are both hash-verified on disk; the 23 tests
+are re-run by me, not taken on report (§7). The code-equivalence gate passes: **built-only = 0** on
+both renamed chunks — live == HEAD's code + one build-time env literal, so "live ≠ HEAD" is retired as a
+staleness claim. **Remaining: one served marker on the web/nginx half**; `team/PERF_P1.md`,
+`team/RELEASE_P1.md`, `team/A11Y_AXE.md` are still ABSENT.
+
+Third revision (2026-09-27): **P1-d is SHIPPED** — `research-scout`'s
 `team/FRONTIER_RECON.md` (9,679 B, sha256 `167d1f3e5f206185…`) is on disk and committed at `ef77e80`,
 and it corrects the brief in three places (§0.1–§0.3) before any P2 code is written. The unpushed-docs
 defect is **CLOSED**: `git status -sb` shows no ahead marker, `origin/release/owned-staging-20260917`
@@ -32,10 +41,10 @@ Repo: `C:\Users\chris\Desktop\Workspace\dev-projects\loop-gpt`, branch
 | phase | owner | deliverable | acceptance | status |
 |---|---|---|---|---|
 | **P0** — land the in-flight work | `ui-visual` (solo writer of `hooks.ts`), `core-dev` (`/api/tts` contract), `boss-bot` (this ledger + `team/P0_CLOSEOUT.md`) | §8-40 connector chip, §8-44 hands-free voice, §8-45 server TTS + `ttsEngine` pref, Appearance tab | clean tree; gates green (`tsc`, `lint`, `vitest`, `playwright`, `build`); revision reviewed by both lanes; deployed | **SHIPPED (code + gates) — `team/P0_CLOSEOUT.md`.** `7540a3d`, 14 files, +836/−42. `tsc`=0, `lint`=0 (13 warn / 0 err), `vitest` 23 files/150 tests, `playwright` 20 passed, `build` exit 0 (19 routes). One commit, not four. **"Deployed" NOT met** — §3b. Proof: §E1, E9–E13, `team/P0_CLOSEOUT.md` |
-| **P1** — close the launch gaps | `perf-eng` (perf), `ops-release` (release+deploy), `qa-verify` (a11y), `research-scout` (recon), `core-dev` (version endpoint) | `team/PERF_P1.md`; `team/RELEASE_P1.md`; `team/A11Y_AXE.md` (GAP-003 `serious` contrast sweep); `team/FRONTIER_RECON.md`; `GET /api/version` | one line of raw evidence each: byte size, sha256, HTTP status, test count; before/after number per fix; no `NEEDS CONFIRMATION` left unowned | **PARTIAL — 1 of 5 shipped.** `team/FRONTIER_RECON.md` **SHIPPED** (9,679 B, sha256 `167d1f3e5f206185…`, `ef77e80`; §E19). `PERF_P1.md` / `RELEASE_P1.md` / `A11Y_AXE.md` **ABSENT** on disk (re-checked this pass); `GET /api/version` → **404 on both origins**, no source match (§E19). Decider gate re-measured, unchanged: 8 of 18 served chunks absent from a HEAD build. Proof: §E14–E16, E19 |
-| **P2** — frontier-parity UI rebuild | `ui-visual` (builds the accepted list), `arch-lead` (contract for any new surface), `mobile-dev` (mirrors accepted IA into `mobile/`) | rebuilt chat/landing surface to Claude/ChatGPT/Grok standard — fast + snappy; `mobile/` parity | accepted pattern list from P1 recon is the only source of work; each item carries a before/after measurement; contract signed before a new surface lands | **READY (source landed)** — recon is shipped; ranks 1/3/5 buildable now, rank 4 gated on `arch-lead`'s effort-level contract (FRONTIER_RECON §1.4) |
+| **P1** — close the launch gaps | `perf-eng` (perf), `ops-release` (release+deploy), `qa-verify` (a11y), `research-scout` (recon), `core-dev` (version endpoint) | `team/PERF_P1.md`; `team/RELEASE_P1.md`; `team/A11Y_AXE.md` (GAP-003 `serious` contrast sweep); `team/FRONTIER_RECON.md`; `GET /api/version` | one line of raw evidence each: byte size, sha256, HTTP status, test count; before/after number per fix; no `NEEDS CONFIRMATION` left unowned | **4 of 5 LANDED.** `FRONTIER_RECON.md` (pass 2, 15,465 B, `2e74b58`), `CONTRACT_P2_STREAM.md` (8,023 B, `350ad4d`), resolver + `/api/version` (live `200`, revision `3a43db8`) all hash-verified by me (§7.1/§7.3). **ABSENT still: `PERF_P1.md`, `RELEASE_P1.md`, `A11Y_AXE.md`.** Proof: §E19, §6, §7 |
+| **P2** — frontier-parity UI rebuild | `ui-visual` (builds the accepted list), `arch-lead` (contract for any new surface), `mobile-dev` (mirrors accepted IA into `mobile/`) | rebuilt chat/landing surface to Claude/ChatGPT/Grok standard — fast + snappy; `mobile/` parity | accepted pattern list from P1 recon is the only source of work; each item carries a before/after measurement; contract signed before a new surface lands | **IN FLIGHT** — contract signed (`350ad4d`); `ui-visual` has ranks 1/3/5/7 open against it; the effort selector is unblocked (`3a43db8` zod accepts the union) |
 | **P3** — independent verification | `qa-verify` (dynamic) + `code-review` (static) on the FROZEN revision; `perf-eng` re-measures post-rebuild | dynamic + static verdicts pinned to a revision hash; post-rebuild perf numbers | both lanes report the revision hash — "green" must refer to specific bytes | **OPEN** — P0's frozen revision (`7540a3d`) is reviewable NOW; re-freeze after P2 |
-| **P4** — release | `ops-release` (migration state, deploy, served-revision read-back, tag); `boss-bot` (close-out, roster + docs, declare) | deployed revision + tag; read-back proving the served revision | served revision read back from the live host, not from a deploy log; roster + docs updated in the same pass | **OPEN** — and the read-back instrument does not exist yet (§E12) |
+| **P4** — release | `ops-release` (migration state, deploy, served-revision read-back, tag); `boss-bot` (close-out, roster + docs, declare) | deployed revision + tag; read-back proving the served revision | served revision read back from the live host, not from a deploy log; roster + docs updated in the same pass | **HALF-CLOSED** — API read-back **works** (`GET /api/version` → `200`, revision `3a43db8`, `no-store`); the web/nginx half still has **no** served marker (served `/chat/` HTML carries no revision/40-hex) — §7.3 |
 
 Lane order (dependency): static review → dynamic test → research. P3 is the only lane that runs both
 reviewers; research (`research-scout`) feeds P2.
@@ -65,8 +74,8 @@ the exact figures are not.
 | P1-b | **Release**: DB-restore footer, Stripe freeze-vs-go-live, Figma OAuth live smoke, deliberate-error observability, uptime probe, **and the deploy itself** | `ops-release` | `team/RELEASE_P1.md` — one raw line per item | `team/RELEASE_BASELINE.md`: 6 items with probes; #2 already closed (both DSNs → HTTP 200) (§E15) |
 | P1-c | **A11y / GAP-003**: the axe suite gates on `impact==='critical'` **only**; the `serious` contrast sweep on the dark theme is unrun | `qa-verify` | `team/A11Y_AXE.md` — every `serious+` violation with element + ratio, per route | `frontend/tests/e2e/app.spec.ts:10-13` (the `critical`-only filter is in the source) (§E16) |
 | P1-d | **Recon**: which frontier patterns (Claude / ChatGPT / Grok) the audit still lists as missing, each with a source; feeds `ui-visual` | `research-scout` | `team/FRONTIER_RECON.md` — accepted-pattern list with citations | **SHIPPED** — `team/FRONTIER_RECON.md` 9,679 B, sha256 `167d1f3e5f206185…`, commit `ef77e80` (§E19). 6 ranked parity patterns + 4 table-stakes; §0 corrects the audit itself (4 "missing" items already ship; §8 numbering ≠ PROGRESS §8-N; ChatGPT retired Canvas). **UNVERIFIED set is explicit** (§4): OpenAI/Claude article pages 403'd the keyless extractor |
-| **NEW** | **No way to read the served revision back** — `/api/version` → 404 on both origins; `/healthz` is `nginx return 200 "owned-web\n"` (proves nginx, not the app); the API origin's `/health` returns the web `index.html` (200 `text/html`, 27,285 B) because nginx only proxies `^/api(?:/|$)` and `^/v1/` | `core-dev` (endpoint + contract), `ops-release` (deploy + read-back) | `GET /api/version` → `{sha,builtAt}` baked at build; `/healthz` proxies or embeds the SHA | §E11, §E12 — three raw probes |
-| **NEW** | **The live host is stale**: 8 of the 18 chunk names `/chat/` serves are absent from a fresh build of HEAD; the webpack runtime hash differs outright | `ops-release` | deploy the frozen revision, then the served-vs-built set-diff must be **equal** | §E11 — `comm`-style set diff, not a deploy log |
+| **NEW** | **No way to read the served revision back** — ~~`/api/version` → 404 on both origins~~ **API HALF CLOSED** (`3a43db8`): live `/api/version` → `200 {"revision":"3a43db8…"}`, `no-store`, unauthenticated, mounted at `server.ts:100` ahead of the global limiter. **Web half OPEN**: `/healthz` is still `nginx return 200 "owned-web\n"` and the served `/chat/` HTML carries no revision/40-hex (§7.3) | `core-dev` (endpoint, done), `ops-release` (web marker + read-back) | `GET /api/version` → `{revision,…}` ✅; a served marker on the nginx half ⏳ | §E12, §7.3 — raw probes, both halves |
+| **NEW** | **"The live host is stale"** — 8 of the 18 chunk names `/chat/` serves are absent from a fresh build of HEAD; the webpack runtime hash differs outright. **EXPLAINED, NOT STALENESS (§6/§7.4):** the 8 are renamed pairs; 10/10 identical-name chunks are byte-identical, and the renamed pairs show **built-only literals = 0** with `live-only ⊆ {NEXT_PUBLIC_SENTRY_DSN, NEXT_PUBLIC_POSTHOG_KEY}` (no `.env.local` locally) | `ops-release` (no longer chases this) | **retired** as a deploy criterion; superseded by the §7.4 code-equivalence gate | §6, §7.4 — per-chunk sha + prose-literal set diff |
 | **NEW** | ~~**Two unpushed docs commits**~~ (`30ce162`, `5a74833`) — **CLOSED 2026-09-27**: `git status -sb` shows no ahead marker; `origin/release/owned-staging-20260917` = `ef77e80` = HEAD | `boss-bot` (push) | `git rev-list --count origin/…..HEAD` → `0` | `ahead: 0` (§E19) |
 
 ## 4. EVIDENCE (raw commands, raw results)
@@ -144,26 +153,32 @@ the exact figures are not.
 **Next owner: `ui-visual` — with `arch-lead`'s one decision in front of it — and three P1 artifact
 holders (`perf-eng`, `ops-release`, `qa-verify`) plus `core-dev`.**
 
-1. **`arch-lead`** — one signature, and it is now the critical path, because `FRONTIER_RECON.md` §1
-   ranks 1/3/5 as buildable with no contract and rank **4** (reasoning **effort levels**, Low/Med/High/
-   xhigh) as requiring a stream-contract change: `thinking: boolean` → `effort: enum`. Also §1.2
-   (`/library` over existing artifact rows) needs a yes/no: new table or read-through.
-   Artifact: the contract in a `team/` note, or a one-line "read-through is fine".
-2. **`ui-visual`** — start P2 on `FRONTIER_RECON.md` §1 ranks 1, 3, 5 (long-thread TOC rail; composer
-   Output chooser; visible research-trace budget). Each item carries a before/after measurement, and
-   anything that adds bundle weight names what it evicts (`/chat` first-load is 505 kB JS today).
+1. **`arch-lead`** — **DONE** (`350ad4d`, `team/CONTRACT_P2_STREAM.md`, 8,023 B). Effort signed as a
+   widening (`thinking?: boolean | 'low'|'medium'|'high'|'xhigh'`, `true ≡ 'medium'`); `/library`
+   read-through confirmed, no migration.
+2. **`ui-visual`** — in flight on `FRONTIER_RECON.md` ranks 1 (TOC rail), 3 (429 `Retry-After`), 5
+   (wait card on `onRetry`), plus the effort selector now that `agentStream.ts:129` accepts the union.
+   Each item carries a before/after measurement; anything that adds bundle weight names what it evicts
+   (`/chat` first-load 505–506 kB JS today).
 3. **`perf-eng` / `ops-release` / `qa-verify`** — the three still-missing artifacts
-   (`team/PERF_P1.md`, `team/RELEASE_P1.md`, `team/A11Y_AXE.md`). One raw line each.
-4. **`core-dev`** — `GET /api/version` → `{sha,builtAt}`, wired so `web/nginx.template.conf:32`
-   stops answering `/healthz` with a static string. Still 404 on both origins as of §E19.
+   (`team/PERF_P1.md`, `team/RELEASE_P1.md`, `team/A11Y_AXE.md`). One raw line each. `qa-verify`
+   must not duplicate `resolveThinking.test.ts` (14) / `thinkingWire.test.ts` (4) — extend, don't copy.
+4. **`core-dev` + `ops-release`** — **the one open release blocker:** a served revision marker on the
+   web/nginx half. The API half answers; `location = /healthz` is still a static string and the served
+   `/chat/` HTML carries no revision. Ship the marker and live == HEAD is provable end to end.
 
 **`code-review` + `qa-verify`: freeze `7540a3d` for P3 now** — it is committed, clean, and gated, and
 P2 has not started.
 
-The single gate that decides P1: **the live host must serve the frozen revision, proven by the
-served-vs-built chunk-set diff being equal** — re-measured today, still 8 of 18 absent (§E19).
-⚠️ **That gate is mis-specified and I have corrected it in §6**: chunk-name set equality is not
-achievable between two independent webpack builds. Read §6 before re-running it.
+The gate that decides P1/P4, **corrected twice and now sound**: (a) `GET /api/version` read back from
+the live host — **done**, revision `3a43db8`; (b) the code-equivalence gate on any renamed chunk —
+**built-only literals = 0** (§7.4); (c) a served marker on the web/nginx half — **open**. **Never**
+chunk-name set equality, and never a bare `200` on a chunk URL (nginx falls back to `index.html`; assert
+content-type — §6.2). ⚠️ **The chunk-set-equality wording below is superseded — read §6 + §7.4.**
+
+Blockers named in one line, not worked around: web/nginx served marker missing (§7.3); `team/PERF_P1.md`,
+`team/RELEASE_P1.md`, `team/A11Y_AXE.md` absent (§7.6); `CORE_DEV_P2_EFFORT.md` self-quotes 5,005 B
+against 5,325 B on disk (§7.1).
 
 ## 6. P1 GATE RE-MEASURED AND CORRECTED — live vs HEAD is a BUILD-ENV delta, not staleness
 *(boss-bot, 2026-09-27, re-run from the filesystem: `rm -rf .next && npm run build`, then live curls)*
@@ -231,3 +246,102 @@ Blockers named in one line, not worked around: no served-revision instrument (§
 item — §6.1**); `arch-lead`'s effort-level contract unsigned (FRONTIER_RECON §1.4).
 **Retired blocker:** "live bundle ≠ HEAD" is a build-env delta, not a stale deploy — §6. `ops-release`
 no longer has to chase chunk-name equality; `ops-release`/`core-dev` ship the read-back instead.
+
+## 7. FOURTH REVISION — four landings verified from the filesystem; the read-back instrument EXISTS
+
+*(boss-bot, 2026-09-27. Every line below is my own read/run this pass; nothing is copied from a room
+post. HEAD `2e74b58`; `@{u}..HEAD` → `0` after I pushed — see 7.5.)*
+
+### 7.1 The four landings, hash-verified on disk
+
+| artifact | on disk | claimed | verdict |
+|---|---|---|---|
+| `team/CONTRACT_P2_STREAM.md` | 8,023 B, sha256 `51c27942668ae45c…`, `350ad4d` | 8,023 / `51c27942668ae45c…` | ✓ exact |
+| `backend/src/agent/thinking.ts` (new) | 4,094 B, sha256 `49a4a92acc8f32c0…` | 4,094 / `49a4a92a…` | ✓ exact |
+| `backend/src/routes/version.ts` (new) | 1,887 B, sha256 `103396a86a9732ac…` | 1,887 / `103396a8…` | ✓ exact |
+| `team/CORE_DEV_P2_EFFORT.md` | **5,325 B**, sha256 `357e5f5ae26ccf76…` | doc self-quotes **5,005 B** | ⚠ **drift +320 B** — cite `357e5f5a…`; `qa-verify` read it right |
+| `team/FRONTIER_RECON.md` | **15,465 B**, sha256 `6ac53ca9666ae675…`, `2e74b58` (pass 2) | 15,465 / `6ac53ca9…` | ✓ exact — **supersedes `ef77e80`/9,679 B** cited in §3/§E19 |
+
+Two line-drifts to log, both harmless: the contract cites `stream.ts:58`, the field is at `:59`; and
+`core-dev` cites the version mount at `server.ts:98`, it is at **`:100`** — `grep -n` shows
+`93 /api/workspaces`, `95 /api/styles`, `96 /api/memory`, **`100 app.use('/api', versionRouter)`**,
+`105` the global limiter. The ordering claim (probe before limiter) is **true**.
+
+### 7.2 The resolver is one reader, as contracted
+
+`grep -rn "QWEN_THINKING" backend/src | grep -v __tests__` → **`thinking.ts:63` only** (the two other
+hits are its own comment). Both call sites import the resolver: `agentRuntime.ts:30`,
+`llmClient.ts:18`. zod is exactly the widening: `agentStream.ts:129`
+`thinking: z.union([z.boolean(), z.enum(THINKING_EFFORTS)]).optional()`, with
+`THINKING_EFFORTS = ['low','medium','high','xhigh']` at `thinking.ts:24`.
+
+**Tests re-run by me, not taken on report** — `cd backend && npx vitest run resolveThinking thinkingWire version`:
+
+```
+✓ src/agent/__tests__/resolveThinking.test.ts (14 tests) 4ms
+✓ src/routes/__tests__/version.test.ts (5 tests) 21ms
+✓ src/controllers/__tests__/thinkingWire.test.ts (4 tests) 5ms
+Test Files  3 passed (3)      Tests  23 passed (23)      Duration 2.03s
+```
+
+### 7.3 The served-revision read-back — **the §6.1 instrument now exists**
+
+```
+curl -s -D- https://loop-gpt.cyou/api/version          → 200, Cache-Control: no-store,
+                                                          x-content-type-options: nosniff
+curl -s     https://api.loop-gpt.cyou/api/version      → 200
+  {"service":"loop-gpt-backend","revision":"3a43db8909704dbc145b8f0178ae009b534f1aca",
+   "startedAt":"2026-09-27T22:10:06.398Z","node":"v22.23.2"}
+```
+
+So the 404 in §E19 is dead and `revision` is the **served** SHA. **The API half of the P4 read-back is
+closed.** The static/nginx half is not: the served `/chat/` HTML (21,400 B) carries **no**
+`revision`/`commit`/`sha` token and **no** 40-hex string (`grep -oE '\b[0-9a-f]{40}\b'` → empty), and
+`location = /healthz` is still `200 text/plain` from a static string. **Remaining: one served marker on
+the web/nginx side (`core-dev` + `ops-release`).** Only that line keeps "deployed" unmet.
+
+### 7.4 The code-equivalence gate, re-run on the live host (this is the gate §6.1 named)
+
+I did **not** accept §6.4 on report. `curl` of all 18 served chunks (`1,824,442 B` fetched), then a
+**prose-literal** set-diff (`"[A-Za-z][A-Za-z0-9 ,:!?.'’%()/_+-]{5,90}"`) on the two renamed pairs:
+
+| pair | live B | built B | built-only | live-only |
+|---|---|---|---|---|
+| `app/chat/page-*` (`page-b2100450a5471ec3.js` vs `page-1a4368a0163b6661.js`) | 216,192 | 216,150 | **0** | 1 (`phc_WsaOyg…`) |
+| `app/layout-*` (`layout-a7c7cf45c3f55274.js` vs built) | 11,519 | 11,477 | **0** | 1 (`phc_WsaOyg…`) |
+
+**built-only = 0 on both. The gate passes: live == HEAD's code + one build-time env literal.** Cause
+re-confirmed: `grep -rl "ingest.us.sentry.io" frontend/out/` → **0**, `grep -rl "phc_WsaOyg"` → **0**
+— no `.env.local`, so the local build inlines `undefined` while the live build inlined the real
+analytics values. **Live is ahead of a local build, never behind it.**
+
+The §6.2 probe hazard reproduces exactly, and is the reason a status code proves nothing:
+`…/chunks/app/chat/page-b2100450a5471ec3.js` → `200 application/javascript`, `Content-Length: 216192`;
+`…/chunks/does-not-exist-1234.js` → `200 **text/html**`, `27,285`. Assert content-type.
+
+**Marker probe, corrected:** `research-scout`'s literal does verify — `git show --unified=0 d110e56 --
+frontend/ | grep '^+' …` → exactly **one** added literal, `"Server read-aloud voice"`, which is served
+live (in `page-b2100450a5471ec3.js`) *and* present in a build of HEAD (`PersonalizationTab.tsx:252`).
+Methodology catch worth one line: the unfiltered `git show | grep -oE '"…"'` also harvests the **commit
+message** and any unchanged text — it returned three "literals", of which two
+(`Text-to-speech generation failed`, `Model not supported by provider`) are nowhere in the frontend at
+HEAD. Use `grep '^+'` **and** `--format=`; the marker alone is weaker than built-only = 0.
+
+### 7.5 Ledger hygiene fixed, and the upstream trap confirmed
+
+`2e74b58` (recon pass 2) was sitting **unpushed** — `git status -sb` said `ahead 1`, and upstream
+pointed at `3a43db8`. **Pushed by me; `@{u}..HEAD` → `0`, upstream = `2e74b58` = HEAD.** And
+`arch-lead`'s note is confirmed on this box: `git rev-list --count @{u}..HEAD` → `1` while
+`origin/HEAD..HEAD` → **127**, because the default-branch ref points at another branch. **Always
+`@{u}`, never `origin/HEAD`** — same class of trap as §E19's `%f`.
+
+### 7.6 Board effect
+
+- **P1** — 4 of 5 landed (`PERF_P1.md`, `RELEASE_P1.md`, `A11Y_AXE.md` still **ABSENT**; `/api/version` **SHIPPED and live**). The two "new defects" of §3 are now one: the nginx/web served marker.
+- **P2** — unblocked. Contract signed; `ui-visual` has ranks 1/3/5 (+7 signed) in flight; the selector waits on nothing (zod is live in `3a43db8`).
+- **P3/P4 acceptance, corrected a second time** — not chunk-name equality, and no longer "no instrument": **`GET /api/version` read back from the live host (done, `3a43db8`), plus one served marker on the web/nginx half (open)**.
+
+Blockers, one line each: (a) web/nginx served marker missing — `core-dev`+`ops-release`; (b)
+`team/PERF_P1.md`, `team/RELEASE_P1.md`, `team/A11Y_AXE.md` absent — `perf-eng`/`ops-release`/
+`qa-verify`; (c) doc self-quote drift in `CORE_DEV_P2_EFFORT.md` (5,005 → 5,325) — `core-dev`, one
+line.
