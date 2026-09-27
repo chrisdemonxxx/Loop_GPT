@@ -1,6 +1,15 @@
 # team/PHASES.md — Loop GPT phase ledger (owner: boss-bot)
 
-ROOM POST (boss-bot, 2026-09-26, second revision): **P0 is SHIPPED and gated** — the four in-flight
+ROOM POST (boss-bot, 2026-09-27, third revision): **P1-d is SHIPPED** — `research-scout`'s
+`team/FRONTIER_RECON.md` (9,679 B, sha256 `167d1f3e5f206185…`) is on disk and committed at `ef77e80`,
+and it corrects the brief in three places (§0.1–§0.3) before any P2 code is written. The unpushed-docs
+defect is **CLOSED**: `git status -sb` shows no ahead marker, `origin/release/owned-staging-20260917`
+= `ef77e80` = HEAD. P1's decider gate was re-measured by me this pass and is **unchanged**: 18 served
+chunk names, **8 absent** from a build of HEAD, webpack runtime hash differs outright (§E19). P1-a/b/c
+(`team/PERF_P1.md`, `team/RELEASE_P1.md`, `team/A11Y_AXE.md`) are still **ABSENT** — three owners
+hold the only open P1 artifacts.
+
+Second revision (2026-09-26): **P0 is SHIPPED and gated** — the four in-flight
 items landed as **one** commit, `7540a3d`, on a clean tree, with all five gates re-run by me and pasted
 in `team/P0_CLOSEOUT.md`. P0's "deployed" acceptance is the only unmet line: the live host is serving
 a **different build** than HEAD (§3b/§E11). **P1 is now IN-FLIGHT with four named owners.** Three
@@ -8,7 +17,7 @@ defects are new this pass (no `/api/version`, `/healthz` is a static nginx strin
 chunk-set mismatch) — all evidenced, none owned before.
 
 First revision written 2026-09-26 03:50 EDT; this revision re-verified against the filesystem after
-`7540a3d`/`30ce162`/`5a74833`. Ground truth order: filesystem → `docs/PROGRESS.md` → `AUDIT_REPORT.md`
+`ef77e80`. Ground truth order: filesystem → `docs/PROGRESS.md` → `AUDIT_REPORT.md`
 §6/§8/§10 + `docs/GAP_REGISTER.md`.
 
 Legend — `SHIPPED` = a path was read AND a raw command result is pasted in §EVIDENCE below.
@@ -23,8 +32,8 @@ Repo: `C:\Users\chris\Desktop\Workspace\dev-projects\loop-gpt`, branch
 | phase | owner | deliverable | acceptance | status |
 |---|---|---|---|---|
 | **P0** — land the in-flight work | `ui-visual` (solo writer of `hooks.ts`), `core-dev` (`/api/tts` contract), `boss-bot` (this ledger + `team/P0_CLOSEOUT.md`) | §8-40 connector chip, §8-44 hands-free voice, §8-45 server TTS + `ttsEngine` pref, Appearance tab | clean tree; gates green (`tsc`, `lint`, `vitest`, `playwright`, `build`); revision reviewed by both lanes; deployed | **SHIPPED (code + gates) — `team/P0_CLOSEOUT.md`.** `7540a3d`, 14 files, +836/−42. `tsc`=0, `lint`=0 (13 warn / 0 err), `vitest` 23 files/150 tests, `playwright` 20 passed, `build` exit 0 (19 routes). One commit, not four. **"Deployed" NOT met** — §3b. Proof: §E1, E9–E13, `team/P0_CLOSEOUT.md` |
-| **P1** — close the launch gaps | `perf-eng` (perf), `ops-release` (release+deploy), `qa-verify` (a11y), `research-scout` (recon), `core-dev` (version endpoint) | `team/PERF_P1.md`; `team/RELEASE_P1.md`; `team/A11Y_AXE.md` (GAP-003 `serious` contrast sweep); `team/FRONTIER_RECON.md`; `GET /api/version` | one line of raw evidence each: byte size, sha256, HTTP status, test count; before/after number per fix; no `NEEDS CONFIRMATION` left unowned | **IN-FLIGHT** — baselines landed (`team/PERF_BASELINE.md` 6,059 B, `team/RELEASE_BASELINE.md` 6,554 B, `team/MOBILE_BASELINE.md` 3,716 B); none of the four P1 deliverables exists yet. Proof: §E14–E16 |
-| **P2** — frontier-parity UI rebuild | `ui-visual` (builds the accepted list), `arch-lead` (contract for any new surface), `mobile-dev` (mirrors accepted IA into `mobile/`) | rebuilt chat/landing surface to Claude/ChatGPT/Grok standard — fast + snappy; `mobile/` parity | accepted pattern list from P1 recon is the only source of work; each item carries a before/after measurement; contract signed before a new surface lands | **OPEN** — blocked on P1 recon |
+| **P1** — close the launch gaps | `perf-eng` (perf), `ops-release` (release+deploy), `qa-verify` (a11y), `research-scout` (recon), `core-dev` (version endpoint) | `team/PERF_P1.md`; `team/RELEASE_P1.md`; `team/A11Y_AXE.md` (GAP-003 `serious` contrast sweep); `team/FRONTIER_RECON.md`; `GET /api/version` | one line of raw evidence each: byte size, sha256, HTTP status, test count; before/after number per fix; no `NEEDS CONFIRMATION` left unowned | **PARTIAL — 1 of 5 shipped.** `team/FRONTIER_RECON.md` **SHIPPED** (9,679 B, sha256 `167d1f3e5f206185…`, `ef77e80`; §E19). `PERF_P1.md` / `RELEASE_P1.md` / `A11Y_AXE.md` **ABSENT** on disk (re-checked this pass); `GET /api/version` → **404 on both origins**, no source match (§E19). Decider gate re-measured, unchanged: 8 of 18 served chunks absent from a HEAD build. Proof: §E14–E16, E19 |
+| **P2** — frontier-parity UI rebuild | `ui-visual` (builds the accepted list), `arch-lead` (contract for any new surface), `mobile-dev` (mirrors accepted IA into `mobile/`) | rebuilt chat/landing surface to Claude/ChatGPT/Grok standard — fast + snappy; `mobile/` parity | accepted pattern list from P1 recon is the only source of work; each item carries a before/after measurement; contract signed before a new surface lands | **READY (source landed)** — recon is shipped; ranks 1/3/5 buildable now, rank 4 gated on `arch-lead`'s effort-level contract (FRONTIER_RECON §1.4) |
 | **P3** — independent verification | `qa-verify` (dynamic) + `code-review` (static) on the FROZEN revision; `perf-eng` re-measures post-rebuild | dynamic + static verdicts pinned to a revision hash; post-rebuild perf numbers | both lanes report the revision hash — "green" must refer to specific bytes | **OPEN** — P0's frozen revision (`7540a3d`) is reviewable NOW; re-freeze after P2 |
 | **P4** — release | `ops-release` (migration state, deploy, served-revision read-back, tag); `boss-bot` (close-out, roster + docs, declare) | deployed revision + tag; read-back proving the served revision | served revision read back from the live host, not from a deploy log; roster + docs updated in the same pass | **OPEN** — and the read-back instrument does not exist yet (§E12) |
 
@@ -55,10 +64,10 @@ the exact figures are not.
 | P1-a | **Perf**: baseline exists; the fixes now need before/after numbers. Biggest: mermaid loaded unconditionally at 2.5 MB raw (~692 kB gzip) on every `/chat` first-load; `/chat` first-load = **505 kB JS** | `perf-eng` | `team/PERF_P1.md` — one before/after pair per fix, measured with the same command | `team/PERF_BASELINE.md` (real build + live `curl` timings, §E14) |
 | P1-b | **Release**: DB-restore footer, Stripe freeze-vs-go-live, Figma OAuth live smoke, deliberate-error observability, uptime probe, **and the deploy itself** | `ops-release` | `team/RELEASE_P1.md` — one raw line per item | `team/RELEASE_BASELINE.md`: 6 items with probes; #2 already closed (both DSNs → HTTP 200) (§E15) |
 | P1-c | **A11y / GAP-003**: the axe suite gates on `impact==='critical'` **only**; the `serious` contrast sweep on the dark theme is unrun | `qa-verify` | `team/A11Y_AXE.md` — every `serious+` violation with element + ratio, per route | `frontend/tests/e2e/app.spec.ts:10-13` (the `critical`-only filter is in the source) (§E16) |
-| P1-d | **Recon**: which frontier patterns (Claude / ChatGPT / Grok) the audit still lists as missing, each with a source; feeds `ui-visual` | `research-scout` | `team/FRONTIER_RECON.md` — accepted-pattern list with citations | none yet; `AUDIT_REPORT.md` §8 is the input |
+| P1-d | **Recon**: which frontier patterns (Claude / ChatGPT / Grok) the audit still lists as missing, each with a source; feeds `ui-visual` | `research-scout` | `team/FRONTIER_RECON.md` — accepted-pattern list with citations | **SHIPPED** — `team/FRONTIER_RECON.md` 9,679 B, sha256 `167d1f3e5f206185…`, commit `ef77e80` (§E19). 6 ranked parity patterns + 4 table-stakes; §0 corrects the audit itself (4 "missing" items already ship; §8 numbering ≠ PROGRESS §8-N; ChatGPT retired Canvas). **UNVERIFIED set is explicit** (§4): OpenAI/Claude article pages 403'd the keyless extractor |
 | **NEW** | **No way to read the served revision back** — `/api/version` → 404 on both origins; `/healthz` is `nginx return 200 "owned-web\n"` (proves nginx, not the app); the API origin's `/health` returns the web `index.html` (200 `text/html`, 27,285 B) because nginx only proxies `^/api(?:/|$)` and `^/v1/` | `core-dev` (endpoint + contract), `ops-release` (deploy + read-back) | `GET /api/version` → `{sha,builtAt}` baked at build; `/healthz` proxies or embeds the SHA | §E11, §E12 — three raw probes |
 | **NEW** | **The live host is stale**: 8 of the 18 chunk names `/chat/` serves are absent from a fresh build of HEAD; the webpack runtime hash differs outright | `ops-release` | deploy the frozen revision, then the served-vs-built set-diff must be **equal** | §E11 — `comm`-style set diff, not a deploy log |
-| **NEW** | **Two unpushed docs commits** (`30ce162`, `5a74833`) — `ahead 2` of origin. The durable channel is not durable until it is pushed | `boss-bot` (push), then all | `git status -sb` → no ahead marker | `git log --oneline origin/…..HEAD` = 2 lines |
+| **NEW** | ~~**Two unpushed docs commits**~~ (`30ce162`, `5a74833`) — **CLOSED 2026-09-27**: `git status -sb` shows no ahead marker; `origin/release/owned-staging-20260917` = `ef77e80` = HEAD | `boss-bot` (push) | `git rev-list --count origin/…..HEAD` → `0` | `ahead: 0` (§E19) |
 
 ## 4. EVIDENCE (raw commands, raw results)
 
@@ -109,16 +118,51 @@ the exact figures are not.
   `{"error":"Invalid token"}` `401 0.876 s`; `GET /api/models/catalog` → `200 0.879 s`. Full probes:
   `team/P1_FINDINGS.md`. exit 0.
 
+- **E19** (boss-bot, 2026-09-27 — the whole pass re-run against the live host and the filesystem, not
+  copied from a self-report)
+  - `for f in team/PERF_P1.md team/RELEASE_P1.md team/A11Y_AXE.md team/FRONTIER_RECON.md; do stat -c%s` →
+    `PERF_P1.md ABSENT`; `RELEASE_P1.md ABSENT`; `A11Y_AXE.md ABSENT`; **`FRONTIER_RECON.md 9679 B
+    sha256 167d1f3e5f206185…`**. exit 0.
+  - `git status -sb` → `## release/owned-staging-20260917...origin/release/owned-staging-20260917` (no
+    ahead marker); `git log --oneline -1 origin/…` → `ef77e80 docs(team): FRONTIER_RECON …`;
+    `git rev-list --count origin/…..HEAD` → **`0`**. exit 0.
+  - `curl -s https://loop-gpt.cyou/chat/ | grep -oE '_next/static/chunks/[A-Za-z0-9_./-]+\.js' | sort -u | wc -l`
+    → **`18`** served. `find frontend/out/_next/static/chunks -name '*.js' -printf '%P\n'` (out/ rebuilt
+    today 17:35, 116 files, 114 unique chunk names) → `comm -23` → **`8` served names absent**, incl.
+    `webpack-12ed1796ffdc89d3.js` served vs `webpack-bfdd25fdbe871018.js` built, and
+    `app/chat/page-b2100450a5471ec3.js` served vs `page-<other>` built. **Gate unchanged: live ≠ HEAD.**
+  - `curl -w '%{http_code} %{size_download}' https://loop-gpt.cyou/api/version` → `404 0`;
+    `https://api.loop-gpt.cyou/api/version` → `404 0`; `grep -rn "api/version" backend/src web/nginx.template.conf`
+    → **no match**. exit 0.
+  - **Methodology trap, logged so the next reader does not repeat it**: diffing served names against
+    `find … -printf '%f'` (basenames only) inflates the miss to `18/18` because nested chunks carry an
+    `app/…` path prefix. The correct comparator is the path **relative to `out/`**; that yields the
+    true **8**. Same file, different `find` format — 10 phantom "missing" chunks.
+
 ## 5. Next owner + exact artifact (the hand-off)
 
-**Next owner: `perf-eng`, `ops-release`, `qa-verify`, `research-scout` — in parallel, one artifact each**
-(`team/PERF_P1.md`, `team/RELEASE_P1.md`, `team/A11Y_AXE.md`, `team/FRONTIER_RECON.md`), and
-**`core-dev`** for `GET /api/version` (`backend/src/server.ts` + `web/nginx.template.conf:32`).
+**Next owner: `ui-visual` — with `arch-lead`'s one decision in front of it — and three P1 artifact
+holders (`perf-eng`, `ops-release`, `qa-verify`) plus `core-dev`.**
+
+1. **`arch-lead`** — one signature, and it is now the critical path, because `FRONTIER_RECON.md` §1
+   ranks 1/3/5 as buildable with no contract and rank **4** (reasoning **effort levels**, Low/Med/High/
+   xhigh) as requiring a stream-contract change: `thinking: boolean` → `effort: enum`. Also §1.2
+   (`/library` over existing artifact rows) needs a yes/no: new table or read-through.
+   Artifact: the contract in a `team/` note, or a one-line "read-through is fine".
+2. **`ui-visual`** — start P2 on `FRONTIER_RECON.md` §1 ranks 1, 3, 5 (long-thread TOC rail; composer
+   Output chooser; visible research-trace budget). Each item carries a before/after measurement, and
+   anything that adds bundle weight names what it evicts (`/chat` first-load is 505 kB JS today).
+3. **`perf-eng` / `ops-release` / `qa-verify`** — the three still-missing artifacts
+   (`team/PERF_P1.md`, `team/RELEASE_P1.md`, `team/A11Y_AXE.md`). One raw line each.
+4. **`core-dev`** — `GET /api/version` → `{sha,builtAt}`, wired so `web/nginx.template.conf:32`
+   stops answering `/healthz` with a static string. Still 404 on both origins as of §E19.
+
+**`code-review` + `qa-verify`: freeze `7540a3d` for P3 now** — it is committed, clean, and gated, and
+P2 has not started.
 
 The single gate that decides P1: **the live host must serve the frozen revision, proven by the
-served-vs-built chunk-set diff being equal** — today it is not (§E11). `ui-visual` starts P2 only on
-`research-scout`'s accepted-pattern list. `qa-verify` + `code-review` can freeze `7540a3d` for P3
-**now** — it is committed, clean, and gated.
+served-vs-built chunk-set diff being equal** — re-measured today, still 8 of 18 absent (§E19).
+`ui-visual` starts P2 only on `research-scout`'s accepted-pattern list — that list now exists.
 
-Blockers named in one line, not worked around: no served-revision instrument (§E12); live bundle ≠ HEAD
-(§E11); docs commits unpushed.
+Blockers named in one line, not worked around: no served-revision instrument (§E19); live bundle ≠ HEAD
+(§E19); `arch-lead`'s effort-level contract unsigned (FRONTIER_RECON §1.4).
