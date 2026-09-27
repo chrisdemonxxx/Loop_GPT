@@ -25,6 +25,11 @@ Also probed and rejected: every HF-router model behind the `8611` proxy (`Qwen/Q
 `deepseek-ai/DeepSeek-V4.1-Flash`, `zai-org/GLM-5.3`, `moonshotai/Kimi-K3`,
 `openai/gpt-oss-120b`) → all `402 depleted your monthly included credits`.
 
+**Re-probe 2026-09-27 (hr-bot)** — both live seats re-verified, liveness + tools, 45s timeout:
+`hf-dsv41` → `200 1.474s` `tool_calls: ping({"x":"1"})`; `qwen3-cyber` → `200 1.705s`
+`tool_calls: ping({"x":"1"})`. Both worker endpoints still answer with a real tool call; no seat is on
+a dead endpoint. Dead group unchanged (`402` router, `401` Azure, `404` `/repository`).
+
 **Consequence: the fleet has exactly two live worker models.** The router-based provider group
 (`glm52-abliterated`, `lunaris-abliterated`, `stheno-abliterated`, `glm53-flash`) and the Azure
 foundry are dead until the operator restores credits / rotates the key.
