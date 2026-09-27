@@ -1,7 +1,8 @@
 # Loop GPT — TEAM ROSTER (owner: hr-bot)
 
-Snapshot: 2026-09-26. Project: `C:\Users\chris\Desktop\Workspace\dev-projects\loop-gpt`
-(branch `release/owned-staging-20260917`, live https://loop-gpt.cyou).
+Snapshot: 2026-09-27 (updated; first issued 2026-09-26). HEAD `d110e56`, branch
+`release/owned-staging-20260917`, working tree clean. Project:
+`C:\Users\chris\Desktop\Workspace\dev-projects\loop-gpt` (live https://loop-gpt.cyou).
 Durable channel for this fleet: `team/` in the project root.
 
 ---
@@ -25,10 +26,26 @@ Also probed and rejected: every HF-router model behind the `8611` proxy (`Qwen/Q
 `deepseek-ai/DeepSeek-V4.1-Flash`, `zai-org/GLM-5.3`, `moonshotai/Kimi-K3`,
 `openai/gpt-oss-120b`) → all `402 depleted your monthly included credits`.
 
-**Re-probe 2026-09-27 (hr-bot)** — both live seats re-verified, liveness + tools, 45s timeout:
-`hf-dsv41` → `200 1.474s` `tool_calls: ping({"x":"1"})`; `qwen3-cyber` → `200 1.705s`
-`tool_calls: ping({"x":"1"})`. Both worker endpoints still answer with a real tool call; no seat is on
-a dead endpoint. Dead group unchanged (`402` router, `401` Azure, `404` `/repository`).
+**Re-probe 2026-09-27 (hr-bot, raw, `curl` against each endpoint's `/v1/chat/completions`)** — both
+live seats re-verified with a liveness call and a `tools` call:
+- `hf-dsv41` → liveness `HTTP=200 1.089s`; tools `HTTP=200 1.297s`, response carries
+  `"tool_calls":[{"id":"chatcmpl-tool-81d199048f2a0488","type":"function"…`.
+- `qwen3-cyber` → **first 4 probes `503 SERVICE_UNAVAILABLE` (`0.69–0.76s`), 5th `200 1.069s`,
+  then 4 consecutive `200`s.** Warm: liveness `HTTP=200 0.968s`, tools `HTTP=200 1.739s` with
+  `"tool_calls"` present.
+Both are live and can call tools. Dead group unchanged (`402` router, `401` Azure, `404` `/repository`).
+
+**New finding — `qwen3-cyber` is a scale-to-zero endpoint with a `503` cold-start window** (≥60s of
+consecutive `503`s observed at 21:22Z before the first `200`; `GET /v1/models` `503`s the same way).
+**Five seats are pinned primary to it** (`ui-visual`, `qa-verify`, `code-review`, `mobile-dev`,
+`perf-eng`), so a seat's *first* call after idle can fail with `503`. Each of the five already lists
+`hf-dsv41` as fallback; the roster keeps that ordering deliberately, but any bot that sees a `503`
+should retry once before reporting a dead endpoint.
+
+**Defect found and fixed (this pass):** `hr-bot`'s own `config.yaml` declared the `qwen3-cyber`
+fallback provider (`model.fallback`) but had **no `providers.qwen3-cyber` block** — its failover would
+have resolved to nothing. Block added from the fleet-identical definition (mirrors `boss-bot`'s); `yaml`
+parses with `providers: ['hf-dsv41', 'qwen3-cyber']`, backup at `config.yaml.bak.pre-qwen-block-*`.
 
 **Consequence: the fleet has exactly two live worker models.** The router-based provider group
 (`glm52-abliterated`, `lunaris-abliterated`, `stheno-abliterated`, `glm53-flash`) and the Azure
@@ -75,30 +92,30 @@ files have been rewritten against the real project (repo map, `docs/PROGRESS.md`
 
 ## 4. Current state of the project (filesystem-verified, not self-reported)
 
-**Committed and shipped** (per `docs/PROGRESS.md`, HEAD `31cb496`): audit §10 questions resolved; P0
-blockers executed (Resend key swap + `MAIL_FROM`; Postgres image swap to `postgres-ssl:16`; Sentry +
-PostHog vars set; `ADMIN_INVITE_CODE` set; landing copy fix); Phase 4 architecture cleanup
-(`chat/page.tsx` 755→440, `MessageList` 593→142, `Composer` 432→252, backend `routes/agent.ts`
-788→389, backend ESLint added); Phase 2 UI rebuild items 2.1–2.7; Phase 3 groups; nice-to-haves
-§8-35 theme switcher, §8-39 per-message queue, §8-47 doc hygiene; the cross-tenant tool-audit-log leak.
+**Committed and shipped** (per `docs/PROGRESS.md`, HEAD `d110e56`, tree clean): audit §10 questions
+resolved; P0 blockers executed (Resend key swap + `MAIL_FROM`; Postgres image swap to
+`postgres-ssl:16`; Sentry + PostHog vars set; `ADMIN_INVITE_CODE` set; landing copy fix); Phase 4
+architecture cleanup (`chat/page.tsx` 755→440, `MessageList` 593→142, `Composer` 432→252, backend
+`routes/agent.ts` 788→389, backend ESLint added); Phase 2 UI rebuild items 2.1–2.7; Phase 3 groups;
+nice-to-haves §8-35 theme switcher, §8-39 per-message queue, §8-47 doc hygiene; the cross-tenant
+tool-audit-log leak.
 
-**In flight in the working tree right now** (13 entries, agents actively writing):
-- §8-40 composer connector chip — `frontend/app/chat/hooks.ts` (`useWorkspaceConnections`),
-  `components/chat/Composer.tsx`, `components/chat/types.ts`, new
-  `chat/__tests__/useWorkspaceConnections.test.tsx`
-- §8-44 hands-free voice mode — `frontend/app/chat/hooks.ts` (`useVoiceMode`), new
-  `chat/__tests__/useVoiceMode.test.tsx`
-- §8-45 server (Kokoro) read-aloud engine + preference — `lib/voice.ts`,
-  `components/settings/PersonalizationTab.tsx`, new `lib/__tests__/voice.test.tsx`
-- Appearance settings tab — `components/settings/AppearanceTab.tsx` (new, untracked) +
-  `components/SettingsPanel.tsx`
-- `frontend` `npx tsc --noEmit` → **exit 0** on this tree (verified by hr-bot).
+**The four UI items this roster last listed as "in flight" are committed** — `7540a3d`
+(`14 files, +836/−42`): §8-40 connector chip, §8-44 hands-free voice mode, §8-45 server TTS +
+`Appearance` tab. Follow-up `d110e56` then **fixed the TTS upstream** (HF Inference Providers dropped
+TTS platform-wide → Kokoro Space over `/gradio_api/call`; verified end-to-end before wiring, 156 KB
+RIFF/WAV; 7 route tests). The two-writers seam in §5 below is closed: the tree is clean.
+
+**Gates measured on HEAD this pass (hr-bot):** `frontend` `npm run build` → `BUILD_EXIT=0`, 19
+routes; `webpack-bfdd25fdbe871018.js`.
 
 **Open, by owner** — the work this roster exists to close:
 
 | Item | Owner | Source |
 |---|---|---|
-| Finish + commit the 4 in-flight UI items (gates, then one commit per item) | `ui-visual` (+`core-dev` for the `/api/tts` contract) | working tree |
+| **The live host does not serve a build of HEAD** — re-measured 2026-09-27: 18 served chunk names vs 114 built, **8 served names absent**; `webpack-12ed1796ffdc89d3.js` served vs `webpack-bfdd25fdbe871018.js` built; `app/chat/page-b2100450a5471ec3.js` served (216,192 B, sha256 `f1598704…`) vs `app/chat/page-1a4368a0163b6661.js` built (sha256 `e22c39c6…`). The served chat chunk *does* carry the `d110e56` frontend markers (`Kokoro` ×1, `serverVoice` ×1) — live is *near* HEAD, not equal. Ship + prove by served-vs-built set-diff equal. | `ops-release` | `team/P1_FINDINGS.md` F1, re-probed |
+| `GET /api/version` (F2: `404` on both origins, no served-revision read-back; `/healthz` is a static nginx string, `/health` falls through to the web `index.html`) | `core-dev` → `ops-release` (vhost) | F2 |
+| One real authed `POST /api/tts` returning audio bytes + `Content-Type` + byte count (F3) | `core-dev` + `qa-verify` | F3 |
 | GAP-003 a11y contrast sweep (axe serious-level on the dark theme) | `qa-verify` | `GAP_REGISTER.md`, `AUDIT_REPORT.md` §6 P6 |
 | §8-41 / GAP-070 mobile parity; §8-43 / GAP-049 native signing | `mobile-dev` | `AUDIT_REPORT.md` §8-41/43 |
 | DB restore rehearsal (needs `DATABASE_URL`); Stripe go-live or an explicit free-only freeze; marketplace OAuth live smoke (Figma first); observability confirmation with a deliberate test error; uptime probe on `/healthz` | `ops-release` | `docs/PROGRESS.md` "Still open", `AUDIT_REPORT.md` §6 P8/P9/P10/P11 |
@@ -110,7 +127,8 @@ PostHog vars set; `ADMIN_INVITE_CODE` set; landing copy fix); Phase 4 architectu
 
 ## 5. Files an owner must not lose
 
-`frontend/app/chat/hooks.ts` and `frontend/app/components/chat/Composer.tsx` currently have **two
-writers in one file each** (§8-40 and §8-44 both land in `hooks.ts`). `hooks.ts` has a single owner —
-`ui-visual` — and `core-dev` must hand changes over rather than edit in place. This is the exact seam
-where the fleet clobbered a file in a previous run.
+`frontend/app/chat/hooks.ts` and `frontend/app/components/chat/Composer.tsx` each had **two writers**
+while §8-40 and §8-44 were open. That work is committed (`7540a3d`) and the tree is clean, so the seam
+is closed for now — but the rule stands: `hooks.ts` has a single owner, `ui-visual`, and `core-dev`
+hands changes over rather than editing in place. This is the exact seam where the fleet clobbered a file
+in a previous run.
