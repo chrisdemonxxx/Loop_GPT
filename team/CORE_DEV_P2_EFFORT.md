@@ -163,7 +163,122 @@ build loudly if this line is wrong.
 - The version endpoint's doc surface is `{ service, revision, startedAt, node }` — the **field name
   is `revision`**, matching §F, not `commit`/`sha`.
 
-## 6. Not in this commit
+## 6.5 §F.2 accepted — the expected value is pinned at deploy, not re-`rev-parse`d
+
+§1's acceptance line above is **superseded by `team/CONTRACT_P2_STREAM.md` §F.2**: the third term is
+`revision(/api/version) == revision(/version.json) == <SHA pinned at deploy>`. Measured here, one pass:
+
+```
+$ git rev-parse HEAD   → 77689da87c0c7a2f17c42b8c01cff5c4cef5022a
+$ curl -s https://loop-gpt.cyou/api/version | head -c 120
+{"service":"loop-gpt-backend","revision":"c3f008469e5defdd1441f361f1f590b589b68953",...
+```
+
+Δ = `team/`-only. A probe that re-`rev-parse`s at probe time measures a *moving* expected value against a
+fresh response; it fails a correct deploy. My own line, kept only for history.
+
+## 7. The web mirror — proven locally, on a real Docker daemon (Docker 29.8.0)
+
+`web/Dockerfile` (owner `ops-release`) declares only `ARG GIT_REVISION=""` at `:15`. §12/§F.2 want the
+web surface to resolve itself off the platform build arg, with **the same precedence as
+`backend/src/routes/version.ts:20-29`**: `GIT_REVISION` → `RAILWAY_GIT_COMMIT_SHA`.
+
+**Railway's own docs close the "is it exposed at build?" question** (`docs.railway.com/builds/dockerfiles`,
+verbatim): *"If you need to use the environment variables that Railway injects at build time, which include
+variables that you define and Railway-provided variables, you must specify them in the Dockerfile using the
+`ARG` command."* `RAILWAY_GIT_COMMIT_SHA` is a Railway-provided git variable (`docs.railway.com/reference/variables`,
+*"provided if the deploy originated from a GitHub trigger"*). So: **declare the ARG, no operator step**,
+and the dashboard line is only the fallback.
+
+### The exact two hunks — and the one rule that makes them work
+
+```dockerfile
+ ARG GIT_REVISION=""
++# The platform build arg, used only when GIT_REVISION is unset — same order as
++# backend servedRevision(). The sha must sit INSIDE the RUN argv: that is what
++# puts it in this layer's cache key, so the marker busts by itself (no --no-cache).
++ARG RAILWAY_GIT_COMMIT_SHA=""
+ ...
+-RUN node -e "...const r=(process.argv[1]||'').trim();..." "$GIT_REVISION"
++RUN node -e "...const r=(process.argv[1]||'').trim()||(process.argv[2]||'').trim();..." "$GIT_REVISION" "$RAILWAY_GIT_COMMIT_SHA"
+```
+
+Verified by building the two-`ARG` form as a scratch image off the **same pinned base**
+(`node:22-bookworm-slim@sha256:83f487e0…`, the digest at `web/Dockerfile:3`):
+
+```
+B1  no args                                        → #5 (rebuilt)  MARKER=unknown
+B2  --build-arg RAILWAY_GIT_COMMIT_SHA=1111       → #5 (rebuilt)  MARKER=1111
+B3  --build-arg RAILWAY_GIT_COMMIT_SHA=1111 again → #5 CACHED
+B4  --build-arg RAILWAY_GIT_COMMIT_SHA=2222       → #5 (rebuilt)  MARKER=2222
+B5  both set (sha=2222, GIT_REVISION=explicit)    → #5 (rebuilt)  MARKER=explicit-wins
+```
+
+B4 is the whole point: a changed sha **busts the layer with no `--no-cache`** — `"$RAILWAY_GIT_COMMIT_SHA"`
+is expanded into the `RUN` command string, which Docker hashes. B5 proves the mirror keeps backend
+precedence (explicit `GIT_REVISION` wins). **Negative control** — same Dockerfile, `ARG UNUSED_SHA` declared
+but not referenced in the `RUN`: `AAA`→`BBB` leaves the layer `#5 CACHED`. So the failure mode to avoid is
+*declaring* the arg without *using* it; that is exactly the class of bug that froze `builtAt`.
+
+Also delete the now-wrong comment at `web/Dockerfile:13-15` ("Set the web service variable `GIT_REVISION` …").
+
+### Backend half, re-verified this pass (my seat)
+
+```
+$ npx vitest run src/routes/__tests__/version.test.ts
+✓ src/routes/__tests__/version.test.ts (5 tests) 18ms   →  Test Files 1 passed (1) | Tests 5 passed (5)
+```
+
+Precedence, blank-as-absent and `unknown`-never-a-guess all covered. One route, one source:
+`grep -rn servedRevision backend/src` → `routes/version.ts` + its test only. Mount order holds —
+`server.ts:100` `app.use('/api', versionRouter)` is **before** the generic `server.ts:106` limiter,
+so a deploy probe cannot be throttled into a false 429.
+
+### Live pair at 10:30Z — 1 of 2, and that is the expected shape pre-mirror
+
+```
+GET https://loop-gpt.cyou/api/version  → {"revision":"c3f008469e5defdd1441f361f1f590b589b68953",...}   HTTP=200
+GET https://loop-gpt.cyou/version.json → {"surface":"web","revision":"unknown","builtAt":"2026-09-28T03:44:37.316Z"}  75 B
+```
+
+The backend is `c3f0084` (fresh: `startedAt` 10:20:06Z — a *pushed* revision, the API half passes).
+The web half has no *value*; `unknown` is honest, not broken (§H).
+
+## 7.1 The served marker can carry a **same-length, same-etag, different body** — gate on the value, not the size
+
+Code Review saw it 3×; I saw it once; the two sightings share every header and differ in the body.
+Raw, my sighting (10:30:57Z) and the header set it arrived under:
+
+```
+bytes=75 etag="6ab9e2a5-4b" last-modified: Mon, 28 Sep 2026 03:44:37 GMT
+{"status":"completed","lang":"en-US","bankerOutreachText":"Your account ending in 7800 had a cash withdrawal for $23,145.00 on January 28, 2026. ..."}
+```
+
+versus the real marker, **the same 75 B and the same `"6ab9e2a5-4b"`** (`hex(0x4b)`=75 B,
+`hex(6ab9e2a5)`=the file mtime — nginx's size-mtime etag):
+
+```
+bytes=75 etag="6ab9e2a5-4b" sha256=a53acfeda9fe... {"surface":"web","revision":"unknown","builtAt":"2026-09-28T03:44:37.316Z"}
+```
+
+Then 62 consecutive probes — 40 plain, 12 cache-busted (`?cb=N`, which the `map` regex still matches since
+it anchors `$uri`, not `$request_uri`), 10 `HEAD`, 10 conditional (`If-None-Match` → `304`) — returned the
+real marker, 0 decoys. So it is **intermittent**, not a steady state; `bankerOutreachText` appears **nowhere
+in the repo** (`grep -rl` over the tree, `node_modules` excluded → no hits), so it is not a fixture, and the
+cause is **unverified** — my economical reading (a stale second replica / an edge artifact) stays a reading.
+
+**Gate consequence (this is the actionable half):** the decoy has *no `revision` field at all*. So the
+assertion must be `body.surface=="web" && body.revision == <pinned SHA>`, with the `!="unknown"` guard —
+never `HTTP 200 && len==75 && etag==…`. A size/etag check passes on the wrong body.
+
+## 7.2 Residue — the prune list is now exactly the 19
+
+`77689da` carries the KEEP-5 (my read: 5 files, 219 insertions, all 100644 — the a11y deliverable
+survives a clean). Re-measured this pass: `git status --porcelain | grep -c '^??'` → **19**, and the 19
+names are exactly the `_fix*`×5 / `_final*`×3 / `p3` / `p5` / `_run*`×5 / `_probe-*`×2 / `_per.cjs` /
+`_H.bin` list. `git clean -fd` is safe **now**; it was not before `77689da`.
+
+## 8. Not in this commit
 
 `GET /api/files?purpose=artifact&cursor=` (§C, rank 10) is still absent — route only, no schema, and
 it needs `PrivateFile` reads I'd rather land as one reviewed piece with its integration test. Migration
