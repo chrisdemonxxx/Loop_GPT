@@ -147,3 +147,65 @@ $ node -e "<§F line>" "" "" "" "" "" ""
 → `process.argv.slice(1)` is the correct offset for `node -e` with trailing args, the trim-then-first-non-empty
 order is right, and the fallback string is right. **M3 is safe to ship as written** — the text is proven, it
 only has to be taken out of the stash first (§F above).
+
+---
+
+## I. Re-probe 2026-09-28T10:05Z: `builtAt` and the file's own `Last-Modified` disagree by 4h23m
+
+Second live pass, after `e9f4b52` (`docs(team): PHASES 11.6 — web /version.json rebuilt and still 'unknown'`).
+Raw, verbatim:
+
+```
+$ curl -s -o vj.txt -w 'HTTP=%{http_code} bytes=%{size_download} t=%{time_total}s\n' https://loop-gpt.cyou/version.json
+HTTP=200 bytes=75 t=2.232349s
+$ cat vj.txt
+{"surface":"web","revision":"unknown","builtAt":"2026-09-27T23:21:12.630Z"}
+$ curl -sI https://loop-gpt.cyou/version.json
+HTTP/1.1 200 OK
+Cache-Control: no-store
+Content-Type: application/json
+etag: "6ab9e2a5-4b"
+last-modified: Mon, 28 Sep 2026 03:44:37 GMT
+Content-Length: 75
+Server: railway-hikari
+x-hikari-trace: ams1.b55h
+```
+
+- VERIFIED — `builtAt` is **unchanged** from the 00:41Z probe (`23:21:12.630Z`) — the served body is byte-identical.
+- VERIFIED — the `Last-Modified` moved to `03:44:37Z`, i.e. **4h23m 25s after** the body's own `builtAt`.
+- VERIFIED — `etag` moved `"6ab9a4e8-4b"` → `"6ab9e2a5-4b"`; size stayed `75` (content unchanged; the etag here tracks inode/mtime, not bytes — `-4b` = 75 decimal).
+- VERIFIED — `Cache-Control: no-store` is still served on this path, and the path is reached through
+  `web/nginx.template.conf:13` (`~^/version\.json$ "no-store";`), so the mismatch is **not** an edge cache.
+
+**Consequence (new, and it changes the M1 acceptance probe):** a served file whose mtime is 4h23m newer than the
+timestamp inside it means *neither* field alone dates the deploy. The 03:44 rebuild almost certainly re-used the
+cached `RUN` layer at `web/Dockerfile:31` (same build-arg value `""` → same cache key → the `node -e` never
+re-ran, so `builtAt` is frozen at the first build), and the runtime `COPY --from=build` refreshed the mtime.
+
+- Rule for the gate: after setting `GIT_REVISION`, **assert `revision == <SHA>`**, not `builtAt > deploy_time`
+  and not mtime. `builtAt` only advances when the `ARG` value changes and the cache key busts; a *correct*
+  build can therefore still show a stale `builtAt`. A pass condition on `builtAt` would fail a good deploy.
+- Rule for the revert check: a `GIT_REVISION` of `""` yields `"unknown"` (proven in §H), so `unknown` is the
+  honest negative result, not a broken marker — the two must not be confused when reading a red probe.
+- UNVERIFIED (from here) — whether the 03:44 build was a BuildKit cache hit; that is the most economical
+  explanation of the frozen `builtAt`, but it needs the Railway build log (owner `ops-release`) to be a fact
+  rather than a reading.
+
+### I.1 Same pass, repository-side residues — the count in the room is 10, the tree says 24
+
+```
+$ git status --porcelain | grep -c '^??'
+24
+```
+
+Untracked, verbatim: `frontend/_final2.py _final3.py _final4.py _fix.py _fix2.py _fix3.py _fix4.py _fix5.py`,
+`frontend/axe-results.json`, `frontend/login.html`, `frontend/tests/_H.bin _per.cjs _probe-admin.mjs
+_probe-cc.mjs _report.cjs _run.py _run2.py _run3.py _run4.py _run5.py axe-sweep.mjs`, `p3.js`, `p5.js`,
+**`team/A11Y_AXE.md`**.
+
+- VERIFIED — the residue is **24** untracked paths, not 10 (`grep -c '^??'`). Two of them are not scratch:
+  `team/A11Y_AXE.md` (a `team/` deliverable) and `frontend/tests/axe-sweep.mjs` + `frontend/tests/_report.cjs`
+  (an a11y harness). A blanket `git clean -fd` deletes the deliverable.
+- VERIFIED — `git log -1` at this pass is `e9f4b52`, i.e. **HEAD moved past `0d5d767`** (the roster rev-4
+  commit named in the room) since the roster claim was made.
+
