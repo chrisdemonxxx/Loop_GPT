@@ -415,3 +415,270 @@ plus one line in `frontend/`'s build.
 **Ownership note:** `team/PHASES.md` is `boss-bot`'s file; §7 landed in it attributed to me from
 another seat. Both revisions now reconcile — §7 = `3a43db8`, §8 = `2e74b58` and the web fix. No
 further writes to this file from other lanes; route additions through a `team/` note or ping me.
+
+## 9. SIXTH REVISION — the live half is confirmed a *variable*, the P2 gate is **RED on disk**, and the ownership seam is now 9 files
+
+*(boss-bot, 2026-09-28T00:45–00:50Z = 20:45–20:50 EDT, re-run against the filesystem. §8's live
+readings are superseded at `a4b29bb`; §8's web-fix analysis stands and is now **confirmed**.)*
+
+### 9.1 `GET /version.json` re-probed — the marker ships, the value does not (§E20)
+
+```
+$ git rev-parse HEAD
+a4b29bbaaf1349c694b54c0efe9e1140a8bb9d37
+$ git log -1 --format='%H %cI %s'
+a4b29bbaaf1349c694b54c0efe9e1140a8bb9d37 2026-09-27T19:19:33-04:00 feat(web): served-revision marker at /version.json (contract §F) + no-store map entry
+$ curl -s -w "\nHTTP=%{http_code} t=%{time_total}\n" https://loop-gpt.cyou/api/version
+{"service":"loop-gpt-backend","revision":"a4b29bbaaf1349c694b54c0efe9e1140a8bb9d37","startedAt":"2026-09-27T23:19:54.262Z","node":"v22.23.2"}
+HTTP=200 t=0.824290
+$ curl -s https://loop-gpt.cyou/version.json | sha256sum
+7e20278b6d064f01dcbd3c482a7a40cd87bdb77aec8837a6b00b1ea403669427 *-
+$ curl -s -w "\nHTTP=%{http_code} t=%{time_total}\n" https://loop-gpt.cyou/version.json
+{"surface":"web","revision":"unknown","builtAt":"2026-09-27T23:21:12.630Z"}
+HTTP=200 t=0.726004
+```
+
+Backend read-back == current HEAD, so **F2 is closed and stays closed**. The web marker is served
+(`200 application/json`, 75 B, `builtAt` 12 min *after* `a4b29bb` was authored — the image is the new
+one) and reads `unknown`. Verified in the producer, on disk: `web/Dockerfile:15 ARG GIT_REVISION=""`
+inside the `AS build` stage, consumed at `:31` as `(process.argv[1]||'').trim() … ||'unknown'` —
+**one candidate**, same stage. So this is `ops-release`'s **variable + rebuild**, not a code change:
+`GIT_REVISION=${{RAILWAY_GIT_COMMIT_SHA}}` on the web service, then rebuild (a runtime redeploy re-serves
+the frozen build-time value — `research-scout`'s reading, and the `:31` literal, which reads the
+value once at build, proves it).
+**Exit:** `GET /version.json` → `{"revision":"<HEAD>"}` with the same sha read back on `/api/version`.
+
+### 9.2 P2's gate is RED on the working tree — nobody had run it (§E21)
+
+```
+$ cd frontend && npx tsc --noEmit; echo TSC_EXIT=$?
+app/components/chat/__tests__/Composer.test.tsx(153,41): error TS2353: Object literal may only
+specify known properties, and 'onToggle' does not exist in type 'Partial<{ … }>'.
+TSC_EXIT=2
+$ npx vitest run
+ Test Files  1 failed | 22 passed (23)
+      Tests  1 failed | 150 passed (151)
+   × Composer > effort selector: all six positions, xhigh carries the 8k cap, pick dispatches 25ms
+     → Unable to find an element with the title: /^Reasoning effort: XHighhigh /.
+```
+
+All of it is **test-side, one file, three defects** (`onToggle` vs `onToggleThinking`; `cap('xhigh')`
+→ `"XHighhigh"`; the dispatch loop assumes the menu stays open while `EffortSelector.tsx:68` closes it
+on every pick). The component is correct — labels `:18-25`, `role="menuitem"` + aria-label `:99-105`.
+The 3-edit patch, its isolation proof, and the raw before/after are in `team/PATCH_P2_composer_test.md`.
+**Proof the patch is sufficient, run by me on a sibling copy (never on the owner's file): the patched
+file is 19/19 green and the only file in the project whose `tsc` error disappears — no second cause.**
+
+### 9.3 Ownership, per the signed contract §E (one owner per file, resolved not guessed)
+
+`CONTRACT_P2_STREAM.md:109-123` is the authority; the roster's §5 only names `hooks.ts`.
+
+| file (dirty, at `a4b29bb`) | +/− | mtime EDT | owner | state |
+|---|---|---|---|---|
+| `frontend/app/components/chat/Composer.tsx` | +12/−14 | 18:41 | `ui-visual` (contract §E) | done, uncommitted — **roster's "core-dev hands over" still applies** |
+| `frontend/app/chat/page.tsx` | +11/−2 | 18:41 | `ui-visual` (§E) | done, uncommitted |
+| `frontend/app/components/chat/types.ts` | +3/−1 | 18:42 | `ui-visual` (§E) | done, uncommitted |
+| `frontend/app/lib/stream.ts` | +11/−3 | 18:42 | `ui-visual` (§E) | done, uncommitted |
+| `frontend/app/chat/hooks.ts` | +3/−1 | 18:43 | `ui-visual` (roster §5) | done, uncommitted |
+| `frontend/app/components/chat/__tests__/Composer.test.tsx` | +32/−10 | 19:30 | **`qa-verify` (§E: tests)** | **RED** → patch filed |
+| `frontend/app/components/chat/composer/EffortSelector.tsx` | **new, untracked** | 19:22 | `ui-visual` (owns `Composer.tsx`/`composer/`) | 5,978 B, sha256 `ff5723b0…`; **imported** by `Composer.tsx:12` and `chat/page.tsx:8` → must be `git add`ed with them or the commit breaks the build |
+| `team/CONTRACT_P2_STREAM.md` | +36/−2 | 19:53 | `arch-lead` | §F rev 3 |
+| `TEAM_ROSTER.md` | +34/−13 | 20:38 | `hr-bot` | rev 3 |
+
+8 tracked dirty (+142/−46, `git diff --stat`), 1 untracked-but-imported, and **8** untracked
+`frontend/_fix*.py`/`_final*.py` scratchers (12 `??` total before my two `team/` notes). The scratch
+files are not imported by anything — confirmed: no `.py` in the app tree, `tsc` and `vitest` both
+green without them in a commit.
+
+### 9.4 Board effect and the hand-off
+
+- **P2** — code is written; the *gate* is the open item, and it is now one file. Not shippable at
+  "150/151" and not at `TSC_EXIT=2`. Re-verify at: `tsc` = 0 **and** `vitest` 23 files / 151 passed.
+- **P1/P4** — backend read-back **PASS at `a4b29bb`**; web half needs the variable + rebuild (§9.1).
+  `PERF_P1.md`, `RELEASE_P1.md`, `A11Y_AXE.md` remain **ABSENT** (`perf-eng`, `ops-release`, `qa-verify`).
+- **Next owner + exact artifact:** `qa-verify` → `Composer.test.tsx` green on disk (apply
+  `team/PATCH_P2_composer_test.md`, paste `tsc`=0 + the 151/151 line). Then `ui-visual` → one commit
+  of the §9.3 frontend set (incl. `git add` of `EffortSelector.tsx`), and `ops-release` → the web
+  variable + rebuild with the `/version.json` read-back pasted beside it.
+
+## 10. SEVENTH REVISION — the gate is GREEN at `0d5d767`, and a stash swallowed three owners' docs
+
+*(boss-bot, 2026-09-28T01:4xZ = 21:4x EDT. Re-run against the filesystem after the M2 re-commit and the
+`qa2` stash cycle. Nothing below is taken from a report.)*
+
+### 10.1 The P2 gate, re-run by the orchestrator — **GREEN**
+
+```
+$ git log -1 --format='%h %cI %s'
+0d5d767 2026-09-27T21:37:05-04:00 feat(chat): composer effort selector + stream hook pair (M2, two-writer seam rev3)
+$ git show --stat 0d5d767 | tail -9
+ frontend/app/chat/hooks.ts                         |   4 +-
+ frontend/app/chat/page.tsx                        |  13 ++-
+ frontend/app/components/chat/Composer.tsx         |  26 ++---
+ .../components/chat/__tests__/Composer.test.tsx    |  50 ++++++--
+ frontend/app/components/chat/composer/EffortSelector.tsx | 127 +++++++++++++++++
+ frontend/app/components/chat/types.ts               |   4 +-
+ frontend/app/lib/stream.ts                         |  14 ++-
+ 7 files changed, 206 insertions(+), 32 deletions(-)
+$ git cat-file -s HEAD:frontend/app/components/chat/composer/EffortSelector.tsx
+5978                      # == the untracked sha ff5723b0… — the same bytes, now tracked
+$ cd frontend && npx tsc --noEmit; echo TSC_EXIT=$?
+TSC_EXIT=0
+$ npx vitest run
+ Test Files  23 passed (23)
+      Tests  151 passed (151)
+```
+
+So §9.4's exit condition is met on the shipped revision: `tsc` = 0 and 23 files / 151 tests green,
+measured here, not accepted. (The red both `core-dev` and I saw was the **intermediate** `e0c76d7`;
+the re-commit replaced it. §9.2's three test-side defects are gone from HEAD: `CAPS` map, `within(menu)`
+scoping, re-open before each pick.)
+
+### 10.2 `stash@{0}` is the only copy of arch-lead's ruling, hr-bot's roster rev 3, and §9 (§E25)
+
+```
+$ git stash list
+stash@{0}: On release/owned-staging-20260917: qa2
+$ git stash show --stat 'stash@{0}'
+ TEAM_ROSTER.md                                     | 47 ++++++++----
+ .../components/chat/__tests__/Composer.test.tsx    |  3 +-
+ .../components/chat/composer/EffortSelector.tsx    |  2 +-
+ team/CONTRACT_P2_STREAM.md                         | 40 +++++++++-
+ team/PHASES.md                                     | 85 ++++++++++++++++++++++
+ 5 files changed, 159 insertions(+), 18 deletions(-)
+```
+
+The M2 commit shipped the **code** and left the three docs behind — HEAD carries the *pre-ruling* bytes:
+
+| file | at HEAD | proof it lost the ruling |
+|---|---|---|
+| `team/CONTRACT_P2_STREAM.md` | 11,092 B | `grep -n EffortSelector` → **0 hits**; the stash's copy has §E at `:109` and the ruling row at `:117` |
+| `TEAM_ROSTER.md` | 10,568 B | `grep -c 'rev 3'` → **0**; the stash's copy → 3 |
+| `team/PHASES.md` | 417 lines | `diff --strip-trailing-cr HEAD stash` → **`417a418,502`** = exactly §9, nothing else |
+
+`arch-lead`'s `:117-118` ruling and `hr-bot`'s rev-3 roster are therefore **true on the filesystem and
+absent from the shipped revision** at the same time. Both are owed a docs commit.
+
+**`team/PHASES.md` §9 recovered** by `git checkout 'stash@{0}' -- team/PHASES.md` → `grep -c "SIXTH
+REVISION"` = 1, and the `:31`-literal correction of §9.1 survived with it (`grep -c ':31` literal'` = 1).
+The file is staged (`M `) and belongs in the docs commit below.
+
+**Sizes are a trap here:** the worktree copy of every LF file is +1 B per line (CRLF) — e.g. PHASES
+`35,529` (HEAD blob) vs `35,946` (worktree, 417 lines). A byte-count mismatch between a blob and the
+worktree is line endings until proven otherwise; compare `git show HEAD:<path>` to `git show
+'stash@{0}':<path>` with `diff --strip-trailing-cr`, never `diff` raw.
+
+### 10.3 Hand-off — one docs commit, and hands off the stash
+
+1. `arch-lead` → `git checkout 'stash@{0}' -- team/CONTRACT_P2_STREAM.md`
+2. `hr-bot` → `git checkout 'stash@{0}' -- TEAM_ROSTER.md`
+3. one owner commits the three docs (§9 is already staged); **nobody runs `git stash drop`/`pop`/`clear`
+   until all three `git diff HEAD` are clean and the `qa2` stash shows no owed line.**
+4. Housekeeping: 10 untracked scratch files now (`frontend/_fix{,2,3,4,5}.py`, `_final{2,3,4}.py`,
+   `p3.js`, `p5.js`) — none referenced by the app or the build; keep them out of that commit.
+
+**Still open after this:** `ops-release` M1/M3 (`GIT_REVISION` + rebuild; then the six-`ARG` chain from
+§F), and `team/PERF_P1.md` / `team/RELEASE_P1.md` / `team/A11Y_AXE.md` — all three **ABSENT**.
+## 11. EIGHTH REVISION — the stash is paid, and the DEPLOY PATH ITSELF was broken
+
+*(boss-bot, 2026-09-28 ~03:40Z = 23:40 EDT. Re-run against the filesystem; nothing below is taken from a
+report. This revision is the docs commit §10.3 called for, and it carries one defect no lane had seen.)*
+
+### 11.1 Both owners' recoveries verified byte-for-byte (not paraphrased)
+
+```
+$ for f in team/CONTRACT_P2_STREAM.md TEAM_ROSTER.md team/PHASES.md; do
+    echo "$f stash=$(git show \"stash@{0}:$f\" | git hash-object --stdin) index=$(git show \":$f\" | git hash-object --stdin)"; done
+team/CONTRACT_P2_STREAM.md  stash=c993cf8be6f9ceca0bb0321ab9d3b50aab1beeed  index=c993cf8be6f9ceca0bb0321ab9d3b50aab1beeed
+TEAM_ROSTER.md              stash=d151a4c530e797bb198443441d643f6fa9d5422e  index=97ee4bc26c2c07b08db1ed9f379194ece0c397ab
+team/PHASES.md              stash=e551adb6d11ede9a25f18ace6169b70547e58dc3  index=e551adb6d11ede9a25f18ace6169b70547e58dc3
+$ sha256sum TEAM_ROSTER.md team/ROSTER_NOTE_20260927_rev4.md team/CONTRACT_P2_STREAM.md
+66f5fbcaef3bf5c3226e853e15caf0b74dc384c46a9f3202a060163e8517b3f7  TEAM_ROSTER.md          (15,889 B)
+372158bc3504aad24781239143240f4ec5305404cf71c327bc4816900e8ddf34  team/ROSTER_NOTE_20260927_rev4.md  (4,112 B)
+566ee755e37dbb886138a22244070aeffebe5034f8bec38b267f1519b537c4cd  team/CONTRACT_P2_STREAM.md (17,110 B)
+```
+
+`CONTRACT_P2_STREAM.md` and `PHASES.md` index blobs == the stash blobs (the rev-3 contract and §9 are
+**recovered**, not rewritten). `TEAM_ROSTER.md`'s index blob differs from the stash by design — rev 4 is
+built on top of the recovered rev 3, and its own `sha256` matches `hr-bot`'s two published claims
+(`66f5fbca…b3f7`, `372158bc…ddf34`) exactly. `git stash show --stat` still lists all five entries; the
+stash's `EffortSelector.tsx`/`Composer.test.tsx` copies are the **debug** versions (arch-lead's trap) and
+stay unused — worktree == HEAD for both.
+
+### 11.2 NEW — the live deploy path could not have built. Found while staging §10.3
+
+```
+$ git status --short | grep pwa
+ D frontend/build/pwa.mjs                    # deleted in the WORKTREE, staged nowhere
+$ ls frontend/build/
+ls: cannot access 'frontend/build/': No such file or directory
+$ git ls-tree -r --long HEAD frontend/build/
+100644 blob 497604d9137f6a05621c7bb4eee2b2e93407d1f7    4715   frontend/build/pwa.mjs
+$ grep -rn "pwa\.mjs" web/Dockerfile .github/workflows/web-validation.yml
+web/Dockerfile:23:RUN npm run build && node build/pwa.mjs
+.github/workflows/web-validation.yml:29:      - run: node build/pwa.mjs
+```
+
+`frontend/build/` was gone from the worktree while the file is committed at HEAD. The next **web deploy**
+(Railway builds `web/Dockerfile`) and the next `web-validation` CI run would both have died at
+`node build/pwa.mjs` with MODULE_NOT_FOUND — and the shipped bundle would have lost the PWA shell. This was
+a live-deploy blocker, not a cosmetic dirt: it outranked every open `team/` artifact.
+
+**Fixed + proven on the restored tree, with the exact Dockerfile:23 command:**
+
+```
+$ git restore frontend/build/pwa.mjs          # worktree 4,817 B (CRLF) == HEAD blob 4,715 B (LF)
+$ cd frontend && rm -rf .next out && npm run build   → NEXT_BUILD_EXIT=0; 18 html files
+$ node build/pwa.mjs                        → PWA_EXIT=0
+PWA shell generated: 104 shell paths, 98 static assets
+$ ls -la out/sw.js                           → 6,241 B
+```
+
+**Live parity, content-type asserted (never the status code — §6.2):**
+
+```
+/sw.js                 -> 200 application/javascript      6241 B   # byte-identical to the fresh build
+/manifest.webmanifest  -> 200 application/manifest+json   468 B
+/manifest.json         -> 200 text/html                 27285 B   # THE FALLBACK, not a file
+```
+
+That is the §6.2 nginx-fallback trap for the **third** time in this engagement (it fooled §E18's probe and
+now a 75-byte-adjacent one): the artifact's real name is `manifest.webmanifest`, and `out/` writes no
+`manifest.json`. Any probe of a web asset must assert `%{content_type}`.
+
+### 11.3 P2 gate re-measured on the worktree this pass — GREEN, and now committed
+
+```
+$ npx tsc --noEmit ; echo TSC_EXIT=$?     → TSC_EXIT=0
+$ npx vitest run                          → Test Files 23 passed (23) | Tests 151 passed (151)
+```
+
+HEAD `0d5d767`; `EffortSelector.tsx` 5,978 B tracked. The M2 seam is closed at the gate, not at the
+report: 7 files, +206/-32.
+
+### 11.4 Still open after this (unchanged, and now correctly ranked)
+
+1. **`ops-release`** — `GIT_REVISION=${{RAILWAY_GIT_COMMIT_SHA}}` on **web**, unset on **backend** (the
+   §F.1 ruling), then rebuild → `GET /version.json` must read back the sha that `/api/version` reports.
+   Today: `/version.json` → `{"surface":"web","revision":"unknown"}`.
+2. **`perf-eng`** — `team/PERF_P1.md`. First line is now settled by three independent sessions:
+   **edge handshake, not bundle budget.** Report `time_starttransfer − time_appconnect` (~0.30 s reused
+   connection), and carry `dns / tls / (ttfb − tls)` as three columns (hr-bot's separation) or the
+   metric moves when someone "fixes" only TLS.
+3. **`qa-verify`** — `team/A11Y_AXE.md` (in flight: `frontend/axe-results.json`, 204,497 B, 23:23).
+4. **`ops-release`** — `team/RELEASE_P1.md`.
+### 11.5 The `qa2` stash is KEPT (deliberately), and what that costs
+
+Redundancy test against the staged tree (`diff --strip-trailing-cr`):
+
+```
+team/CONTRACT_P2_STREAM.md  differing lines = 66    # = arch-lead's rev-3 RE-BASE on top of the stash copy
+team/PHASES.md              differing lines = 167   # = §10 + §11
+TEAM_ROSTER.md              stash-only lines = 8+   # rev-3's snapshot prose, rewritten by rev 4
+```
+
+So `CONTRACT_P2_STREAM.md` and `PHASES.md` at HEAD are strict supersets of their stash copies; `TEAM_ROSTER.md`
+is not (rev 4 re-writes the rev-3 snapshot header in place). Rev 3's own note is preserved as
+`team/ROSTER_NOTE_20260927_rev3.md` (2,822 B), so no ruling is lost either way. **Ruling: keep `stash@{0}`**
+— one cheap insurance copy of the rev-3 roster body, no owed line, no code in it. Nobody needs to consult it to
+build or release; anyone who drops it must know that the 8+ rev-3-only roster lines go with it.

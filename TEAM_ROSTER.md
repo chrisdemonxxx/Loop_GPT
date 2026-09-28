@@ -1,7 +1,8 @@
 # Loop GPT — TEAM ROSTER (owner: hr-bot)
 
-Snapshot: 2026-09-27 (updated; first issued 2026-09-26). HEAD `d110e56`, branch
-`release/owned-staging-20260917`, working tree clean. Project:
+Snapshot: 2026-09-27 (rev 4 — post-M2; first issued 2026-09-26). HEAD `0d5d767`, branch
+`release/owned-staging-20260917`; the P2/M2 stream is now **committed and the tree is clean**
+except docs in the index and scratch files (see §5). Project:
 `C:\Users\chris\Desktop\Workspace\dev-projects\loop-gpt` (live https://loop-gpt.cyou).
 Durable channel for this fleet: `team/` in the project root.
 
@@ -34,6 +35,25 @@ live seats re-verified with a liveness call and a `tools` call:
   then 4 consecutive `200`s.** Warm: liveness `HTTP=200 0.968s`, tools `HTTP=200 1.739s` with
   `"tool_calls"` present.
 Both are live and can call tools. Dead group unchanged (`402` router, `401` Azure, `404` `/repository`).
+
+**Re-probe 2026-09-27 (rev 3, hr-bot, raw `curl` with a real `tools` array)** — both seats re-verified:
+- `hf-dsv41` → liveness `HTTP=200 2.488s`; tools `HTTP=200`, response carries
+  `"tool_calls":[{"id":"chatcmpl-tool-8cc6a8078698001c","type":"function","function":{"name":"ping","arguments":"{\"x\": \"1\"}"}}]`.
+- `qwen3-cyber` → liveness `HTTP=200 1.818s`; tools `HTTP=200`, response carries
+  `"tool_calls":[{"id":"call_5d2233335d694aeb8f50e0f2","index":0,"type":"function","function":{"name":"ping","arguments":"{\"x\": \"1\"}"}}]`.
+**Re-probe 2026-09-27 (rev 4, hr-bot, raw `curl` + a real `tools` array, `HF_TOKEN` from the profile
+env)** — both live seats re-verified at HEAD `0d5d767`; the rejection list re-probed too:
+- `hf-dsv41` → liveness `HTTP=200 t=1.747s`; tools `HTTP=200 t=3.886s`, response carries
+  `[{"id": "chatcmpl-tool-870ac07d1496afb6", "type": "function", "function": {"name": "ping", "arguments": "{\"x\": \"1\"}"}}]`.
+- `qwen3-cyber` → liveness `HTTP=200 t=1.742s`; tools `HTTP=200 t=1.828s`, response carries
+  `[{"id": "call_5d6d4ae8fb68474ebd5a8c8f", "index": 0, "type": "function", "function": {"name": "ping", "arguments": "{\"x\": \"1\"}"}}]`.
+- Router re-probe (`https://router.huggingface.co/v1`): `zai-org/GLM-5.2` → `HTTP=402 t=1.805s`,
+  `Sao10K/L3-8B-Lunaris-v1` → `HTTP=402 t=1.700s`, both body
+  `{"error":"You have depleted your monthly included credits. …"}`.
+**No repin needed: both live seats are still live and tool-capable; the dead group is unchanged.**
+`config.yaml` now carries exactly two `providers:` keys (`['hf-dsv41', 'qwen3-cyber']`) — the router
+and Azure blocks were pruned (`config.yaml.bak.no-hf-router-20260926-040442`), so the rejections are
+recorded here rather than left pinned anywhere.
 
 **New finding — `qwen3-cyber` is a scale-to-zero endpoint with a `503` cold-start window** (≥60s of
 consecutive `503`s observed at 21:22Z before the first `200`; `GET /v1/models` `503`s the same way).
@@ -92,7 +112,7 @@ files have been rewritten against the real project (repo map, `docs/PROGRESS.md`
 
 ## 4. Current state of the project (filesystem-verified, not self-reported)
 
-**Committed and shipped** (per `docs/PROGRESS.md`, HEAD `d110e56`, tree clean): audit §10 questions
+**Committed and shipped** (per `docs/PROGRESS.md`, HEAD `0d5d767`): audit §10 questions
 resolved; P0 blockers executed (Resend key swap + `MAIL_FROM`; Postgres image swap to
 `postgres-ssl:16`; Sentry + PostHog vars set; `ADMIN_INVITE_CODE` set; landing copy fix); Phase 4
 architecture cleanup (`chat/page.tsx` 755→440, `MessageList` 593→142, `Composer` 432→252, backend
@@ -100,26 +120,41 @@ architecture cleanup (`chat/page.tsx` 755→440, `MessageList` 593→142, `Compo
 nice-to-haves §8-35 theme switcher, §8-39 per-message queue, §8-47 doc hygiene; the cross-tenant
 tool-audit-log leak.
 
-**The four UI items this roster last listed as "in flight" are committed** — `7540a3d`
+Since the last revision: `3a43db8` (effort resolver per contract §A + **served-revision endpoint**
+`GET /api/version`; html artifact kind) and `a4b29bb` (**served-revision marker** `out/version.json`
+written by `web/Dockerfile` from `ARG GIT_REVISION`, with one `map` no-store entry in
+`web/nginx.template.conf` — a map, not a location, so the five security headers survive). `1b16094`
+fixes the §F contract, `66e35f9` records the read-back move.
+
+The four UI items this roster last listed as "in flight" are committed — `7540a3d`
 (`14 files, +836/−42`): §8-40 connector chip, §8-44 hands-free voice mode, §8-45 server TTS +
 `Appearance` tab. Follow-up `d110e56` then **fixed the TTS upstream** (HF Inference Providers dropped
 TTS platform-wide → Kokoro Space over `/gradio_api/call`; verified end-to-end before wiring, 156 KB
-RIFF/WAV; 7 route tests). The two-writers seam in §5 below is closed: the tree is clean.
+RIFF/WAV; 7 route tests). The two-writers seam in §5 below was clean at `d110e56`, reopened with the
+P2 stream, and is **closed again** by `0d5d767`.
 
-**Gates measured on HEAD this pass (hr-bot):** `frontend` `npm run build` → `BUILD_EXIT=0`, 19
-routes; `webpack-bfdd25fdbe871018.js`.
+**Since rev 3 (this pass):** `0d5d767` — `feat(chat): composer effort selector + stream hook pair (M2,
+two-writer seam rev3)`, **7 files, +206/−32**, `EffortSelector.tsx` 5,978 B tracked. M2 is
+frontend-only, so the live backend (`a4b29bb`) remains code-equivalent on the API surface; the served
+marker simply no longer names HEAD (see the open table).
+
+**Gates measured at `0d5d767` (re-run by `arch-lead` and `boss-bot`, hr-bot does not re-litigate):**
+`npx tsc --noEmit` → `TSC_EXIT=0`; `npx vitest run` → **23 files / 151 tests passed**
+(`VITEST_EXIT=0`). At `7540a3d` the same suite was 23 files/150, `lint` 0 err/13 warn, `playwright`
+20, `build` exit 0 / 19 routes. The pre-M2 red gate had **three test-side defects only** (patch
+`team/PATCH_P2_composer_test.md`), so no product code was implicated.
 
 **Open, by owner** — the work this roster exists to close:
 
 | Item | Owner | Source |
 |---|---|---|
-| **The live host does not serve a build of HEAD** — re-measured 2026-09-27: 18 served chunk names vs 114 built, **8 served names absent**; `webpack-12ed1796ffdc89d3.js` served vs `webpack-bfdd25fdbe871018.js` built; `app/chat/page-b2100450a5471ec3.js` served (216,192 B, sha256 `f1598704…`) vs `app/chat/page-1a4368a0163b6661.js` built (sha256 `e22c39c6…`). The served chat chunk *does* carry the `d110e56` frontend markers (`Kokoro` ×1, `serverVoice` ×1) — live is *near* HEAD, not equal. Ship + prove by served-vs-built set-diff equal. | `ops-release` | `team/P1_FINDINGS.md` F1, re-probed |
-| `GET /api/version` (F2: `404` on both origins, no served-revision read-back; `/healthz` is a static nginx string, `/health` falls through to the web `index.html`) | `core-dev` → `ops-release` (vhost) | F2 |
+| **The web served marker is LIVE but blind.** Measured 2026-09-27 (rev 4, hr-bot, raw): `GET https://loop-gpt.cyou/version.json` → `HTTP=200, 75 B, {"surface":"web","revision":"unknown","builtAt":"2026-09-27T23:21:12.630Z"}`, three probes `t=2.00s / 7.98s / 1.80s`. `builtAt` is *after* `a4b29bb` (`19:19 EDT` = `23:19Z`), so the live image **is** the new one and the path works — but the web service's `GIT_REVISION` build arg is **unset**, so the marker cannot name a revision. One-line unblocker: set `GIT_REVISION=${{RAILWAY_GIT_COMMIT_SHA}}` on the web service and redeploy (per `arch-lead`'s §F.1 ruling: web **set**, backend **unset**). | `ops-release` | this roster, rev 4 |
+| ~~F2: `GET /api/version` `404` on both origins~~ **CLOSED** — measured: `HTTP=200, 141 B, {"service":"loop-gpt-backend","revision":"a4b29bbaaf1349c694b54c0efe9e1140a8bb9d37",…}`, i.e. the backend serves exactly HEAD-at-the-time. Backend read-back is proven; the **web half** is the row above. Since `0d5d767` is frontend-only, live remains code-equivalent — a redeploy just makes the read-back *name* HEAD. | `core-dev` ✔ → `ops-release` | this roster, rev 4 |
 | One real authed `POST /api/tts` returning audio bytes + `Content-Type` + byte count (F3) | `core-dev` + `qa-verify` | F3 |
 | GAP-003 a11y contrast sweep (axe serious-level on the dark theme) | `qa-verify` | `GAP_REGISTER.md`, `AUDIT_REPORT.md` §6 P6 |
 | §8-41 / GAP-070 mobile parity; §8-43 / GAP-049 native signing | `mobile-dev` | `AUDIT_REPORT.md` §8-41/43 |
 | DB restore rehearsal (needs `DATABASE_URL`); Stripe go-live or an explicit free-only freeze; marketplace OAuth live smoke (Figma first); observability confirmation with a deliberate test error; uptime probe on `/healthz` | `ops-release` | `docs/PROGRESS.md` "Still open", `AUDIT_REPORT.md` §6 P8/P9/P10/P11 |
-| Latency + bundle budgets ("fast and snappy") | `perf-eng` | user directive; no prior owner |
+| Latency + bundle budgets ("fast and snappy") — **the cost is the EDGE, not the bundle or our backend, measured two ways.** My raw probes of the live host: `/healthz` (10 B, nginx `return 200`, **zero** origin work) `tls=1.762s ttfb=2.067s`; `/version.json` (75 B) `tls=1.487s ttfb=1.790s`; `/api/version` (141 B, proxied to the backend) `tls=1.527s ttfb=1.860s`. Fastest runs of both proxied paths land at `ttfb≈0.77–0.81s`, while the TLS phase alone swings `0.46s → 3.38s` across runs — and DNS swung `0.016s → 0.722s` on top. `@arch-lead` isolated the same seam with a two-request session: `req1 ttfb=1.778s → req2 ttfb=0.329s` on a reused connection. A user pays that handshake before the first HTML byte regardless of what `ui-visual` ships. Reportable metric is `time_starttransfer − time_appconnect`. | `perf-eng` (measure) + `ops-release` (edge: keep-alive / session resumption / PoP) | this roster, rev 4; `@arch-lead`'s probe; user directive |
 | Frontier-parity pattern recon (what Claude/ChatGPT/Grok do that §8 still lists as missing) | `research-scout` | `AUDIT_REPORT.md` §8 |
 | Static review of each shipped phase's bytes | `code-review` | roster convention |
 
@@ -128,7 +163,18 @@ routes; `webpack-bfdd25fdbe871018.js`.
 ## 5. Files an owner must not lose
 
 `frontend/app/chat/hooks.ts` and `frontend/app/components/chat/Composer.tsx` each had **two writers**
-while §8-40 and §8-44 were open. That work is committed (`7540a3d`) and the tree is clean, so the seam
-is closed for now — but the rule stands: `hooks.ts` has a single owner, `ui-visual`, and `core-dev`
-hands changes over rather than editing in place. This is the exact seam where the fleet clobbered a file
-in a previous run.
+while §8-40 and §8-44 were open. That work is committed (`7540a3d`), the seam reopened with the P2
+stream, and it is **closed again by `0d5d767`** (`EffortSelector.tsx` landed as a new file, not as an
+edit inside `hooks.ts`). The rule stands for the next UI phase: **`hooks.ts` has a single owner,
+`ui-visual`; `core-dev` hands changes over rather than editing in place.** This is the exact seam where
+the fleet clobbered a file in a previous run. Housekeeping: the untracked `frontend/_fix*.py` /
+`_final*.py` scratch files (`_fix.py`, `_fix2–5.py`, `_final2–4.py`) plus `p3.js` / `p5.js` are still
+sitting in the tree — `@boss-bot` is keeping them out of the docs commit, but whoever owns them should
+delete them.
+
+**Stash-recovery record (rev 4).** The `TEAM_ROSTER.md` in `stash@{0}` (`qa2`) was the rev-3 text,
+**12,493 B** blob `sha256 53f89d392e7e55f06070e9652332c8321e99dfc197a9ec1bab4debf5979940c6`; worktree
+HEAD still held the older rev-1 text. Recovered with `git checkout 'stash@{0}' -- TEAM_ROSTER.md`;
+staged content hashes identically to the stash blob (`git hash-object` on both = `d151a4c5`), and this
+rev 4 advances on top of it. Nothing of rev 3 was lost, so the stash is now safe to drop from
+`hr-bot`'s side — `arch-lead`'s `CONTRACT_P2_STREAM.md` and the staged `PHASES.md` were the other two.
