@@ -32,18 +32,32 @@ prose stated a fixed command with no root named).
    prints `[2] COVERAGE FAIL 19 manifest rows / 20 tree files; 1 uncovered` → `reports/README.md`.
    The room's close-out figure `tree files under evidence|findings|SOC = 19` is the *same tree minus
    `reports/`* — i.e. it matches at 19 only because the scope differs. **Shipped practice seals it:**
-   `bluekit-pentest/reports/evidence_manifest.sha256` carries 2 `README` rows. So the coverage FAIL is
-   a real one-file gap in lane A's seal, **not** an over-strict gate. Source: live probe of both
-   engagements + the shipped manifests. **Confidence: certain (the gap); high that it is the intended
-   bar (bluekit is the reference the plan points at).**
-5. Reference run, unchanged after the patch: `gate.py ENG-2026-09-28-001` →
+   `bluekit-pentest/reports/evidence_manifest.sha256` carries 2 `README` rows (`:327` `evidence\README.md`,
+   `:330` `reports\README.md`). Source: live probe of both engagements + the shipped manifests.
+   **Confidence: certain (the gap).**
+5. **The divergence is in the CONTRACT TEXT, and the scaffold's copy is the outlier.** The shipped
+   reference states the wide scope: `bluekit-pentest/SOC/04_Evidence_and_Proof_Standard.md:33` — *"Phase R
+   produces `reports/evidence_manifest.sha256` covering every evidence/finding/**report** file"* (sha256
+   `c3fbfc48…`). The standing sandbox and the scaffold template state the narrow one:
+   `ENG-2026-09-28-001/SOC/04:35` and `offense-fleet/SOC/04:35` — *"covering every evidence/finding/**SOC**
+   file minus the excludes declared in SOC/02"* (ENG sha256 `365ae3f2…`). `PHASES_PENTEST.md` §4a check 2
+   inherited the scaffold's phrasing, so the plan, the scaffold contract, and the scaffold's `bin/offense`
+   all read three tops while the shipped contract reads three tops **plus `reports/`**. Source: both SOC/04
+   texts, read whole, hashes above. **Confidence: certain.** Recommendation: widen to
+   `evidence|findings|reports|SOC` and fix the scaffold's line — that is the reference's own wording.
+6. **No manual exclude is needed for the manifest — the wider set is off by exactly one file.**
+   `gate.py:140` drops it structurally (`have = [p for p in tree_files(root) if p != MANIFEST]`), so
+   `walked 21 − manifest = 20` is the denominator the gate already prints. `hr-bot`'s `comm -13` delta of
+   two collapses to one real artifact. Source: `python` walk of the four tops (21/20) + `:140`.
+   **Confidence: certain.**
+7. Reference run, unchanged after the patch: `gate.py ENG-2026-09-28-001` →
    `[1] PASS 19 OK / 19 rows, 0 FAILED, 0 unreadable (exit=0)`; `[3] PASS 0 Open (of 7 data rows)`;
    `[4] FAIL no phase-R artifact`; `[2] FAIL (coverage)` → `=> FAIL (coverage)`. Source: raw run.
    **Confidence: certain.**
-6. **A gate report needs the cwd and the tree set in it, not a bare `n == n`.** Added to the skill's
+8. **A gate report needs the cwd and the tree set in it, not a bare `n == n`.** Added to the skill's
    `## Reporting` (claim 4 is the worked example: two defensible readings of "19 files", one PASS and
    one FAIL). Source: the two counts above. **Confidence: certain.**
-7. **UNVERIFIED:** that any other live board reads its manifest from a fourth root. No such engagement on
+9. **UNVERIFIED:** that any other live board reads its manifest from a fourth root. No such engagement on
    this box; the clause covers it either way.
 
 ## Where the room's figures stand now
