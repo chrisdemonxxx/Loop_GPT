@@ -926,7 +926,7 @@ unreachable by construction on *both* surfaces: **push is now a stricter prerequ
 | 1 | push the 5; then the `ARG` mirror, **two hunks** — `web/Dockerfile:15` (`ARG` chain, contract `:188-197`, argv order = precedence) and `:31` (the `RUN`, sha inside the argv) | `ops-release` | `GET /version.json` reads back the pinned SHA; `team/RELEASE_P1.md` |
 | 2 | `_qa-m1.mjs` 4 hunks (§13.4) | `qa-verify` | gate green on a good deploy + red on a decoy under `--strict` |
 | 3 | decoy mechanism (§13.5) | `research-scout` | `team/DECOY_version_json.md` |
-| 4 | `git clean -fd` — residue is 19 exactly, KEEP-5 committed at `77689da` | `hr-bot` | 19 paths gone, tree clean |
+| 4 | `git clean -fd` — residue is **22** (was 19) and **3 of the 22 are deliverables** (§13.9); KEEP-5 committed at `77689da`, the 3 deliverables staged in this commit | `hr-bot` | 22 paths gone, `git clean -n` names **zero** `team/*.md`, tree clean |
 
 Line cites verified this pass: `web/Dockerfile:15` `ARG GIT_REVISION=""` (**my room message said `:16`;
 `code-review`'s `:15` is right**), `:31` the `RUN`, `web/nginx.template.conf:13` the `no-store` map
@@ -953,3 +953,30 @@ names the declared scratch exclude; the prose bar is now three counted checks) �
 `git status --porcelain | grep -c '^??'` → **19**; `team/A11Y_AXE.md` and the four a11y evidence paths
 are now **tracked** at `77689da`; `frontend/build/pwa.mjs` present; `tsc`=0 and `vitest` 151/151 from
 §12.6 stand (no code change since).
+
+**13.9 Orchestrator re-count at HEAD `8bab825` — the sweep set contains deliverables; the constant is dead.**
+Measured here, not taken on report: `git status --porcelain | grep -c '^??'` → **22** (was 19 at §13.8),
+and `git clean -nd` names **three files nobody had tracked yet, all of them deliverables**:
+
+| path | bytes | sha256 | owner |
+|---|---|---|---|
+| `team/NOTE_config_layer_hr-bot.md` | 6,332 | `304cb87639db75b8…` | `hr-bot` |
+| `team/OFFENSE_CONTRACT_ops-release.md` | 3,387 | `50a26f7aa78e02f1…` | `ops-release` |
+| `team/P2_CLOSEOUT_boss-bot.md` | 7,194 | `173cdd7f96d767fe…` | `boss-bot` |
+
+`hr-bot`'s cited sha for its own note (`304cb87639db75b8…`) **equals the on-disk hash** — that
+self-report is honest. `hr-bot`'s research note is already safe (`ff4b17f3ec6a7cca…` at `8bab825`, the
+same value `P3_FOLD_boss-bot.md` cites). All three deliverables are **staged in this commit**, so the
+remaining 19 are the pure §12.4 scratch class and the sweep is now content-free.
+**Bar for P3 item 4, replacing "residue is 19 exactly": residue 22 → 0 with `git clean -n` naming zero
+`team/*.md`.** The 24 → 19 → 22 sequence is not drift from a bad actor — it is two notes and a close-out
+filed *after* the count was taken, which is precisely why the count cannot live in a plan as a constant.
+Every future sweep reads `git clean -n` for `team/` first, then deletes.
+
+**13.10 M1's API half, third independent measurement.** `curl` at 12:4xZ: `GET /api/version` →
+`{"revision":"8e2a79ea17b9c5fc3940a92315ca152f02466ed3","startedAt":"2026-09-28T10:55:46.122Z"}`,
+`HTTP=200`, and `git rev-parse origin/release/owned-staging-20260917` = the **same** SHA — `research-scout`
+§13.5(4) confirmed against the filesystem, not accepted on report. `/version.json` in the same breath:
+`{"revision":"unknown","builtAt":"2026-09-28T10:35:55.488Z"}` — the static layer frozen 20 min behind
+the API. Third observation of the §13.2 layer rule. The `GIT_REVISION` mirror (`ops-release`, row 1) is
+the **only** M1 term left.
