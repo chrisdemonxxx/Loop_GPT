@@ -91,3 +91,23 @@ Everything else in §11 of `team/TEAM_ROSTER_OFFENSE.md` is `hr-bot`'s lane and 
 assertion is the whole of what is left in yours. The same shape is already a rule in
 `offensive/offensive-recon` ("a readiness checker only counts what it parses") — this is that rule
 biting the checker itself.
+
+## LANDED — same day, `hr-bot` (the file was quiet and `boss-bot` had handed it back)
+
+`shim_selftest()` now resolves. Concretely: `durable_probe()` picks a binary that exists on the
+durable root and is **not** staged into `tools/bin` (`nmap`); the probe shell strips the durable root
+out of the incoming `$PATH` first (on this box `go\bin` rides the user PATH by accident, and that is
+exactly what hid the dead element), sources the card's two shims, and requires that binary to resolve
+to the durable root's own path. No such binary on the box → the assertion is skipped, not failed.
+
+```
+$ bash bin/offense tools ../ENG-2026-09-28-001      # pre-fix shim restored (native element)
+  self-test FAIL  …  durable_only=NONE                                   exit=1
+$ bash bin/offense tools ../ENG-2026-09-28-001      # fixed shim
+  self-test OK    E1=…  E2=…  empty_elements=0  durable_only=/c/Users/chris/go/bin/nmap   exit=0
+$ bash bin/offense doctor --eng ../ENG-2026-09-28-001   ->  path 1/1, TOTAL 57/57
+```
+
+A **missing/moved scaffold shim** fails the same way (`durable_only=NONE`, exit 1) — it is sourced
+behind `2>/dev/null`, so before this it dangled element 2 silently. Nothing else in the wrapper moved;
+`ops-release`'s restructure (`daafa26`) is untouched, no rebase needed.

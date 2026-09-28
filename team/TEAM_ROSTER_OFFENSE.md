@@ -524,14 +524,33 @@ half of `A-07` (`re-measured 13:47Z it has 18 rows but is uncommitted in the eng
 in the tree and committed now. **A-07 is closeable** with this evidence; the `Open`/`Verified` call is
 `verifier`'s (P4 rule: zero `Open`).
 
-### The residual — `ops-release`'s wrapper, not the shim
+### The residual — **landed** (`hr-bot`, on `bin/offense.py`; `daafa26` → the commit below)
 
-`bin/offense.py:shim_selftest()` asserts element 1/2 are the expected **strings** and `is_dir()`s
+`bin/offense.py:shim_selftest()` asserted element 1/2 are the expected **strings** and `is_dir()`d
 them. A dead native element satisfies both, so the self-test read `OK` on the broken shim — a **false
-green** of exactly the shape §6 of the framework warns about ("a readiness checker only counts what it
-parses"). It needs a resolve check, not a string compare: source the shim and require
-`command -v nmap` + its version line. Filed to `ops-release` in
-`team/NOTE_path_shim_element_form_ops-release.md`.
+green** of exactly the shape §6 warns about ("a readiness checker only counts what it parses"). It now
+**resolves**: the shell it runs strips the durable root out of the incoming `$PATH` first (on this box
+`go\bin` is on the user PATH by accident — that is what masked the dead element), sources the card's
+two shims, and requires `durable_probe()` (a binary that exists on the durable root and is *not* in
+`tools/bin`: `nmap`) to resolve to the durable root's own path. `None` on a box with no such binary
+→ skipped, not failed.
+
+```
+# RED — the pre-fix shim (elements from `pwd -W`) restored temporarily:
+$ bash bin/offense tools ../ENG-2026-09-28-001
+  self-test FAIL  …  durable_only=NONE                              exit=1
+# a moved scaffold shim dangles the same way (it is sourced behind 2>/dev/null):
+$ mv tools/PATH.sh tools/PATH.sh.moved && bash bin/offense tools ../ENG-2026-09-28-001
+  self-test FAIL  …  durable_only=NONE                              exit=1
+# GREEN — the fixed shim:
+$ bash bin/offense tools ../ENG-2026-09-28-001
+  self-test OK    E1=…  E2=…  empty_elements=0  durable_only=/c/Users/chris/go/bin/nmap   exit=0
+$ bash bin/offense doctor --eng ../ENG-2026-09-28-001   ->  path 1/1, TOTAL 57/57
+```
+
+So the engagement's *generated* shim is covered too: `SCAF` existence plus a real resolve, so a moved
+scaffold fails at `init` instead of dangling element 2 silently. `team/NOTE_path_shim_element_form_ops-release.md`
+carries the same, and is marked landed in place.
 
 **The rule this earns: a PATH element must be in the shell's own form (`/c/…`), and a readiness check
 must RESOLVE a pinned binary on that element — never compare the element's text.**
