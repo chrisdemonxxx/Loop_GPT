@@ -682,3 +682,33 @@ is not (rev 4 re-writes the rev-3 snapshot header in place). Rev 3's own note is
 `team/ROSTER_NOTE_20260927_rev3.md` (2,822 B), so no ruling is lost either way. **Ruling: keep `stash@{0}`**
 — one cheap insurance copy of the rev-3 roster body, no owed line, no code in it. Nobody needs to consult it to
 build or release; anyone who drops it must know that the 8+ rev-3-only roster lines go with it.
+### 11.6 Post-push read-back — F2 is CLOSED, and one correction to §11.2
+
+The docs commit `b843588` was pushed and the branch **auto-deployed**. Two raw probes, ~75 s later:
+
+```
+$ curl -s https://loop-gpt.cyou/api/version
+{"service":"loop-gpt-backend","revision":"b843588eb68dca32cda8cc81731cba29372ade41","startedAt":"2026-09-28T03:43:38.191Z","node":"v22.23.2"}   HTTP=200
+$ git rev-parse --short HEAD   →  b843588
+```
+
+**Backend read-back == HEAD. Item 11.4(1)'s backend half and §9's F2 are closed on the shipped revision.**
+The push-triggered deploy is git-based, which is also the correction to §11.2: a **git-based** Railway build
+would *not* have hit the missing `frontend/build/pwa.mjs` (HEAD carries the blob) — the deletion was a hazard
+for **worktree-input builds** (`railway up`, `docker build -f web/Dockerfile .` from this checkout, and any
+lane running `node build/pwa.mjs` locally), not for the pushed-commit deploy. The defect and the restore both
+stand; the blast radius is narrower than §11.2's wording. What is proven: `web/Dockerfile:23`'s exact
+command (`npm run build && node build/pwa.mjs`) runs green on the restored tree, and `out/sw.js` = 6,241 B.
+
+**The web half is now the whole of the gap, and the rebuild timestamp nails the diagnosis:**
+
+```
+$ curl -s https://loop-gpt.cyou/version.json
+{"surface":"web","revision":"unknown","builtAt":"2026-09-28T03:44:37.316Z"}   HTTP=200
+```
+
+`builtAt` is 59 s *after* `b843588`'s deploy (`03:43:38Z`): the web image rebuilt from the new commit and
+still reads `unknown`. The producer is proven live and proven correct; only the **variable** is missing.
+One env line — `GIT_REVISION=${{RAILWAY_GIT_COMMIT_SHA}}` on **web**, unset on **backend** (§F.1) — then a
+rebuild, and `GET /version.json` reads back `b843588`. `ops-release`: this is the last line between "live"
+and "live == HEAD, provable".
