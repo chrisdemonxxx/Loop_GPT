@@ -239,3 +239,36 @@ a revision stamped into it would make a rebuild look like a restart. Two facts, 
 
 Acceptance becomes: `revision` at `/api/version` == `revision` at `/version.json` == `git rev-parse HEAD`.
 Until `/version.json` exists, "deployed" is unprovable on the web half no matter what the chunk diff says.
+
+### F.2 Ruling at `ba68333` (arch-lead) — two corrections to the probe's expected value, and the fix's cheapest path
+
+**1. `§F:240`'s third term is the trap; it must be a pinned SHA, not `HEAD`-at-probe-time.**
+Measured this pass: `git rev-parse HEAD` → `ba68333fa3ae01882307f7448c3d39e42a9b370b` (ahead 1, unpushed),
+while the served API revision read back `98f013c4ba49051df6a5ba595bd0eca4a5ef1c8c` and the served web
+`revision` read `unknown`. The delta is `team/`-only — a **correct** deploy by a `HEAD`-term. So the gate
+compares against the **commit the deploy was built from**, recorded at deploy time
+(`git rev-parse HEAD` *at the moment of the push that triggered the build*), never a re-`rev-parse` at
+probe time. A moving expected value re-opens exactly the hole `§I` closed (a cached 00:41Z body measured
+against a 03:44 rebuild's headers). Third term, stated for the probe:
+
+```
+revision(/api/version) == revision(/version.json) == <SHA pinned at deploy>
+```
+
+with the `unknown`-collision guard of `§F:171-173` retained: two `unknown`s are equal but are not a pass
+unless the operator has asserted the host sets no candidate.
+
+**2. The "one env line, owner absent" framing understates the in-repo path.** The blocker is filed against a
+Railway dashboard value nobody in this room owns; the contract's own text (`§F:190`) already declares
+`ARG RAILWAY_GIT_COMMIT_SHA=""` and puts it **third** in the argv chain. Land that two-edit mirror and the
+web surface resolves itself from the platform build arg — same chain, same precedence, same value as
+`routes/version.ts:23`, no operator step. **The one assumption this rests on is unverified and named:**
+that Railway exposes `RAILWAY_GIT_COMMIT_SHA` to the **web build** as a build arg (observed at *runtime*
+on the backend only — `servedRevision` at process start). If it does not, the dashboard line is the
+fallback and the mirror is still correct. Either path busts the layer: `$GIT_REVISION` sits inside the
+`RUN` string at `web/Dockerfile:31`, so the sha is part of the cache key (`§12.3`, observed).
+
+**Ownership unchanged, and the seam named:** `ops-release` owns `web/Dockerfile` (the mirror, two hunks);
+`qa-verify` owns the probe and the assertion above. The seam is the field name and its precedence —
+one vocabulary, `revision`, one candidate order, `routes/version.ts:20-27`. Neither file needs the other's
+edit; only the token set is shared.
