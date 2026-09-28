@@ -9,6 +9,7 @@ import { useDictation } from '../../lib/voice'
 import type { PendingAttachment } from '../../chat/hooks'
 import { SlashPalette, RunModePicker, TriStateToggle, type ToggleState } from './composer/SlashPalette'
 import { PlusMenu, AttachmentChips, DictationBar } from './composer/PlusMenu'
+import { EffortSelector, type EffortValue } from './composer/EffortSelector'
 
 export type RunMode = 'auto' | 'plan' | 'step' | 'accept'
 
@@ -24,9 +25,11 @@ interface ComposerProps {
    *  explicit per-run overrides. */
   webSearch: ToggleState
   onToggleWebSearch: (next: ToggleState) => void
-  /** Extended-thinking override (§8-26): same tri-state contract. */
-  thinking: ToggleState
-  onToggleThinking: (next: ToggleState) => void
+  /** Extended-thinking override (§8-26) — widened to the effort union
+   *  (contract §A): auto/low/medium/high/xhigh/off. auto = server default,
+   *  off = explicit no-think. Wired against the Brain tri-state above it. */
+  thinking: EffortValue
+  onToggleThinking: (next: EffortValue) => void
   /** Context meter (§2.5): 0-100 estimated window usage. */
   contextPct?: number
   contextTokens?: number
@@ -318,17 +321,12 @@ export default function Composer({
                 : 'Web search: off — strip web tools from this run'}
           />
 
-          {/* Extended-thinking toggle (§8-26) — cycles Auto → On → Off */}
-          <TriStateToggle
-            icon={Brain}
-            kind="thinking"
-            state={thinking}
-            onCycle={onToggleThinking}
-            titleFor={(s) => s === 'auto'
-              ? 'Extended thinking: auto — model default'
-              : s === 'on'
-                ? 'Extended thinking: on — deeper reasoning for this run'
-                : 'Extended thinking: off — answer directly for this run'}
+          {/* Reasoning-effort selector (§8-26, contract §A) — the 6-way
+              replacement for the tri-state: Auto → Low → Medium → High →
+              XHigh → Off. One picker, 44px row, menu like RunModePicker. */}
+          <EffortSelector
+            value={thinking}
+            onChange={onToggleThinking}
           />
 
           {/* Hands-free voice mode (§8-44) — speak → listen → send loop. */}

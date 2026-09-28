@@ -597,7 +597,9 @@ export interface ChatStreamSendOptions {
   projectId?: string
   /** Explicit per-run overrides (§8-25/26): undefined = server default. */
   webSearch?: boolean
-  thinking?: boolean
+  /** Effort union (contract §A): the page dispatches low..xhigh + the
+   *  legacy booleans (medium→true keeps old clients 200ing). */
+  thinking?: boolean | 'low' | 'medium' | 'high' | 'xhigh'
   /** Pinned workspace connections (§8-40): their tools join this agent run. */
   connectionIds?: string[]
   /** The workspace a NEW conversation is created in (§8-40: only sent when

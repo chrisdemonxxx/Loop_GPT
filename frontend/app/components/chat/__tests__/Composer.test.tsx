@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import Composer from '../Composer'
 import type { PendingAttachment } from '../../../chat/hooks'
 
@@ -16,7 +16,8 @@ const base = {
   runMode: 'auto' as 'auto' | 'plan' | 'step' | 'accept',
   webSearch: 'auto' as 'auto' | 'on' | 'off',
   onToggleWebSearch: () => {},
-  thinking: 'auto' as 'auto' | 'on' | 'off',
+  /** Contract §A (rank 7): the 6-value effort union. */
+  thinking: 'auto' as 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'off',
   onToggleThinking: () => {},
   showSlash: false,
   showPlus: false,
@@ -123,15 +124,15 @@ describe('Composer', () => {
     expect(screen.getByTitle('Confirm before every action').textContent).toContain('Ask first')
   })
 
-  it('renders the web-search and thinking toggles cycling Auto → On → Off', () => {
+  it('renders the web-search tri-state and the 6-way effort selector', () => {
     const onToggleWebSearch = vi.fn()
     const onToggleThinking = vi.fn()
-    const { rerender } = renderComposer({ onToggleWebSearch, onToggleThinking })
+    renderComposer({ onToggleWebSearch, onToggleThinking })
     const web = screen.getByRole('button', { name: /web search: auto/i })
-    const brain = screen.getByRole('button', { name: /extended thinking: auto/i })
+    const brain = screen.getByRole('button', { name: /reasoning effort: auto/i })
     expect(web).toBeInTheDocument()
     expect(brain).toBeInTheDocument()
-    // Cycle from auto lands on on; from on lands on off.
+    // Cycle the web tri-state: auto → on → off → auto.
     fireEvent.click(web)
     expect(onToggleWebSearch).toHaveBeenCalledWith('on')
     renderComposer({ webSearch: 'on', onToggleWebSearch, onToggleThinking })
@@ -140,18 +141,45 @@ describe('Composer', () => {
     renderComposer({ webSearch: 'off', onToggleWebSearch, onToggleThinking })
     fireEvent.click(screen.getByRole('button', { name: /web search: off/i }))
     expect(onToggleWebSearch).toHaveBeenCalledWith('auto')
+    // effort: open the menu (aria-expanded), then a menuitem dispatches.
     fireEvent.click(brain)
-    expect(onToggleThinking).toHaveBeenCalledWith('on')
+    expect(brain.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(screen.getByTitle(/^Reasoning effort: Low /))
+    expect(onToggleThinking).toHaveBeenCalledWith('low')
   })
 
-  it('marks explicit toggle states visually (on = terracotta, off = struck)', () => {
-    renderComposer({ webSearch: 'on', thinking: 'off' })
+  it('effort selector: all six positions, xhigh carries the 8k cap, pick dispatches', () => {
+    const onToggle = vi.fn()
+    renderComposer({ thinking: 'xhigh', onToggle: onToggle as never, onToggleThinking: onToggle as never } as any)
+    // open the menu first
+    const openBtn = screen.getByRole('button', { name: /^Reasoning effort: XHigh /i })
+    fireEvent.click(openBtn)
+    const CAPS: Record<string, string> = { auto: 'Auto', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh', off: 'Off' }
+    const cap = (s: string) => CAPS[s]
+    const menu = screen.getByRole('menu', { name: 'Reasoning effort' })
+    for (const id of ['auto', 'low', 'medium', 'high', 'xhigh', 'off'] as const) {
+      const title = new RegExp(`^Reasoning effort: ${cap(id)} `)
+      expect(within(menu).getByTitle(title)).toBeInTheDocument()
+    }
+    for (const next of ['auto', 'low', 'medium', 'high', 'xhigh', 'off'] as const) {
+      // scoped to the menu — the trigger button carries the same title for the current value
+      const item = within(screen.getByRole('menu', { name: 'Reasoning effort' })).getByTitle(new RegExp(`^Reasoning effort: ${cap(next)} `))
+      onToggle.mockClear()
+      fireEvent.click(item)
+      expect(onToggle).toHaveBeenLastCalledWith(next)
+      // pick() closed the menu — reopen for the next pass
+      fireEvent.click(openBtn)
+    }
+  })
+
+  it('marks explicit toggle states visually (on + high = terracotta)', () => {
+    renderComposer({ webSearch: 'on', thinking: 'high' })
     const web = screen.getByRole('button', { name: /web search: on/i })
-    const brain = screen.getByRole('button', { name: /extended thinking: off/i })
+    const brain = screen.getByRole('button', { name: /reasoning effort: high/i })
     expect(web.className).toContain('text-[#e79d7f]')
     expect(web.getAttribute('aria-pressed')).toBe('true')
+    expect(brain.className).toContain('text-[#e79d7f]')
     expect(brain.getAttribute('aria-pressed')).toBe('true')
-    expect(brain.className).toContain('line-through')
   })
 })
 

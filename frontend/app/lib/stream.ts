@@ -32,6 +32,9 @@ export interface StreamHandlers {
   onToolCall?: (step: number, name: string, args: any, source?: string) => void
   /** Live tool output while it runs (§8-28): e.g. execute_code stdout/stderr. */
   onToolOutput?: (step: number, chunk: string, stream?: 'stdout' | 'stderr') => void
+  /** At-capacity self-resume (§B): a retryable 429 after the stream opened
+   *  emits {type:'retry'} instead of `error` — this drives the wait card. */
+  onRetry?: (attempt: number, afterMs: number) => void
   /** Step progress checklist (§8-29); the latest event per step wins. */
   onProgress?: (step: number, items: ProgressItem[]) => void
   onToolResult?: (step: number, name: string, content: string, data: any, isError?: boolean) => void
@@ -55,8 +58,10 @@ export interface StreamBody {
   projectId?: string
   /** Web-search override (§8-25): true forces web tools in, false strips them. */
   webSearch?: boolean
-  /** Extended-thinking override (§8-26): per-run CoT switch. */
-  thinking?: boolean
+  /** Extended-thinking override (§8-26), widened to the effort union
+   *  (contract §A): low/medium/high/xhigh, plus the frozen legacy aliases
+   *  (true ≡ 'medium', false ≡ off, omitted ≡ server default). */
+  thinking?: boolean | 'low' | 'medium' | 'high' | 'xhigh'
   /** Pinned workspace connections (§8-40): their tools join this agent run. */
   connectionIds?: string[]
   /** The workspace a NEW conversation is created in (§8-40: only sent when
@@ -95,7 +100,7 @@ export async function runAgentStream(
   // /api/agent/:id/stream and rejects BYOK fields (provider/model/apiKey) and
   // server file paths (imagePath). Send only the hosted contract, including the
   // attachmentId so image attachments actually reach the vision path.
-  const safeBody: { content: string; mode: string; attachmentId?: string; attachmentIds?: string[]; toolNames?: string[]; autoApprove?: boolean; stepMode?: boolean; incognito?: boolean; projectId?: string; model?: string; webSearch?: boolean; thinking?: boolean; parentMessageId?: string | null; regenerateOf?: string; connectionIds?: string[]; workspaceId?: string } = {
+  const safeBody: { content: string; mode: string; attachmentId?: string; attachmentIds?: string[]; toolNames?: string[]; autoApprove?: boolean; stepMode?: boolean; incognito?: boolean; projectId?: string; model?: string; webSearch?: boolean; thinking?: boolean | 'low' | 'medium' | 'high' | 'xhigh'; parentMessageId?: string | null; regenerateOf?: string; connectionIds?: string[]; workspaceId?: string } = {
     content: body.content,
     mode: body.mode || 'chat',
   }
@@ -261,6 +266,9 @@ function dispatch(event: any, h: StreamHandlers) {
     case 'tool_output':
       // Unstamped output (outside a tool execution) has no card to attach to.
       if (typeof event.step === 'number') h.onToolOutput?.(event.step, event.chunk, event.stream)
+      break
+    case 'retry':
+      h.onRetry?.(event.attempt, event.afterMs)
       break
     case 'progress':
       if (typeof event.step === 'number') h.onProgress?.(event.step, event.items)

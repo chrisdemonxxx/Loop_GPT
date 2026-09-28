@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import axios from 'axios'
 
 import { API_URL, authHeaders, getStoredUser, getToken, getModelTier, setModelTier, type AgentMode } from '../lib/api'
+import type { EffortValue } from '../components/chat/composer/EffortSelector'
 import { getDraft, setDraft, deleteDraft } from '../lib/drafts'
 import SettingsPanel from '../components/SettingsPanel'
 import { CommandPalette } from '../components/CommandPalette'
@@ -46,7 +47,9 @@ export default function ChatPage() {
   const [runMode, setRunMode] = useState<'auto' | 'plan' | 'accept' | 'step'>('auto')
   // ── Per-run capability toggles (§8-25/26): auto = server default.
   const [webSearch, setWebSearch] = useState<'auto' | 'on' | 'off'>('auto')
-  const [thinking, setThinking] = useState<'auto' | 'on' | 'off'>('auto')
+  // Effort union (contract §A): auto/low/medium/high/xhigh/off —
+  // the 6-way selector that replaced the tri-state Brain toggle.
+  const [thinking, setThinking] = useState<EffortValue>('auto')
   const [incognito, setIncognito] = useState(false)
   const [modelTier, setModelTierState] = useState('')
   const [showSettings, setShowSettings] = useState(false)
@@ -260,7 +263,13 @@ export default function ChatPage() {
       projectId: snapshot.projectId,
       // Explicit overrides only (§8-25/26): undefined keeps the server default.
       webSearch: snapshot.webSearch === 'auto' ? undefined : snapshot.webSearch === 'on',
-      thinking: snapshot.thinking === 'auto' ? undefined : snapshot.thinking === 'on',
+      // Effort union (contract §A): auto→undefined, off→false,
+      // low..xhigh pass through; 'medium'→true keeps legacy clients 200ing
+      // (the old tri-state's 'on').
+      thinking: snapshot.thinking === 'auto' ? undefined
+        : snapshot.thinking === 'medium' ? true
+        : snapshot.thinking === 'off' ? false
+        : snapshot.thinking,
       ...(snapshot.branchParent !== undefined ? { parentMessageId: snapshot.branchParent } : {}),
       ...(pinnedForRun ? { connectionIds: pinnedForRun } : {}),
       ...(pinnedForRun && newConversation && workspaceId ? { workspaceId } : {}),

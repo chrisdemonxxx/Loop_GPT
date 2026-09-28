@@ -81,7 +81,9 @@ export interface QueuedMessage {
   incognito: boolean
   projectId?: string
   webSearch?: 'auto' | 'on' | 'off'
-  thinking?: 'auto' | 'on' | 'off'
+  /** Effort union (contract §A, rank 7): the 6 composer positions —
+   *  auto = server default, low/medium/high/xhigh, off = no CoT. */
+  thinking?: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'off'
   /** Pinned workspace connections (§8-40): their tools join this agent run. */
   connectionIds?: string[]
   /** §8-22: pending-branch parent, if the queued message was an edit. */
