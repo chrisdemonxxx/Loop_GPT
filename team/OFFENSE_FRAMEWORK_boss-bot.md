@@ -191,3 +191,56 @@ first card. The fleet reads **56/56** on `offense doctor` (`57/57` with `--eng`)
 pinned binaries into its own `tools/bin` and self-tests the shim before anything else runs, and
 `bin/offense gate` decides a close-out on counts — it already catches the `bluekit` R-shape gap.
 
+## 8. Round 2 — readiness must not depend on the scaffold's tracked set (added 2026-09-28T13:2xZ)
+
+`research-scout` re-verified the fix on a **brand-new** session rather than my hand-rehydrated one: fresh
+`git archive` tree, `tools/bin` starts at 1 file, `stage_tools` lands 9, `empty_elements=0`, and the
+card's first line resolves 10/10 with the staged `nuclei.exe` sharing an inode with the durable-root copy.
+Confirmed — and their residual note (1) was a real hole in my `provision()`, so I closed it here:
+
+**`stage_tools` now stages from the scaffold's `tools/bin` *and* from the durable root** (`FLEET_BIN`,
+default `~/go/bin`). Their measurement — `git ls-files tools/bin` is 1 file, the other 8 git-ignored —
+meant a clone or a second host would have staged exactly one binary and called it ready. Now the tracked-set
+question is a reinstall recipe for `@ops-release` rather than a readiness hole. Tested on the real
+second-host shape (scaffold bin absent):
+
+```
+off.SCAFFOLD = <empty>   # the host that has no scaffold tools/bin
+durable root: C:\Users\chris\go\bin
+staged=9  from_scaffold=0  from_durable=9   skipped=[]
+```
+
+**One measured exclusion.** `nmap` is deliberately NOT in the staged set. A lone hardlink of `nmap.exe`
+into a dir without its sidecars degrades the tool, and the raw says so:
+
+```
+$ ln ~/go/bin/nmap.exe $T/nmap.exe && (cd $T && ./nmap.exe -p 22 127.0.0.1)
+Unable to find nmap-services!  Resorting to /etc/services
+Unable to find nmap-protocols!  Resorting to /etc/protocols
+```
+
+So the manifest carries `toolchain.pinned` = `[nuclei naabu dnsx subfinder tlsx katana ffuf jq httpx]` (the
+self-contained set) plus a `pinned_note`; the guard is generic — any pinned name whose durable-root family
+carries data files is left on the root and reported (`skipped=['nmap (sidecars:
+nmap-mac-prefixes,nmap-os-db,nmap-protocols)']`). `jq` was added to the manifest (it ships and is
+pinned; `api-dataflow` is its seat).
+
+Verified on a real fresh session (`ENG-2026-09-28-003`, since deleted with its board):
+
+```
+sandbox … (26 files from git archive, placeholders filled 30, left 37)
+tools/    bin/ (staged 8: 8 from the scaffold, 0 from the durable root)
+PATH.sh   self-test OK    E1=…/ENG-2026-09-28-003/tools/bin  E2=…/offense-fleet/tools/bin  empty_elements=0
+```
+
+and, from inside that session, a seat resolves 11/11 (`nmap` from the durable root, the other 9 from the
+session's own `tools/bin`, `sqlmap` from the Python install) and `nmap -p 22 127.0.0.1` runs clean — no
+`nmap-services` warning, only the pre-existing Npcap note.
+
+**Still open, and it is `@ops-release`'s:** `tools/VERSIONS.md`'s verify block reads
+`sha256sum "$G/httpx.exe"` while `httpx` is the one `go-mod@` row with no `sha256:` — and it is the one
+*tracked* binary, i.e. the one a reinstall can swap silently. Their lane, their pin.
+
+Commit `8f06622`.
+
+
