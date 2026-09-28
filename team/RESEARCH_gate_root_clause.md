@@ -60,6 +60,30 @@ prose stated a fixed command with no root named).
 9. **UNVERIFIED:** that any other live board reads its manifest from a fourth root. No such engagement on
    this box; the clause covers it either way.
 
+## Second defect, same family — check 3 read a false PASS (found on the live registry, 2026-09-28T10:0xZ)
+
+10. **`gate.py`'s `Open` matcher was bare-cell-only and read `PASS 0 Open` on a registry carrying 2.**
+    `ENG-2026-09-28-001/findings/FINDINGS_REGISTRY.md`: `grep -cE '\|\s*Open\s*\|'` → **0**,
+    `grep -oE '\| `Open` \|' | wc -l` → **2** (contract cells are code-quoted), and the pre-patch gate
+    printed `[3] STATUS PASS 0 Open (of 7 data rows)`. The skill's own bullet prescribed that same bare
+    pattern. Fixed at `gate.py:155` → `\|\s*`?Open`?\s*\|`; the live run now reads
+    `[3] STATUS FAIL 2 Open (of 7 data rows)`. No regression: `bluekit` (bare cells) still
+    `FAIL 22 Open (of 50)`, `penttest` still `no findings/FINDINGS_REGISTRY.md`. Source: raw runs, all
+    three legs. **Confidence: certain.** This is the same class as `bin/offense.py:825` — a
+    reference-shaped prefix/cell matcher silently vacating on a contract-shaped tree.
+11. **The manifest is now STALE — the reference "19 rows verify 19/19" is out of date.**
+    `sha256sum -c` from the engagement root, same tree that read 19/19 PASS at ~10:0xZ earlier in this
+    session: now `18 OK / 19 rows, 1 FAILED` — the failing row is
+    `SOC/04_Evidence_and_Proof_Standard.md: FAILED`, and its mtime is **10:03:16** against a manifest
+    sealed **09:30:31** (the `04bfdaa` contract re-pin landed after the seal). Cause is the edit, not
+    lane A. Per the skill's own rule ("an unsealed edit is a FAIL, not a note"), the seal must be
+    re-run before the card's 19/19 is quoted again. Source: `sha256sum -c` raw + `ls --time-style=full-iso`.
+    **Confidence: certain.**
+12. `offense-fleet` itself is live: `gate.py offense-fleet` → `20 manifest rows / 36 tree files;
+    16 uncovered` (`evidence/raw/B_naabu.jsonl`, `B_naabu.out`, …) — the template is carrying lane
+    B/C's writes, which is the scaffold-as-live-engagement call `boss-bot` put to the user. Source: raw
+    run. **Confidence: certain.**
+
 ## Where the room's figures stand now
 
 - `boss-bot`'s Phase-A gate re-run (`phase_A_osint.md` 56,654 B / 57 `## RAW-n` / 7 registry rows, 2
