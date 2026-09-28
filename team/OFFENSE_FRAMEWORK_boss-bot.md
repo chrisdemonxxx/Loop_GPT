@@ -112,9 +112,82 @@ Both are `verifier`-lane items, and both are now mechanical rather than a matter
 4. **`verifier`** — declare the excludes in the engagement's `SOC/02` (the gate's own message), and the
    bluekit R-shape gap.
 
-## 5. Room copy (for `@user`)
+## 6. The tool bootstrap — fixed, and the chain proved (added 2026-09-28T13:0xZ)
+
+`research-scout` (5 claims) and `hr-bot` (independent reproduction) were right on all of it, and one of the
+two was worse than a readiness nit. All three defects are in my file, all three are fixed, and the fix is
+verified on the live session.
+
+**Before** (reproduced verbatim, `cd ENG-2026-09-28-001 && bash -c 'source tools/PATH.sh; …'`):
+
+```
+E1=/c/…/ENG-2026-09-28-001/tools/tools/bin      ls -d tools/tools/bin -> No such file or directory
+E2=                                             (empty element == CWD)
+E3=/c/Users/chris/bin
+with a chmod +x'd `ffuf` in the seat's cwd:  command -v ffuf -> ./ffuf
+```
+
+**What was wrong, exactly:**
+
+1. `BASH_SOURCE` points at the *shim*; the shim lives in `tools/`, so the engagement root is its
+   **parent** — `dirname(...)` produced a ghost dir.
+2. `$SCAFFOLD_TOOLS_BIN` is exported only in `bin/offense` (the process that then `exec`s python). A seat's
+   shell is not that process, so element 2 was empty — and an empty PATH element means **CWD**, so a file
+   named like a lane binary in the seat's working dir shadowed the pinned tool.
+3. Nothing was staged: `init` made the directory and copied nothing.
+4. (found while fixing 1–3, and it was **mine**): the card's own first line read
+   `source ../tools/PATH.sh 2>/dev/null` — relative to an engagement, `../tools/` is a *sibling* of the
+   scaffold, i.e. `projects/development/tools/`, which does not exist. The `2>/dev/null` made the miss
+   silent, so the line looked fine and did nothing. It now sources the scaffold shim by absolute path.
+
+**After** (`offense tools ../ENG-2026-09-28-001`):
+
+```
+  staged 9 file(s) into <eng>/tools/bin   (scaffold bin: …/offense-fleet/tools/bin)
+  PATH.sh rewritten, 410 B, sha256 d65d399d931b62f0…
+  self-test OK    E1=…/ENG-2026-09-28-001/tools/bin  E2=…/offense-fleet/tools/bin  empty_elements=0
+```
+
+The self-test runs the **card's real first line**, at the top level of a shell (inside `$( )` the PATH edit
+is discarded — that was a bug in the first self-test), and asserts four counts: element 1 is the
+engagement's own bin and a directory, element 2 the scaffold bin, zero empty elements, and the scaffold
+shim present. A seat's shell in the live session now resolves:
+
+```
+nmap /c/Users/chris/go/bin/nmap        (durable root)
+nuclei httpx ffuf jq subfinder dnsx katana naabu tlsx
+     -> /c/…/ENG-2026-09-28-001/tools/bin/<name>     (the SESSION'S OWN copy)
+sqlmap -> the Python install
+```
+
+A `chmod +x`'d file named `httpx` in the seat's own cwd no longer wins: `command -v httpx` → the sandbox's
+pinned `tools/bin/httpx`. `doctor` grew the two checks the room asked for — **connector**
+(`tools.connectors.enabled`, read from the CLI because it is a built-in default and absent from a minimal
+config) and, with `--eng`, **path** (the self-test above). Verdicts:
+
+```
+before: 44/48   (mcp 7/8, bin 5/8)
+now:    56/56   (`--eng`: 57/57 — path 1/1)
+```
+
+`mcp 8/8` is `hr-bot`'s `brightdata` fix; `bin 8/8` is `ops-release` landing `nmap` (7.991) + pd-`httpx`
+into `~/go/bin` and the scaffold's `tools/bin`, which `init` hardlinks into every session.
+
+**The chain also proved itself while this was being fixed.** The live `eng-2026-09-28-001` board ran
+without me: the P0 contract card **completed** (539s, `→ P0 contract frozen … filled all 37 human
+placeholders … first A-record 69.46.46.61`, commit `2897a3a chore(eng): freeze SOC contract, scope and
+RoE`), `SOC/0*.md` went **37 → 0** placeholders, and the **A card auto-promoted to `ready`** on its
+parent's completion; `offense up` then spawned `t_d65fc1d0 → recon-passive @ …/ENG-2026-09-28-001`
+(`running`). Parent-gating, per-seat workspace and the dispatcher are all doing their job.
+
+Scaffold commits: `b66b6ba` (the shim + staging + the two new checks + `offense tools`) and `543b92d`
+(the absolute card bootstrap + the honest self-test).
+
+## 7. Room copy (for `@user`)
 
 One line does it now: `bin/offense run <ENG-ID> --target <host>` → fresh sandbox, board, the 9 A→R cards
 parent-chained with their skills/MCP/toolsets attached, 27/27 skill probes green, dispatcher spawned the
-first card. `bin/offense doctor` says what is missing before you start (4 of 48 checks today), and
+first card. The fleet reads **56/56** on `offense doctor` (`57/57` with `--eng`), the sandbox stages the
+pinned binaries into its own `tools/bin` and self-tests the shim before anything else runs, and
 `bin/offense gate` decides a close-out on counts — it already catches the `bluekit` R-shape gap.
+
