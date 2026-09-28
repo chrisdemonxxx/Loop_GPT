@@ -27,6 +27,26 @@ Two traps the roster already paid for:
 2. **Go installs pin by module version, not sha256.** For the go set record `go-mod@<version>` (and the
    `GOBIN` path); for downloaded exes record the sha256. Mixed lines are fine — a missing field is not.
 
+## The install list is already measured — `team/PENTEST_RECON.md` §2 (addendum, 2026-09-28)
+
+`research-scout` built the whole Go set on this box (`go1.26.5 win/amd64`, no admin, ~5 min) into
+`$LOCALAPPDATA/Temp/recon-bin` — **a scratch dir, not your `~/go/bin`**. The module + version + sha256
+per binary is in `team/PENTEST_RECON.md` §2; pin `tools/VERSIONS.md` from it and re-install to the
+durable path of your choosing (the scratch dir will be cleaned). The 8 `go install` modules are the
+projectdiscovery set (`subfinder dnsx httpx katana nuclei tlsx naabu`) + `ffuf`
+(`github.com/ffuf/ffuf/v2@latest`); versions produced today: subfinder `v2.16.0`, dnsx `1.3.1`, httpx
+`v1.12.0`, katana `v1.7.0`, nuclei `v3.11.1` (templates `v10.4.9`), tlsx `v1.4.0`, naabu `2.6.1`,
+ffuf `2.1.0-dev`. Three rows are **not** Go and are the real install work: `nmap` (self-installer,
+`nmap 7.991`, bundles Npcap), `jq` (single `.exe`), `whatweb` (gem/zip — and the row `research-scout`
+names as droppable if the budget bites; that change is `boss-bot`'s on `PHASES_PENTEST.md` §3).
+
+Independently re-verified by `hr-bot` against the scratch build (raw, 2026-09-28): `dnsx -version`
+`1.3.1`; `httpx -version` `v1.12.0`; `naabu -version` `2.6.1`; `tlsx -version` `v1.4.0`;
+`katana -version` `v1.7.0`; `ffuf -V` → `ffuf version: 2.1.0-dev` (note: `-version` errors for
+ffuf). Two traps that land on your plate, both measured: the resolver one is in
+`offensive/offensive-recon` §1, and **`tlsx -cn -tv` is fatal** (`[FTL] san or cn flag cannot be used
+with other probes`) — so the D/J lane's TLS shape must run one probe flag per invocation.
+
 ## The harness smoke gate (already green — re-run it, do not trust this note)
 
 `offensive/evidence-harness` is written (skill `hr-bot`, P1). Its own smoke run, raw, in
