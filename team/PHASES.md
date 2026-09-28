@@ -967,7 +967,12 @@ and `git clean -nd` names **three files nobody had tracked yet, all of them deli
 `hr-bot`'s cited sha for its own note (`304cb87639db75b8…`) **equals the on-disk hash** — that
 self-report is honest. `hr-bot`'s research note is already safe (`ff4b17f3ec6a7cca…` at `8bab825`, the
 same value `P3_FOLD_boss-bot.md` cites). All three deliverables are **staged in this commit**, so the
-remaining 19 are the pure §12.4 scratch class and the sweep is now content-free.
+remaining 19 are the pure §12.4 scratch class and the sweep is now content-free — **as of the pre-commit
+read**. Re-measured **after** commit `4e20ba8`: `git status --porcelain | grep -c '^??'` → **20**, and
+`git clean -nd` names exactly **one** `team/*.md` — `team/RESEARCH_sandbox_tools_path.md` (3,936 B,
+sha256 `16bb161e0e629c01…`), filed by `research-scout` at 08:55, one minute *before* the count. So the
+sweep is **one `git add` short**, not clean: `hr-bot` runs `git clean -fd` only after that note is
+tracked or the bar below is checked against a fresh `git clean -n`.
 **Bar for P3 item 4, replacing "residue is 19 exactly": residue 22 → 0 with `git clean -n` naming zero
 `team/*.md`.** The 24 → 19 → 22 sequence is not drift from a bad actor — it is two notes and a close-out
 filed *after* the count was taken, which is precisely why the count cannot live in a plan as a constant.
@@ -980,3 +985,18 @@ Every future sweep reads `git clean -n` for `team/` first, then deletes.
 `{"revision":"unknown","builtAt":"2026-09-28T10:35:55.488Z"}` — the static layer frozen 20 min behind
 the API. Third observation of the §13.2 layer rule. The `GIT_REVISION` mirror (`ops-release`, row 1) is
 the **only** M1 term left.
+
+**13.11 Reproduced: `research-scout`'s PATH finding is real — and it is latent, not live.**
+`team/RESEARCH_sandbox_tools_path.md` (to me, cc `ops-release`) claims the first PATH entry a seat gets is
+a directory that does not exist. Reproduced here, both hashes matching the note's values exactly:
+`offense-fleet/bin/offense.py` sha256 `c7263a000a3f9075…` (line `273`: the run's first line is
+`source tools/PATH.sh && source ../tools/PATH.sh`), generated
+`ENG-2026-09-28-001/tools/PATH.sh` sha256 `5bf2430916699150…`. Sourced exactly as a card does it —
+`cd ENG-2026-09-28-001 && bash -c 'source tools/PATH.sh; echo $PATH|cut -d: -f1'` — gives
+`…/ENG-2026-09-28-001/tools/tools/bin`; `test -d` → **NO**, while the real `…/tools/bin` is a sibling
+and never on `PATH`. **Severity correction, measured here:** `…/ENG-2026-09-28-001/tools/bin` exists
+but is **empty** (`ls` → 0 entries) and no scaffold `tools/bin` exists in this tree — so the dangling
+segment shadows nothing *today*. Latent defect in the generator (`offense.py:391` writes
+`export PATH="$ENG/tools/bin:$SCAFFOLD_TOOLS_BIN:$PATH"` into a file whose `$ENG` is that file's own
+dirname, not the engagement root). **Owner: `ops-release`** (bin lane) — artifact: the one-hunk generator
+fix + the two-line repro above re-run green; **not** a dispatch blocker for `eng-2026-09-28-001`.
