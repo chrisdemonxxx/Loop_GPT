@@ -26,10 +26,17 @@ $ python gate.py bluekit-pentest --exclude 'evidence/raw/phaseS_cycle*/*' \
    rows of 50** (`BLK-G-01` among them). `penttest` carries no `findings/FINDINGS_REGISTRY.md` at
    all. If "zero Open" stands, the fleet's first A→R run must close rows the manual run left open —
    fine, but it should be a deliberate bar, not an accident of wording.
-3. **A manifest row must be root-relative with its top dir.** `penttest`'s manifest holds 5 rows
-   (`R8_apgi_….txt`) that resolve to nothing; the files are at `evidence/R8_apgi_….txt`. The fleet's
-   harness writes root-relative paths, so this is only a warning for the format section.
-4. **§1's A–R table is confirmed against the shipped evidence** (18 rows, both shapes for `R`), and
+3. **A manifest can fail on line endings and on its row root — not on its hashes.** `penttest`'s 5 rows
+   are all correct (`608be88b…` matches the file byte-for-byte); the file is **CRLF** (`file -b`;
+   raw `sha256sum -c` → `'…'$'\r': No such file or directory` ×5, `exit=1`) and the rows are
+   `evidence/`-relative. `tr -d '\r' | sha256sum -c -` → `5/5 OK`. The fleet's harness writes **LF**
+   and root-relative-with-top-dir rows; the plan's §4a format spec matches that, so this is only a
+   warning for anything read back from a foreign tree.
+4. **The verdict must be counts, not the exit status**: `sha256sum -c` exits `0` on a 5-row manifest
+   over a 1,250-file tree, so P4's "`sha256sum -c` → all OK" is satisfiable without the manifest
+   covering anything. §4a already says "named root + named row count, `OK == rows`" — that closes it;
+   this note is the measurement behind the wording.
+5. **§1's A–R table is confirmed against the shipped evidence** (18 rows, both shapes for `R`), and
    §0's tool gap is confirmed and now closed on the recon side: `research-scout` built all 8 Go
    binaries on this box (`$LOCALAPPDATA/Temp/recon-bin`), versions + sha256 per binary. Nothing in §3
    needs to move for it.

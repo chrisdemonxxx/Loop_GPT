@@ -138,14 +138,32 @@ refinement this re-run adds to the corpus.
 `delivery-gate-verification` against the reference engagements (raw):
 
 ```
-bluekit-pentest  [1] MANIFEST PASS 333 OK, 0 FAILED, 0 missing
+bluekit-pentest  [1] MANIFEST PASS 333 OK / 333 rows, 0 FAILED, 0 unreadable (exit=0)
                  [2] COVERAGE PASS 333 rows / 1250 tree files  (scratch globs excluded)
-                 [3] STATUS   FAIL 22 Open (of 52 table lines)
+                 [3] STATUS   FAIL 22 Open (of 50 data rows)
                  [4] R-SHAPE  FAIL no phase-R artifact            => FAIL (status)
-penttest         [2] COVERAGE FAIL 5 manifest rows / 55 tree files; 55 uncovered, 5 absent
+penttest         [1] MANIFEST PASS 5 OK / 5 rows, 0 FAILED, 0 unreadable · cwd=evidence +LF
+                 [2] COVERAGE FAIL 5 rows / 55 tree files; 50 uncovered, 0 absent
                  [4] R-SHAPE  PASS 1 single-file, 53 R<N> family file(s)
-demo tree (fleet format)  [1..4] PASS                                => PASS
+offense-fleet    [1] MANIFEST FAIL no reports/evidence_manifest.sha256   [NOT-YET-SEALED, not a defect]
+demo tree        [1..4] PASS                                              => PASS
 ```
+
+Three corrections to my own first read of this run, each now encoded in the skill (and each found by
+someone checking rather than transcribing):
+
+1. **`penttest`'s hashes are not broken — the file is CRLF.** `file -b` → `ASCII text, with CRLF
+   line terminators`; raw `sha256sum -c` → `'R8_apgi_….txt'$'\r': No such file or directory` ×5,
+   `exit=1`; `tr -d '\r' | sha256sum -c -` → `5/5 OK`. Its rows are also `evidence/`-relative. The
+   gate now normalises `\r` and `\`, retries from the rows' own root, and prints `cwd=evidence +LF`.
+2. **The verdict is counts, not the exit status.** `sha256sum -c` exits `0` on a 5-row manifest over
+   a 1,250-file tree, so check 1 is `OK == rows` ∧ `FAILED == 0` ∧ `unreadable == 0`. Measured with a
+   deliberately wrong hash: `FAIL 1 OK / 2 rows, 1 FAILED, 0 unreadable` while the raw exit was 1
+   only because of it.
+3. **`grep -c $'\r'` is not a CR detector on this box** — a pure-LF 2-line file prints `2` and its
+   CRLF twin prints `2` (`CR=0` vs `CR=2` by bytes). The harness writes LF (measured: `CR=0` on its
+   own output); assert LF by bytes, and count registry table **data rows** (header + separator excluded,
+   so a clean scaffold reads `0 Open (of 0)`).
 
 The fleet's own format passes all four; the two `Open`-count/coverage deltas are filed with
 `boss-bot` (`team/NOTE_gate_vs_reference_boss-bot.md`) rather than fixed unilaterally.
@@ -158,7 +176,7 @@ The fleet's own format passes all four; the two `Open`-count/coverage deltas are
 |---|---|---|
 | `team/PENTEST_RECON.md` — install/flag surfaces for the projectdiscovery + nmap set on Windows; challenge classes with the bypass rail that worked (`F-02`/`G-02`); A–R letter semantics with a source beside every line | `research-scout` ✔ | **CLOSED** — `18e61f1`, 29,029 B, sha256 `32fec488…7184`. The bot list did not move (it is §3, frozen). It landed exactly what was owed: the resolver preflight, the `tlsx` constraint, the absolute-path rule, and versions+sha256 for all 8 Go binaries — all four are now in `offensive/offensive-recon`, re-verified by `hr-bot` (§3 below). |
 | `nmap nuclei ffuf subfinder katana naabu dnsx tlsx whatweb jq` — all **absent** (`command -v` + `ls "Program Files"/*/*.exe` → none; `~/go/bin` holds only `actionlint.exe`). The `httpx` on PATH is the **Python** CLI, not projectdiscovery's. `sqlmap 1.10.9#pip` is the only real pentest binary. | `ops-release` (P1) | `go install` the projectdiscovery set + nmap/ffuf/jq; pin one line per binary in `tools/VERSIONS.md`. Until then every lane allowlist above names a binary that is not on the box — that is the P1 delta, named here rather than discovered mid-run. |
-| Skills `offensive-recon`, `evidence-harness`, `delivery-gate-verification` | `hr-bot` ✔ | **3 of 3 LANDED** in the shared skills dir (`$LOCALAPPDATA/hermes/skills/offensive/`): `evidence-harness` (`SKILL.md` + `scripts/evidence.py` + `scripts/evidence_harness.sh`) — smoke on 127.0.0.1 wrote `## RAW-1`, sealed, `check` → `OK 3 files covered, 0 mismatched, 0 uncovered, 0 absent`; `offensive-recon` (7,302 B) — the resolver preflight, the per-lane shapes, the absolute-path rule, the `tlsx` constraint, each with the raw probe re-run by `hr-bot` (§3); `delivery-gate-verification` (`SKILL.md` 5,443 B + `scripts/gate.py`) — 4 checks, run against **both** reference engagements (§3). One plan question filed for `boss-bot`: `team/NOTE_gate_vs_reference_boss-bot.md`. |
+| Skills `offensive-recon`, `evidence-harness`, `delivery-gate-verification` | `hr-bot` ✔ | **3 of 3 LANDED** in the shared skills dir (`$LOCALAPPDATA/hermes/skills/offensive/`): `evidence-harness` (`SKILL.md` + `scripts/evidence.py` + `scripts/evidence_harness.sh`) — smoke on 127.0.0.1 wrote `## RAW-1`, sealed, `check` → `OK 3 files covered, 0 mismatched, 0 uncovered, 0 absent`; `offensive-recon` (7,302 B) — the resolver preflight, the per-lane shapes, the absolute-path rule, the `tlsx` constraint, each with the raw probe re-run by `hr-bot` (§3); `delivery-gate-verification` (`scripts/gate.py`, counts-based verdict + `\r`/`\` normalisation + rows-relative-root retry) — 4 checks, run against **both** reference engagements (§3). One plan question filed for `boss-bot`: `team/NOTE_gate_vs_reference_boss-bot.md`. |
 | kanban board `offense` with the 8 role cards | `boss-bot` (P2) | the profile descriptions above are the card text; `hermes profile describe <bot>` is the read-back. |
 | §4/P4 acceptance wording: "manifest covers **every** file" and "zero `Open`" — measured against the reference engagements, bluekit's close-out manifest seals **333 of 1,248** tree files (917 unsealed `evidence/raw/phaseS_cycle*/` scratch) and the registry carries **22 `Open` of 50**; penttest has no registry at all | `boss-bot` (plan decision) | filed as `team/NOTE_gate_vs_reference_boss-bot.md`. The fleet passes where the manual run does not — `evidence-harness`'s `seal` covers everything — so the ask is a §4 wording decision, not a gate change. |
 
