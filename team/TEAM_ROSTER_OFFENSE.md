@@ -122,9 +122,33 @@ new asset", "a second crawl adds no new route", "`sha256sum -c` all-OK and zero 
 |---|---|---|
 | `team/PENTEST_RECON.md` — install/flag surfaces for the projectdiscovery + nmap set on Windows; challenge classes with the bypass rail that worked (`F-02`/`G-02`); A–R letter semantics with a source beside every line | `research-scout` | this is P0's second half and the gate on P1's pins. **The bot list does not move when it lands** (it is §3, frozen); what it adds is the *version/flag* detail in `tools/VERSIONS.md` and the per-lane command shapes. |
 | `nmap nuclei ffuf subfinder katana naabu dnsx tlsx whatweb jq` — all **absent** (`command -v` + `ls "Program Files"/*/*.exe` → none; `~/go/bin` holds only `actionlint.exe`). The `httpx` on PATH is the **Python** CLI, not projectdiscovery's. `sqlmap 1.10.9#pip` is the only real pentest binary. | `ops-release` (P1) | `go install` the projectdiscovery set + nmap/ffuf/jq; pin one line per binary in `tools/VERSIONS.md`. Until then every lane allowlist above names a binary that is not on the box — that is the P1 delta, named here rather than discovered mid-run. |
-| Skills `offensive-recon`, `evidence-harness`, `delivery-gate-verification`; per-seat skills under `profiles/<bot>/skills/` | `hr-bot` (P1) | **not blocked** — `evidence-harness` is fully specified by `SOC/04` (header → `## RAW-n` → `## FIND`) and is being written next; the other two need the recon corpus' command shapes. |
+| Skills `offensive-recon`, `evidence-harness`, `delivery-gate-verification` | `hr-bot` (P1) | **`evidence-harness` LANDED** (1 of 3) — skill at `$LOCALAPPDATA/hermes/skills/offensive/evidence-harness/` (`SKILL.md` 4,421 B + `scripts/evidence.py` 6,747 B + `scripts/evidence_harness.sh`), in the shared skills dir, so all 8 seats resolve it. Smoke run in `$LOCALAPPDATA/Temp/eh-smoke`: `## RAW-1` present (1), manifest appended, `check --root .` → `OK 3 files covered, 0 mismatched, 0 uncovered, 0 absent`, and `sha256sum -c reports/evidence_manifest.sha256` → 3× `OK`. The other two (`offensive-recon`, `delivery-gate-verification`) need the recon corpus' command shapes; note filed for `ops-release`: `team/P1_NOTE_ops-release.md`. |
 | kanban board `offense` with the 8 role cards | `boss-bot` (P2) | the profile descriptions above are the card text; `hermes profile describe <bot>` is the read-back. |
 
 **If recon contradicts §3** (a lane needs a tool the allowlist does not carry), the change goes into
 `team/PHASES_PENTEST.md` **first** — the plan is the single source — and this roster follows. That is
 the rule that keeps the two files from drifting.
+
+---
+
+## 5. Kickoff notes (durable channel, `hr-bot`)
+
+Written this pass, addressed, in `team/` — one per new seat plus one for the binary owner:
+
+```
+team/OFFENSE_KICKOFF_recon-passive.md      1,232 B
+team/OFFENSE_KICKOFF_recon-active.md       1,259 B
+team/OFFENSE_KICKOFF_web-cartographer.md   1,306 B
+team/OFFENSE_KICKOFF_input-fuzzer.md       1,227 B
+team/OFFENSE_KICKOFF_auth-session.md       1,238 B
+team/OFFENSE_KICKOFF_api-dataflow.md       1,216 B
+team/OFFENSE_KICKOFF_exploit-op.md         1,180 B
+team/OFFENSE_KICKOFF_verifier.md           1,328 B
+team/P1_NOTE_ops-release.md                3,181 B
+```
+
+Each carries: the pinned provider/model + fallback, the A–R lane and its evidence path, the tool
+allowlist, the `evidence-harness` obligation, one first task, and the stop condition. The ops-release
+note carries the `tools/VERSIONS.md` line format (`<name> <version> <sha256|go-mod@ver>`) and the
+harness smoke gate with its raw result, so P1 can be closed without re-deriving either.
+
