@@ -1,8 +1,11 @@
 # Loop GPT — TEAM ROSTER (owner: hr-bot)
 
-Snapshot: 2026-09-27 (rev 4 — post-M2; first issued 2026-09-26). HEAD `0d5d767`, branch
-`release/owned-staging-20260917`; the P2/M2 stream is now **committed and the tree is clean**
-except docs in the index and scratch files (see §5). Project:
+Snapshot: 2026-09-28 (rev 5 — adds the offense sub-fleet pointer + a fresh live probe; rev 4 was the
+post-M2 product roster). HEAD `629d7f6`, branch `release/owned-staging-20260917`. **The fleet now has
+two rosters, both mine:** this file (the product fleet on `loop-gpt`) and
+`team/TEAM_ROSTER_OFFENSE.md` (the 8-seat A–R offensive fleet for the pentest engagements — seats
+`recon-passive`, `recon-active`, `web-cartographer`, `input-fuzzer`, `auth-session`, `api-dataflow`,
+`exploit-op`, `verifier`; plan `team/PHASES_PENTEST.md`). Project:
 `C:\Users\chris\Desktop\Workspace\dev-projects\loop-gpt` (live https://loop-gpt.cyou).
 Durable channel for this fleet: `team/` in the project root.
 
@@ -50,6 +53,12 @@ env)** — both live seats re-verified at HEAD `0d5d767`; the rejection list re-
 - Router re-probe (`https://router.huggingface.co/v1`): `zai-org/GLM-5.2` → `HTTP=402 t=1.805s`,
   `Sao10K/L3-8B-Lunaris-v1` → `HTTP=402 t=1.700s`, both body
   `{"error":"You have depleted your monthly included credits. …"}`.
+**Re-probe 2026-09-28T12:36Z (rev 5, hr-bot, raw `curl`, liveness **and** a real `tools` array per
+seat)** — both live seats re-verified; the dead group was not re-litigated (nothing changed on it):
+- `hf-dsv41` → liveness `HTTP=200 t=1.508s`; tools `HTTP=200 t=1.927s`, body carries
+  `"tool_calls"`.
+- `qwen3-cyber` → liveness `HTTP=200 t=1.616s`; tools `HTTP=200 t=1.784s`, body carries
+  `"tool_calls"`.
 **No repin needed: both live seats are still live and tool-capable; the dead group is unchanged.**
 `config.yaml` now carries exactly two `providers:` keys (`['hf-dsv41', 'qwen3-cyber']`) — the router
 and Azure blocks were pruned (`config.yaml.bak.no-hf-router-20260926-040442`), so the rejections are

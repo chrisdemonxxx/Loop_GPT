@@ -1,7 +1,7 @@
 # offense-fleet — TEAM ROSTER (owner: `hr-bot`)
 
-Snapshot: 2026-09-28T10:18Z · HEAD `ba68333` (branch `release/owned-staging-20260917`; tree carries 24
-untracked scratch files, none of them mine). Plan of record: `team/PHASES_PENTEST.md` (`boss-bot`,
+Snapshot: 2026-09-28T12:40Z · HEAD `629d7f6` (branch `release/owned-staging-20260917`; tree carries
+scratch files, none of them mine). Plan of record: `team/PHASES_PENTEST.md` (`boss-bot`,
 sha256 `373fd37e23773469ea4fd9d0b671c45b02ed7a1c154a6eb364e94c5e1419a38e`, 10,388 B) — §3 is the
 frozen bot list and tool allowlist this roster is cut from. Nothing here renames a phase: A–R is the
 taxonomy as used by `bluekit-pentest` and `penttest`.
@@ -106,7 +106,46 @@ web-cartographer Qwen3.8-27B-Uncensored-Cyb   stopped   web-cartographer
 key that exists in that profile's own `providers:` block — `qwen3-cyber` **and** `hf-dsv41` are in all
 eight. A fallback naming an absent provider key resolves to nothing; none here does. Each profile also
 got the root `.env` copied (the clone warns "no API keys yet" — the key resolves via `model.key_env:
-HF_TOKEN`).
+`HF_TOKEN`).
+
+**Skills resolution — on-disk is not resolved (`boss-bot` found this; `hr-bot` re-ran it).** The three
+P1 skills live in the shared root `hermes/skills/offensive/`, but a **profile resolves from its own
+`skills/` dir plus `skills.external_dirs`** — the shared root is not a resolution source. So P1's
+"3/3 landed" was true on disk and false at spawn: `hermes -p recon-passive -s evidence-harness` →
+`agent failed: Unknown skill(s): evidence-harness`. Fixed with one line per seat, no hand-editing:
+
+```
+$ for s in <the 8 seats> boss-bot; do
+    hermes -p $s config set skills.external_dirs "C:/Users/chris/AppData/Local/hermes/skills/offensive"
+  done
+$ <each profile's config.yaml>  ->  skills: {external_dirs: C:/Users/chris/AppData/Local/hermes/skills/offensive}
+```
+
+Re-read live per profile (raw, `hr-bot`, 2026-09-28; names are column-truncated in the table, matched
+by prefix):
+
+```
+recon-passive  delivery-gate-verific… ; evidence-harness ; offensive-recon ;
+recon-active   … ; input-fuzzer … ; web-cartographer … ; auth-session … ; api-dataflow … ; exploit-op …   (all 3/3)
+verifier       delivery-gate-verific… ; evidence-harness ; offensive-recon ;
+boss-bot       delivery-gate-veri… ; evidence-harness ; offensive-recon ;   (+ its own devops skills)
+```
+
+**Name collision, resolved — exactly one `delivery-gate-verification`.** The name existed twice with
+**two different bodies**: the fleet gate (this file's `offensive/`, 5,443 B + `scripts/gate.py`, named
+in the plan's §3 and on the 9 board cards) and `profiles/boss-bot/skills/devops/delivery-gate-verification`
+(a 194-line, CRLF general gate playbook, 25 patches, used outside pentest). A profile's own `skills/`
+dir wins over `external_dirs`, so for `boss-bot` the general body shadowed the fleet gate. The plan-named
+one keeps the name; the general one is now `devops/gate-verification-playbook` (content unchanged,
+frontmatter `name:` + heading updated, and `kanban-fleet-board`'s `related_skills` repointed). Read-back:
+
+```
+$ find hermes -path '*/.archive/*' -prune -o -name SKILL.md -print | grep -i delivery-gate
+./skills/offensive/delivery-gate-verification/SKILL.md          # exactly one, and it is the fleet gate
+$ hermes -p boss-bot skills list | grep -E 'delivery-gate|gate-verification'
+│ delivery-gate-veri…   │           │ local │ enabled │        # the fleet gate, via external_dirs
+│ gate-verification-…   │ devops    │ local │ enabled │        # the renamed general playbook
+```
 
 **Role card (SOUL.md), one per seat** — 2,690–3,370 B each: the A–R lane and its deliverable path,
 the tool allowlist, the skills, the evidence obligation, and a **stop condition**. The five seats whose
@@ -117,6 +156,16 @@ landed, so no seat re-discovers the silent-empty failure on its first run. The s
 the anti-drift rule: a seat stops on a stated, checkable predicate ("two consecutive sources yield no
 new asset", "a second crawl adds no new route", "`sha256sum -c` all-OK and zero `Open`"), never on
 "I think I'm done".
+
+**Skill resolution, re-probed against the live cards (2026-09-28, later pass).** §3's "3/3 resolve" was
+true and *incomplete*: it covered the three fleet skills only. Probing the **actual skill list on each of
+the 9 live board cards** found **9 of 9 cards naming ≥1 skill that died at spawn on that card's assignee** —
+the lane skills live in the *shared root* `.../hermes/skills/`, and `external_dirs` held
+`.../skills/offensive` only. Fixed by making `external_dirs` the 6-entry collision-checked list on all 9
+profiles (8 seats + `ops-release`); re-probe of every card's own skill list: **26 RESOLVED / 0 MISSING**.
+Full raw, the per-card breakdown, and the *second* trap (pointing `external_dirs` at the whole shared root
+**breaks** skills that already resolved — a duplicate name across the local tree and an external dir stops
+resolving) are in `team/NOTE_skill_resolution_boss-bot.md`.
 
 ### Re-verified by `hr-bot` — the corpus' claims, re-run rather than taken on report
 
@@ -176,7 +225,7 @@ The fleet's own format passes all four; the two `Open`-count/coverage deltas are
 |---|---|---|
 | `team/PENTEST_RECON.md` — install/flag surfaces for the projectdiscovery + nmap set on Windows; challenge classes with the bypass rail that worked (`F-02`/`G-02`); A–R letter semantics with a source beside every line | `research-scout` ✔ | **CLOSED** — `18e61f1`, 29,029 B, sha256 `32fec488…7184`. The bot list did not move (it is §3, frozen). It landed exactly what was owed: the resolver preflight, the `tlsx` constraint, the absolute-path rule, and versions+sha256 for all 8 Go binaries — all four are now in `offensive/offensive-recon`, re-verified by `hr-bot` (§3 below). |
 | `nmap nuclei ffuf subfinder katana naabu dnsx tlsx whatweb jq` — all **absent** (`command -v` + `ls "Program Files"/*/*.exe` → none; `~/go/bin` holds only `actionlint.exe`). The `httpx` on PATH is the **Python** CLI, not projectdiscovery's. `sqlmap 1.10.9#pip` is the only real pentest binary. | `ops-release` (P1) | `go install` the projectdiscovery set + nmap/ffuf/jq; pin one line per binary in `tools/VERSIONS.md`. Until then every lane allowlist above names a binary that is not on the box — that is the P1 delta, named here rather than discovered mid-run. |
-| Skills `offensive-recon`, `evidence-harness`, `delivery-gate-verification` | `hr-bot` ✔ | **3 of 3 LANDED** in the shared skills dir (`$LOCALAPPDATA/hermes/skills/offensive/`): `evidence-harness` (`SKILL.md` + `scripts/evidence.py` + `scripts/evidence_harness.sh`) — smoke on 127.0.0.1 wrote `## RAW-1`, sealed, `check` → `OK 3 files covered, 0 mismatched, 0 uncovered, 0 absent`; `offensive-recon` (7,302 B) — the resolver preflight, the per-lane shapes, the absolute-path rule, the `tlsx` constraint, each with the raw probe re-run by `hr-bot` (§3); `delivery-gate-verification` (`scripts/gate.py`, counts-based verdict + `\r`/`\` normalisation + rows-relative-root retry) — 4 checks, run against **both** reference engagements (§3). One plan question filed for `boss-bot`: `team/NOTE_gate_vs_reference_boss-bot.md`. |
+| Skills `offensive-recon`, `evidence-harness`, `delivery-gate-verification` | `hr-bot` ✔ | **3 of 3 LANDED** in the shared skills dir (`$LOCALAPPDATA/hermes/skills/offensive/`) **and resolved at spawn** — each of the 8 seats + `boss-bot` carries `skills.external_dirs` → that dir, read back as 3/3 (§3); the duplicate `delivery-gate-verification` is closed to one (§3): `evidence-harness` (`SKILL.md` + `scripts/evidence.py` + `scripts/evidence_harness.sh`) — smoke on 127.0.0.1 wrote `## RAW-1`, sealed, `check` → `OK 3 files covered, 0 mismatched, 0 uncovered, 0 absent`; `offensive-recon` (7,302 B) — the resolver preflight, the per-lane shapes, the absolute-path rule, the `tlsx` constraint, each with the raw probe re-run by `hr-bot` (§3); `delivery-gate-verification` (`scripts/gate.py`, counts-based verdict + `\r`/`\` normalisation + rows-relative-root retry) — 4 checks, run against **both** reference engagements (§3). One plan question filed for `boss-bot`: `team/NOTE_gate_vs_reference_boss-bot.md`. |
 | kanban board `offense` with the 8 role cards | `boss-bot` (P2) | the profile descriptions above are the card text; `hermes profile describe <bot>` is the read-back. |
 | §4/P4 acceptance wording: "manifest covers **every** file" and "zero `Open`" — measured against the reference engagements, bluekit's close-out manifest seals **333 of 1,248** tree files (917 unsealed `evidence/raw/phaseS_cycle*/` scratch) and the registry carries **22 `Open` of 50**; penttest has no registry at all | `boss-bot` (plan decision) | filed as `team/NOTE_gate_vs_reference_boss-bot.md`. The fleet passes where the manual run does not — `evidence-harness`'s `seal` covers everything — so the ask is a §4 wording decision, not a gate change. |
 
@@ -212,4 +261,84 @@ Each carries: the pinned provider/model + fallback, the A–R lane and its evide
 allowlist, the `evidence-harness` obligation, one first task, and the stop condition. The ops-release
 note carries the `tools/VERSIONS.md` line format (`<name> <version> <sha256|go-mod@ver>`) and the
 harness smoke gate with its raw result, so P1 can be closed without re-deriving either.
+
+---
+
+## 6. Launch & automation — measured 2026-09-28T11:0xZ (`hr-bot`)
+
+**Seats launch today.** A seat is one command; no PTY needed.
+
+```
+$ hermes -p recon-passive -z "Reply with exactly: SEAT-OK, then state the absolute path of your SOUL.md."
+SEAT-OK
+C:\Users\chris\AppData\Local\hermes\profiles\recon-passive\SOUL.md        # the seat reads its own card
+
+$ recon-passive.bat -z "Reply with exactly: ALIAS-OK"      # ~/.local/bin/recon-passive.bat -> `hermes -p recon-passive %*`
+ALIAS-OK
+```
+
+`.bat` aliases exist in `C:\Users\chris\.local\bin\` (on PATH). Called **from bash, the suffix is
+required** — `command -v recon-passive` finds nothing, `recon-passive.bat` runs. Give the seat its
+kickoff note as the query: `hermes -p <seat> -z "$(cat team/OFFENSE_KICKOFF_<seat>.md)"`. `-s <skill>`
+resolves for the fleet skills **and the lane skills** (`skills.external_dirs`, §3; re-probed 26/26 against
+the live cards — `team/NOTE_skill_resolution_boss-bot.md`) — `hermes -p recon-active -s web-app-recon …`
+returns, where it previously died with `Unknown skill(s)`.
+
+**The per-card skill probe is a script now, not a hand-loop** — `team/probe_card_skills.sh <board-slug>`
+reads each card's own `skills` + `assignee` from `kanban list --json` and runs one
+`hermes -p <assignee> -s <skill> -z "Reply with exactly: SKILL-OK"` per pair; `--plan` prints the
+matrix with no model calls. Verdict is counts (`N RESOLVED / 0 MISSING`), and the exit status is only a
+convenience. This is the check P3's `offense run` must carry before its first dispatch; hand the next
+board's slug to `hr-bot` for one pass.
+
+**Two aliases were missing and are now cut** (`hermes profile alias`, both verified on disk):
+`offense-verifier.bat` → `hermes -p verifier %*` (the plain name `verifier` collides with
+`C:\Windows\System32\verifier.exe`, the Windows Driver Verifier — `hermes profile alias verifier`
+fails with that conflict, so the seat carries the prefixed name) and `ops-release.bat`.
+
+**Model layer re-probed live this pass** (`/v1/chat/completions` with a real `tools` array):
+
+```
+s-zaizen/DeepSeek-V4.1-Flash-Abliterated   HTTP 200  2.120s  tools=OK {"name": "ping", "arguments": "{\"x\": \"1\"}"}
+Qwen3.8-27B-Uncensored-Cyber               HTTP 200  5.789s  tools=OK {"name": "ping", "arguments": "{\"x\": \"1\"}"}
+```
+
+Re-probed again 2026-09-28T12:36Z (`hr-bot`, raw `curl`, liveness **and** tools per seat) — both seats
+still live and tool-capable, so the pin pair is unchanged and needs no repin:
+
+```
+hf-dsv41     live HTTP=200 t=1.508s  |  tools HTTP=200 t=1.927s  tools="tool_calls"
+qwen3-cyber  live HTTP=200 t=1.616s  |  tools HTTP=200 t=1.784s  tools="tool_calls"
+```
+
+**What is NOT ready — the automation path, by owner (nothing here is a roster defect):**
+
+| Gap | Measured now | Owner |
+|---|---|---|
+| binaries on a durable path | `command -v nmap nuclei ffuf subfinder katana naabu dnsx tlsx whatweb jq` → **none**; `~/go/bin` → `actionlint.exe`; the 8 Go builds live only in the **scratch** dir `$LOCALAPPDATA/Temp/recon-bin` (`dnsx ffuf httpx katana naabu nuclei subfinder tlsx`); `sqlmap` is the one real pentest binary on PATH | `ops-release` (P1) |
+| the run wrapper | `offense run --target <t> --scope <file>` does not exist anywhere in the tree (`grep -rl "offense run"` → the plan and the P1 note, no script) | `ops-release`+`perf-eng` (P3) |
+| the board | **now two boards exist** (was zero at 11:0xZ): `hermes kanban boards list` → `offense (offense-fleet (A-R))` `archived=1, running=1, todo=8` **and** `eng-2026-09-28-001 (ENG-2026-09-28-001 A-R)` `ready=1, todo=8`; the standing `offense` P1 card `t_a3272e9f` is re-dispatched and `running`. §6's "one-command" gap is the wrapper, not the board. | `boss-bot` (P2) ✔ → wrapper: `ops-release` (P3) |
+
+So: **seats are real and launchable; the engagement is not one-command yet.** Until P3 lands, the
+driveable form is per-seat — copy the scaffold (`offense-fleet/README.md`) to `<engagements>/<ENG-ID>/`,
+fill the SOC, then hand each seat its kickoff note in A–R order; the two gate roles re-run the phase's
+gates (`qa-verify` dynamic, `verifier` at close-out).
+
+---
+
+## 7. Next-board preflight — `eng-2026-09-28-001` (the hand-off from `boss-bot`, closed)
+
+`team/P3_FOLD_boss-bot.md` §4 asked for exactly this: *"hand the next board's slug to `hr-bot` for one
+pass"* before its first dispatch. Done, and it is the **real** pass (model calls), not `--plan`:
+
+```
+$ bash team/probe_card_skills.sh eng-2026-09-28-001
+--- board eng-2026-09-28-001: 9 cards, 27 probes: 27 RESOLVED / 0 MISSING / 0 OTHER ---   EXIT=0
+```
+
+Every card in the new engagement — `t_2a55ad7e` P0 contract (`ops-release`) plus the 8 A–R seats,
+including `web-cartographer`'s 4th skill `dogfood` and `verifier`'s `systematic-debugging` — resolves
+its own `skills` list on its own assignee. **The new board is dispatchable.** The next engagement is the
+one that will need this run again; the check is `bash team/probe_card_skills.sh <slug>` and the bar is
+`0 MISSING`.
 
