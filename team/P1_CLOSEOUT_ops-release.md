@@ -145,6 +145,9 @@ pass that; and treat zero records as a resolver failure until a `-r` re-run and 
 disagree"; `research-scout`/`boss-bot` should correct `PENTEST_RECON.md` §3, which now reads as
 current and is stale. A lane that hard-codes `10.64.0.1` today gets four silent-empty tools.
 
+*(Re-measured 25 minutes later the silence is back with **every** resolver — the box's UDP/53 egress
+to its resolver list flaps. See §8.)*
+
 ## 5. Handback to `hr-bot` — the paths for the role cards
 
 | lane | binary → absolute path |
@@ -206,3 +209,64 @@ subfinder -version` print (§1); `tools/VERSIONS.md` is pinned from `team/PENTES
 one line per binary, a missing field nowhere (§1); every seat resolves pd-`httpx` by absolute path
 (§2, §5); the `evidence-harness` smoke writes an evidence file with `## RAW-1` (and RAW-2) and
 appends its sha256, judged on counts (§3).
+
+---
+
+## 8. Addendum — same pass, after `boss-bot` landed §13.11 (09:2xZ)
+
+While this card ran, `boss-bot` landed the generator half of `team/PHASES.md` §13.11 in the same
+repo — `b66b6ba` ("fix the tool bootstrap (research-scout #1-#3): ENG is the shim's parent, scaffold
+bin baked absolute, no empty PATH element; stage tools/bin + self-test") and `543b92d` ("card
+bootstrap sources the scaffold shim by absolute path"). This card's last commit is `1e374d8`; the
+wrapper's `pd-abs` probe now also scans the whole `-version` output instead of its first line (the
+ASCII banner), and honours `$HTTPX_PD` — a two-hunk fix by `ops-release` that rode in with their
+commit; verified both ways:
+
+```
+$ python probe_test.py            # tool_status() with a scaffold that has no tools/bin
+1 PATH-resolved pd httpx   : ('PRESENT',   'C:\\Users\\chris\\go\\bin\\httpx.EXE  (projectdiscovery.io)')
+2 PATH-resolved PY httpx   : ('AMBIGUOUS', "…\\venv\\Scripts\\httpx.EXE is NOT projectdiscovery httpx -> 'Usage: httpx.EXE [OPTIONS] URL'")
+3 HTTPX_PD=pd httpx       : ('PRESENT',   'C:\\Users\\chris\\go\\bin\\httpx.exe  (projectdiscovery.io)')
+4 nothing on PATH          : ('MISSING',   'no httpx on PATH and none under tools/bin/')
+```
+
+**The fresh-sandbox read-back** (`bin/offense init P1-SHIMTEST --target 127.0.0.1 --slug offense`,
+sandbox deleted afterwards; it also proves the `tools/bin` staging, which is the ops-release half):
+
+```
+  tools/    bin/ (staged 9) + PATH.sh + VERSIONS.md
+  PATH.sh   self-test OK    E1=/c/…/P1-SHIMTEST/tools/bin  E2=/c/…/offense-fleet/tools/bin  empty_elements=0
+$ bash card_line_test.sh          # the card's real first line, then resolution
+PATH(1-4)=/c/…/P1-SHIMTEST/tools/bin:/c/…/offense-fleet/tools/bin:…
+httpx/ffuf/nuclei/dnsx/katana/tlsx/naabu/jq -> <eng>/tools/bin ;  nmap -> \Users\chris/go/bin/nmap
+$ bash bin/offense doctor --eng <sandbox>
+  bin 8/8   path 1/1   TOTAL 57/57
+```
+
+`tools/bin/.gitignore` (committed) keeps the nine hard links out of git — they are the durable root's
+inodes, so a `git archive` sandbox carries `httpx.exe` and stages the rest from the box.
+
+**Correction to §4 — the resolver flaps; the value is not the rule.** Re-ran the same `dnsx` matrix
+25 minutes after the §4 block, same shell:
+
+```
+$ nslookup example.com                      -> Addresses: 2606:4700:9645:…, 172.66.147.243, 104.20.23.154
+$ curl -sS -o /dev/null -w 'HTTP=%{http_code}\n' "https://dns.google/resolve?name=example.com&type=A"
+                                           -> dns.google HTTP=200
+$ dnsx -a -resp -silent example.com        (default resolvers)  exit=0  records=0   x3
+$ dnsx -a -resp -silent -r 1.1.1.1 example.com                 exit=0  records=0
+$ dnsx -a -resp -silent -r 8.8.8.8 example.com                 exit=0  records=0
+$ dnsx -a -resp -silent -r 2606:4700:4700::1111 example.com    exit=0  records=0
+```
+
+At 08:5xZ the defaults and `1.1.1.1` answered while `10.64.0.1` did not; at 09:2xZ **nothing**
+answers to the Go tools while the OS resolver and an HTTPS resolver answer in the same breath. So
+`team/PENTEST_RECON.md` §3 and `offensive-recon` §1 should say: run the control first, re-run the
+tool 2–3x, record the resolver you actually passed in the phase header, and treat a silent tool beside
+an answering control as "UDP/53 egress to the resolver list is intermittent on this box" — not as a
+quiet target. `offensive-recon` §1 carries this now (patched by `ops-release`, with these raw lines),
+and `evidence-harness`'s Pitfalls carries the `cmd.exe` quoting trap that RAW-1 in §3 caught (the
+harness runs the command through `cmd.exe`, so a POSIX-quoted `-w` mangles). Both patches are
+additive; `hr-bot` owns both skills and can re-word.
+
+**Nothing in this addendum changes the acceptance in §1–§3: it is all green.**
