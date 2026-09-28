@@ -1,5 +1,13 @@
 # team/PHASES.md — Loop GPT phase ledger (owner: boss-bot)
 
+ROOM POST (boss-bot, 2026-09-28, **sixth revision**): **the round's sizes were all object-mismatches,
+the M1 gate fails live, and the decoy is the first payload this room didn't author.** `worktree bytes (CRLF)
+≠ blob bytes (LF)` explains Δ838 / Δ241 — measure the object, name it (13.1). `builtAt` is a *layer*
+signal, proven two-sided (13.2). M1 = `surface:web` + `revision == SHA pinned at deploy` on both
+surfaces, never `builtAt`/mtime/**etag** (13.3). `_qa-m1.mjs` exit 1 live on 4 hunks, 3 of them not the
+etag literal (13.4). A 75-byte body-swap with `bankerOutreachText` passes every term we assert — shape,
+not size (13.5). HEAD unpushed ×5 is now stricter than the missing `ARG` (13.6).
+
 ROOM POST (boss-bot, 2026-09-28, **fifth revision**): **the web marker EXISTS and SERVES — the missing
 thing is the *value*, and the cache-hit reading is dead.** Re-probed raw this pass: `GET /version.json` →
 `200`, 75 B, `no-store`, and `builtAt` == `last-modified` == the nginx etag's decoded mtime ==
@@ -836,3 +844,112 @@ disk); `web/nginx.template.conf:13` `no-store` entry present (§12.2).
 
 Static review → dynamic test → research: §12 is the research lane's output, so it re-feeds P3. `perf-eng`
 and `ops-release` are the two names not in this room; every line above is theirs or already in-flight.
+
+---
+
+### 13. The board after the 06:0x–10:5xZ round — object-defined sizes, the frozen gate, and the decoy
+
+**13.1 The measurement defect behind every size disagreement today: worktree bytes (CRLF) vs blob bytes
+(LF).** Both numbers are honest; only one is the *commit*. Measured on two files, one of each shape:
+
+```
+team/PHASES.md             worktree 63,461 B (838 CRLF lines)   blob 62,623 B   Δ838 = CRLF count
+team/CONTRACT_P2_STREAM.md worktree 19,543 B (274 wc -l)       blob 19,302 B   Δ241  (33 LF-only lines)
+$ git show --stat --oneline 98f013c
+ team/PHASES.md | 128 ++++++-          1 file changed, 126 insertions(+), 2 deletions(-)
+```
+
+So `code-review`'s Δ838 is real, and the *mechanism* is not: `git add team/PHASES.md` staged one path, and
+no commit can absorb an unstaged file. `05d23ec7…` is the sha of the **LF blob** — correct for that
+object; `703261be…` is the sha of the **worktree** file — correct for that one. The `CONTRACT` pair shows
+the trap's second shape: `Δ ≠ wc -l` when a file is mixed-EOL. **Ruling for every acceptance line on this
+board: name the object** — shipped claims quote `git show <sha>:<path>` (LF blob, bytes + sha256);
+in-flight reads quote the worktree and say so. `grep -c` of CR is not a line counter (the offense fleet
+hit the same wall at `643ed02`).
+
+**13.2 The layer rule is now two-sided, and the producer is proven twice.** `builtAt` moves iff a layer
+above `web/Dockerfile:31` moves. Side A — my docs-only push (`team/` only): `builtAt` frozen at
+`2026-09-28T03:44:37.316Z` through t+25s…t+270s. Side B — `77689da` (KEEP-5, every path under
+`frontend/`): the `RUN` re-ran, `builtAt` → `10:35:55.488Z`, `last-modified` matching to the second,
+etag `6aba430b-4b` (size `0x4b` = 75 B unchanged; only the mtime half of the tag moved). Nobody set
+`GIT_REVISION` in between. Therefore: the marker's producer is live and re-runs on a frontend commit
+with no env change, and **`builtAt` is a layer signal, never a build signal** — it can never be an
+acceptance term. `core-dev`'s B1–B5 + the negative control close the `ARG` mechanism on a real daemon;
+the load-bearing detail is theirs and correct: the sha must sit inside the `RUN` **argv**, because a
+declared-but-unused `ARG` never enters the cache key — the exact class that froze `builtAt` at `:31`.
+
+**13.3 M1's pass condition, final — frozen here.** `body.surface == "web"` AND `body.revision` == the
+40-hex SHA **pinned at the deploy that built the image**, AND `revision(/api/version) ==
+revision(/version.json)`, with the two-`unknown` guard. Excluded, each with a measured reason: a
+probe-time `git rev-parse HEAD` (`arch-lead` §F.2 — at one point this pass HEAD was `ba68333` and the
+served API `98f013c`, delta `team/`-only: a *correct* deploy by a HEAD-term; a moving expected value
+re-opens the hole §I closed); `builtAt` (§13.2); mtime; and the **etag**, because nginx's
+`hex(mtime)-hex(size)` changes on *every* `frontend/` commit by construction.
+
+**13.4 `_qa-m1.mjs` (`209de6d`, repo root) FAILS live — `GATE_EXIT=1`, `DECOYS=0` — and three of its
+four defects are independent of the etag literal.** Run by me, raw tail: `FAILS: 7×{"name":"etag"} ·
+2×{"mode":"head","name":"bytes","val":0} · 2×{"mode":"head","name":"body","val":null}`. Read at the
+source:
+
+| line | defect | fix |
+|---|---|---|
+| `:56` | `a(r.etag === ETAG, 'etag', r.etak)` — **typo `r.etak`**: the failing payload never carries the live value (hence no `val` on any of the 7 rows above) | `r.etag` |
+| `:45`, `:49` | `bytes===75` and a body object asserted on `mode==='head'` rows; `:55` guards the *etag* for head, nothing guards these → **4 guaranteed fails on a green deploy** | move `:45`/`:49` inside `:55`'s guard |
+| `:10` | `ETAG` pinned to `"6ab9e2a5-4b"` (`research-scout`'s find; `:30`'s seed-derived form is the right shape — keep it for the INM leg) | drop the literal |
+| `:47` | the decoy is **tolerated** (`isMarker \|\| isDecoy`) and only counted: the gate passes on the anomaly it was written to detect | keep default tolerant+counted; add `--strict` where `DECOYS>0` → exit 1 — the mode M1's acceptance runs in |
+
+`@qa-verify` owns the file: four hunks, no one else touches it.
+
+**13.5 The decoy is the round's real finding: the first served payload this room did not author.**
+Aggregate for the day — mine 50/0 (40 plain loop + 10 over a single keep-alive connection), the
+committed gate 11/0, `research-scout` 62/0, `core-dev` 62/1, `code-review` 3 consecutive. Rare and
+**sticky per client, not random**; 75 B — byte-identical to the marker — under, per `core-dev`, a
+byte-identical header set, carrying `{"status":"completed","lang":"en-US","bankerOutreachText":"…account
+ending in 7800 … $23,145.00 on January 28, 2026…"}`. A stale cache cannot yield new headers with a
+foreign body; a **size-preserving body swap under replayed headers is an on-path rewrite**, and its length
+matching the marker's exactly says the writer knew the marker's size. Every term the room asserts today
+(`200`, `75 B`, the etag, `surface:web`) is satisfied by either body, and the committed gate passes on
+the decoy by construction (§13.4). **Owner: `research-scout` → `team/DECOY_version_json.md`.** The
+mechanism probe is a repeated **same-connection, same-UA, no `?cb=`, `Cache-Control: no-cache`** series
+(~200 hits) logging `x-hikari-trace` + `x-railway-request-id` per hit — and the two seats that *saw* it
+re-run first, because a sticky interception reproduces for the client that hit it. Gate rule until then:
+assert the **shape** (`surface` + `revision`), never the size.
+
+**13.6 Heads and the board.** HEAD `643ed02`; `origin/release/owned-staging-20260917` = `c91c817`;
+**local `ahead 5`**. `GET /api/version` → `{"revision":"c91c81782ce67787cdc11cd4d3f19e40cd11c09d",
+"startedAt":"2026-09-28T10:34:51.883Z"}` **HTTP=200 == the pushed head** — M1's API half passes on a
+pushed revision (measured twice today, both times honest). While `ahead 5` stands, `revision == HEAD` is
+unreachable by construction on *both* surfaces: **push is now a stricter prerequisite than the mirror.**
+
+| # | item | owner | artifact |
+|---|---|---|---|
+| 1 | push the 5; then the `ARG` mirror, **two hunks** — `web/Dockerfile:15` (`ARG` chain, contract `:188-197`, argv order = precedence) and `:31` (the `RUN`, sha inside the argv) | `ops-release` | `GET /version.json` reads back the pinned SHA; `team/RELEASE_P1.md` |
+| 2 | `_qa-m1.mjs` 4 hunks (§13.4) | `qa-verify` | gate green on a good deploy + red on a decoy under `--strict` |
+| 3 | decoy mechanism (§13.5) | `research-scout` | `team/DECOY_version_json.md` |
+| 4 | `git clean -fd` — residue is 19 exactly, KEEP-5 committed at `77689da` | `hr-bot` | 19 paths gone, tree clean |
+
+Line cites verified this pass: `web/Dockerfile:15` `ARG GIT_REVISION=""` (**my room message said `:16`;
+`code-review`'s `:15` is right**), `:31` the `RUN`, `web/nginx.template.conf:13` the `no-store` map
+entry, `backend/src/routes/version.ts:23` the third revision candidate.
+
+**13.7 Ruling on `team/NOTE_gate_vs_reference_boss-bot.md` (filed to me by `hr-bot`).** Both asks stand as
+*plan* questions, and both are already closed in the right direction at `643ed02` (`PHASES_PENTEST.md:151`
+names the declared scratch exclude; the prose bar is now three counted checks) — so this is a
+**confirmation, not a change**:
+
+1. **§4 coverage:** adopt the declared exclusion verbatim — `evidence/raw/phaseS_cycle*/` and
+   `evidence/*/chunks/*` — because a literal `comm -3` fails the *shipped* reference (`bluekit-pentest`
+   seals 333 of 1,248, a 917-file scratch gap). The fleet's `seal`-everything path is a strict superset:
+   it passes where the manual engagement cannot, and that asymmetry is fine — a fleet may be stricter than
+   the hand-run it generalises.
+2. **"zero `Open`":** keep the bar, and carry the reference delta as a **footnote** (`22/50` rows Open at
+   `bluekit-pentest`; `penttest` ships no `FINDINGS_REGISTRY.md` at all). The fleet has an R-lane the
+   manual runs lacked; a bar the reference itself misses must be deliberate and named, not implied — that is
+   the whole reason to write it down.
+3. Root-relative manifest rows and the A–R table/tool-gap rows: **confirmed, no change** (§4 warnings
+   only).
+
+**13.8 Gates and residue re-run this pass:** `node _qa-m1.mjs` → exit 1 (§13.4); residue
+`git status --porcelain | grep -c '^??'` → **19**; `team/A11Y_AXE.md` and the four a11y evidence paths
+are now **tracked** at `77689da`; `frontend/build/pwa.mjs` present; `tsc`=0 and `vitest` 151/151 from
+§12.6 stand (no code change since).
