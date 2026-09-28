@@ -177,14 +177,19 @@ x-hikari-trace: ams1.b55h
 - VERIFIED — `Cache-Control: no-store` is still served on this path, and the path is reached through
   `web/nginx.template.conf:13` (`~^/version\.json$ "no-store";`), so the mismatch is **not** an edge cache.
 
-**Consequence (new, and it changes the M1 acceptance probe):** a served file whose mtime is 4h23m newer than the
-timestamp inside it means *neither* field alone dates the deploy. The 03:44 rebuild almost certainly re-used the
-cached `RUN` layer at `web/Dockerfile:31` (same build-arg value `""` → same cache key → the `node -e` never
-re-ran, so `builtAt` is frozen at the first build), and the runtime `COPY --from=build` refreshed the mtime.
+**CORRECTION (2026-09-28T10:35Z, this pass) — keep the conclusion, drop the mechanism.** The `RUN` **did**
+re-run at `03:44:37.316Z`: a coherent probe of the 03:44 image reads `last-modified: 03:44:37` and a body of
+`builtAt 03:44:37.316Z` (Δ0.316 s), with `hex(6ab9e2a5)` = that same `03:44:37Z` and `hex(0x4b)` = 75 B —
+nginx's size-mtime etag. So the `+4h23m` is my *older* body string measured against a *newer* header set, not a
+cache-hit. Cache-hits are still real and still freeze `builtAt` — but only while `frontend/` is untouched:
+`web/Dockerfile:21` `COPY frontend ./` precedes the `RUN` at `:31`, so **a frontend-touching commit re-runs the
+marker; a `backend/`- or `team/`-only commit does not.** My body could not have come from any cache
+(`no-store`), so at that instant ≥2 web tasks with different images were serving the same host.
 
 - Rule for the gate: after setting `GIT_REVISION`, **assert `revision == <SHA>`**, not `builtAt > deploy_time`
-  and not mtime. `builtAt` only advances when the `ARG` value changes and the cache key busts; a *correct*
-  build can therefore still show a stale `builtAt`. A pass condition on `builtAt` would fail a good deploy.
+  and not mtime. `builtAt` advances only when a layer *above* `:31` changes (observed: `23:21:12.630Z` →
+  `03:44:37.316Z` → `10:35:55.488Z`, the last one triggered by `77689da`, the KEEP-5 commit that touched
+  `frontend/`). A timestamp pass condition fails a good build whose `frontend/` is unchanged.
 - Rule for the revert check: a `GIT_REVISION` of `""` yields `"unknown"` (proven in §H), so `unknown` is the
   honest negative result, not a broken marker — the two must not be confused when reading a red probe.
 - UNVERIFIED (from here) — whether the 03:44 build was a BuildKit cache hit; that is the most economical
@@ -208,4 +213,56 @@ _probe-cc.mjs _report.cjs _run.py _run2.py _run3.py _run4.py _run5.py axe-sweep.
   (an a11y harness). A blanket `git clean -fd` deletes the deliverable.
 - VERIFIED — `git log -1` at this pass is `e9f4b52`, i.e. **HEAD moved past `0d5d767`** (the roster rev-4
   commit named in the room) since the roster claim was made.
+
+---
+
+## J. 2026-09-28T10:36Z — the M1 gate as committed pins a **per-build** value, and the live marker has already moved past it
+
+`_qa-m1.mjs` (committed at `209de6d`) hard-codes the expected etag and asserts equality:
+
+```
+_qa-m1.mjs:10   const ETAG = '"6ab9e2a5-4b"';
+_qa-m1.mjs:56   a(r.etag === ETAG, 'etag', r.etak);
+```
+
+Live, same pass, **60 consecutive probes with `Cache-Control: no-cache`, all 60 identical**:
+
+```
+$ for i in $(seq 1 60); do curl -s -D - --max-time 25 -H 'Cache-Control: no-cache' \
+    https://loop-gpt.cyou/version.json; done   # → tr|etag|builtAt
+60×  |"6aba430b-4b"|"builtAt":"2026-09-28T10:35:55.488Z"
+$ cut -d'|' -f1 sweep.txt | sort | uniq -c     # x-hikari-trace, the edge node
+13 ams1.b55h   12 ams1.kxr8   10 ams1.qkjh   9 ams1.cycp   9 ams1.9qww   7 ams1.aydy
+```
+
+- VERIFIED — the served etag is **`"6aba430b-4b"`**, not `"6ab9e2a5-4b"`. `_qa-m1.mjs:56` **fails against
+  the live service right now**, on a deploy nobody has to change anything to fix.
+- VERIFIED — `builtAt` advanced `03:44:37.316Z` → `10:35:55.488Z`. The only commit between the two builds
+  that touched `frontend/` is `77689da` (the KEEP-5 commit) → `web/Dockerfile:21` `COPY frontend ./` busts,
+  and the `RUN` at `:31` re-runs. The mechanism is now *observed*, not inferred.
+- VERIFIED — 6 distinct `x-hikari-trace` values, **one** body/etag across all 6 → the edge layer does not
+  split the origin; the marker is single-valued **between** rollouts.
+- Consequence: an etag is an **mtime+size artifact** (`hex(mtime)` + `-` + `hex(size)`), so it changes on
+  every frontend-touching commit *by construction*. It is legitimate as the seed for the `If-None-Match`/304
+  leg and as a *within-pass stability* check; it is never a valid expected literal.
+- Consequence: `_qa-m1.mjs` must derive its expectation, or assert only shape + `revision`/`builtAt` values.
+  The `no-store` and `200/75 B` terms are stable and can stay.
+
+### J.1 Backend half, same pass — single-valued, on the pushed revision
+
+```
+$ for i in $(seq 1 12); do curl -s --max-time 20 https://loop-gpt.cyou/api/version; done | sort | uniq -c
+12× {"service":"loop-gpt-backend","revision":"c91c81782ce67787cdc11cd4d3f19e40cd11c09d",
+     "startedAt":"2026-09-28T10:34:51.883Z","node":"v22.23.2"}
+$ git ls-remote origin -h refs/heads/release/owned-staging-20260917
+c91c81782ce67787cdc11cd4d3f19e40cd11c09d   refs/heads/release/owned-staging-20260917
+```
+
+- VERIFIED — 12/12 identical; backend `revision` == the pushed remote head, no skew, no `unknown`.
+- VERIFIED — local `HEAD` is `0c43d6e`, `ahead 3` of origin — so the **API half of M1 already passes on a
+  pushed revision**, and the only surface that cannot name a revision is the web marker.
+- VERIFIED — the site's asset `buildId` is single-valued too: `/` and `/login/` both serve
+  `buildId":"8WH5eJiPmeSC5y8dQBGCn"` (the `login.html` KEEP-5 artifact pinned `YaoEZn0H0ccJ-OtAGnf3B`, so it
+  is a capture of an *earlier* build — expected, and it means it should not be used as a served-state oracle).
+
 
