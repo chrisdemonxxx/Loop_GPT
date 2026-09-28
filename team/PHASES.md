@@ -1,5 +1,15 @@
 # team/PHASES.md — Loop GPT phase ledger (owner: boss-bot)
 
+ROOM POST (boss-bot, 2026-09-28, **fifth revision**): **the web marker EXISTS and SERVES — the missing
+thing is the *value*, and the cache-hit reading is dead.** Re-probed raw this pass: `GET /version.json` →
+`200`, 75 B, `no-store`, and `builtAt` == `last-modified` == the nginx etag's decoded mtime ==
+`2026-09-28T03:44:37Z` — so the Dockerfile `RUN` **re-ran**, the `+4h23m` in `research-scout`'s §I was a
+stale-body-vs-fresh-header comparison, and M1's acceptance is `revision == <SHA>` (never `builtAt`, never
+mtime). P4's "no served marker" line is superseded; one env line on the web service is the whole gap.
+Gates re-run by me: `tsc`=0, `vitest` 23 files/151 tests. New: `hr-bot`'s dead aliases are a **live**
+endpoint (200, 135 ids) with a **dead model id** (`/repository` → 400) — repair, don't just prune. Full
+detail and owners: **§12**.
+
 ROOM POST (boss-bot, 2026-09-27, fourth revision): **the read-back instrument EXISTS and answers.** Live
 `GET /api/version` → `200 {"revision":"3a43db8…"}` with `no-store` on both origins, so the API half of
 P4's acceptance is provable today. `arch-lead`'s `team/CONTRACT_P2_STREAM.md` (`350ad4d`, 8,023 B) and
@@ -41,10 +51,10 @@ Repo: `C:\Users\chris\Desktop\Workspace\dev-projects\loop-gpt`, branch
 | phase | owner | deliverable | acceptance | status |
 |---|---|---|---|---|
 | **P0** — land the in-flight work | `ui-visual` (solo writer of `hooks.ts`), `core-dev` (`/api/tts` contract), `boss-bot` (this ledger + `team/P0_CLOSEOUT.md`) | §8-40 connector chip, §8-44 hands-free voice, §8-45 server TTS + `ttsEngine` pref, Appearance tab | clean tree; gates green (`tsc`, `lint`, `vitest`, `playwright`, `build`); revision reviewed by both lanes; deployed | **SHIPPED (code + gates) — `team/P0_CLOSEOUT.md`.** `7540a3d`, 14 files, +836/−42. `tsc`=0, `lint`=0 (13 warn / 0 err), `vitest` 23 files/150 tests, `playwright` 20 passed, `build` exit 0 (19 routes). One commit, not four. **"Deployed" NOT met** — §3b. Proof: §E1, E9–E13, `team/P0_CLOSEOUT.md` |
-| **P1** — close the launch gaps | `perf-eng` (perf), `ops-release` (release+deploy), `qa-verify` (a11y), `research-scout` (recon), `core-dev` (version endpoint) | `team/PERF_P1.md`; `team/RELEASE_P1.md`; `team/A11Y_AXE.md` (GAP-003 `serious` contrast sweep); `team/FRONTIER_RECON.md`; `GET /api/version` | one line of raw evidence each: byte size, sha256, HTTP status, test count; before/after number per fix; no `NEEDS CONFIRMATION` left unowned | **4 of 5 LANDED.** `FRONTIER_RECON.md` (pass 2, 15,465 B, `2e74b58`), `CONTRACT_P2_STREAM.md` (8,023 B, `350ad4d`), resolver + `/api/version` (live `200`, revision `3a43db8`) all hash-verified by me (§7.1/§7.3). **ABSENT still: `PERF_P1.md`, `RELEASE_P1.md`, `A11Y_AXE.md`.** Proof: §E19, §6, §7 |
+| **P1** — close the launch gaps | `perf-eng` (perf), `ops-release` (release+deploy), `qa-verify` (a11y), `research-scout` (recon), `core-dev` (version endpoint) | `team/PERF_P1.md`; `team/RELEASE_P1.md`; `team/A11Y_AXE.md` (GAP-003 `serious` contrast sweep); `team/FRONTIER_RECON.md`; `GET /api/version` | one line of raw evidence each: byte size, sha256, HTTP status, test count; before/after number per fix; no `NEEDS CONFIRMATION` left unowned | **4 of 5 LANDED.** `FRONTIER_RECON.md` (pass 2, 15,465 B, `2e74b58`), `CONTRACT_P2_STREAM.md` (8,023 B, `350ad4d`), resolver + `/api/version` (live `200`, revision `3a43db8`) all hash-verified by me (§7.1/§7.3). **ABSENT still: `PERF_P1.md`, `RELEASE_P1.md`.** `A11Y_AXE.md` **LANDED on disk** (`53f3450dcf4833a1…`, 3,257 B, pinned `0d5d767`) but is **UNTRACKED** — the commit is the residual, not the doc (§12.4). Proof: §E19, §6, §7, §12.4 |
 | **P2** — frontier-parity UI rebuild | `ui-visual` (builds the accepted list), `arch-lead` (contract for any new surface), `mobile-dev` (mirrors accepted IA into `mobile/`) | rebuilt chat/landing surface to Claude/ChatGPT/Grok standard — fast + snappy; `mobile/` parity | accepted pattern list from P1 recon is the only source of work; each item carries a before/after measurement; contract signed before a new surface lands | **IN FLIGHT** — contract signed (`350ad4d`); `ui-visual` has ranks 1/3/5/7 open against it; the effort selector is unblocked (`3a43db8` zod accepts the union) |
 | **P3** — independent verification | `qa-verify` (dynamic) + `code-review` (static) on the FROZEN revision; `perf-eng` re-measures post-rebuild | dynamic + static verdicts pinned to a revision hash; post-rebuild perf numbers | both lanes report the revision hash — "green" must refer to specific bytes | **OPEN** — P0's frozen revision (`7540a3d`) is reviewable NOW; re-freeze after P2 |
-| **P4** — release | `ops-release` (migration state, deploy, served-revision read-back, tag); `boss-bot` (close-out, roster + docs, declare) | deployed revision + tag; read-back proving the served revision | served revision read back from the live host, not from a deploy log; roster + docs updated in the same pass | **HALF-CLOSED** — API read-back **works** (`GET /api/version` → `200`, revision `3a43db8`, `no-store`); the web/nginx half still has **no** served marker (served `/chat/` HTML carries no revision/40-hex) — §7.3 |
+| **P4** — release | `ops-release` (migration state, deploy, served-revision read-back, tag); `boss-bot` (close-out, roster + docs, declare) | deployed revision + tag; read-back proving the served revision | served revision read back from the live host, not from a deploy log — **assert `revision == <SHA>`; never `builtAt`, never mtime (§12.1)**; roster + docs updated in the same pass | **HALF-CLOSED** — API read-back **works** (`GET /api/version` → `200`, revision `e9f4b52`, `no-store`; docs-only behind HEAD, and HEAD unpushed — §12.5). The web marker now **EXISTS and SERVES**: `GET /version.json` → `200`, 75 B, `no-store` (`nginx.template.conf:13`) — **§7.3's "no served marker" is superseded (§12.2)**. Remaining: the *value* is `unknown` because `GIT_REVISION` is unset on web — one env line + rebuild. §I's cache-hit reading is **FALSIFIED** (§12.1): `builtAt` == `last-modified` == etag mtime == `2026-09-28T03:44:37Z` |
 
 Lane order (dependency): static review → dynamic test → research. P3 is the only lane that runs both
 reviewers; research (`research-scout`) feeds P2.
@@ -712,3 +722,117 @@ still reads `unknown`. The producer is proven live and proven correct; only the 
 One env line — `GIT_REVISION=${{RAILWAY_GIT_COMMIT_SHA}}` on **web**, unset on **backend** (§F.1) — then a
 rebuild, and `GET /version.json` reads back `b843588`. `ops-release`: this is the last line between "live"
 and "live == HEAD, provable".
+
+---
+
+### 12. M1's acceptance, re-probed by boss-bot 2026-09-28 10:07Z — **the cache-hit reading is FALSIFIED, the rule stands**
+
+`research-scout`'s §I (commit `bd1ff52`) asked for one thing and got one thing wrong. Both halves of my
+probe, raw, in one pass:
+
+```
+$ curl -s -D - https://loop-gpt.cyou/version.json
+HTTP/1.1 200 OK
+Cache-Control: no-store
+etag: "6ab9e2a5-4b"
+last-modified: Mon, 28 Sep 2026 03:44:37 GMT
+Content-Length: 75
+{"surface":"web","revision":"unknown","builtAt":"2026-09-28T03:44:37.316Z"}
+```
+
+**12.1 `builtAt` is NOT frozen and the `RUN` did NOT cache-hit.** The body now carries
+`builtAt":"2026-09-28T03:44:37.316Z"` — not the `2026-09-27T23:21:12.630Z` §I quotes as "unchanged from
+00:41Z". The file was rewritten. Three independent fields agree on the same build event to the second:
+
+```
+builtAt (in body)   = 2026-09-28T03:44:37.316Z
+last-modified       = Mon, 28 Sep 2026 03:44:37 GMT        # delta 0.316 s
+etag "6ab9e2a5-4b"  → hex(6ab9e2a5) = 2026-09-28T03:44:37Z, size = 0x4b = 75   # nginx size-mtime etag
+```
+
+So the `+4h23m25s` in §I is **not** mtime-vs-`builtAt`; it is §I's *cached 00:41Z body string* measured
+against the *03:44 rebuild's header set*. A cross-time comparison, not a cache hit. Two consequences:
+(a) the cache-hit mechanism is still *possible in principle* — a repeat push with `frontend/` unchanged
+and the same empty `GIT_REVISION` reuses the layer key — it simply did not happen here; (b) because it is
+possible and **unobservable from outside**, a timestamp-based pass condition is exactly as unsound as §I
+argued. **Ruling: M1's acceptance asserts `revision == <SHA>`. `builtAt` is corroboration, never the
+gate.** The distinction now costs nothing: a cache hit and a re-run are indistinguishable from the
+response, and the *variable* is the whole of the remaining gap either way.
+
+**12.2 §7.3 is SUPERSEDED — the web marker exists and serves.** `GET /version.json` → `200`, 75 B,
+`Content-Type: application/json`, `Cache-Control: no-store` (from the `map` entry at
+`web/nginx.template.conf:13`, `~^/version\.json$ "no-store"` — read, not assumed), and the `FROM nginx`
+runtime copies `out/version.json` through `COPY --from=build`. The claim "the web/nginx half has **no**
+served marker" is retired. What is missing is one value: `GIT_REVISION` on the **web** service
+(§11.6 / §F.1). Producer proven live, producer proven to re-run, variable absent.
+
+**12.3 Correction to `hr-bot`'s alias residue: the endpoint is ALIVE, the *model id* is dead.**
+
+```
+$ curl -s -o /dev/null -w '%{http_code} %{time_total}\n' http://127.0.0.1:8611/v1/models
+200 1.638723                                  # 135 model ids served
+$ curl -s -d '{"model":"/repository",...}' http://127.0.0.1:8611/v1/chat/completions
+400 {"error":{"message":"The requested model '/repository' does not exist.",...,"code":"model_not_found"}}
+```
+
+`config.yaml:9` `glm53: glm53-flash//repository` → provider `glm53-flash` (`base_url:
+http://127.0.0.1:8611/v1`, `model: /repository`). The served list contains
+`zai-org/GLM-5.3-Flash`; `/repository` is not in it. So a `--model glm53` seat 400s against a
+**live** endpoint, and the fix is a repair, not only a prune. `hr-bot` owns the profile config —
+authorised: repoint `model` at a served id, **or** prune the alias; either is a one-liner, and the
+`//repository` suffix in the alias string goes with it. Same class: `foundry/gpt6astra` (401) is a key
+absence (`FOUNDRY_API_KEY`), not a dead route.
+
+**12.4 The scratch residue is 24 untracked paths (`git status --porcelain | grep -c '^??'` → 24), and a
+blanket `git clean -fd` costs 5 of them.** Exact split, hashes taken this pass — commit the KEEP set
+**before** any clean:
+
+```
+KEEP (5) — evidence or deliverable, sha256 read this pass
+  team/A11Y_AXE.md                 3,257 B  53f3450dcf4833a1…   deliverable, pinned 0d5d767 (its own header)
+  frontend/tests/axe-sweep.mjs     2,201 B  fffe69d8e3fe6c36…   the sweep A11Y_AXE.md:16 names
+  frontend/tests/_report.cjs       1,260 B  f7347562d0f31629…   the reporter (_report.cjs:2 parses the JSONL)
+  frontend/axe-results.json      204,497 B  6207ac7fc512c90b…   the raw sweep: 22 events, badlines 0
+  frontend/login.html              12,509 B  52dc8566e0381030…   served /login/ capture, buildId YaoEZn0H0ccJ-OtAGnf3R
+PRUNE (19)
+  frontend/_fix{,_2,_3,_4,_5}.py (5) · frontend/_final{2,3,4}.py (3) · p3.js · p5.js
+  frontend/tests/_run{,2,3,4,5}.py (5) · frontend/tests/_probe-{admin,cc}.mjs (2) · frontend/tests/_per.cjs · frontend/tests/_H.bin
+```
+
+`axe-results.json` is **JSONL, one `{event:"route"…}` object per line, trailing `\n`** — `json.load` of
+the whole file raises (`Extra data: line 2`); parse per line. My read of it: **22 events = 11 routes × 2
+themes, `badlines 0`, impact totals `critical 2 · serious 26 · moderate 42 · minor 0`.** That is the
+before-number for GAP-003 and it belongs in the repo, not in a `clean`.
+
+**12.5 Backend read-back, re-probed — and the real defect is the push, not the code.**
+
+```
+$ curl -s https://loop-gpt.cyou/api/version
+{"service":"loop-gpt-backend","revision":"e9f4b529141b90b35412dbe5b3a7207bf8e4a5cf","startedAt":"2026-09-28T03:46:04.801Z","node":"v22.23.2"}  HTTP=200
+$ git rev-parse HEAD                → bd1ff5294353cc30f0ee0d7a0ca416ad3cb7e4f4
+$ git diff --stat e9f4b52..HEAD     → team/RESEARCH_web_revision_marker.md | 62 +++++  (1 file, docs only)
+$ git status -sb | head -1          → ## release/owned-staging-20260917...origin/…  [ahead 1]
+```
+
+Served `e9f4b52` vs HEAD `bd1ff52` is a **docs-only** delta, so the API half of M1 still holds on
+code-identity; but `HEAD` is **unpushed (`ahead 1`)**, and while it is, `revision == HEAD` is
+*unreachable by construction* for both surfaces. The §1 ROOM POST's "the unpushed-docs defect is CLOSED"
+is stale — it reopened with `bd1ff52`. `ops-release`: `git push`, then the read-back equals HEAD with no
+rebuild needed for the backend.
+
+**12.6 Gates re-run by me on this worktree, not taken on report** (HEAD `bd1ff52`, worktree clean of code
+changes): `npx tsc --noEmit` → `TSC_EXIT=0`; `npx vitest run` → `Test Files 23 passed (23) | Tests 151
+passed (151)`. §11.3 confirmed. `frontend/build/pwa.mjs` present, 4,817 B (§11.2's hazard repaired on
+disk); `web/nginx.template.conf:13` `no-store` entry present (§12.2).
+
+**12.7 Hand-off — one owner per item, in lane order.**
+
+| # | item | owner | artifact |
+|---|---|---|---|
+| 1 | push `bd1ff52`; then `GIT_REVISION=${{RAILWAY_GIT_COMMIT_SHA}}` on **web**, rebuild | `ops-release` | `GET /version.json` reads back the pushed sha; `team/RELEASE_P1.md` |
+| 2 | commit the KEEP-5 (§12.4), then prune the 19 | `qa-verify` | `team/A11Y_AXE.md` + harness + `axe-results.json` tracked; `git clean` safe |
+| 3 | alias repair-or-prune (§12.3) | `hr-bot` | `config.yaml` `glm53*` → a served id, or removed |
+| 4 | first-line metric: edge handshake, not bundle | `perf-eng` | `team/PERF_P1.md` (`ttfb − tls`, three columns) |
+
+Static review → dynamic test → research: §12 is the research lane's output, so it re-feeds P3. `perf-eng`
+and `ops-release` are the two names not in this room; every line above is theirs or already in-flight.
