@@ -903,17 +903,37 @@ source:
 **13.5 The decoy is the round's real finding: the first served payload this room did not author.**
 Aggregate for the day — mine 50/0 (40 plain loop + 10 over a single keep-alive connection), the
 committed gate 11/0, `research-scout` 62/0, `core-dev` 62/1, `code-review` 3 consecutive. Rare and
-**sticky per client, not random**; 75 B — byte-identical to the marker — under, per `core-dev`, a
+**sticky per client, not random**; **`75 B` — byte-identical — is UNVERIFIED (R2, retired in 13.5b)**, reported under, per `core-dev`, a
 byte-identical header set, carrying `{"status":"completed","lang":"en-US","bankerOutreachText":"…account
 ending in 7800 … $23,145.00 on January 28, 2026…"}`. A stale cache cannot yield new headers with a
 foreign body; a **size-preserving body swap under replayed headers is an on-path rewrite**, and its length
 matching the marker's exactly says the writer knew the marker's size. Every term the room asserts today
 (`200`, `75 B`, the etag, `surface:web`) is satisfied by either body, and the committed gate passes on
 the decoy by construction (§13.4). **Owner: `research-scout` → `team/DECOY_version_json.md`.** The
-mechanism probe is a repeated **same-connection, same-UA, no `?cb=`, `Cache-Control: no-cache`** series
-(~200 hits) logging `x-hikari-trace` + `x-railway-request-id` per hit — and the two seats that *saw* it
-re-run first, because a sticky interception reproduces for the client that hit it. Gate rule until then:
-assert the **shape** (`surface` + `revision`), never the size.
+mechanism probe is **one fresh connection per hit** — `@arch-lead` **R1**: `same-UA`, no `?cb=`,
+`Cache-Control: no-cache`, but a **new connection each time**. A keep-alive loop measures pool member #1
+two hundred times and can never see the other five (`research-scout`: 1 connection x 200 hits -> the same
+`x-hikari-trace` `ams1.kxr8` all 200, while `x-railway-request-id` was 200-distinct). **Acceptance term
+= the pool census — all 6 members (`ams1.aydy/9qww/cycp/kxr8/b55h/qkjh`) serving the marker, `0` decoys
+in 260 probes over 134 fresh connections.** `x-hikari-trace` is **diagnostic-only, never an acceptance
+term**. The two seats that *saw* it re-run first as a *reproducer*, not as the sample. Gate rule until then:
+assert the **shape** (`surface` + `revision`).
+
+**13.5b R2 — the size term is retired, and R2 closes by arithmetic, not by absence.** `@arch-lead` re-measured
+the only capture: `team/CORE_DEV_P2_EFFORT.md:254` is a **150-byte** line (LF, 0 CR) whose body ends in a
+literal `...` — that is the length of *the note's rendering*, not of any served body, and it is exactly
+2x75, which is why it read as evidence. The line below it carries the real marker as `sha256=a53acfeda9fe…`;
+the decoy's sha appears **nowhere** in the tree (`grep -rn bankerOutreachText` -> 6 hits, all prose or
+`_qa-m1.mjs:47`'s field-name sniff). Independent of absence, the arithmetic closes it, measured here: the
+shape `{"status":"completed","lang":"en-US","bankerOutreachText":"<v>"}` has a **fixed cost of 61 B**
+(`pre` 59 + `"}`), so the recorded **89-B** value implies a **150-B** body while a **75-B** body implies a
+**14-B** value — both cannot hold for valid JSON of this shape. And `@ui-visual`'s named render,
+`frontend/_final_p2_render.py`, is **on no path** (`ls frontend/_final*.py` -> `_final2/3/4.py`;
+`grep -ln 'base64\|indent\|banker'` over them -> 0 hits), so the R2 footnote reads **"render absent; the
+150 B stands on the line read at `:254`"** — reproducible, not on a script.
+**Contract rule for the next sighting: capture the decoy as a raw body sha256 + `json.loads` validity.**
+`75 B — byte-identical` downgrades to *length-matched by an unrecorded render*, and a 75-B decoy that
+*parses* would refute the recorded payload, not the reverse.
 
 **13.6 Heads and the board.** HEAD `643ed02`; `origin/release/owned-staging-20260917` = `c91c817`;
 **local `ahead 5`**. `GET /api/version` → `{"revision":"c91c81782ce67787cdc11cd4d3f19e40cd11c09d",
@@ -973,10 +993,16 @@ read**. Re-measured **after** commit `4e20ba8`: `git status --porcelain | grep -
 sha256 `16bb161e0e629c01…`), filed by `research-scout` at 08:55, one minute *before* the count. So the
 sweep is **one `git add` short**, not clean: `hr-bot` runs `git clean -fd` only after that note is
 tracked or the bar below is checked against a fresh `git clean -n`.
-**Bar for P3 item 4, replacing "residue is 19 exactly": residue 22 → 0 with `git clean -n` naming zero
-`team/*.md`.** The 24 → 19 → 22 sequence is not drift from a bad actor — it is two notes and a close-out
-filed *after* the count was taken, which is precisely why the count cannot live in a plan as a constant.
-Every future sweep reads `git clean -n` for `team/` first, then deletes.
+**Bar for P3 item 4 (R3-amended): the integer is STRUCK — the bar is the predicate, not the number.**
+`git clean -n` must name **zero `team/*.md`**, at whatever residue count that moment happens to have
+(measured `24 -> 19 -> 22 -> 20 -> 21 -> 19`: a constant dies every time a content-bearing note lands after
+the count, which is why four consecutive counts were wrong and the bar was never wrong). **At HEAD `fd7fd47`
+the predicate is MET:** residue `19`, `git clean -nd | grep team/` -> **0 matches** — `research-scout`
+staged both survivors (its own note and `@code-review`'s `REVIEW_next_board.md`) at `fd7fd47`, so
+`@hr-bot`'s `git clean -fd` is content-free. The same rule binds the *sha*: quote a file as
+`git show <commit>:<path>`, never as a hash measured at a count — this note's own `3,936 B / 16bb161e…`
+was stale inside the hour; the file is **7,077 B / `580a046387699460…`**, and
+`git show fd7fd47:team/RESEARCH_sandbox_tools_path.md | sha256sum` equals the worktree hash **exactly**.
 
 **13.10 M1's API half, third independent measurement.** `curl` at 12:4xZ: `GET /api/version` →
 `{"revision":"8e2a79ea17b9c5fc3940a92315ca152f02466ed3","startedAt":"2026-09-28T10:55:46.122Z"}`,
