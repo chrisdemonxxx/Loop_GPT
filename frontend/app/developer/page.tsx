@@ -48,7 +48,7 @@ export default function DeveloperPage() {
   -d '{"model":"loop-large","messages":[{"role":"user","content":"Hello"}]}'`
 
   return (
-    <div className="min-h-screen bg-[#111113] text-slate-200">
+    <div className="min-h-screen bg-[#08080a] text-slate-200">
       <div className="max-w-3xl mx-auto px-5 py-8">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">

@@ -319,7 +319,7 @@ export default function Sidebar({
                     onChange={(e) => setLocale(e.target.value as Locale)}
                     className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-2 py-1.5 text-[12px] text-slate-200 focus:outline-none focus:border-white/12 transition"
                   >
-                    {locales.map((l) => <option key={l} value={l} className="bg-[#1c1c1f]">{localeNames[l]}</option>)}
+                    {locales.map((l) => <option key={l} value={l} className="bg-[#131316]">{localeNames[l]}</option>)}
                   </select>
                 </div>
               </motion.div>

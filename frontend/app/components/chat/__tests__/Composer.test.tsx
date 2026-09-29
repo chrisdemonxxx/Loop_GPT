@@ -172,13 +172,15 @@ describe('Composer', () => {
     }
   })
 
-  it('marks explicit toggle states visually (on + high = terracotta)', () => {
+  it('marks explicit toggle states visually (on + high = the active chip state)', () => {
     renderComposer({ webSearch: 'on', thinking: 'high' })
     const web = screen.getByRole('button', { name: /web search: on/i })
     const brain = screen.getByRole('button', { name: /reasoning effort: high/i })
-    expect(web.className).toContain('text-[#e79d7f]')
+    // The accent moved into the stylesheet: `.chip-on` owns the colour, the
+    // component owns the state — assert the state class, not a hex.
+    expect(web.className).toContain('chip-on')
     expect(web.getAttribute('aria-pressed')).toBe('true')
-    expect(brain.className).toContain('text-[#e79d7f]')
+    expect(brain.className).toContain('chip-on')
     expect(brain.getAttribute('aria-pressed')).toBe('true')
   })
 })

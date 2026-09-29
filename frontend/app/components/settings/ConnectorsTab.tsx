@@ -277,7 +277,7 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
       {/* Marketplace OAuth-credential modal */}
       {marketType && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setMarketType(null)}>
-          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#1c1c1f] p-5 space-y-3 shadow-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={`Connect ${marketType.name}`}>
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#131316] p-5 space-y-3 shadow-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={`Connect ${marketType.name}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-100">Connect {marketType.name}</h3>
               <button onClick={() => setMarketType(null)} className="p-1 rounded-lg text-slate-500 hover:text-slate-200" aria-label="Close"><X size={15} /></button>

@@ -54,7 +54,7 @@ export default function AccountPage() {
     try {
       const d = await apiFetch<{ secret: string; uri: string }>('/api/account/totp/setup', { method: 'POST' })
       setMfa((p) => ({ ...(p || { enabled: false }), enabled: false, secret: d.secret, uri: d.uri }))
-      setMfaQr(await QRCode.toDataURL(d.uri, { margin: 1, width: 200, color: { dark: '#e2e8f0', light: '#111113' } }))
+      setMfaQr(await QRCode.toDataURL(d.uri, { margin: 1, width: 200, color: { dark: '#e2e8f0', light: '#08080a' } }))
     } catch (e: any) { setMfaMsg({ ok: false, text: e?.message || 'Setup failed.' }) } finally { setMfaBusy(false) }
   }
 

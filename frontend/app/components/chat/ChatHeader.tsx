@@ -43,7 +43,7 @@ export default function ChatHeader({
   const ThemeIcon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor
 
   return (
-    <div className="flex items-center gap-2 px-3 sm:px-4 h-12 border-b border-white/[0.05] shrink-0 bg-[#111113]">
+    <div className="flex items-center gap-2 px-3 sm:px-4 h-12 border-b border-white/[0.05] shrink-0 bg-[#08080a]">
       {!sidebarOpen && (
         <button
           onClick={onOpenSidebar}

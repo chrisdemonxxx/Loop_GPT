@@ -221,7 +221,7 @@ export default function Composer({
       {/* Input form */}
       <form
         onSubmit={onSend}
-        className={`rounded-2xl border bg-[#1c1c1f] transition ${recording ? 'border-[#c96442]/40' : 'border-white/[0.08] focus-within:border-white/[0.14] focus-within:bg-[#1f1f22]'}`}
+        className={`rounded-[1.25rem] surface transition ${recording ? 'border-[#c96442]/40' : 'focus-within:border-white/[0.14] focus-within:bg-[#141418]'}`}
       >
         <textarea
           value={input}
@@ -340,11 +340,7 @@ export default function Composer({
                 ? `Voice mode: on${voiceModeListening ? ' — listening…' : ''} — answers are spoken, the mic re-opens, and your speech sends. Click to turn off.`
                 : 'Voice mode — speak answers aloud and reply hands-free'}
               aria-label={voiceMode ? 'Turn off hands-free voice mode' : 'Turn on hands-free voice mode'}
-              className={`tap-target p-1.5 rounded-lg border transition ${
-                voiceMode
-                  ? 'border-[#c96442]/50 text-[#e79d7f] bg-[#c96442]/[0.08]'
-                  : 'border-transparent text-slate-400 hover:text-slate-300 hover:bg-white/[0.05]'
-              }`}
+              className={`tap-target chip !px-2 ${voiceMode ? 'chip-live' : ''}`}
             >
               <AudioLines size={15} className={voiceModeListening ? 'animate-pulse' : ''} />
             </button>
@@ -357,7 +353,7 @@ export default function Composer({
               onClick={startDictation}
               title={t('mic')}
               aria-label={t('mic')}
-              className="tap-target w-8 h-8 flex items-center justify-center rounded-lg border border-white/[0.08] text-slate-400 hover:bg-white/[0.05] hover:text-slate-300 transition"
+              className="tap-target chip !px-2"
             >
               <Mic size={16} />
             </button>
@@ -371,7 +367,7 @@ export default function Composer({
                 onClick={onStop}
                 title="Stop"
                 aria-label="Stop response"
-                className="tap-target w-9 h-9 flex items-center justify-center rounded-lg border border-white/[0.08] text-slate-300 hover:border-rose-400/30 hover:text-rose-400 transition"
+                className="tap-target w-9 h-9 flex items-center justify-center rounded-full surface text-slate-300 hover:text-rose-400 transition"
               >
                 <X size={18} />
               </button>
@@ -381,7 +377,7 @@ export default function Composer({
                 disabled={!canSend}
                 title="Send"
                 aria-label="Send message"
-                className="tap-target w-9 h-9 flex items-center justify-center rounded-lg text-white bg-[#c96442] disabled:opacity-25 disabled:cursor-not-allowed hover:bg-[#b5593a] active:bg-[#a34e34] transition"
+                className="tap-target w-9 h-9 flex items-center justify-center rounded-full text-white bg-[#c96442] shadow-[0_2px_10px_-2px_rgba(201,100,66,0.55)] disabled:opacity-25 disabled:shadow-none disabled:cursor-not-allowed hover:bg-[#d76d4a] active:bg-[#a34e34] transition"
               >
                 <Send size={16} />
               </button>

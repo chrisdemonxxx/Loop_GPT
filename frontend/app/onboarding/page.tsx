@@ -57,7 +57,7 @@ const TOUR = [
 /** Onboarding — a real "what to try first" guide (brief P2). */
 export default function Onboarding() {
   return (
-    <div className="min-h-screen bg-[#111113] text-slate-200">
+    <div className="min-h-screen bg-[#08080a] text-slate-200">
       <div className="max-w-3xl mx-auto px-5 py-14">
         <div className="flex items-center gap-2.5 mb-3">
           <div className="w-8 h-8 rounded-lg bg-[#c96442] flex items-center justify-center"><Sparkles size={15} className="text-white" /></div>

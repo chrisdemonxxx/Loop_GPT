@@ -36,8 +36,8 @@ export default function SharePage() {
   }, [])
 
   return (
-    <div className="min-h-[100dvh] bg-[#111113] text-slate-200">
-      <header className="border-b border-white/[0.05] px-4 py-3 flex items-center gap-2.5 sticky top-0 bg-[#111113] z-10">
+    <div className="min-h-[100dvh] bg-[#08080a] text-slate-200">
+      <header className="border-b border-white/[0.05] px-4 py-3 flex items-center gap-2.5 sticky top-0 bg-[#08080a] z-10">
         <div className="w-7 h-7 rounded-lg bg-[#c96442] flex items-center justify-center shrink-0">
           <Sparkles size={14} className="text-white" />
         </div>

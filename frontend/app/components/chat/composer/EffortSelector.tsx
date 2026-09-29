@@ -80,14 +80,10 @@ export function EffortSelector({
         aria-pressed={value !== 'auto'}
         aria-label={titleFor(value, meta)}
         title={titleFor(value, meta)}
-        className={`tap-target h-8 px-2.5 flex items-center gap-1.5 rounded-lg border transition text-xs ${
-          value !== 'auto'
-            ? 'border-[#c96442]/40 text-[#e79d7f] bg-[#c96442]/[0.07]'
-            : 'border-white/[0.08] text-slate-400 hover:bg-white/[0.05] hover:text-slate-200'
-        }`}
+        className={`tap-target chip ${value !== 'auto' ? 'chip-on' : ''}`}
       >
         <Brain size={13} />
-        <span className={`hidden md:inline ${value === 'off' ? 'line-through decoration-slate-500' : ''}`}>{meta.label}</span>
+        <span className={value === 'off' ? 'line-through decoration-slate-500' : ''}>Reason · {meta.label}</span>
         <ChevronDown size={12} className="text-slate-500" />
       </button>
       {open && (

@@ -465,8 +465,33 @@ export default function ChatPage() {
   const contextTokens = Math.ceil(((messages as Message[]).reduce((n, m) => n + (m.content?.length || 0), 0) + chat.liveAnswer.length) / 4)
   const contextPct = Math.min(100, Math.round((contextTokens / 32_768) * 100))
 
+  // Sidebar contents — shared by the docked column (md+) and the mobile drawer.
+  const sidebarContents = (
+    <Sidebar
+      conversations={conversations}
+      currentConversationId={currentConversationId}
+      user={user}
+      projects={projects}
+      activeProjectId={activeProjectId}
+      onSelectConversation={(id) => { selectConversation(id); panels.closeOverlays() }}
+      onClose={() => panels.setSidebarOpen(false)}
+      onOpenSettings={() => setShowSettings(true)}
+      onLogout={logout}
+      onRenameConversation={(id, title) => updateConv.mutate({ id, title })}
+      onDeleteConversation={(id) => deleteConv.mutate(id)}
+      onPinConversation={(id, pinned) => updateConv.mutate({ id, pinned })}
+      onShareConversation={handleShareConversation}
+      searchQuery={sidebarSearch}
+      onSearchChange={setSidebarSearch}
+      messageHits={messageHits}
+      onOpenProjects={() => setProjectsOpen(true)}
+      onSelectProject={(id) => { setActiveProjectId(id); if (id) localStorage.setItem('activeProjectId', id); else localStorage.removeItem('activeProjectId') }}
+      activeProjectName={activeProjectId ? (projects.find((p) => p.id === activeProjectId)?.name || undefined) : undefined}
+    />
+  )
+
   return (
-    <div className="flex h-[100dvh] overflow-hidden text-slate-200 bg-[#111113]">
+    <div className="flex h-[100dvh] overflow-hidden text-slate-200 bg-[#08080a]">
       {/* Mobile backdrop — only below the tablet breakpoint; from 768px up
           the sidebar is a persistent column and the artifacts panel is the
           only overlay. */}
@@ -477,41 +502,36 @@ export default function ChatPage() {
         />
       )}
 
-      {/* ── Left sidebar — persistent from tablet up (audit P6); the spec
-          width never overflows a 320px viewport. ───────────────────────── */}
-      <AnimatePresence initial={false}>
-        {panels.sidebarOpen && (
-          <motion.aside
-            initial={{ x: -280 }}
-            animate={{ x: 0 }}
-            exit={{ x: -280 }}
-            transition={{ type: 'spring', stiffness: 380, damping: 34 }}
-            className="fixed md:relative inset-y-0 left-0 w-[min(20rem,calc(100vw-2rem))] shrink-0 flex flex-col h-full z-40 md:z-20 pt-[env(safe-area-inset-top)] md:pt-0 bg-[#0f0f11] border-r border-white/[0.05]"
-          >
-            <Sidebar
-              conversations={conversations}
-              currentConversationId={currentConversationId}
-              user={user}
-              projects={projects}
-              activeProjectId={activeProjectId}
-              onSelectConversation={(id) => { selectConversation(id); panels.closeOverlays() }}
-              onClose={() => panels.setSidebarOpen(false)}
-              onOpenSettings={() => setShowSettings(true)}
-              onLogout={logout}
-              onRenameConversation={(id, title) => updateConv.mutate({ id, title })}
-              onDeleteConversation={(id) => deleteConv.mutate(id)}
-              onPinConversation={(id, pinned) => updateConv.mutate({ id, pinned })}
-              onShareConversation={handleShareConversation}
-              searchQuery={sidebarSearch}
-              onSearchChange={setSidebarSearch}
-              messageHits={messageHits}
-              onOpenProjects={() => setProjectsOpen(true)}
-              onSelectProject={(id) => { setActiveProjectId(id); if (id) localStorage.setItem('activeProjectId', id); else localStorage.removeItem('activeProjectId') }}
-              activeProjectName={activeProjectId ? (projects.find((p) => p.id === activeProjectId)?.name || undefined) : undefined}
-            />
-          </motion.aside>
-        )}
-      </AnimatePresence>
+      {/* ── Left sidebar — a docked column from 768px up, a drawer below.
+          The docked case is a plain flex column toggled by WIDTH: a
+          transform (the old approach) is paint-only, so the panel could sit
+          off-screen while its 320px of flow stayed reserved — which is what
+          pushed the whole transcript off-centre. ───────────────────────── */}
+      {panels.isTablet ? (
+        <aside
+          aria-label="Chats"
+          aria-hidden={!panels.sidebarOpen}
+          className={`shrink-0 h-full overflow-hidden bg-[#0a0a0c] border-r border-white/[0.06] transition-[width] duration-200 ease-out ${
+            panels.sidebarOpen ? 'w-[260px]' : 'w-0 border-r-0'
+          }`}
+        >
+          <div className="w-[260px] h-full">{sidebarContents}</div>
+        </aside>
+      ) : (
+        <AnimatePresence initial={false}>
+          {panels.sidebarOpen && (
+            <motion.aside
+              initial={{ x: -280 }}
+              animate={{ x: 0 }}
+              exit={{ x: -280 }}
+              transition={{ type: 'spring', stiffness: 380, damping: 34 }}
+              className="fixed inset-y-0 left-0 w-[min(20rem,calc(100vw-2rem))] shrink-0 flex flex-col h-full z-40 pt-[env(safe-area-inset-top)] bg-[#0a0a0c] border-r border-white/[0.06]"
+            >
+              {sidebarContents}
+            </motion.aside>
+          )}
+        </AnimatePresence>
+      )}
 
       <AnimatePresence>
         {projectsOpen && (
@@ -592,7 +612,7 @@ export default function ChatPage() {
 
         {/* Composer — bottom padding lifts above the iOS keyboard via the
             --kb-offset variable from useKeyboardSafeBottom (audit P6). */}
-        <div className="border-t border-white/[0.05] px-3 sm:px-4 py-3 sm:py-4 pb-[max(0.75rem,calc(env(safe-area-inset-bottom)+var(--kb-offset)))] bg-[#111113]">
+        <div className="border-t border-white/[0.05] px-3 sm:px-4 py-3 sm:py-4 pb-[max(0.75rem,calc(env(safe-area-inset-bottom)+var(--kb-offset)))] bg-[#08080a]">
           <div className="max-w-[48rem] mx-auto">
             {/* §8-22 pending-branch banner: an edited prompt is loaded and the
                 next send starts a new version — visible + cancellable. */}

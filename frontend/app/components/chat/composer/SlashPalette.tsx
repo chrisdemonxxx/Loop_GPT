@@ -100,14 +100,10 @@ export function RunModePicker({
         aria-haspopup="menu"
         aria-expanded={open}
         title={activeMode.hint}
-        className={`tap-target h-8 px-2.5 flex items-center gap-1.5 rounded-lg border transition ${
-          runMode !== 'auto'
-            ? 'border-[#c96442]/40 text-[#e79d7f] bg-[#c96442]/[0.07]'
-            : 'border-white/[0.08] text-slate-400 hover:bg-white/[0.05] hover:text-slate-200'
-        } text-xs`}
+        className={`tap-target chip ${runMode !== 'auto' ? 'chip-on' : ''}`}
       >
         <ActiveIcon size={13} />
-        {activeMode.label}
+        <span>Mode · {activeMode.label}</span>
         <ChevronDown size={12} className="text-slate-500" />
       </button>
       {open && (
@@ -176,10 +172,10 @@ export function TriStateToggle({
       title={titleFor(state)}
       aria-label={ariaLabel}
       aria-pressed={state !== 'auto'}
-      className={`tap-target h-8 px-2 flex items-center gap-1 rounded-lg border transition text-xs ${meta.cls}`}
+      className={`tap-target chip ${state === 'on' ? 'chip-on' : ''} ${state === 'off' ? 'text-slate-500' : ''}`}
     >
       <Icon size={13} />
-      <span className="hidden md:inline">{meta.label}</span>
+      <span>{kind === 'web' ? 'Web' : 'Think'} · {meta.label}</span>
     </button>
   )
 }

@@ -265,7 +265,7 @@ export default function MessageList({
           {queued?.map((q) => (
             <div key={q.id} data-testid="queued-message" className="flex flex-col items-end gap-1">
               <div className="relative max-w-[85%] rounded-2xl rounded-br-sm bg-[#1e1e21] border border-dashed border-white/[0.14] px-4 py-3 opacity-80">
-                <span className="absolute -top-2.5 right-3 inline-flex items-center gap-1 rounded-full bg-[#0f0f11] border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-400" aria-label="Queued message">
+                <span className="absolute -top-2.5 right-3 inline-flex items-center gap-1 rounded-full bg-[#0a0a0c] border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-400" aria-label="Queued message">
                   <Loader2 size={9} className="animate-spin" /> Queued
                 </span>
                 {(q.previews?.length) && (
