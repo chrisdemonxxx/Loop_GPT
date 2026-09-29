@@ -18,6 +18,45 @@ production with the HF token in `HF_TOKEN`.
 The Space is `red-kit/nsfw-media-studio` (private, A100-large). The backend
 authenticates with `HF_TOKEN` on every call, including file downloads.
 
+## Video task API — LightX2V / MiniMax-H3 (wired 2026-09-29)
+
+A dedicated HF endpoint can serve video as an **async task API** instead of a
+Gradio call. Set:
+
+| Env | Value |
+|---|---|
+| `HF_VIDEO_ENDPOINT_URL` | the endpoint origin, e.g. `https://<id>.endpoints.huggingface.cloud` |
+| `HF_VIDEO_API` | `lightx2v` (any other value keeps the Gradio / `{inputs,parameters}` paths) |
+| `HF_VIDEO_SAVE_DIR` | optional; defaults to `/opt/LightX2V/save_results/server_cache/outputs` |
+
+Contract (probed live 2026-09-29, `Authorization: Bearer $HF_TOKEN`):
+
+- `GET /v1/service/metadata` → `{"nproc_per_node":1,"model_cls":"minimax_h3","model_path":"/models/MiniMax-H3"}`
+- `POST /v1/tasks/video/` → `{"task":"t2av|i2av|l2av|fl2av|ref2av", "prompt", "seed", "num_frames",
+  "size":[h,w], "save_result_path", "image_path"}` → `{"task_id","task_status","save_result_path"}`.
+  `task` is **required** ("task is required when the runner supports multiple tasks"; an unsupported
+  one answers `Task 'x' is not supported by this runner; expected one of: t2av, i2av, l2av, fl2av, ref2av`).
+  `image_path` accepts a base64 or data-URL frame; `aspect_ratio` is an *image*-task field and is
+  rejected (`extra_forbidden`) on video tasks.
+- `GET /v1/tasks/{id}/status` → `{"status":"pending|processing|completed|failed"}` (a ~46 s task: submit
+  `21:09:27` → `completed 21:10:21`).
+- `GET /v1/tasks/{id}/result` → the MP4 bytes — **only when `save_result_path` was set**; omitted, the
+  task answers `{"detail":"Task result file does not exist"}`. A save path outside the server's own root
+  answers `403 {"detail":"Access to this file is not allowed"}` — hence `HF_VIDEO_SAVE_DIR`.
+
+`generate_video` maps a text prompt to `t2av` and any reference frame to `i2av`, and polls the status
+inside the same wall-clock budget as the other media paths.
+
+Raw (2026-09-29, `curl`, 25,487 B, `Content-Type: video/mp4`, sha256 `d36d81d7…ac099f`):
+
+```
+POST /v1/tasks/video/ {"task":"t2av","prompt":"A cinematic slow pan over ocean waves …","seed":42,
+  "save_result_path":"/opt/LightX2V/save_results/server_cache/outputs/loopgpt_roster_t2av.mp4"}
+  → {"task_id":"89G4-UM95-YDFL-854O-R3BM","task_status":"pending","save_result_path":null}
+GET  /v1/tasks/89G4-UM95-YDFL-854O-R3BM/status   → processing ×6 → completed (46.1 s)
+GET  /v1/tasks/89G4-UM95-YDFL-854O-R3BM/result   → HTTP 200 video/mp4 25,487 B
+```
+
 ## ref2lock — how identity is preserved
 
 `ref2lock` means the reference anchors the subject. Two paths:

@@ -118,6 +118,72 @@ describe('image provider migration', () => {
   })
 })
 
+describe('video task API (LightX2V / MiniMax-H3)', () => {
+  const taskEndpoint = 'https://provider.example'
+  function json(data: unknown) {
+    return { status: 200, ok: true, headers: new Headers({ 'content-type': 'application/json' }),
+      body: Buffer.from(JSON.stringify(data)), json: async () => data }
+  }
+  beforeEach(() => {
+    vi.stubEnv('VIDEO_API_URL', taskEndpoint)
+    vi.stubEnv('HF_VIDEO_API', 'lightx2v')
+    vi.stubEnv('HF_VIDEO_SAVE_DIR', '')
+  })
+
+  it('submits text-to-video, polls the status, then downloads the saved result', async () => {
+    mocks.request.mockResolvedValueOnce(json({ task_id: 'T-1', task_status: 'pending', save_result_path: null }))
+      .mockResolvedValueOnce(json({ task_id: 'T-1', status: 'processing' }))
+      .mockResolvedValueOnce(json({ task_id: 'T-1', status: 'completed' }))
+      .mockResolvedValueOnce(response(bytes, true))
+    const pending = generateVideoTool.handler({ prompt: 'ocean waves', duration_seconds: 4, fps: 24 }, ctx())
+    await vi.advanceTimersByTimeAsync(5000)
+    const result = await pending
+    expect(result.isError).toBeUndefined()
+    expect(mocks.request.mock.calls.map(call => call[0])).toEqual([
+      'https://provider.example/v1/tasks/video/',
+      'https://provider.example/v1/tasks/T-1/status',
+      'https://provider.example/v1/tasks/T-1/status',
+      'https://provider.example/v1/tasks/T-1/result',
+    ])
+    const submitted = JSON.parse(mocks.request.mock.calls[0][1].body)
+    expect(submitted).toMatchObject({ task: 't2av', prompt: 'ocean waves', num_frames: 96, size: [544, 960] })
+    expect(submitted.save_result_path).toMatch(/^\/opt\/LightX2V\/save_results\/server_cache\/outputs\/loopgpt-.+\.mp4$/)
+    expect(mocks.request.mock.calls[0][1]).toMatchObject({ method: 'POST', allowedOrigins: ['https://provider.example'],
+      headers: { Authorization: 'Bearer fixture-token', 'Content-Type': 'application/json' } })
+    expect(mocks.request.mock.calls[3][1]).toMatchObject({ allowedOrigins: ['https://provider.example'],
+      headers: { Authorization: 'Bearer fixture-token' } })
+    expect(mocks.save).toHaveBeenCalledWith(expect.stringMatching(/^video-.*\.mp4$/), bytes,
+      { userId: 'owner', conversationId: 'conversation' })
+  })
+
+  it('uses image-to-video when a reference frame is supplied', async () => {
+    mocks.request.mockResolvedValueOnce(json({ task_id: 'T-2', task_status: 'pending' }))
+      .mockResolvedValueOnce(json({ status: 'completed' })).mockResolvedValueOnce(response(bytes, true))
+    await generateVideoTool.handler({ prompt: 'slow zoom', image_prompt: b64 }, ctx())
+    expect(JSON.parse(mocks.request.mock.calls[0][1].body)).toMatchObject({ task: 'i2av', image_path: b64 })
+  })
+
+  it('honours a configured save root and fails closed on a failed task', async () => {
+    vi.stubEnv('HF_VIDEO_SAVE_DIR', '/mnt/out/')
+    mocks.request.mockResolvedValueOnce(json({ task_id: 'T-3', task_status: 'pending' }))
+      .mockResolvedValueOnce(json({ status: 'failed', error: 'token=secret' }))
+    const result = await generateVideoTool.handler({ prompt: 'fixture' }, ctx())
+    expect(result).toMatchObject({ isError: true, content: 'Video generation failed' })
+    expect(JSON.parse(mocks.request.mock.calls[0][1].body).save_result_path).toMatch(/^\/mnt\/out\/loopgpt-/)
+    expect(mocks.request).toHaveBeenCalledTimes(2)
+    expect(mocks.save).not.toHaveBeenCalled()
+  })
+
+  it('rejects a submit without a task id, and is inert when the flavor is unset', async () => {
+    mocks.request.mockResolvedValueOnce(json({ task_status: 'pending' }))
+    expect((await generateVideoTool.handler({ prompt: 'fixture' }, ctx())).isError).toBe(true)
+    vi.stubEnv('HF_VIDEO_API', '')
+    mocks.request.mockReset().mockResolvedValue(response({ video_base64: b64 }))
+    expect((await generateVideoTool.handler({ prompt: 'fixture' }, ctx())).isError).toBeUndefined()
+    expect(mocks.request.mock.calls[0][0]).toBe(`${taskEndpoint}/`)
+  })
+})
+
 describe('video provider migration', () => {
   it.each([response(bytes, true), response({ video_base64: b64 }), response({ video: `data:video/mp4;base64,${b64}` }),
     response({ data: [{ b64_json: b64 }] })])('supports synchronous media envelopes', async result => {

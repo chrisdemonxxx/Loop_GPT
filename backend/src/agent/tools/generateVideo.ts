@@ -31,6 +31,60 @@ export async function decodeVideoResponse(data: any, endpoint: string, op: Media
   throw new Error('Missing video data')
 }
 
+/** Video task APIs (LightX2V): POST a task, poll its status, download the saved
+ *  result. The endpoint writes the clip server-side (save_result_path), so the
+ *  result must be downloaded through the API, not read from the submit response.
+ */
+export function videoTaskApi(): boolean {
+  const flavor = String(process.env.HF_VIDEO_API || '').trim().toLowerCase()
+  return flavor === 'lightx2v' || flavor === 'task'
+}
+
+/** Save root the endpoint will serve back through GET /v1/tasks/:id/result.
+ *  Paths outside this root answer 403 ("Access to this file is not allowed"). */
+export function videoTaskSaveDir(): string {
+  return (process.env.HF_VIDEO_SAVE_DIR || '/opt/LightX2V/save_results/server_cache/outputs').replace(/\/+$/, '')
+}
+
+/** A start frame means image-to-video; otherwise text-to-video. */
+export function videoTaskName(referenceCount: number): string {
+  return referenceCount > 0 ? 'i2av' : 't2av'
+}
+
+async function generateVideoFromTaskApi(prompt: string, images: string[], numFrames: number,
+  width: number, height: number, endpoint: string, op: MediaOperation): Promise<Buffer> {
+  const base = mediaUrl(endpoint).replace(/\/+$/, '')
+  const auth = mediaAuth(base)
+  const task = videoTaskName(images.length)
+  const savePath = `${videoTaskSaveDir()}/loopgpt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}.mp4`
+  const submit = await providerRequest(`${base}/v1/tasks/video/`, { ...auth, method: 'POST',
+    headers: { ...auth.headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task, prompt, seed: Math.floor(Math.random() * 1_000_000), num_frames: numFrames,
+      size: [height, width], save_result_path: savePath,
+      ...(images.length ? { image_path: images[0] } : {}) }),
+    signal: op.signal, timeoutMs: op.remaining(60000), maxBytes: VIDEO_RESPONSE_BYTES })
+  op.check()
+  const job = await submit.json()
+  const id = String(job?.task_id || '')
+  if (!id) throw new Error('Missing video task id')
+  const taskUrl = `${base}/v1/tasks/${encodeURIComponent(id)}`
+  while (true) {
+    const response = await providerRequest(`${taskUrl}/status`, { ...auth,
+      signal: op.signal, timeoutMs: op.remaining(30000), maxBytes: VIDEO_RESPONSE_BYTES })
+    op.check()
+    const status = await response.json()
+    const state = String(status?.status || '').toLowerCase()
+    if (state === 'completed') break
+    if (state === 'failed' || state === 'cancelled') throw new Error('Video generation failed')
+    await op.sleep(3000)
+  }
+  const result = await providerRequest(`${taskUrl}/result`, { ...auth,
+    headers: { ...auth.headers, Accept: 'video/mp4, application/json' },
+    signal: op.signal, timeoutMs: op.remaining(120000), maxBytes: VIDEO_RESPONSE_BYTES })
+  op.check()
+  return checkedMedia(result.body)
+}
+
 async function pollVideoJob(endpoint: string, statusUrl: string, resultUrl: string | undefined, op: MediaOperation): Promise<Buffer> {
   // Validate both links before beginning, and status again before every request.
   mediaUrl(statusUrl, endpoint, true)
@@ -54,6 +108,12 @@ async function generateVideoFromEndpoint(prompt: string, images: string[], numFr
   const endpoint = mediaUrl(process.env.VIDEO_API_URL || process.env.HF_VIDEO_ENDPOINT_URL || '')
   const auth = mediaAuth(endpoint)
   await beforeDispatch()
+
+  // Async video task APIs (LightX2V / MiniMax-H3): submit, poll, download the
+  // server-saved result. Selected by HF_VIDEO_API=lightx2v.
+  if (videoTaskApi()) {
+    return generateVideoFromTaskApi(prompt, images, numFrames, width, height, endpoint, op)
+  }
 
   // Gradio Space detection. The Space signature takes one reference frame; the
   // first reference (the identity anchor) is used.
