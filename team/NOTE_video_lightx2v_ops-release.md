@@ -38,7 +38,16 @@ save_result_path outside the server's own root -> 403 {"detail":"Access to this 
 
 The allowed save root is `/opt/LightX2V/save_results/server_cache/outputs` (the two
 pre-existing rows in `GET /v1/tasks/` sit there). Text→video = `t2av`,
-reference frame→video = `i2av` (`image_path` takes base64 or a data URL).
+reference frame→video = `i2av` (`image_path` takes base64 or a data URL) — both
+branches read back real bytes:
+
+```
+i2av  POST /v1/tasks/video/ {"task":"i2av","image_path":"data:image/png;base64,…","seed":11,
+        "save_result_path":"/opt/LightX2V/save_results/server_cache/outputs/loopgpt_i2v_test.mp4"}
+      → 4Q6Z-MXNU-VLP7-PIUW-6929  processing x7 → completed (59.7 s)
+      → GET /v1/tasks/4Q6Z-…/result  HTTP 200  video/mp4  713,051 B
+        (ISO Media MP4, sha256 d076bbde…da1200)
+```
 
 ## What was changed (commit `c894095`, pushed to `release/owned-staging-20260917`)
 

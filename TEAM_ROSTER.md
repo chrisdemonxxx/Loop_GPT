@@ -231,7 +231,7 @@ suffix answers `404` (`Not Found: <host>`) for both seats — that is a wrong UR
 
 | Endpoint | What it is | Probe (raw) | Verdict |
 |---|---|---|---|
-| `6abb8c1a84bcc564cb60d1e2.endpoints.huggingface.cloud` | **LightX2V task API**, `model_cls=minimax_h3` (`GET /v1/service/metadata`) — video only, auth = the same `HF_TOKEN` | `POST /v1/tasks/video/ {task:"t2av",…}` → `completed` in **46.1 s** → `GET …/result` `HTTP 200 video/mp4 25,487 B sha256 d36d81d7…ac099f` | **LIVE — the video path's primary** |
+| `6abb8c1a84bcc564cb60d1e2.endpoints.huggingface.cloud` | **LightX2V task API**, `model_cls=minimax_h3` (`GET /v1/service/metadata`) — video only, auth = the same `HF_TOKEN` | `t2av`: `POST` → `completed` in **46.1 s** → `HTTP 200 video/mp4 25,487 B sha256 d36d81d7…ac099f`. `i2av` (data-URL frame): `4Q6Z-…` → `completed` in **59.7 s** → `HTTP 200 video/mp4 713,051 B sha256 d076bbde…da1200` | **LIVE — the video path's primary** |
 | `red-kit-nsfw-media-studio.hf.space` (Gradio) | still the **image** endpoint (`HF_IMAGE_ENDPOINT_URL`) | `GET /config` `HTTP=503` on a cold probe (scale-to-zero, not a verdict) | unchanged |
 
 It takes no model of ours: `POST /` is `405`, `GET /v1/models` is `404`, and `task` must be one of
