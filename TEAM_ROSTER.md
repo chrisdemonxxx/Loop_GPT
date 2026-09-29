@@ -1,6 +1,8 @@
 # Loop GPT — TEAM ROSTER (owner: hr-bot)
 
-Snapshot: 2026-09-28 (rev 5 — adds the offense sub-fleet pointer + a fresh live probe; rev 4 was the
+Snapshot: 2026-09-29 (rev 6 — the offense sub-fleet is on its **second live target**, `ssndobz.us`
+(`ENG-2026-09-29-001`); §12 of `team/TEAM_ROSTER_OFFENSE.md` carries the raw launch. Rev 5 added the
+offense sub-fleet pointer + a fresh live probe; rev 4 was the
 post-M2 product roster). HEAD `629d7f6`, branch `release/owned-staging-20260917`. **The fleet now has
 two rosters, both mine:** this file (the product fleet on `loop-gpt`) and
 `team/TEAM_ROSTER_OFFENSE.md` (the 8-seat A–R offensive fleet for the pentest engagements — seats
@@ -59,6 +61,15 @@ seat)** — both live seats re-verified; the dead group was not re-litigated (no
   `"tool_calls"`.
 - `qwen3-cyber` → liveness `HTTP=200 t=1.616s`; tools `HTTP=200 t=1.784s`, body carries
   `"tool_calls"`.
+**Re-probe 2026-09-29T04:5xZ (rev 6, hr-bot, raw `curl`, liveness **and** a real `tools` array per
+seat, `HF_TOKEN` from the profile env)** — run as the pre-dispatch check for `ENG-2026-09-29-001`;
+the dead group was not re-litigated (nothing changed on it):
+- `hf-dsv41` → liveness `HTTP=200 t=1.526s`; tools `HTTP=200 t=1.524s`, body carries
+  `[{"id": "chatcmpl-tool-9c8dcaf94422c2b4", "type": "function", "function": {"name": "ping", "arguments": "{\"x\": \"1\"}"}}]`.
+- `qwen3-cyber` → liveness `HTTP=200 t=1.671s`; tools `HTTP=200 t=1.855s`, body carries
+  `[{"id": "call_76585d39a7d94cc3be9358e2", "index": 0, "type": "function", "function": {"name": "ping", "arguments": "{\"x\": \"1\"}"}}]`.
+- No `503` cold-start seen this pass (the `qwen3-cyber` scale-to-zero window of the note below is
+  real but was not hit — the endpoint was warm).
 **No repin needed: both live seats are still live and tool-capable; the dead group is unchanged.**
 `config.yaml` now carries exactly two `providers:` keys (`['hf-dsv41', 'qwen3-cyber']`) — the router
 and Azure blocks were pruned (`config.yaml.bak.no-hf-router-20260926-040442`), so the rejections are
