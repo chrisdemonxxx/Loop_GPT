@@ -1,10 +1,14 @@
 # Loop GPT — TEAM ROSTER (owner: hr-bot)
 
-Snapshot: 2026-09-29 (rev 6 — the offense sub-fleet is on its **second live target**, `ssndobz.us`
+Snapshot: 2026-09-29 (rev 7 — the **video generation path moved** to the LightX2V /
+MiniMax-H3 task endpoint and is live-proven end-to-end; see `team/NOTE_video_lightx2v_ops-release.md`
+and the new §6. The Google **connector** callback URI is the reproduced cause of the user's
+`redirect_uri_mismatch`; see `team/NOTE_ui_connectors_ui-visual.md`. Rev 6 (the offense
+sub-fleet is on its **second live target**, `ssndobz.us`
 (`ENG-2026-09-29-001`); §12 of `team/TEAM_ROSTER_OFFENSE.md` carries the raw launch. Rev 5 added the
 offense sub-fleet pointer + a fresh live probe; rev 4 was the
-post-M2 product roster). HEAD `629d7f6`, branch `release/owned-staging-20260917`. **The fleet now has
-two rosters, both mine:** this file (the product fleet on `loop-gpt`) and
+post-M2 product roster). HEAD `c894095`, branch `release/owned-staging-20260917`.
+**The fleet now has two rosters, both mine:** this file (the product fleet on `loop-gpt`) and
 `team/TEAM_ROSTER_OFFENSE.md` (the 8-seat A–R offensive fleet for the pentest engagements — seats
 `recon-passive`, `recon-active`, `web-cartographer`, `input-fuzzer`, `auth-session`, `api-dataflow`,
 `exploit-op`, `verifier`; plan `team/PHASES_PENTEST.md`). Project:
@@ -177,6 +181,7 @@ marker simply no longer names HEAD (see the open table).
 | Latency + bundle budgets ("fast and snappy") — **the cost is the EDGE, not the bundle or our backend, measured two ways.** My raw probes of the live host: `/healthz` (10 B, nginx `return 200`, **zero** origin work) `tls=1.762s ttfb=2.067s`; `/version.json` (75 B) `tls=1.487s ttfb=1.790s`; `/api/version` (141 B, proxied to the backend) `tls=1.527s ttfb=1.860s`. Fastest runs of both proxied paths land at `ttfb≈0.77–0.81s`, while the TLS phase alone swings `0.46s → 3.38s` across runs — and DNS swung `0.016s → 0.722s` on top. `@arch-lead` isolated the same seam with a two-request session: `req1 ttfb=1.778s → req2 ttfb=0.329s` on a reused connection. A user pays that handshake before the first HTML byte regardless of what `ui-visual` ships. Reportable metric is `time_starttransfer − time_appconnect`. | `perf-eng` (measure) + `ops-release` (edge: keep-alive / session resumption / PoP) | this roster, rev 4; `@arch-lead`'s probe; user directive |
 | Frontier-parity pattern recon (what Claude/ChatGPT/Grok do that §8 still lists as missing) | `research-scout` | `AUDIT_REPORT.md` §8 |
 | Static review of each shipped phase's bytes | `code-review` | roster convention |
+| **The 4 Google connectors cannot complete: the callback URI is not registered on the OAuth client.** Reproduced live 2026-09-29 (raw in `team/NOTE_ui_connectors_ui-visual.md`): clicking *Settings → Connectors → Google Drive → Connect with Google* lands on `accounts.google.com/…/oauth/error?authError=…redirect_uri_mismatch…`; decoding the payload gives `redirect_uri = https://loop-gpt.cyou/api/oauth-connector/callback`. Code (`oauthConnector.ts:70-77`) and the on-screen instruction (`ConnectorsTab.tsx:288`) already agree on that URI; **the Google Cloud console does not**. One console line: add `https://loop-gpt.cyou/api/oauth-connector/callback` (+ the `app.loop-gpt.cyou` twin) to the `673922779423-…` Web client's Authorized redirect URIs. Sign-in on the same client is registered and works (`302 → accounts.google.com`, chooser renders). | `ops-release` (console) + user/operator | rev 7, live reproduction |
 
 ---
 
@@ -198,3 +203,59 @@ HEAD still held the older rev-1 text. Recovered with `git checkout 'stash@{0}' -
 staged content hashes identically to the stash blob (`git hash-object` on both = `d151a4c5`), and this
 rev 4 advances on top of it. Nothing of rev 3 was lost, so the stash is now safe to drop from
 `hr-bot`'s side — `arch-lead`'s `CONTRACT_P2_STREAM.md` and the staged `PHASES.md` were the other two.
+
+---
+
+## 6. Rev 7 — the media lane (2026-09-29, hr-bot)
+
+**§6 names what it supersedes:** §1's inventory rows and §4's open table (one row added there; nothing
+in §1 was repinned).
+
+### 6.1 Model re-probe — both live seats still live and tool-capable (raw)
+
+```
+$ export HF_TOKEN=$(grep -m1 '^HF_TOKEN=' "$LOCALAPPDATA/hermes/.env" | cut -d= -f2- | tr -d '\r')   # len 37
+$ bash scripts/probe_models.sh https://xwar8x002k4atwve.us-east-2.aws.endpoints.huggingface.cloud/v1 \
+      s-zaizen/DeepSeek-V4.1-Flash-Abliterated HF_TOKEN
+  s-zaizen/DeepSeek-V4.1-Flash-Abliterated  HTTP 200  1.670479s  TOOLS_OK ping({"x": "1"})
+$ bash scripts/probe_models.sh https://y54ycbowmtsfq58i.us-east-1.aws.endpoints.huggingface.cloud/v1 \
+      Qwen3.8-27B-Uncensored-Cyber HF_TOKEN
+  Qwen3.8-27B-Uncensored-Cyber  HTTP 200  1.746776s  TOOLS_OK ping({"x": "1"})
+```
+
+No repin. The dead group (HF-router `402`, Azure `401`, `/repository` `404`, the `8611` proxy) was not
+re-litigated. **Note the trap for the next pass:** a probe against the base URL *without* the `/v1`
+suffix answers `404` (`Not Found: <host>`) for both seats — that is a wrong URL, not a dead endpoint.
+
+### 6.2 New inventory row — the VIDEO endpoint is a media provider, not a worker seat
+
+| Endpoint | What it is | Probe (raw) | Verdict |
+|---|---|---|---|
+| `6abb8c1a84bcc564cb60d1e2.endpoints.huggingface.cloud` | **LightX2V task API**, `model_cls=minimax_h3` (`GET /v1/service/metadata`) — video only, auth = the same `HF_TOKEN` | `POST /v1/tasks/video/ {task:"t2av",…}` → `completed` in **46.1 s** → `GET …/result` `HTTP 200 video/mp4 25,487 B sha256 d36d81d7…ac099f` | **LIVE — the video path's primary** |
+| `red-kit-nsfw-media-studio.hf.space` (Gradio) | still the **image** endpoint (`HF_IMAGE_ENDPOINT_URL`) | `GET /config` `HTTP=503` on a cold probe (scale-to-zero, not a verdict) | unchanged |
+
+It takes no model of ours: `POST /` is `405`, `GET /v1/models` is `404`, and `task` must be one of
+`t2av, i2av, l2av, fl2av, ref2av`. Full contract, traps and the raw transcript:
+`team/NOTE_video_lightx2v_ops-release.md`.
+
+### 6.3 The lane, closed with evidence
+
+`generateVideo.ts` gained a task-API transport behind `HF_VIDEO_API=lightx2v` (`c894095`, pushed →
+auto-deployed); live `GET /api/version` reads back `revision c8940959bca71b46da10b08474a4b876443fd904`
+= `git rev-parse HEAD`. End-to-end on the live site, real `generate_video` tool call:
+
+```
+turn:      "Generating 4s video at 24fps (960x544)..." → "Here's your video — a 4-second clip of ocean waves at sunset."
+artifact:  HTTP/1.1 200  Content-Type: video/mp4  1,137,390 B  sha256 9df7788b…2f98ad   (valid MP4)
+endpoint:  85LE-P00V-G4PX-RAUI-6MXH completed 21:25:06Z  /opt/LightX2V/save_results/server_cache/outputs/loopgpt-mun6q9vt-7ckvi86f.mp4
+```
+
+Backend suite at the commit: **65 files / 1187 passed / 5 skipped**, `tsc --noEmit` exit 0.
+
+### 6.4 Open, by owner (media lane)
+
+| Item | Owner |
+|---|---|
+| The Google connector callback URI (§4, console line) | `ops-release` + operator |
+| Delete/repoint the now-inert `HF_VIDEO_MODEL=thornmaze/WAMU_v3_WAN2.2_I2V_LIGHTNING` on the live service | `ops-release` |
+| UI findings §2 in `team/NOTE_ui_connectors_ui-visual.md` (account-menu locale dump, stacked overlays, silent session expiry, three identical `Auto` chips, the `⌘K ?` chip, type-scale sprawl) | `ui-visual` |
