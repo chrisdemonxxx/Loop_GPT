@@ -210,12 +210,12 @@ html[data-theme='light'] .prose-legal td { color: #47474f; border-bottom-color: 
     display: inline-flex; align-items: center; gap: 0.375rem;
     height: 2rem; padding: 0 0.625rem; border-radius: 0.625rem;
     font-size: 0.75rem; line-height: 1;
-    color: rgb(148 163 184);
+    color: rgb(176 189 204);
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.07);
     transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
-  .chip:hover { background: rgba(255, 255, 255, 0.06); color: rgb(203 213 225); }
+  .chip:hover { background: rgba(255, 255, 255, 0.07); color: rgb(226 232 240); }
   /* Active (non-default) chip: the warm accent. */
   .chip-on {
     color: #e79d7f; background: rgba(201, 100, 66, 0.09);

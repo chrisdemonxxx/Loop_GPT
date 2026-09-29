@@ -24,7 +24,7 @@ export function EmptyState({ onStartPrompt }: { onStartPrompt?: (p: string) => v
         <div className="w-12 h-12 rounded-2xl surface flex items-center justify-center mx-auto shadow-[0_0_0_1px_rgba(201,100,66,0.25),0_10px_30px_-14px_rgba(201,100,66,0.55)]">
           <Sparkles size={22} className="text-[#f0b39a]" />
         </div>
-        <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight text-gradient">
+        <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight text-[#f4f4f6]">
           How can I help you today?
         </h1>
         <p className="text-slate-300 text-[14px] max-w-sm mx-auto">
