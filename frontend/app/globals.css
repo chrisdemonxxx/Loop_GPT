@@ -227,9 +227,10 @@ html[data-theme='light'] .prose-legal td { color: #47474f; border-bottom-color: 
     border-color: rgba(56, 160, 220, 0.34);
   }
 
-  /* Gradient text + accent ring */
+  /* Gradient text + accent ring — the warm end is bright enough to read on
+     #08080a without shouting. */
   .text-gradient {
-    background: linear-gradient(100deg, #e6b8a6, #c96442 60%, #d8846a);
+    background: linear-gradient(100deg, #ffd9c9, #e2906c 55%, #f0b39a);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;

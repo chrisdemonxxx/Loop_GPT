@@ -21,16 +21,16 @@ export function EmptyState({ onStartPrompt }: { onStartPrompt?: (p: string) => v
         transition={{ duration: 0.3 }}
         className="space-y-4"
       >
-        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#c96442]/20 to-[#c96442]/8 flex items-center justify-center mx-auto">
-          <Sparkles size={22} className="text-gradient" />
+        <div className="w-12 h-12 rounded-2xl surface flex items-center justify-center mx-auto shadow-[0_0_0_1px_rgba(201,100,66,0.25),0_10px_30px_-14px_rgba(201,100,66,0.55)]">
+          <Sparkles size={22} className="text-[#f0b39a]" />
         </div>
         <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight text-gradient">
           How can I help you today?
         </h1>
-        <p className="text-slate-400 text-[14px] max-w-sm mx-auto">
-          Type <span className="font-mono text-slate-400 bg-white/[0.05] px-1.5 py-0.5 rounded text-[13px]">/</span> for
-          deep research. <span className="font-mono text-slate-400 bg-white/[0.05] px-1.5 py-0.5 rounded text-[13px]">⌘K</span> for commands.
-          New here? <Link href="/onboarding" className="text-[#e79d7f] hover:underline">Take the 2-minute tour →</Link>
+        <p className="text-slate-300 text-[14px] max-w-sm mx-auto">
+          Type <span className="font-mono text-slate-300 bg-white/[0.06] px-1.5 py-0.5 rounded text-[13px]">/</span> for
+          deep research. <span className="font-mono text-slate-300 bg-white/[0.06] px-1.5 py-0.5 rounded text-[13px]">⌘K</span> for
+          commands. New here? <Link href="/onboarding" className="text-[#f0b39a] hover:underline">Take the 2-minute tour →</Link>
         </p>
 
         {/* Starter prompt cards */}
@@ -40,7 +40,7 @@ export function EmptyState({ onStartPrompt }: { onStartPrompt?: (p: string) => v
               key={p}
               type="button"
               onClick={() => onStartPrompt?.(p)}
-              className="text-left px-4 py-3 rounded-2xl glass bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] hover:border-white/12 transition text-[13px] text-slate-300 hover:text-slate-100 leading-relaxed"
+              className="text-left px-4 py-3 rounded-2xl bg-white/[0.04] hover:bg-white/[0.07] border border-white/[0.09] hover:border-white/[0.16] transition text-[13px] text-slate-200 hover:text-slate-100 leading-relaxed"
             >
               {p}
             </button>

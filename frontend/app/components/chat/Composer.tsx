@@ -247,7 +247,7 @@ export default function Composer({
           aria-label={t('placeholder')}
           placeholder={t('placeholder')}
           rows={1}
-          className="w-full bg-transparent px-4 pt-3 pb-1 resize-none focus:outline-none placeholder-slate-500 text-[15px] text-slate-100 leading-relaxed"
+          className="w-full bg-transparent px-4 pt-3 pb-1 resize-none focus:outline-none placeholder-slate-400 text-[15px] text-slate-100 leading-relaxed"
           style={{ maxHeight: 220 }}
           onInput={(e) => {
             const el = e.target as HTMLTextAreaElement
@@ -377,7 +377,7 @@ export default function Composer({
                 disabled={!canSend}
                 title="Send"
                 aria-label="Send message"
-                className="tap-target w-9 h-9 flex items-center justify-center rounded-full text-white bg-[#c96442] shadow-[0_2px_10px_-2px_rgba(201,100,66,0.55)] disabled:opacity-25 disabled:shadow-none disabled:cursor-not-allowed hover:bg-[#d76d4a] active:bg-[#a34e34] transition"
+                className="tap-target w-9 h-9 flex items-center justify-center rounded-full text-white bg-[#d76d4a] shadow-[0_2px_12px_-2px_rgba(201,100,66,0.6)] disabled:opacity-40 disabled:shadow-none disabled:cursor-not-allowed hover:bg-[#e07a55] active:bg-[#a34e34] transition"
               >
                 <Send size={16} />
               </button>
@@ -387,7 +387,9 @@ export default function Composer({
       </form>
 
       <div className="flex items-center gap-3 mt-2">
-        {typeof contextPct === 'number' && (
+        {/* Context meter — only once there is a context to meter (an empty
+            conversation drew a stray 4px hairline across the composer). */}
+        {typeof contextPct === 'number' && (contextTokens || 0) > 0 && (
           <div
             className="flex-1 h-1 rounded-full bg-white/[0.05] overflow-hidden"
             title={`Context: ~${(contextTokens || 0).toLocaleString()} tokens used (~${contextPct}% of the 32k window)`}
