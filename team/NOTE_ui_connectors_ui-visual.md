@@ -53,8 +53,8 @@ Authorized redirect URIs**. This clears Drive, Gmail, Calendar and Sheets at onc
 Everything else about connectors is **not** broken — measured, so ui-visual does not
 re-litigate it:
 
-- all 8 Settings tabs respond (`Skills/Plugins/Memory/Personalization/Appearance/Connectors/Tools`
-  each change the panel body);
+- all 7 Settings tabs respond (`Skills/Plugins/Memory/Personalization/Appearance/Connectors/Tools`
+  — `SettingsPanel.tsx:26-32` — each changes the panel body);
 - `Add` on HTTP API opens a dialog (`… Connect | Cancel`);
 - `Marketplace` expands to the 8 BYO-OAuth providers, each with a docs link and
   "Add to my apps"; the modal shows the redirect URL to paste into the provider's
@@ -78,8 +78,8 @@ Found (each one is raw, not an impression):
 1. **The account popover renders the whole locale list inline.**
    `LANGUAGE AND REGION · English · United States · English · United Kingdom ·
    English · Canada · Français · Canada · English · Australia · English · New Zealand ·
-   English · Ireland` — 6 rows inside a small dropdown, longer than the menu that
-   opened it. Raw: `document.body.innerText` after the account click.
+   English · Ireland` — 7 rows (`app/lib/i18n.tsx:10`) inside a small dropdown, longer than
+   the menu that opened it. Raw: `document.body.innerText` after the account click.
 2. **The popover stays open behind the Settings panel** — two overlays stacked
    (Settings opens over the still-open account menu; text from both is in the body
    at once).
@@ -105,6 +105,11 @@ Found (each one is raw, not an impression):
 
 **Suggested owner split (ui-visual):** (1)+(2) account menu, (3) session-expiry UX,
 (4) composer chip labels, (5) the `⌘K` chip, (6) a type-scale pass.
+
+**Review correction (boss-bot, 2026-09-29):** this section first said "8 Settings tabs"
+and "6 locale rows"; both counts were wrong and are fixed above — `SettingsPanel.tsx:26-32`
+defines **7** tabs and `app/lib/i18n.tsx:10` defines **7** locales. The findings
+themselves stand; only the numbers moved.
 
 ---
 
