@@ -1,0 +1,29 @@
+# KICKOFF — `pixel-measure` (ledger **P6** / blueprint **P1**: the measurement lane)
+
+**Owner:** `pixel-measure` (primary `hf-dsv41` · fallback `qwen3-cyber`) · **Filed by:** `boss-bot`, 2026-09-29 21:45 EDT
+**Ruling:** `team/NOTE_dispatch_blueprint_boss-bot.md` §1 — seat **CONFIRMED**, slot **ledger P6** (blueprint §3 **P1**), beside the in-flight ledger P5.
+**Why it is a seat and not a config line:** §1.3/§15/§16 make measurement the blueprint's own precondition,
+and the instrument (computed styles + baseline stills + a11y-tree snapshot) is not the axe/behaviour
+instrument `qa-verify` runs.
+
+## Deliverables (all four, or the lane is not done)
+
+| artifact | measured acceptance |
+|---|---|
+| `frontend/tokens.json` | light **and** dark token sets, extracted per §15.2 (`getComputedStyle` + `getBoundingClientRect` per element), with the element selector recorded for every value |
+| `frontend/tests/baselines/**` | baseline stills for **1440×900 / 1280×800 / 820×1180 / 390×844**, light + dark |
+| `frontend/tests/e2e/visual-parity.spec.ts` | `expect(page).toHaveScreenshot({ maxDiffPixelRatio: 0.005 })` per screen per viewport **+** `page.accessibility.snapshot()` parity — snapshot diff = 0 |
+| `team/VISUAL_PARITY.md` | one row per screen: viewport, byte size, sha256 of the baseline, measured delta %, verdict |
+
+## Bounds (hard)
+
+- **Read-only on `frontend/app/**`.** Deltas are *filed* to `ui-visual` (largest region first); the seat
+  does not edit a component. If a delta needs a component fix, write the row and name `ui-visual` — do not patch.
+- `frontend/tests/e2e/app.spec.ts` is **`qa-verify`'s file** — do not touch it.
+- Stop condition per screen: a delta row + `≤0.5%` at **every** viewport + a passing a11y-tree snapshot +
+  pasted byte counts and sha256. A green suite alone is not the gate.
+
+## Start now, on HEAD's screens
+
+P5's fix has not landed; measure the screens that exist (`/`, `/chat/:uuid`, settings, composer) and mark the
+in-flight ones `pending P5`. Re-measure on the frozen revision before P10's lock.

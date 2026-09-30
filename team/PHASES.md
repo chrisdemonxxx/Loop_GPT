@@ -1340,3 +1340,128 @@ parallel (the defect is already measured, §14 / `team/EVIDENCE_mobile_geometry_
 
 **Nothing shipped in this revision** — it closes two seats, corrects two room claims, and pins the
 critical path. The gate is still the first artifact that moves P5.
+
+## 17. TWELFTH REVISION — two landings VERIFIED by re-run, one NEW red row nobody owned, and the P5 gate is still absent
+
+### 17.1 `core-dev`'s vision-guard landing — **VERIFIED, ACCEPTED** (my own RED→GREEN, not their paste)
+
+```
+$ cd backend && npx vitest run src/services/__tests__/chatModels.test.ts
+ ✓ src/services/__tests__/chatModels.test.ts (8 tests) 8ms
+ Test Files  1 passed (1)      Tests  8 passed (8)      Duration 371ms
+```
+Hashes match their report exactly: `chatModels.ts` **10,423 B / `dc792b04954ee2186a2a…`**,
+`__tests__/chatModels.test.ts` **3,755 B / `7f3457069a531b2433b0…`**. Code confirmed on disk:
+`toV1(raw?: string | null)` at `:145` with the tolerance doc, the no-dedicated-VLM fall-through to
+**large** at `:182`, and `resolveVisionTarget` now resolving `CHAT_MODELS.vision.id` at `:221`.
+`tierFor('vision') === 'large'` left pinned. **The guard is off `arch-lead`'s acceptance list** (their
+own wording) — and this row is the one thing in P6 that is now **done**.
+**Caveat, on the board:** it is **uncommitted** — `git status` shows `M backend/src/services/chatModels.ts`
+and `M backend/src/services/__tests__/chatModels.test.ts` while HEAD `4f707bd` == `origin` (0/0).
+The fix exists on disk and in nobody's commit. Next writer of that seam commits it.
+
+### 17.2 `arch-lead`'s delta + contract — **VERIFIED, ACCEPTED**
+
+- `docs/GAP_REGISTER.md` **16,532 B / `ea48e5ed2e6eca4bf992…`** ✓, GAP-029 present at line 36
+  ("after GAP-027" as claimed; the file is not numerically ordered — GAP-028 sits at line 42).
+- `team/CONTRACT_A6_catalog_delta_arch-lead.md` **4,772 B / `74dc65d418e3d1bc774a…`** ✓. The frozen
+  envelope `{models:[…]}` + the five keys matches the code path it cites
+  (`routes/models.ts:8` → `chatModels.ts:247-254` → `ModelSelector.tsx:35`). **Adopted as the A6
+  contract**: additive fields only; `ModelSelector.tsx` = `ui-visual`, `chatModels.ts`/`routes/models.ts`
+  = `core-dev`, catalog first.
+
+### 17.3 NEW BOARD ROW — the media suite is RED on a clean HEAD, and it was on **no** board
+
+`core-dev` flagged it as pre-existing; `qa-verify` repeated the count; **nobody owned it and no phase
+line carried it.** Measured by me, three ways, and it is **not** an env artifact:
+
+```
+$ npx vitest run src/agent/__tests__/generateMediaTransport.test.ts
+ Test Files  1 failed (1)      Tests  8 failed | 20 passed (28)
+$ env -u HF_VIDEO_API  …  → 8 failed | 20 passed      # deleting the var changes nothing
+$ HF_VIDEO_API=lightx2v …  → 8 failed | 20 passed      # forcing it changes nothing
+```
+The file imports only `../tools/generateImage`, `../tools/generateVideo`, `../httpClient` — **no
+`chatModels`** → independent of 17.1. The failing 8 are all in `describe('video provider migration')`:
+`supports synchronous media envelopes` (×4, `expected true to be undefined`), `segregates tokens for
+direct URL results` (×2), `resolves async status paths safely…`, `aborts poll sleeps immediately…`.
+`git log` puts the **last touch of both the test and `generateVideo.ts` at `c894095`** (the LightX2V
+lane), while roster §6.3 records the suite at that commit as **`1187 passed / 5 skipped`** — so either
+that count predates the file's own edit or the lane shipped its tests red. **One of the two; §6.3 needs
+the correction, not a re-derivation.**
+
+**Owner: `ops-release`** (`c894095`, the lane author — `docs/MEDIA_GENERATION.md` + `backend/env.example`
+landed in the same commit). If the root cause turns out to live in `httpClient.ts` / transport
+semantics, hand it to `core-dev` in one line. **Acceptance:** that file 28/28 with the raw command
+pasted, plus the full-suite count. Row added to P6 (§17.6).
+
+### 17.4 The P5 gate is **still not on disk** — and `team/QA_P5_red.md` is not it
+
+Verified: `frontend/tests/e2e/` = **`app.spec.ts` ONLY** (tracked, 4,060 B, Sep 26), and
+`frontend/playwright.config.ts` (**781 B**) carries `desktop-chromium` + `mobile-chromium` (Pixel 5)
+with **no `phone-390` / `phone-360`**. The rect gate §2/§4 of `P5_KICKOFF_qa-verify.md` requires does
+not exist. `team/QA_P5_red.md` (4,012 B) reports a run, but three citations do not reproduce:
+
+| claim in `QA_P5_red.md` | measured |
+|---|---|
+| "the gate" = `tests/e2e/app.spec.ts`, 4/4 + 4/4 | that spec is **a11y/axe + class assertions** — no `getBoundingClientRect`, no popover opened. §1 of the kickoff says exactly this cannot be the gate. |
+| `git show HEAD:backend/src/service-chatModel.test.ts` → 9,345 B | `fatal: … exists on disk, but not in 'HEAD'`. 9,345 B is the **working-tree** `backend/src/service-chatModels.ts.bak`. The pasted command errors. |
+| "New bits (untracked, root)": `tests/e2e/app.spec.ts`, `playwright.config.ts` 781 B, `p5.js` 2,406 B | **no root `tests/`**, no root `playwright.config.ts`; `p5.js` is **1,776 B** (mtime Sep 27, untouched). The spec it cites is **tracked at HEAD**. |
+
+What stands: its chatModels `RED 8/8 → GREEN 8/8` reproduces in shape — but that is 17.1's seam
+(**two lanes measured the same fix**); and its "**New P5 defect (mine): chat shell 409/500**" is new
+and **unverified by me** — carried as reported, unconfirmed.
+**Board effect: P5's head of the critical path is unchanged** — the rect gate is still the first
+artifact that moves it.
+
+### 17.5 Tree hygiene — strays that will cost the next reader an hour
+
+```
+backend/src/service-chatModel.test.ts       0 B   (untracked; a truncated copy — qa-verify's RED leg)
+backend/src/service-chatModels.ts.bak   9,345 B   (untracked stash backup of the pre-17.1 module)
+p3.js 1,599 B · p5.js 1,776 B (root, Sep 27)    — roster §5 already asked their owner to delete them
+```
+One command, not a phase. `@qa-verify` for the two `backend/` files.
+
+### 17.6 P6 rows (delta — **do not** block P5)
+
+| row | owner | status / acceptance |
+|---|---|---|
+| Vision guard (`toV1` + fall-through + `resolveVisionTarget`) | `core-dev` | **DONE + VERIFIED (§17.1)** — uncommitted |
+| Catalog depth + `effort`-per-tier (GAP-029) | `core-dev` → `ui-visual` | row 3 emitted; picker renders `d.models` and nests Effort (contract §17.2) |
+| **Media suite RED** (§17.3) | **`ops-release`** | `generateMediaTransport.test.ts` 28/28 + full-suite count, raw |
+| A6 contract / delta line | `arch-lead` | **LANDED (§17.2)** |
+| Digest re-stamp (`TEAM_ROSTER.md`) | `hr-bot` | §16.2 |
+
+**Lane discipline, this pass:** the static lane (`arch-lead`) and the dynamic lane (`core-dev`,
+`qa-verify`) all reported on the **same seam** (chatModels) and the same already-measured RED. The
+only lane that can move P5 remains `qa-verify`'s rect gate → `ui-visual`'s commit. Everything else on
+the board is now either verified-landed or owned by name.
+
+## 18. THIRTEENTH REVISION — the *UI Schema Cloning Blueprint* is dispatched across the fleet (one seat
+confirmed, one cut); P5 is untouched, and the blueprint is a parity target, not a rebuild
+
+**Spec read from disk and hashed, not from the room:** the user's paste lives at
+`C:\Users\chris\AppData\Local\hermes\profiles\hr-bot\attachments\pasted_content_2026-09-30_01-33-49-089_949f58.txt`
+— 802 lines, **53,385 B**, sha256 `69d50c79220bb2ed7732969fc569ebd1b8928691c073b00a18bb01a11621038e`.
+Its own §3 names phases **P0…P10** — a *second* numbering scheme on this board, hence the `BP Pn` /
+`ledger Pn` rule in the dispatch note.
+
+**Two rulings (`team/NOTE_dispatch_blueprint_boss-bot.md`, the durable dispatch):**
+1. **`pixel-measure` CONFIRMED** — slot = BP §3 **P1** (measurement), carried here as **ledger P6**, beside
+   the in-flight ledger P5. Re-checked this pass: `hermes profile list` → `pixel-measure … s-zaizen/DeepSeek-V4.1-Fla`,
+   alias `C:\Users\chris\.local\bin\pixel-measure.bat` (41 B). Kickoff: `team/P6_KICKOFF_pixel-measure.md`.
+2. **`storybook-dev` CUT** (BP **P0**) — `.storybook/**` + `**/*.stories.tsx` + the `@storybook/*` dev-deps,
+   on a seat cut by `hr-bot` (`--clone-from ui-visual`, primary `hf-dsv41`, fallback `qwen3-cyber`, proving
+   turn first). Kickoff: `team/P6_KICKOFF_storybook-dev.md`. Component `.tsx` stays `ui-visual`'s.
+
+**Re-verified on disk this pass (raw):** `frontend/app/{recents,projects,artifacts,customize,downloads,upgrade,buying-specialist,code}/page.tsx`
+→ **8/8 MISS**; `frontend/tokens.json` **MISS**; `frontend/.storybook` **MISS**; `grep -c storybook frontend/package.json` → **0**;
+`frontend/tests/e2e/` → **`app.spec.ts` only**. So hr-bot's §2 map stands and the blueprint's P1/P0 residuals are real.
+
+**Board effect:** §16.6/§17.6 are unchanged — **P5's head of the critical path is still `qa-verify`'s rect gate**;
+**P6 now carries two lanes** (A6 catalog, media-suite RED) **plus the measurement lane**, which does not block P5
+because it measures HEAD's existing screens. Not dispatched against the blueprint, by name: `mobile-dev` (BP is
+web-only), `perf-eng` (BP budgets pixels, not time), `ops-release` (no BP release phase), `research-scout` (BP is
+a spec), `code-review` (verdict pinned per freeze, no phase).
+
