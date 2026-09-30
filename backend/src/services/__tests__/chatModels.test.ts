@@ -1,7 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { availableChatModels, chatModelCatalog, tierFor, CHAT_MODELS } from '../chatModels'
+import {
+  availableChatModels,
+  chatModelCatalog,
+  resolveChatTarget,
+  resolveVisionTarget,
+  tierFor,
+  CHAT_MODELS,
+} from '../chatModels'
 
 afterEach(() => vi.unstubAllEnvs())
+
+/** Empty string = absent: deterministic regardless of the developer's shell. */
+const ABSENT = ''
 
 describe('chat model catalog', () => {
   it('lists exactly two Loopers', () => {
@@ -24,5 +34,65 @@ describe('chat model catalog', () => {
     expect(tierFor('small-looper')).toBe('standard')
     expect(tierFor('unknown-value')).toBe('standard')
     expect(CHAT_MODELS.large.aliases).toContain('large-looper')
+  })
+})
+
+describe('vision routing — the dedicated endpoint is optional', () => {
+  const caller = { provider: 'huggingface', model: '', baseUrl: '' }
+
+  it('falls through to the large tier for a vision request when only HF_LARGE_ENDPOINT_URL is set', () => {
+    vi.stubEnv('HF_LARGE_ENDPOINT_URL', 'https://large.example.test/')
+    vi.stubEnv('HF_LARGE_MODEL', 'large-upstream')
+    vi.stubEnv('HF_VISION_ENDPOINT_URL', ABSENT)
+    vi.stubEnv('HF_VISION_MODEL', ABSENT)
+
+    expect(tierFor(CHAT_MODELS.vision.id)).toBe('vision')
+    // Regression: this used to throw (toV1 on an undefined endpoint URL).
+    expect(resolveChatTarget(CHAT_MODELS.vision.id)).toMatchObject({
+      tier: 'large',
+      model: 'large-upstream',
+      baseUrl: 'https://large.example.test/v1',
+    })
+  })
+
+  it('uses the dedicated VLM endpoint when it is configured alongside the large tier', () => {
+    vi.stubEnv('HF_LARGE_ENDPOINT_URL', 'https://large.example.test')
+    vi.stubEnv('HF_VISION_ENDPOINT_URL', 'https://vlm.example.test/')
+    vi.stubEnv('HF_VISION_MODEL', 'vlm-upstream')
+
+    // Regression: 'vision' is shadowed to the large tier by CHAT_MODELS.large.aliases.
+    expect(resolveVisionTarget(caller)).toMatchObject({
+      model: 'vlm-upstream',
+      baseUrl: 'https://vlm.example.test/v1',
+    })
+  })
+
+  it('uses the dedicated VLM endpoint when it is the only endpoint configured', () => {
+    vi.stubEnv('HF_LARGE_ENDPOINT_URL', ABSENT)
+    vi.stubEnv('HF_VISION_ENDPOINT_URL', 'https://vlm.example.test')
+    vi.stubEnv('HF_VISION_MODEL', 'vlm-upstream')
+
+    expect(resolveVisionTarget(caller)).toMatchObject({
+      model: 'vlm-upstream',
+      baseUrl: 'https://vlm.example.test/v1',
+    })
+  })
+
+  it('falls back to the large tier when no dedicated VLM endpoint is configured', () => {
+    vi.stubEnv('HF_LARGE_ENDPOINT_URL', 'https://large.example.test')
+    vi.stubEnv('HF_LARGE_MODEL', 'large-upstream')
+    vi.stubEnv('HF_VISION_ENDPOINT_URL', ABSENT)
+
+    expect(resolveVisionTarget(caller)).toMatchObject({
+      model: 'large-upstream',
+      baseUrl: 'https://large.example.test/v1',
+    })
+  })
+
+  it('returns null when no vision-capable endpoint is configured at all', () => {
+    vi.stubEnv('HF_LARGE_ENDPOINT_URL', ABSENT)
+    vi.stubEnv('HF_VISION_ENDPOINT_URL', ABSENT)
+
+    expect(resolveVisionTarget(caller)).toBeNull()
   })
 })

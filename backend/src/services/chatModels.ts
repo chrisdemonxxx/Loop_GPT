@@ -139,9 +139,11 @@ export function availableChatModels(): ChatModelSpec[] {
   return [CHAT_MODELS.large, CHAT_MODELS.standard]
 }
 
-/** Normalise a base URL to the OpenAI-compatible `/v1` root. */
-function toV1(raw: string): string {
-  const trimmed = raw.replace(/\/+$/, '')
+/** Normalise a base URL to the OpenAI-compatible `/v1` root.
+ *  Tolerates a missing/empty value (`toV1(undefined) === '/v1'`) so an
+ *  optional endpoint var never throws — callers guard presence when it matters. */
+function toV1(raw?: string | null): string {
+  const trimmed = (raw ?? '').replace(/\/+$/, '')
   return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`
 }
 
@@ -170,7 +172,16 @@ export function tierFor(model?: string | null): ChatTier {
 
 /** Resolve a tier (or a caller-supplied model string) to a routing target. */
 export function resolveChatTarget(model?: string | null): ChatTarget {
-  const tier = tierFor(model)
+  let tier = tierFor(model)
+
+  // `CHAT_MODELS.large.aliases` carries the legacy string 'vision', and the
+  // alias scan returns on the first match — so `tierFor('vision')` is 'large'
+  // (pinned by chatModels.test.ts). Callers wanting the VLM pass the canonical
+  // id, `CHAT_MODELS.vision.id`. A dedicated VLM endpoint is optional: with
+  // none configured, the large tier (which sees images natively) serves it.
+  if (tier === 'vision' && !process.env.HF_VISION_ENDPOINT_URL && largeModelEnabled()) {
+    tier = 'large'
+  }
 
   if (tier === 'large' && largeModelEnabled()) {
     return {
@@ -204,10 +215,13 @@ export function resolveChatTarget(model?: string | null): ChatTarget {
  * supports multimodal input — the DeepSeek-V4.1-Flash-Abliterated endpoint).
  * Returns null when no vision-capable model is available. */
 export function resolveVisionTarget(callerTarget: CallerTarget): CallerTarget | null {
-  // Dedicated VLM endpoint configured → route to it.
-  if (process.env.HF_VISION_ENDPOINT_URL && process.env.HF_VISION_MODEL) {
-    const t = resolveChatTarget('vision')
-    return { provider: 'huggingface', model: t.model, baseUrl: t.baseUrl, apiKey: undefined }
+  // Dedicated VLM endpoint configured → route to it. Resolve by the canonical id,
+  // not the string 'vision' (shadowed to the large tier — see resolveChatTarget).
+  if (process.env.HF_VISION_ENDPOINT_URL) {
+    const t = resolveChatTarget(CHAT_MODELS.vision.id)
+    if (t.tier === 'vision') {
+      return { provider: 'huggingface', model: t.model, baseUrl: t.baseUrl, apiKey: undefined }
+    }
   }
   // No dedicated vision endpoint but the large/DeepSeek tier is set → it is
   // vision-capable; route to it for image-attachment turns.
