@@ -1,0 +1,41 @@
+EVIDENCE — storybook gate (P0), re-verified by boss-bot, 2026-09-29 22:19-22:22 EDT
+Artifact owner: storybook-dev. Config measured: frontend/.storybook/main.ts 1598 B
+sha256 3ac88f3cddb1e2d52c8ed8233ec5000ed075eda920556f940487ac01117419cb (mtime 22:17).
+
+RUN 1 — the gate name the ask uses
+  cd frontend && npx build-storybook > %LOCALAPPDATA%/Temp/sb_verify.log 2>&1
+  EXIT=0
+  info => Preview built (39 s)
+  info => Output directory: ...\loop-gpt\frontend\storybook-static
+
+RUN 2 — the raw CLI shape §20.3 reported RED on
+  cd frontend && ./node_modules/.bin/storybook build -o %LOCALAPPDATA%/Temp/.sb-verify3 \
+      --quiet --disable-telemetry
+  RAW_CLI_EXIT=0
+  info => Preview built (38 s)
+  index.json entries: 31
+
+Story index (built, on disk)
+  frontend/storybook-static/index.json   8176 B
+  sha256 98e42da70c6ce195c264852129cb9eba5bb4d9b88a7cbc9edd5e90db4e4e1956
+  entries 31 (Chat/ModelSelector 4, Chat/ArtifactCard 4, Chat/Composer 12,
+              Chat/MessageList 6, Chat/Sidebar 5)
+  storybook-static/ total 3,791,475 B
+
+Story sources on disk (5 files; blueprint §10 wants ~25)
+  frontend/app/components/ModelSelector.stories.tsx
+  frontend/app/components/chat/{ArtifactCard,Composer,MessageList,Sidebar}.stories.tsx
+
+Config / deps
+  frontend/.storybook/main.ts            1598 B  sha256 3ac88f3cddb1e2d52c8ed8233ec5000ed075eda920556f940487ac01117419cb
+  frontend/.storybook/preview.ts        3859 B  sha256 0a4eb3d6bb462498a0ad14da9b73f1e879d3f8750c3f1414107153a93c7820a9
+  frontend/.storybook/build-storybook.mjs 743 B  (bin shim -> `storybook build`)
+  frontend/package.json: @storybook/{addon-essentials,addon-interactions,blocks,cli,nextjs,test} ^8.6.14
+
+SUPERSEDES §20.3 (EXIT=1, "reading 'tap'"). The `tap` throw was the webpack cache-shutdown
+path; main.ts now sets `config.cache = false` in webpackFinal (1598 B, 22:17). §20.3 measured
+the 1219 B pre-patch config. Raw exit codes above are the post-patch measurement.
+
+CAVEAT (measured, not hidden): the seat's own fire left team/RUN_storybook-dev_p6.log at 0 B —
+the process was SIGKILLed (taskkill /T /F, §20.1) so its block-buffered stdout never flushed.
+This file is the orchestrator's own re-run of both command shapes.

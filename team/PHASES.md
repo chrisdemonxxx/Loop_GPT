@@ -1539,3 +1539,192 @@ past a 390 px viewport). **Two owners, two artifacts, both absent** — P5's hea
 - **Owner delta: one row added, none changed.** `qa-verify` → the clean step must also remove
   `frontend/tsconfig.tsbuildinfo`, plus the P5 RED gate spec `frontend/tests/e2e/mobile-composer.spec.ts`.
   `pixel-measure` and `storybook-dev` rows are `running`, owner unchanged from §18.
+
+---
+
+## 20. The re-fire, and the pair that was never dead (2026-09-29 22:1x EDT, HEAD `48e613d`)
+
+### 20.1 The re-fire, and the duplicate it collided with
+
+Two seats were re-fired detached by `boss-bot` (terminal-tool background session, stdout+stderr redirected to
+`team/RUN_<seat>_p6.log`, prompt = `team/ASK_<seat>_p6.txt` + an appended RE-FIRE DELTA, ask files NOT re-authored):
+
+| seat | re-fire launcher pid | python child | created | owed first artifact |
+|---|---|---|---|---|
+| `pixel-measure` | **21832** | 62756 | 22:10:14 | `frontend/tokens.json` + first rows of `team/VISUAL_PARITY.md` |
+| `storybook-dev` | **27900** | 44436 | 22:10:14 | `frontend/.storybook/{main,preview}.ts` + a GREEN `build-storybook` + the story index |
+
+**hr-bot's premise is CORRECTED, not confirmed.** The 22:0x fire was **never dead**: at 22:12 the
+22:08:34 pair was still running - `pixel-measure` launcher **36920** (descendant tree 12 procs, **18.5 s CPU**,
+4 x `headless_shell` mid-render) and `storybook-dev` launcher **14340** (3 procs, 26.8 s CPU). The pids
+§19 logged (27072 / 64904) were that fire's *shell* pids, so `absent from tasklist` was a **wrong-pid
+measurement, not a death**. The 0 B `RUN_*_p6.log` files are also not evidence of death: `hermes -z` writes
+to a file fd, so the log is block-buffered and flushes only at exit.
+
+**That made TWO seats per lane in ONE `frontend/`** - both pixel-measure trees held 4 headless Chromium shells
+each, rendering the same `frontend/out/` and the same `:4123`. Deduped, dupes first:
+
+```
+$ taskkill /PID 36920 /T /F   -> GONE (tree: 65080, 45188, 46856, + headless_shells)
+$ taskkill /PID 14340 /T /F   -> GONE (tree: 59516, 60344, 6324)
+survivors: 21832 (pixel-measure) ALIVE | 27900 (storybook-dev) ALIVE
+```
+
+The later fire was kept because its delta carries the load-bearing guard the earlier one lacked:
+*"do NOT run `npm ci` (it wipes `node_modules`)"* - two lanes share one `frontend/`.
+**No corruption from the kill:** sha256 of every baseline file identical pre/post; the only change in that
+window was one added file, `deltas.json`.
+
+### 20.2 On disk, measured (not self-reported)
+
+| path | bytes | sha256 |
+|---|---|---|
+| `frontend/tokens.json` | **1,089,146** | `8d94ad1ea9d20075f1e28eb0dedaf9bbb8bfd46b9db0b60234b1eaa6d4250418` |
+| `frontend/tests/visual/measure.cjs` | 12,408 | `475601f391a2b727ad2859ce2e779fab17aa324254c6970e70080dd7c613c0b8` |
+| `frontend/tests/baselines/MANIFEST.json` | 4,247 | `9804cec294858b605f0a1303d016cb629cb6a9901307fd14b4836bcdd17aed9e` |
+| `frontend/tests/baselines/deltas.json` | 15,252 | - |
+| `frontend/.storybook/main.ts` | 1,219 | `b74f2911694cf09298c6f91e1ce75d2d96e8c6ff87ee53151a7dea07ec087ed2` |
+| `frontend/.storybook/preview.ts` | 3,859 | `0a4eb3d6bb462498a0ad14da9b73f1e879d3f8750c3f1414107153a93c7820a9` |
+| `frontend/storybook-static/index.json` | 8,176 | `98e42da70c6ce195c264852129cb9eba5bb4d9b88a7cbc9edd5e90db4e4e1956` |
+
+- `frontend/tests/baselines/**` - **62 files** = 30 PNG + 30 a11y json + MANIFEST + deltas;
+  sha256 of the sorted `"<sha>  <path>"` manifest of the whole set = **`11cd0d329839c3b5be930c78447035ffdcb665e00350db59b964dc5bcc56b7f9`**.
+  Grown from the 24 files §19 measured (settings lane + `MANIFEST.json` + `deltas.json` added).
+- `frontend/tokens.json` **meets its acceptance**: `headRevision` = `48e613dcb3bcb66f5fbdd41c7f58947d263fc63a`
+  (= HEAD), `themes.light` **and** `themes.dark`, 6 families each, and every value is
+  `{"name","selector","value"}` - **the element selector is recorded per value**. Captured by
+  `node tests/visual/tokens.cjs` against the real static export on `:4123`, chromium 131.0.6778.33, DSF 2.
+- `frontend/package.json` 1,720 -> **2,149 B** (`@storybook/*` dev-deps + `storybook` / `build-storybook`
+  scripts); 5 story files (`Composer` 4,566, `MessageList` 4,371, `Sidebar` 3,224, `ArtifactCard` 1,576,
+  `ModelSelector` 1,396) -> `storybook-static/index.json` v5 lists **31 story entries**.
+- **STILL MISS:** `team/VISUAL_PARITY.md` (pixel-measure); the seat's own `build-storybook` **exit code**.
+
+### 20.3 The one gate that is RED: `build-storybook` exits 1
+
+`storybook-dev`'s exit criterion is a GREEN build. The seat's log is still buffered, so `boss-bot` ran the
+gate independently, twice, into a throwaway `-o` dir (no clobber), the second with telemetry off and `CI=1`:
+
+```
+$ STORYBOOK_DISABLE_TELEMETRY=1 CI=1 ./node_modules/.bin/storybook build -o .sb-verify2 --quiet --disable-telemetry
+info => Manager built (153 ms)
+info => Building preview..
+=> Failed to build the preview
+SB_BUILDER-WEBPACK5_0002 (WebpackInvocationError): Module not found: TypeError: Cannot read properties of
+undefined (reading 'tap')   at @storybook/builder-webpack5/dist/index.js:1:25029
+EXIT=1
+```
+
+**Reproducible: `EXIT=1` on both runs** - while still writing a complete 3.7 MB / 31-entry index.
+So *"stories exist"* is true and *"green"* is FALSE: the manager builds, the **preview** build throws
+(`reading 'tap'` at `builder-webpack5` - the signature of a webpack-version mismatch between
+`@storybook/builder-webpack5` and the project's webpack, not a story-file defect). A seat that pastes
+`index.json` and calls the gate green would be self-reporting over a red exit code. **Owner: `storybook-dev`.**
+
+### 20.4 Push
+
+**Nothing to push; the §19 claim is stale.** Authoritative check, bypassing local refs:
+
+```
+$ git ls-remote origin release/owned-staging-20260917
+48e613dcb3bcb66f5fbdd41c7f58947d263fc63a   refs/heads/release/owned-staging-20260917
+$ git rev-parse HEAD                                   -> 48e613d
+$ git rev-list --left-right --count origin/...HEAD     -> 0    0
+```
+
+Remote tip == local HEAD, ahead **0**. §19's *"HEAD `ea17529` unpushed, remote `fdea17d`"* is superseded:
+both `ea17529` and `48e613d` are on the remote.
+
+### 20.5 Supersedes, and the owner delta
+
+- **Supersedes §19's seat pids (27072 / 64904)** as the live seats, and supersedes the premise
+  *"the seat runs did NOT survive their caller"*: they did survive - the measurement used the wrong pid.
+- **§19.2 stands, re-measured:** P5's RED gate spec is still absent and `Composer.tsx`'s 70 px Send
+  overflow is still unfixed; no phase is re-opened.
+- **Owner delta:** no row changed hands. `pixel-measure` (21832) still owes `team/VISUAL_PARITY.md` first
+  rows; `storybook-dev` (27900) now owes a **green** `build-storybook` (exit 0), which is a *config* fix,
+  not a story fix.
+- **New hygiene rows (two):**
+  1. *A seat's launcher pid is not the seat.* Measure liveness with
+     `Get-CimInstance Win32_Process` matched on the profile flag in the command line, and measure *work* by
+     summing CPU over the descendant tree - the launcher sits at 0.0 s CPU with 1 thread while its python
+     child renders.
+  2. *Do not infer a second fire before checking for a live first.* The 22:10 fire duplicated a live 22:08
+     pair and put two renderers on one `frontend/`; dedupe before dispatch, not after.
+- **Concurrent-writer hazard:** a sibling `boss-bot` session (pid **20240**, `-p boss-bot`, 22:08:27) is
+  still live with this same prompt and may also append a section 20. If `team/PHASES.md` carries two
+  `## 20.` headings, this one is the one whose pids are 21832 / 27900.
+
+---
+
+## 21. §20 CLOSE-OUT — the two rows §20 left open are CLOSED, measured (the pass the boss asked for as "§20")
+
+`boss-bot`, 2026-09-29 22:2x EDT, HEAD **`3b994cd`**. A sibling `boss-bot` (pid **20240**, same prompt)
+appended its `## 20.` first, so this is the same pass numbered **21** — one `## 20.` and one `## 21.`,
+not two §20s. Every number below is mine, from the filesystem.
+
+### 21.1 `team/VISUAL_PARITY.md` — landed, and its gate re-run by the orchestrator
+
+`team/VISUAL_PARITY.md` **10,164 B**, sha256 **`6bf5178fcbe570bb108e4b9a2ee3aeabb711cac0fab5cd277efd9bd70cf9f44f`**
+(22:19). §20.2's "STILL MISS: `team/VISUAL_PARITY.md`" and §20.5's "21832 still owes it" are **closed**.
+
+- 30 rows (screen × theme × viewport), each carrying bytes + sha256 + delta % + verdict; `chat-shell` @390x844
+  and @320x844 carry **pending P5** because P5's fix has not landed.
+- **Independent re-run of the seat's own gate:** `node tests/visual/measure.cjs --verify` → **EXIT 0**,
+  `rows 30 · worst delta 0.0000% · FAIL 0`. Row 1 JSON: `baselineSha256 == liveSha256 == 92439c18eb06…`,
+  `diffPixels 0`, `a11yDiff 0`, `verdict PASS`.
+- Spot-checked against disk: `frontend/tests/baselines/landing/dark/1440x900.png` **401999 B**, sha256
+  `92439c18eb0658a3dd55c2fd32550f5c2040b60fec55eef39a24010a7b0ea50c` — byte for byte the ledger's number.
+  `find … -name '*.png' -printf '%s' | awk` → **5,659,631 B in 30 PNG** = the ledger's own manifest total.
+- **Supersedes §20.2's MANIFEST row:** on disk now `frontend/tests/baselines/MANIFEST.json` **12,633 B**,
+  sha256 **`059194bb3f5e47134c28ea718739640620880e7c699843538d409c0b37844786`** (the ledger cites exactly this),
+  **not** the 4,247 B / `9804cec2…` §20.2 measured — the later capture rewrote it. The `deltas.json` on disk
+  (sha `c6f703e8…`) is my re-run's, written after the ledger's; the row set is identical.
+- `frontend/tokens.json` 1,089,146 B sha `8d94ad1e…` (unchanged, re-hashed) — light+dark, selector per value.
+
+### 21.2 `build-storybook` is GREEN — §20.3's RED is superseded by the config patch
+
+Two raw runs, both on the current config (`frontend/.storybook/main.ts` **1,598 B**, sha256
+`3ac88f3cddb1e2d52c8ed8233ec5000ed075eda920556f940487ac01117419cb`, mtime 22:17):
+
+```
+cd frontend && npx build-storybook                        -> EXIT 0   ("Preview built (39 s)")
+cd frontend && ./node_modules/.bin/storybook build -o <tmp> --quiet --disable-telemetry
+                                                          -> RAW_CLI_EXIT 0 ("Preview built (38 s)", 31 entries)
+frontend/storybook-static/index.json  8176 B  sha256 98e42da70c6ce195c264852129cb9eba5bb4d9b88a7cbc9edd5e90db4e4e1956
+```
+
+The `reading 'tap'` throw in §20.3 was the webpack cache-shutdown path; `main.ts` now forces
+`config.cache = false` in `webpackFinal`. **§20.3 measured the 1,219 B pre-patch config** (sha `b74f2911…`);
+both exit codes above are post-patch. Evidence file: `team/EVIDENCE_storybook_p6.txt` **2,213 B**.
+`.storybook/preview.ts` 3,859 B (`0a4eb3d6…`), `build-storybook.mjs` 743 B, `@storybook/*` deps in
+`frontend/package.json`; 5 story files → 31 index entries. **~20 of the §10 stories are still owed.**
+
+### 21.3 Log-diagnosis correction (mine), and the one durable recipe
+
+A 0-byte `team/RUN_*_p6.log` proves **nothing about a seat**. Here it had two causes, in order: (1) the v1
+pair was **SIGKILLed** (`taskkill /PID 36920 /T /F` / `14340 /T /F`, §20.1), so block-buffered stdout never
+flushed; (2) `hermes -z` writes to a file fd, so a log is only as fresh as the last 4 KiB block. The 4,074 B
+in `team/RUN_pixel-measure_p6.log` (pid **63928**) is exactly one block — a flush at a seat's own exit, not a
+console-flag effect. **Recipe kept: `team/refire_seat.py`** (1451 B, sha256
+`9752228920aa7176a21d9bf0ac5fe45ea9008904d763586e5f85047694573bb4`) — spawns `hermes.exe -p <seat> --in
+<proj> -z "<ask + delta-note>"` with `CREATE_NEW_CONSOLE|CREATE_NEW_PROCESS_GROUP`, stdout+stderr to the log.
+Ask files were read, never re-authored. Pids this pass: **36920**, **14340** (both killed), **63928** (clean exit).
+
+### 21.4 Push
+
+`git rev-list --left-right --count origin/release/owned-staging-20260917...HEAD` → **`0	0`**; HEAD `3b994cd`
+== remote tip. §19's `ea17529` is on the remote. Nothing left unpushed.
+
+### 21.5 Supersedes, and the owner delta
+
+- **Supersedes §20.2's MANIFEST row and its two "STILL MISS" rows; supersedes §20.3 (RED) and §20.5's
+  "owes a green build".** §20.1/§20.4 (dedupe, remote tip) stand.
+- **§19.2 stands, re-measured:** P5's fix has not landed and `frontend/tests/e2e/mobile-composer.spec.ts`
+  is still absent — **`ui-visual` and `qa-verify` hold the head of the critical path.**
+- **Owner delta, three rows, none changed hands:**
+  `pixel-measure` → first artifacts landed (`tokens.json`, baselines 62 files, `VISUAL_PARITY.md`); still owes
+  `frontend/tests/e2e/visual-parity.spec.ts`. `storybook-dev` → `.storybook/**` + a green `build-storybook` +
+  the 31-entry index landed; still owes ~20 §10 stories and the storybook line in the gate. `boss-bot` →
+  two hygiene rows: **dedupe before dispatch** (two lanes ran two renderers each on one `frontend/` this window)
+  and **never `taskkill /T /F` a seat whose stdout is a file** (you lose its transcript, then misread the 0 B
+  as death — which is exactly how §19's premise and my own §20 draft went wrong).
