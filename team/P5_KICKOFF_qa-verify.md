@@ -44,8 +44,28 @@ card rects and the intersection test are all in it) rather than re-deriving the 
 2. **GREEN after `ui-visual`'s commit:** same command, raw output, plus the commit SHA.
    Unit gate beside it: `npx tsc --noEmit` exit 0, `npx vitest run` 23 files / 151 tests.
 3. **LIVE re-measure (this is the acceptance):** the same spec pointed at `https://loop-gpt.cyou`
-   (base URL override; an authed session is needed — `hr-bot` used a throwaway account) at
-   **390×844 and 360×800**, with raw rects pasted beside it. Until this line exists, P5 is not done.
+   (base URL override; the authed session is the fixture in **§3a** below — verified live by
+   `boss-bot` 2026-09-30 01:0xZ, so nothing here waits on a human) at **390×844 and 360×800**, with
+   raw rects pasted beside it. Until this line exists, P5 is not done.
+
+### 3a. The live-session fixture — verified live, not taken from a note
+
+```
+POST https://loop-gpt.cyou/api/auth/login
+     {"email":"hr.mobile.probe.20260929@example.com","password":"HrProbe!2941-aa"}
+  -> HTTP=200  310 B  keys=['token','user']  token_len=177
+GET  /api/account/me   (Bearer that token) -> HTTP=200 354 B  plan=free, credits=30,
+                        usage={tokensIn:0,tokensOut:0,images:0,messages:0}
+GET  /api/conversations                    -> HTTP=200 2 B   []
+NEGATIVE CONTROL, password "wrong-2941-aa"  -> HTTP=401 31 B  {"error":"Invalid credentials"}
+```
+
+Disposable fixture, no data (`/api/conversations` empty; all usage counters zero). The 401 on a wrong
+password is the point: it is real auth, not a stub that accepts anything. Script + raw output:
+`team/probe_p5_fixture.py` (1,333 B, sha256 `e724fd538a92b01f…`),
+`team/EVIDENCE_p5_fixture_probe.txt` (835 B, sha256 `4a848ef83cd4c0c2…`). Provenance and the full
+argument: `team/PHASES.md` §15.2; the credential is also recorded in `team/NOTE_ui_mobile_web_hr-bot.md`
+§2f (its author). If you rotate it, say so in one line and `hr-bot` updates §2f.
 
 ## 4. Boundaries
 

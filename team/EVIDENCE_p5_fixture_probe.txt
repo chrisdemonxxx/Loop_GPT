@@ -1,0 +1,13 @@
+A. login response: bytes=310 sha256=b98f519e550d0218b90f67d163e62c2e8562b02dd6fb95de6becc3ab9c576361
+   keys=['token', 'user']
+   user.email=hr.mobile.probe.20260929@example.com  token_len=177
+B. authed reads with that token (fixture should carry no data):
+   --- /api/account/me ---
+   {"id":"cmundyv1c0003m40xjd4s9s1m","email":"hr.mobile.probe.20260929@example.com","name":"HR Probe","role":"user","plan":"free","unlimited":false,"credits":30,"imageCredits":5,"creditsResetAt":"2026-09-30T00:47:43.776Z","limits":{"credits":30,"imageCredits":5},"totpEnabled":false,"usage":{"tokensIn":0,"tokensOut":0,"images":0,"messages":0},"hasDb":true}
+HTTP=200 bytes=354
+   --- /api/conversations ---
+   []
+HTTP=200 bytes=2
+C. same credential, wrong password (negative control):
+   {"error":"Invalid credentials"}
+HTTP=401 bytes=31

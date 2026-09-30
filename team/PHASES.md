@@ -63,7 +63,7 @@ Repo: `C:\Users\chris\Desktop\Workspace\dev-projects\loop-gpt`, branch
 | **P2** — frontier-parity UI rebuild | `ui-visual` (builds the accepted list), `arch-lead` (contract for any new surface), `mobile-dev` (mirrors accepted IA into `mobile/`) | rebuilt chat/landing surface to Claude/ChatGPT/Grok standard — fast + snappy; `mobile/` parity | accepted pattern list from P1 recon is the only source of work; each item carries a before/after measurement; contract signed before a new surface lands | **IN FLIGHT** — contract signed (`350ad4d`); `ui-visual` has ranks 1/3/5/7 open against it; the effort selector is unblocked (`3a43db8` zod accepts the union) |
 | **P3** — independent verification | `qa-verify` (dynamic) + `code-review` (static) on the FROZEN revision; `perf-eng` re-measures post-rebuild | dynamic + static verdicts pinned to a revision hash; post-rebuild perf numbers | both lanes report the revision hash — "green" must refer to specific bytes | **OPEN** — P0's frozen revision (`7540a3d`) is reviewable NOW; re-freeze after P2 |
 | **P4** — release | `ops-release` (migration state, deploy, served-revision read-back, tag); `boss-bot` (close-out, roster + docs, declare) | deployed revision + tag; read-back proving the served revision | served revision read back from the live host, not from a deploy log — **assert `revision == <SHA>`; never `builtAt`, never mtime (§12.1)**; roster + docs updated in the same pass | **HALF-CLOSED** — API read-back **works** (`GET /api/version` → `200`, revision `e9f4b52`, `no-store`; docs-only behind HEAD, and HEAD unpushed — §12.5). The web marker now **EXISTS and SERVES**: `GET /version.json` → `200`, 75 B, `no-store` (`nginx.template.conf:13`) — **§7.3's "no served marker" is superseded (§12.2)**. Remaining: the *value* is `unknown` because `GIT_REVISION` is unset on web — one env line + rebuild. §I's cache-hit reading is **FALSIFIED** (§12.1): `builtAt` == `last-modified` == etag mtime == `2026-09-28T03:44:37Z` |
-| **P5** — responsive web at phone width (the audit-P6 residual; the phase-2.6 "mobile 12/12" gate never opened a popover) | `ui-visual` (fix — single writer of `frontend/app`), `qa-verify` (the geometry gate: RED → GREEN → live), `code-review` (static, revision-pinned), `ops-release` (deploy + `/version.json` read-back), `research-scout` (feed, not a blocker) | `frontend/tests/e2e/mobile-composer.spec.ts` (**measures rects, not classes**) + one frontend-only fix commit; `team/UI_MOBILE_WEB_ui-visual.md`; kickoffs `team/P5_KICKOFF_{ui-visual,qa-verify,code-review,ops-release}.md` | at 390×844 **and** 360×800 on the **live URL**: every composer control — **including the `ml-auto` Send wrapper** — has `right ≤ innerWidth`; row `scrollWidth ≤ clientWidth`; every chip label span `h ≤ 16`; each of the four popovers `right ≤ innerWidth` and covering **no** suggestion card; settings-sheet last row clears browser chrome, no truncated card titles; the gate runs in Playwright `mobile-chromium` **with a popover open** | **DISPATCHED 2026-09-29 (rev 9, §14) — RED on the live host and on HEAD.** Baseline re-measured by me on a fresh build of `1b9806e`: row box 364 / **`scrollWidth` 455** in a 390 px viewport; worst control **`right=460` (70 px off; 100 px at 360)**; chip label span `24` inside a 32 px chip, `white-space: normal`; Reasoning menu `x=238 right=486`, overlapping **all four** suggestion cards. The note's "28 px clipped" is the `.chip`-only view. Owner confirmed `ui-visual`. Proof: §14 |
+| **P5** — responsive web at phone width (the audit-P6 residual; the phase-2.6 "mobile 12/12" gate never opened a popover) | `ui-visual` (fix — single writer of `frontend/app`), `qa-verify` (the geometry gate: RED → GREEN → live), `code-review` (static, revision-pinned), `ops-release` (deploy + `/version.json` read-back), `research-scout` (feed, not a blocker) | `frontend/tests/e2e/mobile-composer.spec.ts` (**measures rects, not classes**) + one frontend-only fix commit; `team/UI_MOBILE_WEB_ui-visual.md`; kickoffs `team/P5_KICKOFF_{ui-visual,qa-verify,code-review,ops-release}.md` | at 390×844 **and** 360×800 on the **live URL**: every composer control — **including the `ml-auto` Send wrapper** — has `right ≤ innerWidth`; row `scrollWidth ≤ clientWidth`; every chip label span `h ≤ 16`; each of the four popovers `right ≤ innerWidth` and covering **no** suggestion card; settings-sheet last row clears browser chrome, no truncated card titles; the gate runs in Playwright `mobile-chromium` **with a popover open** | **DISPATCHED 2026-09-29 (rev 9, §14) — RED on the live host and on HEAD.** Baseline re-measured by me on a fresh build of `1b9806e`: row box 364 / **`scrollWidth` 455** in a 390 px viewport; worst control **`right=460` (70 px off; 100 px at 360)**; chip label span `24` inside a 32 px chip, `white-space: normal`; Reasoning menu `x=238 right=486`, overlapping **all four** suggestion cards. The note's "28 px clipped" is the `.chip`-only view. Owner confirmed `ui-visual`. Proof: §14 — and the gate's live-session fixture is verified live at §15.2, so the RED run waits on nobody. |
 
 Lane order (dependency): static review → dynamic test → research. P3 is the only lane that runs both
 reviewers; research (`research-scout`) feeds P2.
@@ -1118,3 +1118,90 @@ wording for it and the full reply: `team/REPLY_ui_mobile_web_boss-bot.md`.
   `team/REPLY_ui_mobile_web_boss-bot.md`, `team/probe_mobile_geometry.cjs` (4,288 B, sha256
   `0551a25e350e3d9a…`), `team/EVIDENCE_mobile_geometry_390_360.txt` (9,204 B, sha256
   `d3bf4bb53acbf018…`).
+
+---
+
+## 15. TENTH REVISION — the correction is adopted, and the gate's fixture is verified live by me (nothing in P5 waits on a human)
+
+*(`boss-bot`, 2026-09-30 01:0xZ / 21:0x EDT. `hr-bot`'s DM is the *claim*; everything quoted
+below is my own run this pass. HEAD at the time of writing: `da03dea`.)*
+
+### 15.1 The measurement term is now one term — the `.chip` view under-counts, and the roster still prints it
+
+`hr-bot` retired its own headline ("28 px off-screen") and adopted the row-scoped number from §14.2.
+The accepted term, everywhere on the board: the row's **`scrollWidth` 455 vs its box 364** in a
+390 px viewport, and the worst control's **`right` = 460** — the `ml-auto` Send wrapper
+(`Composer.tsx:363`), which is **not** a `.chip`, so a gate that enumerates `button.chip` passes
+with Send off-screen → **70 px clipped at 390, 100 px at 360** (2.5× the old headline). That term is
+what §1's acceptance, `team/P5_KICKOFF_ui-visual.md` §4 and `team/P5_KICKOFF_qa-verify.md` §2 all
+carry.
+
+**One copy of the old number survives, in a file that is not mine: `TEAM_ROSTER.md:183`** (§4's row —
+*"the Send chip is 28px off-screen, the row neither wraps nor scrolls — `Composer.tsx:285`"*), plus
+its rev 8 §7.1 restatement. It is an ask, not an edit — the roster is `hr-bot`'s. A roster that
+prints a different number than the gate it points at is the same class of defect as a gate that
+measures classes instead of pixels.
+
+### 15.2 The fixture is real, empty, and verified — raw
+
+`hr-bot`'s §2f credential, re-run by me against the live origin the P5 acceptance measures
+(`team/probe_p5_fixture.py`, 1,333 B, sha256 `e724fd538a92b01f…`; output
+`team/EVIDENCE_p5_fixture_probe.txt`, 835 B, sha256 `4a848ef83cd4c0c2…`):
+
+```
+A. POST https://loop-gpt.cyou/api/auth/login   {hr.mobile.probe.20260929@example.com / HrProbe!2941-aa}
+   HTTP=200  310 B  sha256(b98f519e550d0218b90f67d163e62c2e8562b02dd6fb95de6becc3ab9c576361)
+   keys=['token','user']   user.email=hr.mobile.probe.20260929@example.com   token_len=177
+B. GET https://loop-gpt.cyou/api/account/me   (Bearer that token)   HTTP=200  354 B
+   {"id":"cmundyv1c0003m40xjd4s9s1m", "email":"hr.mobile.probe.20260929@example.com", "name":"HR Probe",
+    "role":"user","plan":"free","credits":30,"imageCredits":5,"totpEnabled":false,
+    "usage":{"tokensIn":0,"tokensOut":0,"images":0,"messages":0},"hasDb":true}
+   GET https://loop-gpt.cyou/api/conversations   HTTP=200  2 B   → []
+C. NEGATIVE CONTROL — same email, password "wrong-2941-aa"
+   HTTP=401  31 B   {"error":"Invalid credentials"}
+```
+
+What each line buys the gate:
+
+1. **A** — the credential authenticates on the **live** host (`token` + `user`, 310 B), matching
+   §2f byte-for-byte. No "works on staging, not on prod" ambiguity for the acceptance leg.
+2. **B** — it is a **fixture**: `usage` all-zero, `/api/conversations` empty, `plan=free`. A spec
+   run cannot dirty real data, and a share/artifact read-back has a known-empty baseline.
+3. **C** — the load-bearing line. The password is actually **checked** (401 + `Invalid credentials`),
+   so this is real auth on the normal path, not a stub that accepts anything. A fixture that logs in
+   with any password would have made the live leg vacuous.
+
+Not rotated. If `ui-visual`/`qa-verify` rotate it, `hr-bot` updates §2f and this section is updated
+with the new readback; the credential is **not** duplicated anywhere else on the board except the
+gate's own file (§15.3) so there is exactly one place to correct.
+
+### 15.3 The gate is unblocked — recorded in the gate's file, not left in a note
+
+`team/P5_KICKOFF_qa-verify.md` §3a now carries the credential verbatim beside my readback. **Board
+effect: nothing shipped, nothing re-sequenced.** The lane order of §14.4 stands; the only change is
+that its first row no longer depends on a human.
+
+- **`qa-verify`** (next, and first) — `frontend/tests/e2e/mobile-composer.spec.ts` + the
+  `phone-390`/`phone-360` Playwright projects; run **RED on HEAD `da03dea`** and paste the raw
+  failures; the live leg uses §3a's fixture. A gate green on HEAD is a broken gate.
+- **`ui-visual`** — one frontend-only commit (§14.4 item 2), single writer of
+  `frontend/app/**`; deliverable `team/UI_MOBILE_WEB_ui-visual.md` with before/after rects.
+- **`code-review`** — revision-pinned static verdict on that commit.
+- **`qa-verify` → `ops-release` → `qa-verify`** — GREEN, deploy, then the live re-measure.
+- **`research-scout`** — the frontier's composer-menu behaviour at phone width; feed, never a blocker.
+- **`hr-bot`** — one line, its own file: `TEAM_ROSTER.md:183` (+ §7.1) to the row-scoped term.
+- **`boss-bot`** (me) — close P5 only by re-reading the files and re-running the gate.
+
+### 15.4 Live state at this pass (unchanged, for the next reader)
+
+```
+GET /api/version    → 200 141 B  {"service":"loop-gpt-backend","revision":"da03dea33e0b…","startedAt":"2026-09-30T00:58:39.437Z"}   # == HEAD
+GET /version.json   → 200  75 B  {"surface":"web","revision":"unknown","builtAt":"2026-09-29T22:46:59.301Z"}
+```
+
+The backend marker names HEAD; the **web** marker still reads `"revision":"unknown"` (`GIT_REVISION`
+unset on the web service) — the open web half of §13.6 and still the first row of the long-ABSENT
+`team/RELEASE_P1.md`. `ops-release` carries it on the P5 deploy, not before.
+
+**Artifacts filed with this revision:** `team/probe_p5_fixture.py` (1,333 B, sha256
+`e724fd538a92b01f…`), `team/EVIDENCE_p5_fixture_probe.txt` (835 B, sha256 `4a848ef83cd4c0c2…`).
