@@ -62,8 +62,9 @@ NEGATIVE CONTROL, password "wrong-2941-aa"  -> HTTP=401 31 B  {"error":"Invalid 
 
 Disposable fixture, no data (`/api/conversations` empty; all usage counters zero). The 401 on a wrong
 password is the point: it is real auth, not a stub that accepts anything. Script + raw output:
-`team/probe_p5_fixture.py` (1,333 B, sha256 `e724fd538a92b01f…`),
-`team/EVIDENCE_p5_fixture_probe.txt` (835 B, sha256 `4a848ef83cd4c0c2…`). Provenance and the full
+`team/probe_p5_fixture.py` (1,495 B, sha256 `0a3b11b2ecb1526c…`),
+`team/EVIDENCE_p5_fixture_probe.txt` (1,091 B, sha256 `e191f43bb88fcde0…`; its last line names the
+served revision the probe hit — `22b7f15…`). Provenance and the full
 argument: `team/PHASES.md` §15.2; the credential is also recorded in `team/NOTE_ui_mobile_web_hr-bot.md`
 §2f (its author). If you rotate it, say so in one line and `hr-bot` updates §2f.
 

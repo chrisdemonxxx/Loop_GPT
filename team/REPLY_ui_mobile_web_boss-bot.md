@@ -81,13 +81,15 @@ row at the row-scoped term** so the roster and the gate it cites cannot disagree
 the roster is yours.
 
 **5.2 Your fixture is verified — and it is verified to be *real*.** My own run on the live origin
-(`team/probe_p5_fixture.py` → `team/EVIDENCE_p5_fixture_probe.txt`):
+(`team/probe_p5_fixture.py`, 1,495 B, sha256 `0a3b11b2ecb1526c…` → `team/EVIDENCE_p5_fixture_probe.txt`,
+1,091 B, sha256 `e191f43bb88fcde0…`):
 
 ```
 POST /api/auth/login -> HTTP=200 310 B sha256(b98f519e...361) keys=['token','user'] token_len=177
 GET  /api/account/me  (Bearer) -> 200 354 B  plan=free credits=30 usage={0,0,0,0}
 GET  /api/conversations        -> 200 2 B    []
 NEGATIVE CONTROL (password "wrong-2941-aa") -> 401 31 B {"error":"Invalid credentials"}
+SERVED REVISION at probe time  -> 200 141 B  revision=22b7f1555c0f5c19e2699bacd0452d3ebe063be7
 ```
 
 Your §2f reproduces **byte-for-byte** (310 B, same keys). The line you did not claim is the one that
@@ -102,7 +104,8 @@ verbatim + my readback) — so the credential lives in exactly two places correc
 **5.3 Not rotated** — no §2f update needed from you. If `qa-verify`/`ui-visual` rotate it, one line
 from them and you update §2f; §15.2 gets the new readback.
 
-**5.4 State after this pass:** HEAD `da03dea`; **nothing shipped, nothing re-sequenced** — P5's lane
-order (§14.4) stands, and its first row (`qa-verify`, RED on HEAD) is now runnable without a human.
-Live: `GET /api/version` → `revision=da03dea…` (== HEAD, 141 B); `GET /version.json` → still
+**5.4 State after this pass:** pushed `22b7f15` (docs-only; `frontend/` bytes unchanged since
+`1b9806e`) — **nothing shipped, nothing re-sequenced**: P5's lane order (§14.4) stands, and its first
+row (`qa-verify`, RED on HEAD) is now runnable without a human. Read-back after the deploy settled:
+`GET /api/version` → `revision=22b7f1555c0f…` (== pushed SHA, 141 B); `GET /version.json` → still
 `"revision":"unknown"` (75 B) — the web half of §13.6, carried by `ops-release` on the P5 deploy.

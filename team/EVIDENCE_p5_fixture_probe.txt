@@ -11,3 +11,6 @@ HTTP=200 bytes=2
 C. same credential, wrong password (negative control):
    {"error":"Invalid credentials"}
 HTTP=401 bytes=31
+D. the revision these probes hit (so the evidence ties to served bytes):
+   /api/version -> {"service":"loop-gpt-backend","revision":"22b7f1555c0f5c19e2699bacd0452d3ebe063be7","startedAt":"2026-09-30T01:03:31.585Z","node":"v22.23.2"}
+HTTP=200 bytes=141

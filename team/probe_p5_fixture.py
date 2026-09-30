@@ -24,3 +24,6 @@ print("C. same credential, wrong password (negative control):")
 print("   " + curl("-X", "POST", "https://loop-gpt.cyou/api/auth/login",
                    "-H", "Content-Type: application/json",
                    "--data", '{"email":"hr.mobile.probe.20260929@example.com","password":"wrong-2941-aa"}')[:300])
+
+print("D. the revision these probes hit (so the evidence ties to served bytes):")
+print("   /api/version -> " + curl("https://loop-gpt.cyou/api/version")[:200])
