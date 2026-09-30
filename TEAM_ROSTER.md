@@ -1,8 +1,9 @@
 # Loop GPT — TEAM ROSTER (owner: hr-bot)
 
-Snapshot: 2026-09-29 (**rev 11** — the two seats §8 hired have delivered their **first measured
-artifacts** (`tokens.json` 1,089,146 B at HEAD; the Storybook harness + 5 stories), with the one
-RED gate named and owned — §9. Rev 10 corrected §6.3's suite count (re-run and reproduced); rev 9
+Snapshot: 2026-09-30 (**rev 12** — `boss-bot`'s **§22 close-out** landed on the user's "done", and
+§10 here is the state re-measured after it: the ledger's declaration, the P5 gate's parse count, and
+`ui-visual`'s uncommitted fix. Rev 11 recorded the two seats' first artifacts; rev 10 corrected
+§6.3's suite count (re-run and reproduced); rev 9
 answers the user's pasted **UI Schema Cloning Blueprint** (§0–§17 +
 Addendum A) with the roster read the spec earns: a surface→file→owner map, **one hire** (`pixel-measure`,
 the measured-pixels lane — cut and proven), two HR defects closed, and the two no-hire rulings (M-01…M-25
@@ -83,6 +84,15 @@ the dead group was not re-litigated (nothing changed on it):
 - No `503` cold-start seen this pass (the `qwen3-cyber` scale-to-zero window of the note below is
   real but was not hit — the endpoint was warm).
 **No repin needed: both live seats are still live and tool-capable; the dead group is unchanged.**
+**Re-probe 2026-09-29T21:0xZ (rev 7, hr-bot, raw `curl`, liveness **and** a real `tools` array per
+seat, `HF_TOKEN` from `profiles/hr-bot/.env`)** — run as the pre-dispatch check for project **P5**
+(six seats about to work: `ui-visual` fix, `qa-verify` gate, `code-review`, `ops-release`, plus the
+orchestrator); the dead group was not re-litigated:
+- `hf-dsv41` → liveness `HTTP=200 t=1.503s` (794 B); tools `HTTP=200 t=1.408s` (931 B), body carries
+  `[{"id": "chatcmpl-tool-a78e996b8037bba8", "type": "function", "function": {"name": "ping", "arguments": "{\"x\": \"1\"}"}}]`.
+- `qwen3-cyber` → liveness `HTTP=200 t=1.538s` (509 B); tools `HTTP=200 t=1.840s` (645 B), body carries
+  `[{"id": "call_5f445b9c2be3473fb2de6c82", "index": 0, "type": "function", "function": {"name": "ping", "arguments": "{\"x\": \"1\"}"}}]`.
+- No `503` cold-start this pass (both warm on the first call — see the scale-to-zero note below).
 `config.yaml` now carries exactly two `providers:` keys (`['hf-dsv41', 'qwen3-cyber']`) — the router
 and Azure blocks were pruned (`config.yaml.bak.no-hf-router-20260926-040442`), so the rejections are
 recorded here rather than left pinned anywhere.
@@ -505,3 +515,29 @@ the announced one-owner hand-off; no `ui-visual` component was touched.
 **Watch item for the next pass (carried, not resolved):** `team/PHASES.md` §20 notes a second
 `boss-bot` (pid 20240, same prompt) was live at 22:08 and could append a duplicate §20 — a second
 `## 20.` heading is the tell, and the fix is one heading, not a rewrite.
+
+---
+
+## 10. Rev 12 — `boss-bot`'s close-out (§22), and the state re-measured after it
+
+**The close-out exists.** `team/PHASES.md` **§22** (file 140,255 B / 1,843 lines at read), commit
+`b765f3b` = remote tip = local HEAD. Its declaration, verbatim in substance: *DONE* — the branch builds
+clean from a HEAD checkout (`next build` EXIT 0, `out/` 9.7 M), is live (`https://loop-gpt.cyou` HTTP
+200), the P2 gate is green, the a11y + desktop e2e suite exists, P6's measurement lane landed all
+three named artifacts, Storybook builds to a 31-entry index, and the **P5 gate now exists on disk**.
+*NOT done, each with an owner*: the P5 phone fix (not landed, gate RED), the gate's two phone
+projects (absent from the tracked config), `visual-parity.spec.ts`, `PERF_P1.md`, `RELEASE_P1.md`,
+`UI_MOBILE_WEB_ui-visual.md` (MISS), the deployed `revision:"unknown"`, ~20 §10 stories.
+
+**Re-measured by `hr-bot` right after it** (this is the roster's job — a close-out is a claim):
+
+| what | measured now | owner |
+|---|---|---|
+| HEAD / remote | `b765f3b` == `origin/release/owned-staging-20260917` | — |
+| the P5 gate spec | **still does not parse** — `ts.createSourceFile(…).parseDiagnostics.length` → **6** (line 149 `',' expected`; line 154 ×4). Line **141 is fixed** since §22.1 (now `…JSON.stringify(b) } as any)`), so 1 of its 3 syntax defects is closed; §22.1's other two (149/154) stand | `qa-verify` (pid 59476, alive) |
+| `ui-visual`'s fix | on disk as an **uncommitted** working-tree diff: `Composer.tsx` +6/−1, `globals.css` +7/−2 (`git diff --stat`); `team/UI_MOBILE_WEB_ui-visual.md` **MISS** | `ui-visual` (pid 63084, alive) |
+| §22.3's owed list | unchanged: `pixel-measure` → `visual-parity.spec.ts`; `storybook-dev` → ~20 stories + the `frontend/package.json` scripts/devDeps + one gate line; `qa-verify` → clean-step recipe, real runner name, the spec defects | per line |
+
+**Roster reading:** both seats the roster hired are live on exactly the rows §22.3 owes, and the two
+rows on the head of the critical path (the fix and the gate) have named, running owners. Nothing in
+§22.2 is owed without an owner — the roster's own bar.
