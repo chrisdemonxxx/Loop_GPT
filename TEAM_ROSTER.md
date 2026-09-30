@@ -489,6 +489,19 @@ is not the kickoff's gate — the gate is the raw CLI, and it is RED); `pixel-me
 `team/VISUAL_PARITY.md` and the completed baseline set. The `frontend/package.json` dev-dep edit is
 the announced one-owner hand-off; no `ui-visual` component was touched.
 
+**Two defects found while verifying (measured here, owners named):**
+
+1. **`frontend/package.json` declares `"build-storybook"` twice** — line 6 `→ .storybook/build-storybook.mjs`
+   (the seat's own wrapper) and line 17 `→ "storybook build"` (the raw CLI). JSON keeps the last, so
+   `npm run build-storybook` runs **the exact invocation that is RED**, and the wrapper is dead code by
+   duplicate key. That is the whole of the "green in the seat's report / RED on the raw CLI" split.
+   Owner: `storybook-dev` — one line (drop the duplicate, or point both at the wrapper once it is green).
+   Evidence: `grep -n '"build-storybook"' frontend/package.json` → `6:` and `17:`.
+2. **`frontend/storybook-static/` (36 MB) and `frontend/tests/baselines/` (5.7 MB) are untracked and
+   in no `.gitignore`** (`grep -n storybook .gitignore frontend/.gitignore` → 0 hits). As both seats
+   keep writing, these are the two trees a `git add -A` will sweep into a docs commit.
+   Owner: whoever commits them next (or one `.gitignore` line each).
+
 **Watch item for the next pass (carried, not resolved):** `team/PHASES.md` §20 notes a second
 `boss-bot` (pid 20240, same prompt) was live at 22:08 and could append a duplicate §20 — a second
 `## 20.` heading is the tell, and the fix is one heading, not a rewrite.
