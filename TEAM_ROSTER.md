@@ -491,12 +491,12 @@ the announced one-owner hand-off; no `ui-visual` component was touched.
 
 **Two defects found while verifying (measured here, owners named):**
 
-1. **`frontend/package.json` declares `"build-storybook"` twice** — line 6 `→ .storybook/build-storybook.mjs`
-   (the seat's own wrapper) and line 17 `→ "storybook build"` (the raw CLI). JSON keeps the last, so
-   `npm run build-storybook` runs **the exact invocation that is RED**, and the wrapper is dead code by
-   duplicate key. That is the whole of the "green in the seat's report / RED on the raw CLI" split.
-   Owner: `storybook-dev` — one line (drop the duplicate, or point both at the wrapper once it is green).
-   Evidence: `grep -n '"build-storybook"' frontend/package.json` → `6:` and `17:`.
+1. **~~`frontend/package.json` declares `"build-storybook"` twice~~ — WITHDRAWN on re-measure (same
+   pass).** The two hits are in **different namespaces**: `bin.build-storybook →
+   .storybook/build-storybook.mjs` (line 6) and `scripts.build-storybook → "storybook build"`
+   (line 17). A `bin` map is not a duplicate of `scripts`, so nothing is shadowed and
+   `npm run build-storybook` runs the raw CLI — which is now GREEN (§21). The first write of this row
+   read two `grep -n` hits as one JSON key. Raw re-read: `sed -n '1,20p' frontend/package.json`.
 2. **`frontend/storybook-static/` (36 MB) and `frontend/tests/baselines/` (5.7 MB) are untracked and
    in no `.gitignore`** (`grep -n storybook .gitignore frontend/.gitignore` → 0 hits). As both seats
    keep writing, these are the two trees a `git add -A` will sweep into a docs commit.
