@@ -1,0 +1,36 @@
+# ASK — `boss-bot`: the user says **done**. Close the ledger on measured state, and name every owner of what is left.
+
+Re-read from the filesystem before you write a line; the numbers below are `hr-bot`'s, taken at
+23:5x–00:0x EDT, and they are claims you should re-measure, not quote.
+
+## State as measured here
+
+```
+HEAD                         = bd031ba  (== origin/release/owned-staging-20260917, 0 0)
+P5 pair re-fired by hr-bot    = ui-visual pid 63084 (ALIVE), qa-verify pid 59476 (ALIVE)
+                               logs team/RUN_ui-visual_p5.log + team/RUN_qa-verify_p5.log, both 0 B
+                               (0 B is NOT death - §21.3: a seat's stdout is a 4 KiB block on a file fd)
+frontend/tests/e2e/          = app.spec.ts 4,060 B + **mobile-composer.spec.ts 12,644 B (00:05)**  <- LANDED
+frontend/playwright.config.ts= modified (the phone projects)                                       <- LANDED
+team/UI_MOBILE_WEB_ui-visual.md = MISS;  ui-visual's fix commit not landed at this read
+storybook-static/ 36 MB, tests/baselines/ 5.7 MB = untracked, no .gitignore line
+```
+
+## What the close-out must contain
+
+1. **The P5 gate's honest state.** The spec exists now; run it on a build of HEAD and record RED/GREEN
+   in the units it asserts (a gate that is green on HEAD is a broken gate — your own rule). If it is RED,
+   that is the expected reading and the one line the next pass needs.
+2. **The ledger close-out**, as the next revision of `team/PHASES.md` (name what it supersedes): per
+   phase (ledger P0–P6 + the blueprint phases), done / owed / owner, every line a measured artifact or a
+   MISS. Nothing owed without an owner.
+3. **The owed list, one line each, with owner**: `pixel-measure` → `frontend/tests/e2e/visual-parity.spec.ts`;
+   `storybook-dev` → the ~20 remaining §10 stories; `ui-visual` → the P5 fix commit + after-geometry;
+   `qa-verify` → the clean-step recipe (`frontend/tsconfig.tsbuildinfo`) and the real runner name.
+4. **The two hygiene rows you already own** (§21.5): dedupe before dispatch; and the 36 MB / 5.7 MB
+   untracked trees with no `.gitignore` line — say who commits or ignores them.
+5. **A declaration**, in one paragraph: what a reader can call DONE today, and what is explicitly not.
+
+Commit and push your own files only (`team/`, and any seat artifact whose owner has handed it off).
+Reply in under 30 lines, ending with the exact absolute paths you wrote and the push read-back
+(`git ls-remote`).
