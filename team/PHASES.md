@@ -1728,3 +1728,116 @@ Ask files were read, never re-authored. Pids this pass: **36920**, **14340** (bo
   two hygiene rows: **dedupe before dispatch** (two lanes ran two renderers each on one `frontend/` this window)
   and **never `taskkill /T /F` a seat whose stdout is a file** (you lose its transcript, then misread the 0 B
   as death — which is exactly how §19's premise and my own §20 draft went wrong).
+
+## 22. §22 CLOSE-OUT — the P5 gate is ON DISK and RED at HEAD; the ledger closes on measured state
+
+**Pass:** `boss-bot`, 2026-09-30 00:1x–00:3x EDT. Filed against `team/ASK_boss-bot_done.txt` on the user's
+word "done". **Supersedes §21.5's owner-delta and §16.6's ledger table; §21.1/§21.2 (measurement +
+storybook landed) and §21.3 (the 0-B log recipe) stand.** Everything below is re-measured this pass.
+
+### 22.0 Three deltas the ask's numbers took before I read them (all measured)
+
+```
+$ git rev-parse --short HEAD                      -> ca3682a   (ask said bd031ba)
+$ git diff --stat bd031ba ca3682a                 -> team/ASK_boss-bot_done.txt 36+, team/NOTE_boss-bot_done_state.md 3+  (docs only)
+$ git rev-list --left-right --count origin/release/owned-staging-20260917...HEAD  -> 0  0
+$ sha256sum frontend/playwright.config.ts          -> 307984c5…  781 B, 2 projects   (mtime 00:11:13)
+$ sha256sum frontend/tests/e2e/mobile-composer.spec.ts -> 9ae21ebf…  12,644 B  (mtime 00:05:29)
+```
+
+1. HEAD is **`ca3682a`**, one docs commit past the ask's `bd031ba` (hr-bot filed the ask; already on the remote).
+2. **`frontend/playwright.config.ts` was REVERTED to HEAD's 781 B at 00:11:13** — the `phone-390` / `phone-360`
+   projects the ask calls "LANDED" are **gone from the live tree** (it was `78b51845…` with 4 projects when the ask
+   was written). The live `qa-verify` seat (pid 59476, still alive) is the writer. **The gate's viewports live in
+   the config, and the spec calls no `setViewportSize`: with the revert, the describe labels (`viewport 390x844`)
+   are cosmetic and both projects run at the project's own width.**
+3. Same window: `frontend/package.json` + `package-lock.json` are back at HEAD (no `storybook` /
+   `build-storybook` scripts, no `@storybook/*` devDeps), so the `.storybook/**` on disk has no manifest entry.
+   `node_modules/.bin/storybook` still resolves (untracked tree).
+
+### 22.1 The P5 gate on a build of HEAD — **RED, and RED before it asserts anything**
+
+```
+$ git worktree add --detach …/lg-headgate ca3682a && cd lg-headgate/frontend && npx next build
+  -> RAW_CLI_EXIT 0 ; frontend/out/ 9.7M
+$ cd frontend && npx playwright test tests/e2e/mobile-composer.spec.ts --project=phone-390 --project=phone-360
+  -> SyntaxError: mobile-composer.spec.ts:141:124 Missing semicolon.  ->  Error: No tests found.
+$ node -e "ts.createSourceFile(…spec…).parseDiagnostics.length"   ->  9
+```
+
+The landed spec **does not parse**. Three distinct syntax defects, by line: **141** stray `)` closing
+`route.fulfill(…)` (`…JSON.stringify(b) }))`); **149** stray `)` closing the `stubApi` arrow (`return ok({}, 200)`
++ `}))`); **154** stray `}` inside `micInit`'s `setTimeout(() => this.onresult?.({…}) }, 150)`.
+
+Two further defects surface only once it parses (measured on a scratch copy of the *same* 12,644 B spec — product
+code untouched, `next build` unchanged):
+
+- **74 / 116:** `CARDS` is closed over inside `PROBE` and `MENU_PROBE` and handed to `page.evaluate`, and
+  `label` likewise in `MENU_PROBE` → `ReferenceError: CARDS is not defined` / `label is not defined`.
+  All 24 tests fail before one assertion runs.
+- With `CARDS` and `label` passed as arguments, the gate runs: **20 failed, 4 passed (5.4 s)**.
+
+**The units it asserts, measured on HEAD** (`team/RUN_gate_p5_scratch2.log`):
+
+```
+phone-390 project (390 wide):  row.scrollWidth 376  >  row.clientWidth 364   Expected <= 364, Received 376
+phone-360 project (360 wide):  row.scrollWidth 455  >  row.clientWidth 334   Expected <= 334, Received 455
+popovers:  "open EffortSelector: role=menu rendered"  Received: null (menu never renders)
+           locator.click: Element is not visible  on  button.chip[aria-label^="Reasoning effort"]
+chips (the 4 green):  pass by ASSERTING THE DEFECT — expect(wrap).toHaveLength(3) counts the 3
+           white-space:normal spans (span h=24 in a 32px chip); they invert when ui-visual's fix lands.
+```
+
+**The one line the next pass needs:** `mobile-composer.spec.ts` is RED on HEAD (376>364 at 390; 455>334 at 360)
+and needs **five** fixes before it is a gate — the three syntax defects (141/149/154), `CARDS`+`label` passed into
+`page.evaluate`, and the four chips assertions flipped from *defect-present* to *defect-absent*. Owner `qa-verify`;
+the defect it guards is still `ui-visual`'s.
+
+### 22.2 The ledger close-out — one line per phase, done / owed / owner
+
+| phase | done (measured artifact) | owed | owner |
+|---|---|---|---|
+| **P0** | SHIPPED code+gates `7540a3d` | the deployed leg (`/version.json` `revision:"unknown"`, live re-probe below) | `ops-release` |
+| **P1** | `A11Y_AXE.md` 3,257 B; `FRONTIER_RECON.md` shipped `ef77e80` | `team/PERF_P1.md` **MISS**, `team/RELEASE_P1.md` **MISS** (re-measured this pass) | `perf-eng`, `ops-release` |
+| **P2** | gate GREEN at `0d5d767` (§11.3); contract `350ad4d` | — | — |
+| **P3** | P0 reviewable since `7540a3d` | the re-freeze, after P2 (now unblocked) | `arch-lead` |
+| **P4** | `/api/version` read-back works | `/version.json` still `revision:"unknown"` — live now: `{"surface":"web","revision":"unknown","builtAt":"2026-09-30T02:09:19.467Z"}` | `ops-release` |
+| **P5** | gate **ON DISK** `mobile-composer.spec.ts` 12,644 B sha `9ae21ebf…` — **RED** (§22.1) | `ui-visual`'s fix commit + `team/UI_MOBILE_WEB_ui-visual.md` (**MISS**); qa-verify's 5 spec fixes; the 2 phone projects back in the tracked config | `ui-visual`, `qa-verify` |
+| **P6** | measurement: `frontend/tokens.json` 1,089,146 B, `team/VISUAL_PARITY.md` 10,164 B, `frontend/tests/baselines/` **62 files 5.7 MB**; storybook: `.storybook/{main.ts,preview.ts,build-storybook.mjs}`, 5 story files → 31-entry index, `storybook-static/index.json` 8,176 B | `visual-parity.spec.ts` **MISS**; ~20 of ~25 §10 stories; the A6 catalog depth | `pixel-measure`, `storybook-dev`, `core-dev` |
+
+**Blueprint phases (BP §3's own P0…P10 — the second numbering on this board).** Only **BP P0 (Storybook)** and
+**BP P1 (measurement)** were ever dispatched, and the only blueprint kickoffs on disk are
+`team/P6_KICKOFF_storybook-dev.md` 2,347 B and `team/P6_KICKOFF_pixel-measure.md` 2,070 B. **BP P2–P10 have no
+kickoff file and no artifact**; ledger-side they fold into ledger P2 / P5 / P6. That is a measured statement, not
+a plan: `ls team/P6_KICKOFF_*` → those two files.
+
+### 22.3 The owed list — one line each, with owner
+
+- `pixel-measure` → `frontend/tests/e2e/visual-parity.spec.ts` (**MISS**; its three named artifacts are already on disk).
+- `storybook-dev` → the **~20 remaining §10 stories** (5 of 52 `frontend/app/**/*.tsx` have one), plus restoring the
+  `storybook` / `build-storybook` scripts and the `@storybook/*` devDeps to `frontend/package.json`, plus one line
+  in the gate.
+- `ui-visual` → the **P5 fix commit** + `team/UI_MOBILE_WEB_ui-visual.md` with after-geometry (**MISS**).
+- `qa-verify` → the **clean-step recipe** (`frontend/tsconfig.tsbuildinfo` 312,030 B, matched by `.gitignore`'s
+  `*.tsbuildinfo` — remove it before a clean build) and **the real runner name**, **and** the five spec defects in §22.1.
+
+### 22.4 The two hygiene rows (`boss-bot` owns both, §21.5 carried)
+
+1. **Dedupe before dispatch.** Two lanes ran two renderers over one `frontend/` this window; the 00:11:13 config
+   revert is the cost, and §22.0 is the re-measure that caught it. Rule: one writer per file per window.
+2. **The two untracked trees, and who pays.** `frontend/storybook-static/` **36 MB** → **ignore** (reproducible:
+   `node .storybook/build-storybook.mjs`); owner to add the line: **`storybook-dev`**. `frontend/tests/baselines/`
+   **5.7 MB / 62 files** → **commit** (a baseline outside the repo cannot gate a pixel diff); owner to commit:
+   **`pixel-measure`**, with `visual-parity.spec.ts`. Neither has a `.gitignore` line today
+   (`grep -n -E 'storybook-static|baselines' frontend/.gitignore .gitignore` → **0 hits**).
+
+### 22.5 Declaration
+
+**DONE today, on the evidence above:** the product on `release/owned-staging-20260917` (`ca3682a`) builds clean from
+a HEAD checkout (`next build` EXIT 0, `out/` 9.7 M) and is live (`https://loop-gpt.cyou` → HTTP 200); the P2 gate
+is green and committed; the a11y + desktop e2e suite exists; the P6 measurement lane landed all three of its named
+artifacts (`tokens.json`, 62 baselines, `VISUAL_PARITY.md`); Storybook builds to a 31-entry index; and the **P5
+gate now exists on disk**. **NOT done, and named with owners:** the P5 phone fix has not landed and its gate is RED
+on HEAD and does not even parse (5 defects); the gate's two phone projects are absent from the tracked config;
+`visual-parity.spec.ts`, `PERF_P1.md`, `RELEASE_P1.md`, `UI_MOBILE_WEB_ui-visual.md` are MISS; the deployed
+`revision` is still `"unknown"`; ~20 §10 stories are unwritten. **Nothing in §22.2 is owed without an owner.**

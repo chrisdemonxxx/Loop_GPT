@@ -1,0 +1,23 @@
+SyntaxError: C:\Users\chris\Desktop\Workspace\dev-projects\loop-gpt\frontend\tests\e2e\mobile-composer.spec.ts: Missing semicolon. (141:124)
+
+[0m [90m 139 |[39m [36mconst[39m stubApi [33m=[39m (page[33m:[39m [33mPage[39m) [33m=>[39m page[33m.[39mroute([32m'**/api/**'[39m[33m,[39m [36masync[39m (route) [33m=>[39m {
+ [90m 140 |[39m   [36mconst[39m u [33m=[39m route[33m.[39mrequest()[33m.[39murl()
+[31m[1m>[22m[39m[90m 141 |[39m   [36mconst[39m ok [33m=[39m (b[33m:[39m unknown[33m,[39m s [33m=[39m [35m200[39m) [33m=>[39m route[33m.[39mfulfill({ status[33m:[39m s[33m,[39m contentType[33m:[39m [32m'application/json'[39m[33m,[39m body[33m:[39m [33mJSON[39m[33m.[39mstringify(b) }))
+ [90m     |[39m                                                                                                                             [31m[1m^[22m[39m
+ [90m 142 |[39m   [36mif[39m (u[33m.[39mincludes([32m'/api/auth/providers'[39m)) [36mreturn[39m ok({ guest[33m:[39m [36mtrue[39m[33m,[39m next[33m:[39m [32m'/onboarding'[39m })
+ [90m 143 |[39m   [36mif[39m (u[33m.[39mincludes([32m'/api/auth/login'[39m)) [36mreturn[39m ok({ token[33m:[39m [32m'st.9f210aa7'[39m[33m,[39m user[33m:[39m [33mFIXTURE[39m })
+ [90m 144 |[39m   [36mif[39m (u[33m.[39mincludes([32m'/api/account/me'[39m)) [36mreturn[39m ok({ [33m...[39m[33mFIXTURE[39m[33m,[39m id[33m:[39m [32m'cmqa_mobile_probe'[39m[33m,[39m role[33m:[39m [32m'user'[39m[33m,[39m plan[33m:[39m [32m'free'[39m[33m,[39m credits[33m:[39m [35m30[39m })[0m
+
+   at mobile-composer.spec.ts:141
+
+  139 | const stubApi = (page: Page) => page.route('**/api/**', async (route) => {
+  140 |   const u = route.request().url()
+> 141 |   const ok = (b: unknown, s = 200) => route.fulfill({ status: s, contentType: 'application/json', body: JSON.stringify(b) }))
+      |                                                                                                                            ^
+  142 |   if (u.includes('/api/auth/providers')) return ok({ guest: true, next: '/onboarding' })
+  143 |   if (u.includes('/api/auth/login')) return ok({ token: 'st.9f210aa7', user: FIXTURE })
+  144 |   if (u.includes('/api/account/me')) return ok({ ...FIXTURE, id: 'cmqa_mobile_probe', role: 'user', plan: 'free', credits: 30 })
+Error: No tests found.
+Make sure that arguments are regular expressions matching test files.
+You may need to escape symbols like "$" or "*" and quote the arguments.
+
