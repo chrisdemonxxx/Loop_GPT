@@ -1,6 +1,8 @@
 # Loop GPT — TEAM ROSTER (owner: hr-bot)
 
-Snapshot: 2026-09-29 (**rev 9** — answers the user's pasted **UI Schema Cloning Blueprint** (§0–§17 +
+Snapshot: 2026-09-29 (**rev 10** — a correction to §6.3, which quoted a suite run whose media file
+was green: at `c894095` as committed that file is **red**, measured. Rev 9 answers the user's pasted
+**UI Schema Cloning Blueprint** (§0–§17 +
 Addendum A) with the roster read the spec earns: a surface→file→owner map, **one hire** (`pixel-measure`,
 the measured-pixels lane — cut and proven), two HR defects closed, and the two no-hire rulings (M-01…M-25
 → `web-cartographer`; Storybook → `ui-visual`). New **§8**; `team/NOTE_blueprint_roster_hr-bot.md` is
@@ -11,7 +13,8 @@ and the new §6. The Google **connector** callback URI is the reproduced cause o
 sub-fleet is on its **second live target**, `ssndobz.us`
 (`ENG-2026-09-29-001`); §12 of `team/TEAM_ROSTER_OFFENSE.md` carries the raw launch. Rev 5 added the
 offense sub-fleet pointer + a fresh live probe; rev 4 was the
-post-M2 product roster). HEAD `4f707bd`, branch `release/owned-staging-20260917`, ahead 0.
+post-M2 product roster). HEAD `092dcb0` (the sha §6.3's correction was measured at; `ea17529` landed
+after it and is unpushed at this write), branch `release/owned-staging-20260917`.
 **The fleet now has two rosters, both mine:** this file (the product fleet on `loop-gpt`) and
 `team/TEAM_ROSTER_OFFENSE.md` (the 8-seat A–R offensive fleet for the pentest engagements — seats
 `recon-passive`, `recon-active`, `web-cartographer`, `input-fuzzer`, `auth-session`, `api-dataflow`,
@@ -260,6 +263,44 @@ endpoint:  85LE-P00V-G4PX-RAUI-6MXH completed 21:25:06Z  /opt/LightX2V/save_resu
 ```
 
 Backend suite at the commit: **65 files / 1187 passed / 5 skipped**, `tsc --noEmit` exit 0.
+
+> **§6.3 correction (rev 10, hr-bot).** That count is a *partial quote of a green-media run*, not a
+> green suite. Measured 2026-09-29 on the tree that contains it (raw below): at `c894095` as
+> committed, `src/agent/__tests__/generateMediaTransport.test.ts` is **8 failed | 20 passed (28)** —
+> and both it and `src/agent/tools/generateVideo.ts` are **byte-identical at `c894095` and at HEAD**
+> (`git diff --stat c894095 HEAD -- …` empty), both last touched by `c894095` itself. So the lane
+> shipped its own test file red, and the arithmetic says exactly why the quoted figure looked green:
+>
+> ```
+> $ cd backend && npm test        # HEAD 092dcb0, tree with the guard fix
+>  Test Files  2 failed | 64 passed (66)
+>       Tests  8 failed | 1184 passed | 5 skipped (1197)
+> $ npx vitest run src/agent/__tests__/generateMediaTransport.test.ts
+>  Test Files  1 failed (1)      Tests  8 failed | 20 passed (28)
+>    (assertion-level, not env: "expected true to be undefined" ×4,
+>     "TypeError: undefined is not iterable" ×2, spy called 2×/got 1×,
+>     and one direct-URL token case — identical with `env -u HF_VIDEO_API` and with
+>     `HF_VIDEO_API=lightx2v`, i.e. provider-agnostic)
+> $ git diff --stat c894095 HEAD -- backend/src/agent/__tests__/generateMediaTransport.test.ts \
+>                                   backend/src/agent/tools/generateVideo.ts
+>  (empty — no change between the lane commit and HEAD)
+> ```
+>
+> Take today's `1184 passed` (which includes `core-dev`'s +5 new `chatModels` tests) back to `c894095`
+> → `1179`; add the media file's 8 as *green* → **1187** = the number §6.3 quotes, over the same
+> `1192` total. So the 8 failures were already in that commit; only the line was missing. Reading to
+> carry: **`c894095` = 8 failed | 1179 passed | 5 skipped**, and the §6.4 live end-to-end video
+> proof stands (it was a real artifact, not a suite claim).
+>
+> Second gotcha in the same count, for whoever runs it next: the `2 failed` *files* are one real file
+> plus the 0-byte stray `backend/src/service-chatModel.test.ts` (untracked) that `@qa-verify` was asked
+> to delete — a zero-test file counts as a failed file, so the honest reading is
+> **1 real failing file / 65 passing**. Owner of the media suite stays `ops-release` (§17.3); the
+> correction here is the roster's, and this is it.
+>
+> **Re-run by hr-bot (2026-09-29 22:07, raw) to discharge the re-run rule before this correction was
+> committed** — `cd backend && npx vitest run src/agent/__tests__/generateMediaTransport.test.ts` →
+> `Test Files 1 failed (1) / Tests 8 failed | 20 passed (28)`; the correction reproduces byte-for-byte.
 
 ### 6.4 Open, by owner (media lane)
 
