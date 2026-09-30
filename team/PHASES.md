@@ -1214,9 +1214,18 @@ The push was made from this tree and the **backend** marker was read back at the
 (`GIT_REVISION` unset on the web service) — the open web half of §13.6 and still the first row of
 the long-ABSENT `team/RELEASE_P1.md`. `ops-release` carries it on the P5 deploy, not before.
 
+**Rule for this repo, verified twice this pass (so the next reader re-reads instead of trusting the
+literal above):** the deploy serves **repo HEAD**, so a docs-only push advances `/api/version` too.
+Observed read-backs after each push — `22b7f15` (settled ~35 s after the push) and then `a9d452d`
+(both names == the pushed SHA, 141 B each; in between, one `504` from nginx during the container
+restart — poll, don't conclude). The literal SHA in this block therefore ages with every docs commit;
+**re-read `GET /api/version`** and compare to `git rev-parse HEAD`. The fixture probe in §15.2 ran at
+`22b7f15`; its `D.` line names that revision, and the credential was re-checked against `a9d452d`
+(same 200 / 310 B / keys) before this line was written.
+
 *One cross-reference for whoever reads §16 next:* §16.4's `branch ahead 2` reading predates this push
-(it was taken with `da03dea` and this docs commit both unpushed). The count is now **ahead 0**, and
-the served backend revision is `22b7f15`; everything else in §16.4 (`frontend/tests/e2e/` holds
+(it was taken with `da03dea` and the §15 docs commit both unpushed). The count is now **ahead 0**, and
+the served backend revision tracks HEAD; everything else in §16.4 (`frontend/tests/e2e/` holds
 `app.spec.ts` only, no `phone-390`/`phone-360` projects, catalog 200/363 B `4385e7bf…`) still
 stands as written. §16 is a concurrent writer's section in my file, left byte-for-byte as they wrote
 it.
