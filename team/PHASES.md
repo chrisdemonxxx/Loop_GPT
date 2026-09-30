@@ -1465,3 +1465,77 @@ because it measures HEAD's existing screens. Not dispatched against the blueprin
 web-only), `perf-eng` (BP budgets pixels, not time), `ops-release` (no BP release phase), `research-scout` (BP is
 a spec), `code-review` (verdict pinned per freeze, no phase).
 
+## 19. FOURTEENTH REVISION — the two new seats are DISPATCHED (raw pids), and P5's blocker is re-measured: the fix has not landed and its gate spec is not on disk
+
+**Pass:** `boss-bot`, 2026-09-29 22:05 EDT, on HEAD `092dcb0` (`release/owned-staging-20260917`). Everything
+below was read from the filesystem this pass; §18 is not re-asserted from memory.
+
+### 19.1 The two dispatches (raw, this pass)
+
+| seat | launch | pid / session | log | expected FIRST artifact |
+|---|---|---|---|---|
+| `pixel-measure` | `hermes -p pixel-measure --in <proj> -z "$(cat team/ASK_pixel-measure_p6.txt)"` | **pid 27072** / `proc_39d8dc625ad3` | `team/RUN_pixel-measure_p6.log` | `frontend/tokens.json`; `frontend/tests/baselines/**`; `team/VISUAL_PARITY.md` first rows |
+| `storybook-dev` | `hermes -p storybook-dev --in <proj> -z "$(cat team/ASK_storybook-dev_p6.txt)"` | **pid 64904** / `proc_cc3cf6e0473d` | `team/RUN_storybook-dev_p6.log` | `frontend/.storybook/{main,preview}.ts` + green `npx build-storybook` + `storybook-static/index.json` |
+
+- Both asks are on disk: `team/ASK_pixel-measure_p6.txt` **2864 B**, `team/ASK_storybook-dev_p6.txt` (the
+  kickoff verbatim + a direct "first measured artifact, not a plan" ask). Neither seat was asked for a plan.
+- **The first `storybook-dev` fire died, raw:** pid 57764, `exit 2`, log `bash: unexpected EOF while looking for
+  matching `''` — an apostrophe ("ui-visual's") inside a single-quoted `printf`. Re-fired with a quoted heredoc
+  (pid 64904). The seat's failure was mine, not the seat's; recorded so the next dispatcher quotes heredocs.
+- Preconditions re-read from disk, not trusted from the report: `SOUL.md` 5635 B (`pixel-measure`) / 5109 B
+  (`storybook-dev`); aliases `pixel-measure.bat` and `storybook-dev.bat` **41 B** each.
+- Deliverable, not claim: neither seat has produced an artifact yet at this pass — `frontend/tokens.json`,
+  `team/VISUAL_PARITY.md`, `frontend/.storybook/main.ts` → all **MISS** on disk. Their rows stay `running`
+  until §20 re-measures bytes+sha256.
+
+### 19.2 P5 re-measured on a fresh build of HEAD `092dcb0` — the fix has NOT landed
+
+Raw this pass: `rm -rf .next out tsconfig.tsbuildinfo && npm run build` → **exit 0**; `node tests/serve-out.cjs`
+(port held by pre-existing pid **51120**); `team/probe_mobile_geometry.cjs`; output
+`team/EVIDENCE_p5_geometry_HEAD092dcb0.txt` **9204 B**. The served bytes were proved equal to the fresh build
+before the numbers were believed — `/` fetched over HTTP = **sha256 `d4ff99fd4f585cd9fe3451d505d3aa6044644641e128d2ee22836207069cf70e`**,
+**26967 B**, `buildId eIDv_CSTSemT2GF-hktu0` — identical to `frontend/out/index.html`. So these are HEAD's
+numbers, not a stale `out/`:
+
+```
+@390x844  row "flex items-center gap-1.5 px-3 pb-2.5 pt-1" (Composer.tsx:285)
+          x=13 w=364 right=377   row.scrollWidth = 455      (91 px of overflow inside the row)
+  [+] 25..61 | Mode 67..158 | Web 164..232 | Reason 238..339
+  voice 345..378 | Dictate 384..418 | **Send (aria "Send message") 424..460 -> 70 px past a 390 px viewport**
+  Reasoning menu x=238 right=486 fitsRight=false; overlaps all four suggestion cards
+@360x800  same row (right=347, scrollWidth 455); Send 424..460 -> **100 px past a 360 px viewport**
+```
+
+Byte-for-byte the same geometry §14 measured on `1b9806e`. `frontend/app/components/chat/Composer.tsx`
+sha256 **`49f406692bd3c6fafc61f6ecb3dc1806782ecd46ab49f731c01b1956b4471412`**, and the newest commit to touch
+it is **`17ffb89`** (09-29 18:40, "the contrast pass") — an ancestor of HEAD. `git merge-base --is-ancestor
+1b9806e HEAD` → **YES**.
+
+**P5's blocker, one line:** the RED gate spec `frontend/tests/e2e/mobile-composer.spec.ts` **is not on disk**
+(`find . -name 'mobile-composer*' -not -path '*/node_modules/*'` → **0**; `frontend/tests/e2e/` → `app.spec.ts`
+only) **and** `ui-visual`'s fix commit has not landed (row unchanged on HEAD `092dcb0`; Send 424..460 = 70 px
+past a 390 px viewport). **Two owners, two artifacts, both absent** — P5's head of the critical path does not move.
+
+### 19.3 One NEW measured defect, and one self-report corrected
+
+1. **The gate's clean step is not clean.** On a tree carrying a stale `frontend/tsconfig.tsbuildinfo`,
+   `rm -rf .next && npm run build` → **exit 1**: `Type error: File
+   '.../frontend/.next/types/app/acceptable-use/page.ts' not found.` — and `app/acceptable-use/page.tsx`
+   exists (**5319 B**). Deleting the tsbuildinfo in the same breath → **exit 0**, `out/` **9,623,020 B / 224
+   files**. So a gate that only removes `.next` can report a RED that is its own cache. **Owner: `qa-verify`**
+   (it owns the run recipe); the artifact is the clean step, not a code fix.
+2. **`team/QA_P5_red.md`'s gate runner is not the file it names.** It says "`p5.js` — **2406 B**, the gate
+   runner at root (builds `out/`, runs playwright, serves :4123)". On disk `p5.js` is **1776 B** and is a
+   one-shot patch script for `Composer.test.tsx` — `grep -c 'serve-out\|playwright\|npm run build' p5.js` → **0**.
+   §17.4 already ruled `QA_P5_red.md` "is not the gate"; this is the same defect one level down, so the RED
+   run's runner stays unnamed until §20 finds or `qa-verify` writes it.
+
+### 19.4 Supersedes, and the owner delta
+
+- **Supersedes §18's "P6 now carries two lanes."** P6 now carries **four**: A6 catalog (`ui-visual`),
+  media-suite RED (`ops-release`), measurement (`pixel-measure`, live), Storybook infra (`storybook-dev`, live).
+- **§17.4 ("the P5 gate is still absent") stands — re-measured, not re-quoted.** §16.6/§17.6 otherwise
+  unchanged; no phase is re-opened.
+- **Owner delta: one row added, none changed.** `qa-verify` → the clean step must also remove
+  `frontend/tsconfig.tsbuildinfo`, plus the P5 RED gate spec `frontend/tests/e2e/mobile-composer.spec.ts`.
+  `pixel-measure` and `storybook-dev` rows are `running`, owner unchanged from §18.
