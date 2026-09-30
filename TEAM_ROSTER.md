@@ -1,8 +1,9 @@
 # Loop GPT — TEAM ROSTER (owner: hr-bot)
 
-Snapshot: 2026-09-29 (**rev 10** — a correction to §6.3, which quoted a suite run whose media file
-was green: at `c894095` as committed that file is **red**, measured. Rev 9 answers the user's pasted
-**UI Schema Cloning Blueprint** (§0–§17 +
+Snapshot: 2026-09-29 (**rev 11** — the two seats §8 hired have delivered their **first measured
+artifacts** (`tokens.json` 1,089,146 B at HEAD; the Storybook harness + 5 stories), with the one
+RED gate named and owned — §9. Rev 10 corrected §6.3's suite count (re-run and reproduced); rev 9
+answers the user's pasted **UI Schema Cloning Blueprint** (§0–§17 +
 Addendum A) with the roster read the spec earns: a surface→file→owner map, **one hire** (`pixel-measure`,
 the measured-pixels lane — cut and proven), two HR defects closed, and the two no-hire rulings (M-01…M-25
 → `web-cartographer`; Storybook → `ui-visual`). New **§8**; `team/NOTE_blueprint_roster_hr-bot.md` is
@@ -452,10 +453,42 @@ model of the component author (`ui-visual`), by the diversity rule.
 without an owner.
 
 **Re-stamp (§16.2's request).** Pre-commit readings from the worktree — the write of this line is the
-last edit of this file, so `wc -c` after the commit reads a few bytes longer:
-`37,277 B` (CRLF), sha256 `677efd3e7a3b7b07e3d79d6b1e0b65d0eb680321a604df50f9d648f08246ca46`;
-LF-normalised `36,855 B`, sha256
-`15aed857bbc6dea8c1ad57c1fddeddbbb9daa004fdd04ac5f025d87393fe8d99`. §7's stale `26,403 B /
-458d896a…` reading is superseded. The addressed note beside it:
+last edit of this file, so `wc -c` after the commit reads a few bytes longer.
+**Rev-11 reading (this pass):** `42,513 B` (CRLF), sha256
+`fc2862327a7a7356573e0d16224b6ebce4ffbd969ec6974d63414a036bc86023`; LF-normalised `42,023 B`, sha256
+`a8b63fd2dea1bd0e5959ddc6170a5e40bc4bc4746bc8b64964f494c77d9dbdcd`.
+Earlier readings, kept because a superseded number is the record of what was true at its sha:
+rev-9's `37,277 B` (CRLF) / sha256 `677efd3e7a3b7b07e3d79d6b1e0b65d0eb680321a604df50f9d648f08246ca46`,
+LF `36,855 B` / `15aed857bbc6dea8c1ad57c1fddeddbbb9daa004fdd04ac5f025d87393fe8d99`.
+§7's stale `26,403 B / 458d896a…` is superseded. The addressed note beside it:
 `team/NOTE_blueprint_roster_hr-bot.md`, `11,482 B`, sha256
-`6ce25307046036405e06293ef3c1802d7550c566584f73bbea2761f8a245ae73`.
+`6ce25307046036405e06293ef3c1802d7550c566584f73bbea2761f8a245ae73` (re-computed this pass; an earlier
+write of this line had dropped one hex character — fixed).
+
+---
+
+## 9. Rev 11 — the two hired seats' first artifacts, measured (and the one RED gate, owned)
+
+**Supersedes:** the header's rev-10 line, and §8.2's "no artifact yet" state for its two rows.
+**Does not supersede:** §6.3's rev-10 correction, §8.4's two closed defects, §1's probe.
+
+Read from the filesystem by `hr-bot` at 22:2x, HEAD `48e613d` (`git ls-remote` == local HEAD,
+`0 0` ahead/behind). The seats' own reports were treated as claims and re-measured:
+
+| seat | artifact | measured here (not the seat's report) | state |
+|---|---|---|---|
+| `pixel-measure` | `frontend/tokens.json` | **1,089,146 B**, parses as JSON; keys `generatedAt, command, headRevision, source, capture, families, semanticIndex, themes`; `headRevision 48e613dc…` == HEAD; `themes.light` + `themes.dark`, 6 families each | **DONE** — 1 of its 4 deliverables |
+| `pixel-measure` | `frontend/tests/baselines/**` | **62 files** (24 at 22:05 → 38 → 62 in ~13 min). A count is a snapshot, not a verdict: the set is still being written | in progress |
+| `pixel-measure` | `team/VISUAL_PARITY.md` (its ledger/gate) | **MISS** | owed |
+| `storybook-dev` | `frontend/.storybook/{main.ts, preview.ts, build-storybook.mjs}` | 1,598 / 3,859 / 743 B | on disk |
+| `storybook-dev` | `*.stories.tsx` × 5 (`Sidebar`, `ModelSelector`, `Composer`, `MessageList`, `ArtifactCard`) | 5 files; `storybook-static/index.json` **v5, 31 entries** | 5 of ~25 |
+| `storybook-dev` | its gate, `npx build-storybook` | **RED**, and re-run by `boss-bot` (not self-reported): `EXIT=1`, `SB_BUILDER-WEBPACK5_0002 (WebpackInvocationError) … reading 'tap'`, reproducible ×2, ~3.7 MB written — the manager builds, the preview throws. `index.json` alone is **not** green | owed |
+
+**Owner delta: none.** `storybook-dev` owes the builder/config fix (its own wrapper `build-storybook.mjs`
+is not the kickoff's gate — the gate is the raw CLI, and it is RED); `pixel-measure` owes
+`team/VISUAL_PARITY.md` and the completed baseline set. The `frontend/package.json` dev-dep edit is
+the announced one-owner hand-off; no `ui-visual` component was touched.
+
+**Watch item for the next pass (carried, not resolved):** `team/PHASES.md` §20 notes a second
+`boss-bot` (pid 20240, same prompt) was live at 22:08 and could append a duplicate §20 — a second
+`## 20.` heading is the tell, and the fix is one heading, not a rewrite.
