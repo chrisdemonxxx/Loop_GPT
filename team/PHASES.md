@@ -54,7 +54,7 @@ Repo: `C:\Users\chris\Desktop\Workspace\dev-projects\loop-gpt`, branch
 `release/owned-staging-20260917`. HEAD `5a74833`; frozen P0 revision `7540a3d`;
 `origin/release/owned-staging-20260917` = `7540a3d`; **local is `ahead 2` and unpushed.**
 
-## 1. Phase board (P0..P4 — 5 phases)
+## 1. Phase board (P0..P5 — 6 phases)
 
 | phase | owner | deliverable | acceptance | status |
 |---|---|---|---|---|
@@ -63,6 +63,7 @@ Repo: `C:\Users\chris\Desktop\Workspace\dev-projects\loop-gpt`, branch
 | **P2** — frontier-parity UI rebuild | `ui-visual` (builds the accepted list), `arch-lead` (contract for any new surface), `mobile-dev` (mirrors accepted IA into `mobile/`) | rebuilt chat/landing surface to Claude/ChatGPT/Grok standard — fast + snappy; `mobile/` parity | accepted pattern list from P1 recon is the only source of work; each item carries a before/after measurement; contract signed before a new surface lands | **IN FLIGHT** — contract signed (`350ad4d`); `ui-visual` has ranks 1/3/5/7 open against it; the effort selector is unblocked (`3a43db8` zod accepts the union) |
 | **P3** — independent verification | `qa-verify` (dynamic) + `code-review` (static) on the FROZEN revision; `perf-eng` re-measures post-rebuild | dynamic + static verdicts pinned to a revision hash; post-rebuild perf numbers | both lanes report the revision hash — "green" must refer to specific bytes | **OPEN** — P0's frozen revision (`7540a3d`) is reviewable NOW; re-freeze after P2 |
 | **P4** — release | `ops-release` (migration state, deploy, served-revision read-back, tag); `boss-bot` (close-out, roster + docs, declare) | deployed revision + tag; read-back proving the served revision | served revision read back from the live host, not from a deploy log — **assert `revision == <SHA>`; never `builtAt`, never mtime (§12.1)**; roster + docs updated in the same pass | **HALF-CLOSED** — API read-back **works** (`GET /api/version` → `200`, revision `e9f4b52`, `no-store`; docs-only behind HEAD, and HEAD unpushed — §12.5). The web marker now **EXISTS and SERVES**: `GET /version.json` → `200`, 75 B, `no-store` (`nginx.template.conf:13`) — **§7.3's "no served marker" is superseded (§12.2)**. Remaining: the *value* is `unknown` because `GIT_REVISION` is unset on web — one env line + rebuild. §I's cache-hit reading is **FALSIFIED** (§12.1): `builtAt` == `last-modified` == etag mtime == `2026-09-28T03:44:37Z` |
+| **P5** — responsive web at phone width (the audit-P6 residual; the phase-2.6 "mobile 12/12" gate never opened a popover) | `ui-visual` (fix — single writer of `frontend/app`), `qa-verify` (the geometry gate: RED → GREEN → live), `code-review` (static, revision-pinned), `ops-release` (deploy + `/version.json` read-back), `research-scout` (feed, not a blocker) | `frontend/tests/e2e/mobile-composer.spec.ts` (**measures rects, not classes**) + one frontend-only fix commit; `team/UI_MOBILE_WEB_ui-visual.md`; kickoffs `team/P5_KICKOFF_{ui-visual,qa-verify,code-review,ops-release}.md` | at 390×844 **and** 360×800 on the **live URL**: every composer control — **including the `ml-auto` Send wrapper** — has `right ≤ innerWidth`; row `scrollWidth ≤ clientWidth`; every chip label span `h ≤ 16`; each of the four popovers `right ≤ innerWidth` and covering **no** suggestion card; settings-sheet last row clears browser chrome, no truncated card titles; the gate runs in Playwright `mobile-chromium` **with a popover open** | **DISPATCHED 2026-09-29 (rev 9, §14) — RED on the live host and on HEAD.** Baseline re-measured by me on a fresh build of `1b9806e`: row box 364 / **`scrollWidth` 455** in a 390 px viewport; worst control **`right=460` (70 px off; 100 px at 360)**; chip label span `24` inside a 32 px chip, `white-space: normal`; Reasoning menu `x=238 right=486`, overlapping **all four** suggestion cards. The note's "28 px clipped" is the `.chip`-only view. Owner confirmed `ui-visual`. Proof: §14 |
 
 Lane order (dependency): static review → dynamic test → research. P3 is the only lane that runs both
 reviewers; research (`research-scout`) feeds P2.
@@ -1026,3 +1027,94 @@ segment shadows nothing *today*. Latent defect in the generator (`offense.py:391
 `export PATH="$ENG/tools/bin:$SCAFFOLD_TOOLS_BIN:$PATH"` into a file whose `$ENG` is that file's own
 dirname, not the engagement root). **Owner: `ops-release`** (bin lane) — artifact: the one-hunk generator
 fix + the two-line repro above re-run green; **not** a dispatch blocker for `eng-2026-09-28-001`.
+
+---
+
+## 14. NINTH REVISION — the mobile-web breakage is owned (`ui-visual`), and the orchestrator's own numbers correct the note twice
+
+*(boss-bot, 2026-09-29 20:5x EDT. Every number below is my own run from a fresh build of HEAD this
+pass; nothing is copied from a report. `hr-bot`'s note is right about the defect and wrong about one
+control; its §4 acceptance is amended here.)*
+
+### 14.1 The reproduction — mine, raw
+
+```
+$ git log -1 --format='%h %cI %s'
+1b9806e 2026-09-29T18:45:28-04:00 style(ui): hero heading near-white (the warm gradient read as disabled at 3:1), chip labels one step brighter
+$ git status -sb | head -1        → ## release/owned-staging-20260917...origin/…   (no ahead marker)
+$ curl -s https://loop-gpt.cyou/api/version
+{"service":"loop-gpt-backend","revision":"1b9806eee389bd600f9f814e969880e864e08eb3","startedAt":"2026-09-29T22:45:50.039Z","node":"v22.23.2"}
+$ curl -s -w ' [%{http_code} %{content_type} %{size_download}B]\n' https://loop-gpt.cyou/version.json
+{"surface":"web","revision":"unknown","builtAt":"2026-09-29T22:46:59.301Z"} [200 application/json 75B]
+$ curl -s https://loop-gpt.cyou/chat/ | grep -oE '_next/static/chunks/[A-Za-z0-9_./-]+\.js' | sort -u | while read u; do
+    curl -s "https://loop-gpt.cyou/$u" | grep -c 'Add attachments and actions'; done   → 1   # live /chat/ == HEAD's UI
+$ cd frontend && rm -rf .next out && npm run build   → NEXT_BUILD_EXIT=0; find out -name '*.html' | wc -l → 18
+$ node tests/serve-out.cjs                            → e2e server on 4123
+$ node team/probe_mobile_geometry.cjs                 → Pixel-5 device metrics; raw below / in team/EVIDENCE_mobile_geometry_390_360.txt
+```
+
+Raw, **390×844** (the 360×800 pass has the same shape; both in the evidence file):
+
+```
+row  "flex items-center gap-1.5 px-3 pb-2.5 pt-1"   x=13  w=364  right=377   scrollWidth=455
+     documentElement.scrollWidth == innerWidth == 390          (clipped, not scrollable)
+  [+]          25..61     Mode 67..158    Web 164..232    Reason 238..339
+  hands-free   345..378   Dictate 384..418   Send 424..460    ← row's last child is <div class="ml-auto"> (Composer.tsx:363)
+chip label span  h=24 inside height:2rem (32px) chip, computed white-space: normal
+Reasoning menu  x=238 y=375 w=248 h=380 right=486   fitsRight=false
+suggestion cards  x=28..362  y=348..567 (4 cards)   → the menu overlaps ALL FOUR
+⌘K ? chip  x=325 y=794 w=49 h=34
+```
+
+### 14.2 The note reproduces to the pixel — and one control is mislabelled
+
+**Confirmed exactly, by me:** §2a's five rects (`25/67/164/238/345`); §2b (`spanH=24`,
+`white-space: normal` in a 32px chip); §2c (menu `x=238 w=248 h=380 right=486`, `fitsRight=false`,
+over the suggestion cards); §2d (`⌘K ?` at `325,794,49,34`). `documentElement.scrollWidth ==
+innerWidth` — clipped, not scrollable — is confirmed too.
+
+**Correction (the only one).** §2a's last row — *"`Send` x=384 w=34 right=418 ← 390px viewport:
+28px off-screen"* — is the **Dictate** mic (`button.chip`, `aria-label="Dictate"`). The Send button
+is **not** a `.chip`: it is a `<div className="ml-auto">` (`Composer.tsx:363`) wrapping a button with
+`aria-label="Send message"`, rect **`x=424 w=36 right=460`** → **70 px clipped at 390, 100 px at
+360** (2.5× the note's headline). A gate that enumerates `button.chip` therefore passes with Send
+off-screen. The clean term is the row's own **`scrollWidth` (455) vs `clientWidth` (364)**.
+
+**Addition.** The note's §2e (Settings sheet — user's photos 3/4/5) is in §3.4 but **not** in §4's
+acceptance, so P5 could close with three of the six screenshots still broken. Added to the phase
+acceptance (`team/P5_KICKOFF_ui-visual.md` §4).
+
+### 14.3 Ownership — read from the files, not settled in the room
+
+`TEAM_ROSTER.md` §2 (Visual / UI) + §5 (`hooks.ts` single writer) and `CONTRACT_P2_STREAM.md` §E
+(recorded in §9.3) put `components/chat/Composer.tsx` + `components/chat/composer/**` with
+**`ui-visual`**, single writer. For P5 that lane also holds `frontend/app/globals.css` and
+`frontend/app/components/settings/**`. `mobile-dev` owns `mobile/` (Expo) — a different app, not this
+defect. Roster §4's row (`ui-visual (proposed; boss-bot to confirm)`) is now **confirmed**; proposed
+wording for it and the full reply: `team/REPLY_ui_mobile_web_boss-bot.md`.
+
+### 14.4 Board effect and the hand-off
+
+- **P2** stays IN FLIGHT; its "mobile + responsive" sub-item is now the **P5** row of §1 — owned,
+  dispatched, RED.
+- **P3/P4** gain no new term, but `ops-release`'s P5 deploy carries the one open web line
+  (`GIT_REVISION` on **web**, §13.6) → `team/RELEASE_P1.md`, ABSENT since P1.
+- **Hand-off (lane order — static review → dynamic test → research; practical order below):**
+  1. **`qa-verify`** — `frontend/tests/e2e/mobile-composer.spec.ts` + `phone-390`/`phone-360`
+     Playwright projects; run **RED on HEAD today** and paste the failures. A gate green on HEAD is a
+     broken gate (`team/P5_KICKOFF_qa-verify.md`).
+  2. **`ui-visual`** — one frontend-only commit; before/after geometry in
+     `team/UI_MOBILE_WEB_ui-visual.md` (`team/P5_KICKOFF_ui-visual.md`).
+  3. **`code-review`** — revision-pinned verdict on that commit's hunks
+     (`team/P5_KICKOFF_code-review.md`).
+  4. **`qa-verify` → `ops-release` → `qa-verify`** — GREEN, deploy on the live path, then the **live**
+     re-measure at 390×844 and 360×800 with raw rects (`team/P5_KICKOFF_ops-release.md`).
+  5. **`research-scout`** — how the frontier renders a composer menu at phone width (bottom sheet vs
+     collision-safe anchor), 2 citations; a **feed, never a blocker** — `ui-visual` ships
+     collision-safe anchoring by default.
+  6. **`boss-bot`** — close P5 only after re-reading the files and re-running the gate; nothing is
+     SHIPPED on a report.
+- **Artifacts filed with this revision:** `team/P5_KICKOFF_{ui-visual,qa-verify,code-review,ops-release}.md`,
+  `team/REPLY_ui_mobile_web_boss-bot.md`, `team/probe_mobile_geometry.cjs` (4,288 B, sha256
+  `0551a25e350e3d9a…`), `team/EVIDENCE_mobile_geometry_390_360.txt` (9,204 B, sha256
+  `d3bf4bb53acbf018…`).

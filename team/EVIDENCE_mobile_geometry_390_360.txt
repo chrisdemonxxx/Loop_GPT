@@ -1,0 +1,526 @@
+=== 390x844 ===
+{
+ "innerWidth": 390,
+ "chain": [
+  {
+   "i": 0,
+   "cls": "relative",
+   "children": 1,
+   "rect": {
+    "x": 25,
+    "y": 763,
+    "w": 36,
+    "h": 32,
+    "right": 61,
+    "bottom": 795
+   }
+  },
+  {
+   "i": 1,
+   "cls": "flex items-center gap-1.5 px-3 pb-2.5 pt-1",
+   "children": 7,
+   "rect": {
+    "x": 13,
+    "y": 757,
+    "w": 364,
+    "h": 50,
+    "right": 377,
+    "bottom": 807
+   }
+  },
+  {
+   "i": 2,
+   "cls": "rounded-[1.25rem] surface transition focus-within:border-white/[0.14] ",
+   "children": 2,
+   "rect": {
+    "x": 12,
+    "y": 709,
+    "w": 366,
+    "h": 98,
+    "right": 378,
+    "bottom": 808
+   }
+  },
+  {
+   "i": 3,
+   "cls": "relative",
+   "children": 4,
+   "rect": {
+    "x": 12,
+    "y": 709,
+    "w": 366,
+    "h": 123,
+    "right": 378,
+    "bottom": 832
+   }
+  },
+  {
+   "i": 4,
+   "cls": "max-w-[48rem] mx-auto",
+   "children": 1,
+   "rect": {
+    "x": 12,
+    "y": 709,
+    "w": 366,
+    "h": 123,
+    "right": 378,
+    "bottom": 832
+   }
+  },
+  {
+   "i": 5,
+   "cls": "border-t border-white/[0.05] px-3 sm:px-4 py-3 sm:py-4 pb-[max(0.75rem",
+   "children": 1,
+   "rect": {
+    "x": 0,
+    "y": 696,
+    "w": 390,
+    "h": 148,
+    "right": 390,
+    "bottom": 844
+   }
+  }
+ ],
+ "rowFound": true,
+ "rowCls": "flex items-center gap-1.5 px-3 pb-2.5 pt-1",
+ "rowRect": {
+  "x": 13,
+  "y": 757,
+  "w": 364,
+  "h": 50,
+  "right": 377,
+  "bottom": 807
+ },
+ "rowScrollW": 455,
+ "controls": [
+  {
+   "tag": "DIV",
+   "aria": null,
+   "title": null,
+   "text": "",
+   "rect": {
+    "x": 25,
+    "y": 763,
+    "w": 36,
+    "h": 32,
+    "right": 61,
+    "bottom": 795
+   }
+  },
+  {
+   "tag": "DIV",
+   "aria": null,
+   "title": null,
+   "text": "Mode · Auto",
+   "rect": {
+    "x": 67,
+    "y": 763,
+    "w": 91,
+    "h": 32,
+    "right": 158,
+    "bottom": 795
+   }
+  },
+  {
+   "tag": "BUTTON",
+   "aria": "Web search: auto",
+   "title": "Web search: auto — the tool selection decides",
+   "text": "Web · Auto",
+   "rect": {
+    "x": 164,
+    "y": 763,
+    "w": 67,
+    "h": 32,
+    "right": 232,
+    "bottom": 795
+   }
+  },
+  {
+   "tag": "DIV",
+   "aria": null,
+   "title": null,
+   "text": "Reason · Auto",
+   "rect": {
+    "x": 238,
+    "y": 763,
+    "w": 101,
+    "h": 32,
+    "right": 339,
+    "bottom": 795
+   }
+  },
+  {
+   "tag": "BUTTON",
+   "aria": "Turn on hands-free voice mode",
+   "title": "Voice mode — speak answers aloud and reply hands-free",
+   "text": "",
+   "rect": {
+    "x": 345,
+    "y": 763,
+    "w": 33,
+    "h": 32,
+    "right": 378,
+    "bottom": 795
+   }
+  },
+  {
+   "tag": "BUTTON",
+   "aria": "Dictate",
+   "title": "Dictate",
+   "text": "",
+   "rect": {
+    "x": 384,
+    "y": 763,
+    "w": 34,
+    "h": 32,
+    "right": 418,
+    "bottom": 795
+   }
+  },
+  {
+   "tag": "DIV",
+   "aria": null,
+   "title": null,
+   "text": "",
+   "rect": {
+    "x": 424,
+    "y": 761,
+    "w": 36,
+    "h": 36,
+    "right": 460,
+    "bottom": 797
+   }
+  }
+ ],
+ "send": [
+  {
+   "aria": "Send message",
+   "title": "Send",
+   "rect": {
+    "x": 424,
+    "y": 761,
+    "w": 36,
+    "h": 36,
+    "right": 460,
+    "bottom": 797
+   },
+   "parentCls": "ml-auto",
+   "sameAsBest": false,
+   "insideBest": true
+  }
+ ],
+ "cards": [
+  {
+   "t": "Explain quantum computing",
+   "rect": {
+    "x": 28,
+    "y": 348,
+    "w": 334,
+    "h": 47,
+    "right": 362,
+    "bottom": 395
+   },
+   "cls": "text-left px-4 py-3 rounded-2xl bg-white/[0.04] ho"
+  },
+  {
+   "t": "plot a sine wave",
+   "rect": {
+    "x": 28,
+    "y": 405,
+    "w": 334,
+    "h": 47,
+    "right": 362,
+    "bottom": 452
+   },
+   "cls": "text-left px-4 py-3 rounded-2xl bg-white/[0.04] ho"
+  },
+  {
+   "t": "AI research trends",
+   "rect": {
+    "x": 28,
+    "y": 462,
+    "w": 334,
+    "h": 47,
+    "right": 362,
+    "bottom": 509
+   },
+   "cls": "text-left px-4 py-3 rounded-2xl bg-white/[0.04] ho"
+  },
+  {
+   "t": "business plan",
+   "rect": {
+    "x": 28,
+    "y": 519,
+    "w": 334,
+    "h": 47,
+    "right": 362,
+    "bottom": 567
+   },
+   "cls": "text-left px-4 py-3 rounded-2xl bg-white/[0.04] ho"
+  }
+ ]
+}
+MENU {"menu":{"x":238,"y":375,"w":248,"h":380,"right":486,"bottom":755},"fitsRight":false,"cards":[{"t":"Explain quantum computing","rect":{"x":28,"y":348,"w":334,"h":47,"right":362,"bottom":395}},{"t":"plot a sine wave","rect":{"x":28,"y":405,"w":334,"h":47,"right":362,"bottom":452}},{"t":"AI research trends","rect":{"x":28,"y":462,"w":334,"h":47,"right":362,"bottom":509}},{"t":"business plan","rect":{"x":28,"y":519,"w":334,"h":47,"right":362,"bottom":567}}],"overlapsCards":["Explain quantum computing","plot a sine wave","AI research trends","business plan"]}
+=== 360x800 ===
+{
+ "innerWidth": 360,
+ "chain": [
+  {
+   "i": 0,
+   "cls": "relative",
+   "children": 1,
+   "rect": {
+    "x": 25,
+    "y": 719,
+    "w": 36,
+    "h": 32,
+    "right": 61,
+    "bottom": 751
+   }
+  },
+  {
+   "i": 1,
+   "cls": "flex items-center gap-1.5 px-3 pb-2.5 pt-1",
+   "children": 7,
+   "rect": {
+    "x": 13,
+    "y": 713,
+    "w": 334,
+    "h": 50,
+    "right": 347,
+    "bottom": 763
+   }
+  },
+  {
+   "i": 2,
+   "cls": "rounded-[1.25rem] surface transition focus-within:border-white/[0.14] ",
+   "children": 2,
+   "rect": {
+    "x": 12,
+    "y": 665,
+    "w": 336,
+    "h": 98,
+    "right": 348,
+    "bottom": 764
+   }
+  },
+  {
+   "i": 3,
+   "cls": "relative",
+   "children": 4,
+   "rect": {
+    "x": 12,
+    "y": 665,
+    "w": 336,
+    "h": 123,
+    "right": 348,
+    "bottom": 788
+   }
+  },
+  {
+   "i": 4,
+   "cls": "max-w-[48rem] mx-auto",
+   "children": 1,
+   "rect": {
+    "x": 12,
+    "y": 665,
+    "w": 336,
+    "h": 123,
+    "right": 348,
+    "bottom": 788
+   }
+  },
+  {
+   "i": 5,
+   "cls": "border-t border-white/[0.05] px-3 sm:px-4 py-3 sm:py-4 pb-[max(0.75rem",
+   "children": 1,
+   "rect": {
+    "x": 0,
+    "y": 652,
+    "w": 360,
+    "h": 148,
+    "right": 360,
+    "bottom": 800
+   }
+  }
+ ],
+ "rowFound": true,
+ "rowCls": "flex items-center gap-1.5 px-3 pb-2.5 pt-1",
+ "rowRect": {
+  "x": 13,
+  "y": 713,
+  "w": 334,
+  "h": 50,
+  "right": 347,
+  "bottom": 763
+ },
+ "rowScrollW": 455,
+ "controls": [
+  {
+   "tag": "DIV",
+   "aria": null,
+   "title": null,
+   "text": "",
+   "rect": {
+    "x": 25,
+    "y": 719,
+    "w": 36,
+    "h": 32,
+    "right": 61,
+    "bottom": 751
+   }
+  },
+  {
+   "tag": "DIV",
+   "aria": null,
+   "title": null,
+   "text": "Mode · Auto",
+   "rect": {
+    "x": 67,
+    "y": 719,
+    "w": 91,
+    "h": 32,
+    "right": 158,
+    "bottom": 751
+   }
+  },
+  {
+   "tag": "BUTTON",
+   "aria": "Web search: auto",
+   "title": "Web search: auto — the tool selection decides",
+   "text": "Web · Auto",
+   "rect": {
+    "x": 164,
+    "y": 719,
+    "w": 67,
+    "h": 32,
+    "right": 232,
+    "bottom": 751
+   }
+  },
+  {
+   "tag": "DIV",
+   "aria": null,
+   "title": null,
+   "text": "Reason · Auto",
+   "rect": {
+    "x": 238,
+    "y": 719,
+    "w": 101,
+    "h": 32,
+    "right": 339,
+    "bottom": 751
+   }
+  },
+  {
+   "tag": "BUTTON",
+   "aria": "Turn on hands-free voice mode",
+   "title": "Voice mode — speak answers aloud and reply hands-free",
+   "text": "",
+   "rect": {
+    "x": 345,
+    "y": 719,
+    "w": 33,
+    "h": 32,
+    "right": 378,
+    "bottom": 751
+   }
+  },
+  {
+   "tag": "BUTTON",
+   "aria": "Dictate",
+   "title": "Dictate",
+   "text": "",
+   "rect": {
+    "x": 384,
+    "y": 719,
+    "w": 34,
+    "h": 32,
+    "right": 418,
+    "bottom": 751
+   }
+  },
+  {
+   "tag": "DIV",
+   "aria": null,
+   "title": null,
+   "text": "",
+   "rect": {
+    "x": 424,
+    "y": 717,
+    "w": 36,
+    "h": 36,
+    "right": 460,
+    "bottom": 753
+   }
+  }
+ ],
+ "send": [
+  {
+   "aria": "Send message",
+   "title": "Send",
+   "rect": {
+    "x": 424,
+    "y": 717,
+    "w": 36,
+    "h": 36,
+    "right": 460,
+    "bottom": 753
+   },
+   "parentCls": "ml-auto",
+   "sameAsBest": false,
+   "insideBest": true
+  }
+ ],
+ "cards": [
+  {
+   "t": "Explain quantum computing",
+   "rect": {
+    "x": 28,
+    "y": 337,
+    "w": 304,
+    "h": 47,
+    "right": 332,
+    "bottom": 384
+   },
+   "cls": "text-left px-4 py-3 rounded-2xl bg-white/[0.04] ho"
+  },
+  {
+   "t": "plot a sine wave",
+   "rect": {
+    "x": 28,
+    "y": 394,
+    "w": 304,
+    "h": 47,
+    "right": 332,
+    "bottom": 441
+   },
+   "cls": "text-left px-4 py-3 rounded-2xl bg-white/[0.04] ho"
+  },
+  {
+   "t": "AI research trends",
+   "rect": {
+    "x": 28,
+    "y": 451,
+    "w": 304,
+    "h": 47,
+    "right": 332,
+    "bottom": 498
+   },
+   "cls": "text-left px-4 py-3 rounded-2xl bg-white/[0.04] ho"
+  },
+  {
+   "t": "business plan",
+   "rect": {
+    "x": 28,
+    "y": 508,
+    "w": 304,
+    "h": 47,
+    "right": 332,
+    "bottom": 555
+   },
+   "cls": "text-left px-4 py-3 rounded-2xl bg-white/[0.04] ho"
+  }
+ ]
+}
+MENU {"menu":{"x":238,"y":331,"w":248,"h":380,"right":486,"bottom":711},"fitsRight":false,"cards":[{"t":"Explain quantum computing","rect":{"x":28,"y":337,"w":304,"h":47,"right":332,"bottom":384}},{"t":"plot a sine wave","rect":{"x":28,"y":394,"w":304,"h":47,"right":332,"bottom":441}},{"t":"AI research trends","rect":{"x":28,"y":451,"w":304,"h":47,"right":332,"bottom":498}},{"t":"business plan","rect":{"x":28,"y":508,"w":304,"h":47,"right":332,"bottom":555}}],"overlapsCards":["Explain quantum computing","plot a sine wave","AI research trends","business plan"]}
