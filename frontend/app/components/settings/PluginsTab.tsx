@@ -37,13 +37,20 @@ export default function PluginsTab() {
   const [installing, setInstalling] = useState(false)
   const [manifest, setManifest] = useState('')
   const [error, setError] = useState('')
+  const [loadError, setLoadError] = useState('')
   const [ok, setOk] = useState('')
 
   const load = () =>
     fetch(`${API_URL}/api/agent/plugins`, { headers: authHeaders() })
-      .then((r) => r.json())
-      .then((d) => { setItems(Array.isArray(d) ? d : []); setLoading(false) })
-      .catch(() => setLoading(false))
+      .then(async (r) => {
+        if (!r.ok) throw new Error('load')
+        const d = await r.json()
+        if (!Array.isArray(d)) throw new Error('load')
+        setItems(d)
+        setLoadError('')
+      })
+      .catch(() => setLoadError('Could not load plugins.'))
+      .finally(() => setLoading(false))
   useEffect(() => { load() }, [])
 
   const toggle = async (id: string, enabled: boolean) => {
@@ -72,7 +79,7 @@ export default function PluginsTab() {
     setError(''); load()
   }
 
-  if (loading) return <p className="text-slate-600 text-sm">Loading…</p>
+  if (loading && !loadError) return <p className="text-slate-600 text-sm">Loading…</p>
 
   return (
     <div className="space-y-4 text-sm">
@@ -106,7 +113,14 @@ export default function PluginsTab() {
         </div>
       )}
 
-      {items.length === 0 && (
+      {loadError && (
+        <div className="text-xs text-rose-400 flex items-center gap-2">
+          <span>{loadError}</span>
+          <button type="button" onClick={() => load()} className="underline hover:text-rose-300">Retry</button>
+        </div>
+      )}
+
+      {!loadError && items.length === 0 && (
         <EmptyState icon={<Puzzle size={22} />} title="No plugins installed" body="Plugins bundle extra tools. Install one from a JSON manifest, or enable a built-in." />
       )}
 

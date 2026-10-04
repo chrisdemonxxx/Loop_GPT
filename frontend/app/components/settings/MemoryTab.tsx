@@ -24,7 +24,7 @@ function timeAgo(iso: string): string {
 }
 
 /**
- * Memory settings (Claude-style): master toggle, search, per-item edit/delete,
+ * Memory settings: master toggle, search, per-item edit/delete,
  * user-vs-learned source badges, tag grouping, and a real empty state.
  */
 export default function MemoryTab() {
@@ -32,23 +32,36 @@ export default function MemoryTab() {
   const [enabled, setEnabled] = useState(true)
   const [text, setText] = useState('')
   const [error, setError] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const [loaded, setLoaded] = useState(false)
   const [query, setQuery] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
 
   const load = () =>
     fetch(`${API_URL}/api/memory`, { headers: authHeaders() })
-      .then((r) => r.json())
-      .then((d: { memories?: MemoryRow[]; enabled?: boolean } | MemoryRow[]) => {
+      .then(async (r) => {
+        if (!r.ok) throw new Error('load')
+        return r.json() as Promise<{ memories?: MemoryRow[]; enabled?: boolean } | MemoryRow[]>
+      })
+      .then((d) => {
         if (Array.isArray(d)) setRows(d)
         else { setRows(d.memories || []); setEnabled(d.enabled !== false) }
+        setLoadError('')
       })
-      .catch(() => {})
+      .catch(() => setLoadError('Could not load memories.'))
+      .finally(() => setLoaded(true))
   useEffect(() => { load() }, [])
 
   const toggleEnabled = async (next: boolean) => {
+    setError('')
+    const res = await fetch(`${API_URL}/api/memory/enabled`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ enabled: next }) }).catch(() => null)
+    if (!res?.ok) {
+      const body = res ? await res.json().catch(() => ({})) : {}
+      setError(body.error || 'Could not save.')
+      return
+    }
     setEnabled(next)
-    await fetch(`${API_URL}/api/memory/enabled`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ enabled: next }) }).catch(() => {})
   }
 
   const add = async () => {
@@ -61,7 +74,13 @@ export default function MemoryTab() {
 
   const saveEdit = async () => {
     if (!editingId || !editText.trim()) { setEditingId(null); return }
-    await fetch(`${API_URL}/api/memory/${editingId}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ content: editText.trim() }) }).catch(() => {})
+    setError('')
+    const res = await fetch(`${API_URL}/api/memory/${editingId}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ content: editText.trim() }) }).catch(() => null)
+    if (!res?.ok) {
+      const body = res ? await res.json().catch(() => ({})) : {}
+      setError(body.error || 'Could not save.')
+      return
+    }
     setEditingId(null); load()
   }
 
@@ -103,7 +122,14 @@ export default function MemoryTab() {
           <input
             value={editText}
             onChange={(e) => setEditText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') setEditingId(null) }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') saveEdit()
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                e.stopPropagation()
+                setEditingId(null)
+              }
+            }}
             autoFocus
             className={inputCls + ' !mt-0 text-[13px]'}
             aria-label="Edit memory"
@@ -161,13 +187,19 @@ export default function MemoryTab() {
         <button onClick={add} className={btnPrimary}><Plus size={14} /> Add</button>
       </div>
       {error && <div className="text-xs text-rose-400">{error}</div>}
+      {loadError && (
+        <div className="text-xs text-rose-400 flex items-center gap-2">
+          <span>{loadError}</span>
+          <button type="button" onClick={() => load()} className="underline hover:text-rose-300">Retry</button>
+        </div>
+      )}
 
       {/* List */}
       {rows.length > 0 && (
         <SearchInput value={query} onChange={setQuery} placeholder="Search memories…" resultCount={q ? filtered.length : null} />
       )}
 
-      {rows.length === 0 && (
+      {loaded && !loadError && rows.length === 0 && (
         <EmptyState
           icon={<Brain size={22} />}
           title="Nothing remembered yet"

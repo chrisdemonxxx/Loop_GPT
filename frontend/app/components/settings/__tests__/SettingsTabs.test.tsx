@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import SettingsPanel from '../../SettingsPanel'
 import MemoryTab from '../MemoryTab'
+import ConnectorsTab from '../ConnectorsTab'
+import ToolsTab from '../ToolsTab'
 import { I18nProvider } from '../../../lib/i18n'
 
 // Stub fetch for the settings tabs.
@@ -73,5 +75,235 @@ describe('MemoryTab', () => {
       expect(call).toBeTruthy()
       expect((call![1] as any).body).toContain('"enabled":false')
     })
+  })
+})
+
+describe('SettingsPanel close and open paths', () => {
+  beforeEach(() => { jsonOnce([]) })
+
+  it('closes from the X, the backdrop, and Escape, but not from a click inside', () => {
+    const onClose = vi.fn()
+    const { container } = render(<SettingsPanel onClose={onClose} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Close settings' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(2)
+    const backdrop = container.querySelector('.fixed.inset-0') as HTMLElement
+    fireEvent.click(backdrop)
+    expect(onClose).toHaveBeenCalledTimes(3)
+    onClose.mockClear()
+    fireEvent.click(screen.getByRole('dialog', { name: 'Agent settings' }))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('lands on the tab callers pass as initialTab', async () => {
+    render(<SettingsPanel onClose={() => {}} initialTab="memory" />)
+    const memory = screen.getAllByRole('tab').find((t) => t.textContent?.includes('Memory'))
+    expect(memory?.getAttribute('aria-selected')).toBe('true')
+    expect(memory?.className).toContain('border-[#c96442]')
+    await waitFor(() => expect(screen.getByText('Nothing remembered yet')).toBeInTheDocument())
+  })
+
+  it('scrolls inside the dialog and keeps the tab row on one line above the safe area', () => {
+    const { container } = render(<SettingsPanel onClose={() => {}} />)
+    const tablist = screen.getByRole('tablist')
+    expect(tablist.className).toContain('overflow-x-auto')
+    expect(tablist.className).toContain('flex-nowrap')
+    const body = container.querySelector('.overflow-y-auto') as HTMLElement
+    expect(body.className).toContain('min-h-0')
+    expect(body.className).toContain('safe-area-inset-bottom')
+    const backdrop = container.querySelector('.fixed.inset-0') as HTMLElement
+    expect(backdrop.className).toContain('safe-area-inset-bottom')
+  })
+})
+
+describe('failed list loads', () => {
+  it('does not show the memory empty state when the list fails, and retry refetches', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('offline'))
+    render(<I18nProvider><MemoryTab /></I18nProvider>)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument())
+    expect(screen.queryByText('Nothing remembered yet')).not.toBeInTheDocument()
+    expect(screen.getByText('Could not load memories.')).toBeInTheDocument()
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ memories: [], enabled: true }) })
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(screen.getByText('Nothing remembered yet')).toBeInTheDocument())
+    expect(screen.queryByText('Could not load memories.')).not.toBeInTheDocument()
+  })
+
+  it('keeps a failed memory save in the draft', async () => {
+    jsonOnce({ memories: [], enabled: true })
+    render(<I18nProvider><MemoryTab /></I18nProvider>)
+    const input = await screen.findByLabelText('New memory')
+    fireEvent.change(input, { target: { value: 'keep this memory' } })
+    fetchMock.mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'Could not save.' }) })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() => expect(screen.getByText('Could not save.')).toBeInTheDocument())
+    expect((input as HTMLInputElement).value).toBe('keep this memory')
+  })
+
+  it('uses the connectors empty copy only after a successful empty load', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ types: [], configured: [], marketplace: [] }) })
+    render(<ConnectorsTab workspaceId={null} />)
+    await waitFor(() => expect(screen.getByText('Nothing connected yet')).toBeInTheDocument())
+  })
+
+  it('does not treat a failed connectors load as empty', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('offline'))
+    render(<ConnectorsTab workspaceId="ws-1" />)
+    await waitFor(() => expect(screen.getByText('Could not load connectors.')).toBeInTheDocument())
+    expect(screen.queryByText('Nothing connected yet')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+
+  it('does not start OAuth when workspaceId is null', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        types: [{ type: 'github', name: 'GitHub', description: 'Repos', category: 'Code', icon: null, oauth: true, fields: [] }],
+        configured: [],
+        marketplace: [],
+      }),
+    })
+    render(<ConnectorsTab workspaceId={null} />)
+    const connect = await screen.findByRole('button', { name: 'Connect with GitHub' })
+    const callsBefore = fetchMock.mock.calls.length
+    fireEvent.click(connect)
+    await waitFor(() => expect(screen.getByText('Open a project first (Projects in the sidebar), then connect.')).toBeInTheDocument())
+    const oauthCalls = fetchMock.mock.calls.slice(callsBefore).filter((c) => String(c[0]).includes('oauth-connector'))
+    expect(oauthCalls).toHaveLength(0)
+  })
+
+  it('keeps the exact sign-in failure string', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes('oauth-connector')) return Promise.reject(new Error('network'))
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          types: [{ type: 'github', name: 'GitHub', description: 'Repos', category: 'Code', icon: null, oauth: true, fields: [] }],
+          configured: [],
+          marketplace: [],
+        }),
+      })
+    })
+    render(<ConnectorsTab workspaceId="ws-1" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect with GitHub' }))
+    await waitFor(() => expect(screen.getByText('Could not start the sign-in flow.')).toBeInTheDocument())
+  })
+
+  it('keeps a failed connector draft', async () => {
+    const catalog = {
+      types: [{ type: 'sentry', name: 'Sentry', description: 'Errors', category: 'Code', icon: null, oauth: false, fields: [{ key: 'token', label: 'Token', secret: true }] }],
+      configured: [],
+      marketplace: [],
+    }
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') return Promise.resolve({ ok: false, json: async () => ({ error: 'Could not connect.' }) })
+      return Promise.resolve({ ok: true, json: async () => catalog })
+    })
+    render(<ConnectorsTab workspaceId="ws-1" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Add' }))
+    const token = await screen.findByLabelText('Token')
+    fireEvent.change(token, { target: { value: 'secret-token' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    await waitFor(() => expect(screen.getAllByText('Could not connect.').length).toBeGreaterThan(0))
+    expect((screen.getByLabelText('Token') as HTMLInputElement).value).toBe('secret-token')
+  })
+})
+
+describe('review fixes', () => {
+  const memoryRows = [
+    { id: 'm1', content: 'I prefer concise answers', kind: 'explicit', source: 'user', tags: ['preference'], createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z' },
+  ]
+
+  it('Escape closes a nested connector dialog without closing Agent settings', async () => {
+    const onClose = vi.fn()
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        types: [],
+        configured: [],
+        marketplace: [{ type: 'slack', name: 'Slack', docs: null }],
+      }),
+    })
+    render(<SettingsPanel onClose={onClose} initialTab="connectors" workspaceId="ws-1" />)
+    fireEvent.click(await screen.findByRole('button', { name: /Marketplace/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Add to my apps' }))
+    expect(await screen.findByRole('dialog', { name: 'Connect Slack' })).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Connect Slack' })).not.toBeInTheDocument())
+    expect(screen.getByRole('dialog', { name: 'Agent settings' })).toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('Escape while editing a memory cancels the edit and leaves the panel open', async () => {
+    const onClose = vi.fn()
+    jsonOnce({ memories: memoryRows, enabled: true })
+    render(<SettingsPanel onClose={onClose} initialTab="memory" />)
+    await screen.findByText('I prefer concise answers')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit memory' }))
+    const input = screen.getByRole('textbox', { name: 'Edit memory' })
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.queryByRole('textbox', { name: 'Edit memory' })).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Agent settings' })).toBeInTheDocument()
+    expect(screen.getByText('I prefer concise answers')).toBeInTheDocument()
+  })
+
+  it('keeps the previous memory toggle when the save fails', async () => {
+    jsonOnce({ memories: [], enabled: true })
+    render(<I18nProvider><MemoryTab /></I18nProvider>)
+    const toggle = await screen.findByRole('switch', { name: 'Use memory across conversations' })
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    fetchMock.mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'Could not save.' }) })
+    fireEvent.click(toggle)
+    await waitFor(() => expect(screen.getByText('Could not save.')).toBeInTheDocument())
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('keeps the previous tool permission when the save fails', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        tools: [{ name: 'web_search', description: 'Search', source: 'builtin', default: 'allow', effective: 'allow' }],
+        permissions: {},
+      }),
+    })
+    render(<ToolsTab />)
+    const select = await screen.findByLabelText('Permission for web_search') as HTMLSelectElement
+    expect(select.value).toBe('allow')
+    fetchMock.mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'Could not save.' }) })
+    fireEvent.change(select, { target: { value: 'blocked' } })
+    await waitFor(() => expect(screen.getByText('Could not save.')).toBeInTheDocument())
+    expect(select.value).toBe('allow')
+  })
+
+  it('always shows the sign-in failure sentence, ignoring a server error', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes('oauth-connector')) {
+        return Promise.resolve({ ok: false, json: async () => ({ error: 'provider down' }) })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          types: [{ type: 'github', name: 'GitHub', description: 'Repos', category: 'Code', icon: null, oauth: true, fields: [] }],
+          configured: [],
+          marketplace: [],
+        }),
+      })
+    })
+    render(<ConnectorsTab workspaceId="ws-1" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect with GitHub' }))
+    await waitFor(() => expect(screen.getByText('Could not start the sign-in flow.')).toBeInTheDocument())
+    expect(screen.queryByText('provider down')).not.toBeInTheDocument()
+  })
+
+  it('does not mention plan usage or link to account on Appearance', async () => {
+    render(<SettingsPanel onClose={() => {}} initialTab="appearance" />)
+    expect(await screen.findByRole('radio', { name: /Dark/ })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /Light/ })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /System/ })).toBeInTheDocument()
+    expect(screen.queryByText(/plan usage/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /account/i })).not.toBeInTheDocument()
+    expect(document.querySelector('a[href="/account"]')).toBeNull()
   })
 })

@@ -30,7 +30,7 @@ export function selectLocale(saved: unknown, languages: readonly string[]): Loca
 
 export const copy = {
   language: 'Language and region', newSession: 'New session', searchChats: 'Search chats…',
-  noSessions: 'No sessions yet', anonymous: 'Anonymous', signOut: 'Sign out',
+  noSessions: 'No sessions yet.', anonymous: 'Anonymous', signOut: 'Sign out',
   emptyTitle: 'How can I help you today?',
   emptyHint: 'Ask anything. Type {slash} for commands like deep research.',
   placeholder: 'Message Loop GPT…   ( / for commands )',

@@ -47,6 +47,8 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
   const [data, setData] = useState<{ types: ConnectorType[]; configured: ConfiguredConnector[]; marketplace: MarketplaceEntry[] }>({ types: [], configured: [], marketplace: [] })
   const [query, setQuery] = useState('')
   const [error, setError] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const [loaded, setLoaded] = useState(false)
   const [showMarketplace, setShowMarketplace] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
 
@@ -66,14 +68,35 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
 
   const load = () =>
     fetch(`${API_URL}/api/agent/connectors`, { headers: authHeaders() })
-      .then((r) => r.json()).then(setData).catch(() => {})
+      .then(async (r) => {
+        if (!r.ok) throw new Error('load')
+        const d = await r.json()
+        if (!d || !Array.isArray(d.types) || !Array.isArray(d.configured)) throw new Error('load')
+        setData({ types: d.types, configured: d.configured, marketplace: Array.isArray(d.marketplace) ? d.marketplace : [] })
+        setLoadError('')
+      })
+      .catch(() => setLoadError('Could not load connectors.'))
+      .finally(() => setLoaded(true))
   useEffect(() => { load() }, [])
+
+  // Escape dismisses only this credential sheet, not Agent settings.
+  useEffect(() => {
+    if (!marketType) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      setMarketType(null)
+    }
+    document.addEventListener('keydown', onKey, true)
+    return () => document.removeEventListener('keydown', onKey, true)
+  }, [marketType])
 
   const selected = data.types.find((t) => t.type === addType)
 
-  const startOAuth = async (type: string, creds?: { clientId: string; clientSecret: string }) => {
+  const startOAuth = async (type: string, creds?: { clientId: string; clientSecret: string }): Promise<boolean> => {
     setError('')
-    if (!workspaceId) { setError('Open a project first (Projects in the sidebar), then connect.'); return }
+    if (!workspaceId) { setError('Open a project first (Projects in the sidebar), then connect.'); return false }
     setOauthBusy(type)
     try {
       const res = await fetch(`${API_URL}/api/oauth-connector/init/${type}`, {
@@ -81,9 +104,10 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
         body: JSON.stringify({ workspaceId, redirectTo: '/chat', ...(creds || {}) }),
       })
       const d = await res.json().catch(() => ({}))
-      if (!res.ok) { setError(d.error || 'Could not start the sign-in flow.'); return }
+      if (!res.ok) { setError('Could not start the sign-in flow.'); return false }
       window.location.href = d.authorizeUrl
-    } catch { setError('Could not start the sign-in flow.') } finally { setOauthBusy(null) }
+      return true
+    } catch { setError('Could not start the sign-in flow.'); return false } finally { setOauthBusy(null) }
   }
 
   const add = async () => {
@@ -136,8 +160,14 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
     <div className="space-y-4 text-sm">
       {/* Connected */}
       <SectionHeader title="Connected" count={data.configured.length} />
-      {data.configured.length === 0 && (
-        <p className="text-xs text-slate-600">Nothing connected yet — add an integration below.</p>
+      {loaded && !loadError && data.configured.length === 0 && (
+        <p className="text-xs text-slate-600">Nothing connected yet</p>
+      )}
+      {loadError && (
+        <div className="text-xs text-rose-400 flex items-center gap-2">
+          <span>{loadError}</span>
+          <button type="button" onClick={() => load()} className="underline hover:text-rose-300">Retry</button>
+        </div>
       )}
       {data.configured.map((c) => (
         <div key={c.id} className="p-3.5 rounded-xl border border-white/[0.06] bg-white/[0.02] flex items-start justify-between gap-3">
@@ -175,7 +205,9 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
       {categories.map(([cat, types]) => (
         <div key={cat} className="space-y-2">
           <SectionHeader title={cat} count={types.length} />
-          <div className="grid grid-cols-2 gap-2">
+          {/* P5: one card per row below sm — the 2-col grid was what clipped
+              the title to `GitHu`/`GitLat`/`Sentr` (title + `+ Add` on one line). */}
+          <div className="grid grid-cols-2 gap-2 max-sm:grid-cols-1">
             {types.map((t) => {
               const connected = configuredTypes.has(t.type)
               return (
@@ -276,7 +308,7 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
 
       {/* Marketplace OAuth-credential modal */}
       {marketType && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setMarketType(null)}>
+        <div data-settings-nested-dialog className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setMarketType(null)}>
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#131316] p-5 space-y-3 shadow-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={`Connect ${marketType.name}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-100">Connect {marketType.name}</h3>
@@ -292,7 +324,7 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
             {error && <div className="text-xs text-rose-400">{error}</div>}
             <div className="flex gap-2">
               <button
-                onClick={() => startOAuth(marketType.type, clientCreds).then(() => { if (!error) setMarketType(null) })}
+                onClick={() => startOAuth(marketType.type, clientCreds).then((started) => { if (started) setMarketType(null) })}
                 disabled={oauthBusy === marketType.type || !clientCreds.clientId || !clientCreds.clientSecret}
                 className={btnPrimary}
               >
@@ -324,20 +356,45 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
 function McpSection() {
   const [servers, setServers] = useState<any[]>([])
   const [form, setForm] = useState({ name: '', transport: 'http', url: '', command: '' })
-  const load = () => fetch(`${API_URL}/api/agent/mcp-servers`, { headers: authHeaders() }).then((r) => r.json()).then(setServers).catch(() => {})
+  const [error, setError] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const load = () => fetch(`${API_URL}/api/agent/mcp-servers`, { headers: authHeaders() })
+    .then(async (r) => {
+      if (!r.ok) throw new Error('load')
+      const d = await r.json()
+      if (!Array.isArray(d)) throw new Error('load')
+      setServers(d)
+      setLoadError('')
+    })
+    .catch(() => setLoadError('Could not load MCP servers.'))
+    .finally(() => setLoaded(true))
   useEffect(() => { load() }, [])
   const add = async () => {
     if (!form.name) return
-    await fetch(`${API_URL}/api/agent/mcp-servers`, {
+    setError('')
+    const res = await fetch(`${API_URL}/api/agent/mcp-servers`, {
       method: 'POST', headers: authHeaders(),
       body: JSON.stringify({ name: form.name, transport: form.transport, url: form.url || undefined, command: form.command || undefined, enabled: true }),
-    }).catch(() => {})
+    }).catch(() => null)
+    if (!res?.ok) {
+      const body = res ? await res.json().catch(() => ({})) : {}
+      setError(body.error || 'Could not save.')
+      return
+    }
     setForm({ name: '', transport: 'http', url: '', command: '' }); load()
   }
   const remove = async (id: string) => { await fetch(`${API_URL}/api/agent/mcp-servers/${id}`, { method: 'DELETE', headers: authHeaders() }).catch(() => {}); load() }
   return (
     <div className="space-y-2.5 text-sm">
-      {servers.length === 0 && <p className="text-[11px] text-slate-600 px-1">No MCP servers. Their tools become available to the agent once connected.</p>}
+      {loadError && (
+        <div className="text-xs text-rose-400 flex items-center gap-2 px-1">
+          <span>{loadError}</span>
+          <button type="button" onClick={() => load()} className="underline hover:text-rose-300">Retry</button>
+        </div>
+      )}
+      {error && <div className="text-xs text-rose-400 px-1">{error}</div>}
+      {loaded && !loadError && servers.length === 0 && <p className="text-[11px] text-slate-600 px-1">No MCP servers. Their tools become available to the agent once connected.</p>}
       {servers.map((s) => (
         <div key={s.id} className="p-3 rounded-xl border border-white/[0.06] bg-white/[0.02] flex items-start justify-between gap-3">
           <div className="min-w-0">

@@ -13,7 +13,7 @@ const CHOICES: Array<{ id: ThemeChoice; label: string; Icon: typeof Sun; hint: s
 /**
  * Appearance (audit §8-36): the explicit light/dark/system theme choice —
  * the header button cycles the same setting; this tab exposes all three
- * states directly. Profile, usage and data controls remain on /account.
+ * states directly.
  */
 export default function AppearanceTab() {
   const theme = useTheme()
@@ -45,10 +45,7 @@ export default function AppearanceTab() {
       </div>
       <div className="flex items-start gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 text-[12px] text-slate-400">
         <Info size={13} className="mt-0.5 shrink-0 text-slate-500" />
-        <span>
-          System follows your device preference live. Profile details, plan usage and data controls
-          (export/delete) live on your <a href="/account" className="text-[#c96442] hover:underline">account page</a>.
-        </span>
+        <span>System follows your device preference live.</span>
       </div>
     </div>
   )

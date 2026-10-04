@@ -8,7 +8,7 @@ import { API_URL, authHeaders, getStoredUser, getToken, getModelTier, setModelTi
 import type { EffortValue } from '../components/chat/composer/EffortSelector'
 import { getDraft, setDraft, deleteDraft } from '../lib/drafts'
 import SettingsPanel from '../components/SettingsPanel'
-import { CommandPalette } from '../components/CommandPalette'
+import { CommandPalette, openSidebarSearch } from '../components/CommandPalette'
 import { ShortcutSheet } from '../components/ShortcutSheet'
 
 import Sidebar from '../components/chat/Sidebar'
@@ -20,7 +20,7 @@ import type { Conversation, Message } from '../components/chat/types'
 import { parseCommand, SLASH_COMMANDS } from '../lib/commands'
 import ProjectsPanel, { type Project } from '../components/ProjectsPanel'
 import ResearchPanel from '../components/ResearchPanel'
-import { usePanels, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom, useAttachments, useConversationSearch, useMessageQueue, useWorkspaceConnections, useVoiceMode } from './hooks'
+import { usePanels, useSidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom, useAttachments, useConversationSearch, useMessageQueue, useWorkspaceConnections, useVoiceMode } from './hooks'
 import { useToast } from '../lib/toast'
 import { useTheme } from '../lib/theme'
 import { useSpeech } from '../lib/voice'
@@ -34,6 +34,8 @@ import type { QueuedMessage } from '../components/chat/types'
 export default function ChatPage() {
   // ── Panels (sidebar / artifacts + tablet/desktop breakpoints) ────────────
   const panels = usePanels()
+  const sidebarWidth = useSidebarWidth()
+  const [sidebarResizing, setSidebarResizing] = useState(false)
   // Lifts the composer above the on-screen keyboard (iOS, audit P6).
   useKeyboardSafeBottom()
 
@@ -70,7 +72,7 @@ export default function ChatPage() {
 
   // ── Data ──────────────────────────────────────────────────────────────────
   const { workspaceId, projects, activeProjectId, setActiveProjectId, refreshProjects } = useWorkspaceProjects()
-  const { conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages, branchVersions, selectVersion } =
+  const { conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages, branchVersions, selectVersion, sessionsError, sessionsPending, retrySessions } =
     useConversationsData(currentConversationId, (id) => { if (currentConversationId === id) setCurrentConversationId(null) })
   const chat = useChatStream()
   // §8-40: workspace-connection chips — recent-use-first, pin for next run.
@@ -100,7 +102,7 @@ export default function ChatPage() {
   const messageQueue = useMessageQueue(chat.running, (entry) => { void dispatchSend(entry) })
   // ── Sidebar search: title filter locally + server-side message-body hits
   const [sidebarSearch, setSidebarSearch] = useState('')
-  const messageHits = useConversationSearch(sidebarSearch)
+  const { hits: messageHits, error: searchError, retry: retrySearch } = useConversationSearch(sidebarSearch)
   /** §8-22 pending branch edit: when set (string | null), the NEXT send
    * becomes a sibling prompt version under this parent (null = first turn).
    * undefined = a normal send. Set by the Edit action, cleared by send,
@@ -342,14 +344,18 @@ export default function ChatPage() {
   }
 
   /** Mint + copy a public read-only share link (audit §8-15). */
-  async function handleShareConversation(id: string): Promise<string | null> {
+  async function handleShareConversation(id: string): Promise<string | { error: 'share' | 'copy' }> {
+    let link = ''
     try {
       const res = await axios.post(`${API_URL}/api/conversations/${id}/share`, {}, { headers: authHeaders() })
-      if (!res.data?.url) return null
-      const link = `${window.location.origin}${res.data.url}`
-      await navigator.clipboard?.writeText(link)
+      if (!res.data?.url) return { error: 'share' }
+      link = `${window.location.origin}${res.data.url}`
+    } catch { return { error: 'share' } }
+    try {
+      if (!navigator.clipboard?.writeText) return { error: 'copy' }
+      await navigator.clipboard.writeText(link)
       return link
-    } catch { return null }
+    } catch { return { error: 'copy' } }
   }
 
   // -- Export / slash dispatch ---------------------------------------------
@@ -477,13 +483,18 @@ export default function ChatPage() {
       onClose={() => panels.setSidebarOpen(false)}
       onOpenSettings={() => setShowSettings(true)}
       onLogout={logout}
-      onRenameConversation={(id, title) => updateConv.mutate({ id, title })}
+      onRenameConversation={async (id, title) => { try { await updateConv.mutateAsync({ id, title }) } catch { return false } }}
       onDeleteConversation={(id) => deleteConv.mutate(id)}
       onPinConversation={(id, pinned) => updateConv.mutate({ id, pinned })}
       onShareConversation={handleShareConversation}
       searchQuery={sidebarSearch}
       onSearchChange={setSidebarSearch}
       messageHits={messageHits}
+      sessionsError={sessionsError}
+      sessionsPending={sessionsPending}
+      onRetrySessions={retrySessions}
+      searchError={searchError}
+      onRetrySearch={retrySearch}
       onOpenProjects={() => setProjectsOpen(true)}
       onSelectProject={(id) => { setActiveProjectId(id); if (id) localStorage.setItem('activeProjectId', id); else localStorage.removeItem('activeProjectId') }}
       activeProjectName={activeProjectId ? (projects.find((p) => p.id === activeProjectId)?.name || undefined) : undefined}
@@ -509,18 +520,20 @@ export default function ChatPage() {
           pushed the whole transcript off-centre. ───────────────────────── */}
       {panels.isTablet ? (
         <aside
-          aria-label="Chats"
+          aria-label="Sidebar"
           aria-hidden={!panels.sidebarOpen}
-          className={`shrink-0 h-full overflow-hidden bg-[#0a0a0c] border-r border-white/[0.06] transition-[width] duration-200 ease-out ${
-            panels.sidebarOpen ? 'w-[260px]' : 'w-0 border-r-0'
+          style={{ width: panels.sidebarOpen ? sidebarWidth.width : 0 }}
+          className={`shrink-0 h-full overflow-hidden bg-[#0a0a0c] border-r border-white/[0.06] ${sidebarResizing ? '' : 'transition-[width] duration-200 ease-out'} ${
+            panels.sidebarOpen ? '' : 'border-r-0'
           }`}
         >
-          <div className="w-[260px] h-full">{sidebarContents}</div>
+          <div className="h-full" style={{ width: sidebarWidth.width }}>{sidebarContents}</div>
         </aside>
       ) : (
         <AnimatePresence initial={false}>
           {panels.sidebarOpen && (
             <motion.aside
+              aria-label="Sidebar"
               initial={{ x: -280 }}
               animate={{ x: 0 }}
               exit={{ x: -280 }}
@@ -531,6 +544,46 @@ export default function ChatPage() {
             </motion.aside>
           )}
         </AnimatePresence>
+      )}
+
+      {panels.isTablet && panels.sidebarOpen && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          aria-valuemin={SIDEBAR_WIDTH_MIN}
+          aria-valuemax={SIDEBAR_WIDTH_MAX}
+          aria-valuenow={sidebarWidth.width}
+          tabIndex={0}
+          title="Drag to resize"
+          onPointerDown={(e) => {
+            const handle = e.currentTarget
+            handle.setPointerCapture(e.pointerId)
+            const startX = e.clientX
+            const startW = sidebarWidth.width
+            const move = (ev: PointerEvent) => sidebarWidth.setWidth(startW + (ev.clientX - startX))
+            setSidebarResizing(true)
+            const up = () => {
+              setSidebarResizing(false)
+              handle.removeEventListener('pointermove', move)
+              handle.removeEventListener('pointerup', up)
+              handle.removeEventListener('pointercancel', up)
+            }
+            handle.addEventListener('pointermove', move)
+            handle.addEventListener('pointerup', up)
+            handle.addEventListener('pointercancel', up)
+          }}
+          onKeyDown={(e) => {
+            const step = e.shiftKey ? 24 : 8
+            if (e.key === 'ArrowRight') { e.preventDefault(); sidebarWidth.setWidth(sidebarWidth.widthRef.current + step) }
+            else if (e.key === 'ArrowLeft') { e.preventDefault(); sidebarWidth.setWidth(sidebarWidth.widthRef.current - step) }
+            else if (e.key === 'Home') { e.preventDefault(); sidebarWidth.setWidth(SIDEBAR_WIDTH_MIN) }
+            else if (e.key === 'End') { e.preventDefault(); sidebarWidth.setWidth(SIDEBAR_WIDTH_MAX) }
+          }}
+          className="relative shrink-0 w-1.5 cursor-col-resize touch-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-[#c96442]"
+        >
+          <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/10" />
+        </div>
       )}
 
       <AnimatePresence>
@@ -551,7 +604,7 @@ export default function ChatPage() {
       </AnimatePresence>
 
       {/* ── Center: conversation ─────────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col h-full min-w-0 relative pt-[env(safe-area-inset-top)]">
+      <main className="flex-1 flex flex-col h-full min-w-0 relative pt-[env(safe-area-inset-top)]">
         <ChatHeader
           sidebarOpen={panels.sidebarOpen}
           convTitle={convTitle}
@@ -572,7 +625,7 @@ export default function ChatPage() {
           hasConversation={!!currentConversationId}
           researchOpen={researchOpen}
           onToggleResearch={() => setResearchOpen((v) => !v)}
-          onOpenSidebar={() => panels.setSidebarOpen(true)}
+          onOpenSidebar={() => panels.setSidebarOpen((open) => !open)}
           theme={theme.choice}
           onCycleTheme={cycleTheme}
         />
@@ -662,7 +715,7 @@ export default function ChatPage() {
             />
           </div>
         </div>
-      </div>
+      </main>
 
       {/* ── Right: Artifacts panel (viewable output only — agent activity is
           inline per turn, audit P1/P2). ─────────────────────────────────── */}
@@ -690,16 +743,19 @@ export default function ChatPage() {
 
       <CommandPalette
         onNewSession={() => { setCurrentConversationId(null); panels.setSidebarOpen(false) }}
+        onSearchChats={() => openSidebarSearch(panels.setSidebarOpen)}
         onToggleSidebar={() => panels.setSidebarOpen((s) => !s)}
         onOpenSettings={() => { setSettingsTab(undefined); setShowSettings(true) }}
         onLogout={() => { logout(); panels.setSidebarOpen(false) }}
       />
       <ShortcutSheet open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      {/* ⌘K ? — keyboard glyph, so it is hidden where there is no
+          keyboard (P5: was visible over the composer border on phones). */}
       <button
         type="button"
         aria-label="Keyboard shortcuts"
         onClick={() => setShortcutsOpen(true)}
-        className="fixed bottom-4 right-4 z-30 p-2 rounded-lg text-slate-500 hover:text-slate-400 hover:bg-white/[0.04] transition text-[12px] font-mono"
+        className="fixed bottom-4 right-4 z-30 p-2 rounded-lg text-slate-500 hover:text-slate-400 hover:bg-white/[0.04] transition text-[12px] font-mono max-sm:hidden"
         title="Keyboard shortcuts (?)"
       >
         ⌘K ?

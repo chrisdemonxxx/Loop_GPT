@@ -54,11 +54,11 @@ export function useAuthedUrl(href: string | undefined): string | null {
 
 /** Authed download: fetch with the session token, then hand the browser a
  * correctly named, correct-MIME file. Never a raw href on auth-only URLs. */
-export async function downloadArtifact(a: ArtifactRef, href?: string | null) {
-  if (!href) return
+export async function downloadArtifact(a: ArtifactRef, href?: string | null): Promise<boolean> {
+  if (!href) return false
   try {
     const res = await fetch(href.startsWith('http') ? href : `${API_URL}${href}`, { headers: authHeaders(false) })
-    if (!res.ok) return
+    if (!res.ok) return false
     const blob = await res.blob()
     const objectUrl = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -68,7 +68,8 @@ export async function downloadArtifact(a: ArtifactRef, href?: string | null) {
     link.click()
     link.remove()
     URL.revokeObjectURL(objectUrl)
-  } catch { /* offline or expired */ }
+    return true
+  } catch { return false }
 }
 
 export function isVideoArtifact(a: ArtifactRef) {
@@ -87,20 +88,56 @@ export function artifactFileId(a: ArtifactRef): string | null {
 }
 
 /** Fetch authed text content (code/markdown/csv) for in-panel viewers. */
-export function useAuthedText(href: string | undefined): { text: string | null; loading: boolean } {
+export function useAuthedText(href: string | undefined): { text: string | null; loading: boolean; error: boolean; retry: () => void } {
   const [text, setText] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(false)
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
-    if (!href) { setText(null); return }
+    if (!href) { setText(null); setLoading(false); setError(false); return }
     let cancelled = false
     setLoading(true)
+    setError(false)
+    setText(null)
     fetch(href, { headers: authHeaders(false) })
-      .then((r) => (r.ok ? r.text() : null))
+      .then((r) => { if (!r.ok) throw new Error('open'); return r.text() })
       .then((t) => { if (!cancelled) { setText(t); setLoading(false) } })
-      .catch(() => { if (!cancelled) { setText(null); setLoading(false) } })
+      .catch(() => { if (!cancelled) { setText(null); setError(true); setLoading(false) } })
     return () => { cancelled = true }
-  }, [href])
-  return { text, loading }
+  }, [href, attempt])
+  return { text, loading, error, retry: () => setAttempt((n) => n + 1) }
+}
+
+/** Same authed blob fetch as useAuthedUrl, plus a settled error and retry.
+ * Cards keep useAuthedUrl; the panel uses this so a failed open is not a shimmer. */
+export function useAuthedBlob(href: string | undefined): { url: string | null; loading: boolean; error: boolean; retry: () => void } {
+  const [url, setUrl] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(false)
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    let objectUrl: string | null = null
+    let revoked = false
+    if (!href || href.startsWith('blob:')) { setUrl(href ?? null); setLoading(false); setError(false); return }
+    if (!href.startsWith(`${API_URL}/api/files/`) && !href.startsWith('/api/files/')) { setUrl(href); setLoading(false); setError(false); return }
+    setLoading(true)
+    setError(false)
+    ;(async () => {
+      try {
+        const res = await fetch(href.startsWith('http') ? href : `${API_URL}${href}`, { headers: authHeaders(false) })
+        if (!res.ok) throw new Error('open')
+        const blob = await res.blob()
+        if (revoked) return
+        objectUrl = URL.createObjectURL(blob)
+        setUrl(objectUrl)
+        setLoading(false)
+      } catch {
+        if (!revoked) { setUrl(null); setError(true); setLoading(false) }
+      }
+    })()
+    return () => { revoked = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
+  }, [href, attempt])
+  return { url, loading, error, retry: () => setAttempt((n) => n + 1) }
 }
 
 /** Mint a short-lived signed link and open the private artifact in a new

@@ -57,6 +57,42 @@ export function usePanels() {
   }
 }
 
+const SIDEBAR_WIDTH_KEY = 'sidebarWidth'
+export const SIDEBAR_WIDTH_MIN = 220
+export const SIDEBAR_WIDTH_MAX = 420
+export const SIDEBAR_WIDTH_DEFAULT = 260
+
+function clampSidebarWidth(n: number) {
+  return Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, Math.round(n)))
+}
+
+/** Docked chat-sidebar width. Both pointer drags and arrow keys call
+ * setWidth, which clamps and writes localStorage. */
+export function useSidebarWidth() {
+  const [width, setWidthState] = useState(SIDEBAR_WIDTH_DEFAULT)
+  const widthRef = useRef(width)
+  widthRef.current = width
+
+  useEffect(() => {
+    try {
+      const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
+      if (Number.isFinite(saved) && saved >= SIDEBAR_WIDTH_MIN && saved <= SIDEBAR_WIDTH_MAX) {
+        setWidthState(saved)
+      }
+    } catch { /* private mode */ }
+  }, [])
+
+  const setWidth = useCallback((next: number) => {
+    const clamped = clampSidebarWidth(next)
+    widthRef.current = clamped
+    setWidthState(clamped)
+    try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(clamped)) } catch { /* private mode */ }
+    return clamped
+  }, [])
+
+  return { width, setWidth, widthRef }
+}
+
 /**
  * Tracks the on-screen keyboard (audit P6) via the VisualViewport API: when
  * the keyboard pushes the visual viewport up, --kb-offset receives the
@@ -135,16 +171,25 @@ export function useConversationsData(
 ) {
   const queryClient = useQueryClient()
 
-  const { data: conversations = [] } = useQuery<Conversation[]>({
+  const sessionsQuery = useQuery<Conversation[]>({
     queryKey: ['conversations'],
     queryFn: async () => {
-      // Normalize: a non-array payload (proxy error page, shape change)
-      // degrades to an empty list instead of crashing the page.
-      const d = (await axios.get(`${API_URL}/api/conversations`, { headers: authHeaders(false) }).catch(() => ({ data: [] }))).data
-      return Array.isArray(d) ? d : []
+      const res = await axios.get(`${API_URL}/api/conversations`, { headers: authHeaders(false) })
+      if (!Array.isArray(res.data)) throw new Error('sessions')
+      return res.data as Conversation[]
     },
     enabled: typeof window !== 'undefined',
+    retry: false,
   })
+  // Remember the last successful list, including a confirmed empty one.
+  // A later failed refetch must not replace that result.
+  const sessionsSeen = useRef<Conversation[] | undefined>(undefined)
+  if (sessionsQuery.isSuccess && Array.isArray(sessionsQuery.data)) sessionsSeen.current = sessionsQuery.data
+  const conversations = (Array.isArray(sessionsQuery.data) ? sessionsQuery.data : sessionsSeen.current) ?? []
+  const sessionsLoaded = sessionsSeen.current !== undefined
+  const sessionsPending = !sessionsLoaded && !sessionsQuery.isError
+  const sessionsError = sessionsQuery.isError && !sessionsLoaded
+  const retrySessions = () => { void sessionsQuery.refetch() }
 
   // Branch envelope (§8-22): every row + the active leaf. The transcript
   // renders the DERIVED active path (buildBranchView) so retries and edits
@@ -197,6 +242,7 @@ export function useConversationsData(
   const messages = branchView.path
   return {
     conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages,
+    sessionsError, sessionsPending, retrySessions,
     /** Version-arrow data per displayed row (§8-22). */
     branchVersions: branchView.versions as Record<string, BranchVersionInfo>,
     /** The conversation's active branch tip. */
@@ -225,13 +271,21 @@ export function useConversationSearch(q: string) {
     const handle = setTimeout(() => setDebounced(q), 250)
     return () => clearTimeout(handle)
   }, [q])
-  const { data: hits = [] } = useQuery<ConversationSearchHit[]>({
+  const searchQuery = useQuery<ConversationSearchHit[]>({
     queryKey: ['conversation-search', debounced],
-    queryFn: async () =>
-      (await axios.get(`${API_URL}/api/conversations/search`, { params: { q: debounced }, headers: authHeaders(false) }).catch(() => ({ data: [] }))).data,
+    queryFn: async () => {
+      const res = await axios.get(`${API_URL}/api/conversations/search`, { params: { q: debounced }, headers: authHeaders(false) })
+      if (!Array.isArray(res.data)) throw new Error('search')
+      return res.data as ConversationSearchHit[]
+    },
     enabled: debounced.trim().length >= 2,
+    retry: false,
   })
-  return hits
+  return {
+    hits: Array.isArray(searchQuery.data) ? searchQuery.data : [],
+    error: searchQuery.isError,
+    retry: () => { void searchQuery.refetch() },
+  }
 }
 
 // ---------------------------------------------------------------------------

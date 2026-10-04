@@ -44,16 +44,15 @@ export default function ChatHeader({
 
   return (
     <div className="flex items-center gap-2 px-3 sm:px-4 h-12 border-b border-white/[0.05] shrink-0 bg-[#08080a]">
-      {!sidebarOpen && (
-        <button
-          onClick={onOpenSidebar}
-          title="Open sidebar"
-          aria-label="Open sidebar"
-          className="p-1.5 rounded-lg hover:bg-white/[0.05] text-slate-400 hover:text-slate-300 transition"
-        >
-          <PanelLeft size={17} />
-        </button>
-      )}
+      <button
+        onClick={onOpenSidebar}
+        title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+        aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+        aria-expanded={sidebarOpen}
+        className="p-1.5 rounded-lg hover:bg-white/[0.05] text-slate-400 hover:text-slate-300 transition"
+      >
+        <PanelLeft size={17} />
+      </button>
       {!sidebarOpen && (
         <div className="w-6 h-6 rounded-md bg-[#c96442] flex items-center justify-center shrink-0">
           <Sparkles size={13} className="text-white" />

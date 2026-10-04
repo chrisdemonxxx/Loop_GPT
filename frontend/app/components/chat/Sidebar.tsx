@@ -30,7 +30,7 @@ interface SidebarProps {
   onClose: () => void
   onOpenSettings: () => void
   onLogout: () => void
-  onRenameConversation: (id: string, title: string) => void
+  onRenameConversation: (id: string, title: string) => void | Promise<false | void>
   onDeleteConversation: (id: string) => void
   /** Pin/unpin (audit §8-13). */
   onPinConversation: (id: string, pinned: boolean) => void
@@ -41,6 +41,14 @@ interface SidebarProps {
   onSearchChange: (v: string) => void
   /** Server-side message-body hits for the current search (audit §8-16). */
   messageHits?: ConversationSearchHit[]
+  /** True when GET /api/conversations failed and nothing has loaded successfully. */
+  sessionsError?: boolean
+  /** True until the first GET settles. Not the empty list. */
+  sessionsPending?: boolean
+  onRetrySessions?: () => void
+  /** True when the message search failed. The loaded list stays up. */
+  searchError?: boolean
+  onRetrySearch?: () => void
   onOpenProjects: () => void
   onSelectProject: (id: string | null) => void
   activeProjectName?: string
@@ -65,13 +73,14 @@ export default function Sidebar({
   onSelectConversation, onClose, onOpenSettings, onLogout,
   onRenameConversation, onDeleteConversation, onPinConversation, onShareConversation,
   searchQuery, onSearchChange, messageHits = [],
+  sessionsError = false, sessionsPending = false, onRetrySessions, searchError = false, onRetrySearch,
   onOpenProjects, onSelectProject, activeProjectName,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [projectsOpen, setProjectsOpen] = useState(false)
-  const [sharedId, setSharedId] = useState<string | null>(null)
+  const [shareNote, setShareNote] = useState<{ id: string; kind: 'copied' | 'share' | 'copy' } | null>(null)
   const { locale, setLocale, t } = useI18n()
 
   const q = searchQuery.trim().toLowerCase()
@@ -79,6 +88,8 @@ export default function Sidebar({
     () => conversations.filter((c) => !q || (c.title || '').toLowerCase().includes(q)),
     [conversations, q],
   )
+  // A failed search must not hide the sessions that already loaded.
+  const listed = searchError ? conversations : titleMatches
   /** Conversations found by message content only (not already in titleMatches). */
   const bodyOnly = useMemo(() => {
     const titleIds = new Set(titleMatches.map((c) => c.id))
@@ -87,8 +98,8 @@ export default function Sidebar({
 
   /** Grouping by pinned, then date bucket (server already orders each list). */
   const groups = useMemo(() => {
-    const pinned = titleMatches.filter((c) => c.pinned)
-    const rest = titleMatches.filter((c) => !c.pinned)
+    const pinned = listed.filter((c) => c.pinned)
+    const rest = listed.filter((c) => !c.pinned)
     const byBucket = new Map<string, Conversation[]>()
     for (const c of rest) {
       const bucket = dateBucket(c.updatedAt)
@@ -99,19 +110,28 @@ export default function Sidebar({
       ...(pinned.length ? [{ label: 'Pinned' as const, items: pinned }] : []),
       ...BUCKET_ORDER.filter((b) => byBucket.has(b)).map((b) => ({ label: b, items: byBucket.get(b)! })),
     ]
-  }, [titleMatches])
+  }, [listed])
 
   async function handleShare(id: string) {
-    const url = await onShareConversation(id)
-    if (url) {
-      setSharedId(id)
-      setTimeout(() => setSharedId((v) => (v === id ? null : v)), 1600)
+    let result: string | null | { error: 'share' | 'copy' } = null
+    try { result = await onShareConversation(id) } catch { result = { error: 'share' } }
+    if (typeof result === 'string' && result) {
+      setShareNote({ id, kind: 'copied' })
+      setTimeout(() => setShareNote((v) => (v?.id === id && v.kind === 'copied' ? null : v)), 1600)
+      return
     }
+    setShareNote({ id, kind: result && typeof result === 'object' && result.error === 'copy' ? 'copy' : 'share' })
   }
 
-  function commitEdit() {
-    if (editingId && editingTitle.trim()) {
-      onRenameConversation(editingId, editingTitle.trim())
+  async function commitEdit() {
+    if (!editingId) return
+    const title = editingTitle.trim()
+    if (!title) { setEditingId(null); return }
+    try {
+      const result = await onRenameConversation(editingId, title)
+      if (result === false) return
+    } catch {
+      return
     }
     setEditingId(null)
   }
@@ -126,8 +146,8 @@ export default function Sidebar({
         <span className="font-semibold text-slate-100 text-[15px]">Loop GPT</span>
         <button
           onClick={onClose}
-          title="Close sidebar"
-          aria-label="Close sidebar"
+          title="Hide sidebar"
+          aria-label="Hide sidebar"
           className="ml-auto p-1.5 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-300 transition"
         >
           <PanelLeft size={16} />
@@ -207,7 +227,7 @@ export default function Sidebar({
                 active={currentConversationId === c.id}
                 editing={editingId === c.id}
                 editingTitle={editingTitle}
-                shared={sharedId === c.id}
+                shareKind={shareNote?.id === c.id ? shareNote.kind : null}
                 onStartEdit={() => { setEditingId(c.id); setEditingTitle(c.title || '') }}
                 onEditChange={setEditingTitle}
                 onCommitEdit={commitEdit}
@@ -243,12 +263,27 @@ export default function Sidebar({
           </div>
         )}
 
-        {searchQuery && titleMatches.length === 0 && bodyOnly.length === 0 && (
+        {searchError && (
+          <div className="px-3 py-4 text-center">
+            <p className="text-xs text-rose-400">{"Couldn't search chats."}</p>
+            <button type="button" onClick={onRetrySearch} className="mt-2 text-xs text-rose-300 underline">Retry</button>
+          </div>
+        )}
+        {searchQuery && !searchError && titleMatches.length === 0 && bodyOnly.length === 0 && (
           <p className="px-3 py-6 text-center text-[12px] text-slate-400">
             No chats match &quot;{searchQuery}&quot;
           </p>
         )}
-        {!searchQuery && conversations.length === 0 && (
+        {sessionsPending && !searchQuery && (
+          <p className="px-3 py-6 text-center text-[12px] text-slate-500">Loading…</p>
+        )}
+        {sessionsError && !sessionsPending && conversations.length === 0 && !searchQuery && (
+          <div className="px-3 py-6 text-center">
+            <p className="text-xs text-rose-400">{"Couldn't load sessions."}</p>
+            <button type="button" onClick={onRetrySessions} className="mt-2 text-xs text-rose-300 underline">Retry</button>
+          </div>
+        )}
+        {!sessionsError && !sessionsPending && !searchQuery && conversations.length === 0 && (
           <p className="px-3 py-6 text-center text-[12px] text-slate-500">{t('noSessions')}</p>
         )}
       </div>
@@ -333,14 +368,14 @@ export default function Sidebar({
 
 /** One conversation row: title, star/pin, share, rename, delete. */
 function ConversationRow({
-  conversation: c, active, editing, editingTitle, shared,
+  conversation: c, active, editing, editingTitle, shareKind,
   onStartEdit, onEditChange, onCommitEdit, onCancelEdit, onSelect, onPin, onShare, onDelete,
 }: {
   conversation: Conversation
   active: boolean
   editing: boolean
   editingTitle: string
-  shared: boolean
+  shareKind: 'copied' | 'share' | 'copy' | null
   onStartEdit: () => void
   onEditChange: (v: string) => void
   onCommitEdit: () => void
@@ -374,8 +409,8 @@ function ConversationRow({
           <RowAction title={c.pinned ? 'Unpin' : 'Pin to top'} onClick={onPin} className={c.pinned ? 'text-[#c96442]' : undefined}>
             <Star size={12} fill={c.pinned ? 'currentColor' : 'none'} />
           </RowAction>
-          <RowAction title={shared ? 'Link copied' : 'Share public link'} onClick={onShare}>
-            {shared ? <Check size={12} className="text-emerald-400" /> : <Share2 size={12} />}
+          <RowAction title={shareKind === 'copied' ? 'Link copied' : 'Share public link'} onClick={onShare}>
+            {shareKind === 'copied' ? <Check size={12} className="text-emerald-400" /> : <Share2 size={12} />}
           </RowAction>
           <RowAction title="Rename" onClick={onStartEdit}><Edit2 size={12} /></RowAction>
           <RowAction title="Delete" onClick={onDelete} danger><Trash2 size={12} /></RowAction>
@@ -385,6 +420,8 @@ function ConversationRow({
           <Star size={11} className="text-[#c96442] shrink-0 group-hover:hidden" fill="currentColor" aria-label="Pinned" />
         )}
       </div>
+      {shareKind === 'share' && <p className="px-2.5 pb-1.5 text-[11px] text-rose-400">Couldn't share this session.</p>}
+      {shareKind === 'copy' && <p className="px-2.5 pb-1.5 text-[11px] text-rose-400">Couldn't copy the link.</p>}
     </div>
   )
 }

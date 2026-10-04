@@ -17,11 +17,29 @@ export default function ToolsTab() {
   const [data, setData] = useState<{ tools: ToolRow[]; permissions: Record<string, string> }>({ tools: [], permissions: {} })
   const [audit, setAudit] = useState<AuditRow[]>([])
   const [showAudit, setShowAudit] = useState(false)
-  const load = () => fetch(`${API_URL}/api/agent/permissions`, { headers: authHeaders() }).then((r) => r.json()).then(setData).catch(() => {})
+  const [loadError, setLoadError] = useState('')
+  const [saveError, setSaveError] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const load = () => fetch(`${API_URL}/api/agent/permissions`, { headers: authHeaders() })
+    .then(async (r) => {
+      if (!r.ok) throw new Error('load')
+      const d = await r.json()
+      if (!d || !Array.isArray(d.tools)) throw new Error('load')
+      setData({ tools: d.tools, permissions: d.permissions || {} })
+      setLoadError('')
+    })
+    .catch(() => setLoadError('Could not load tools.'))
+    .finally(() => setLoaded(true))
   useEffect(() => { load() }, [])
   const setLevel = async (name: string, level: string) => {
+    setSaveError('')
+    const res = await fetch(`${API_URL}/api/agent/permissions`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ name, level }) }).catch(() => null)
+    if (!res?.ok) {
+      const body = res ? await res.json().catch(() => ({})) : {}
+      setSaveError(body.error || 'Could not save.')
+      return
+    }
     setData((d) => ({ ...d, permissions: { ...d.permissions, [name]: level } }))
-    await fetch(`${API_URL}/api/agent/permissions`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ name, level }) }).catch(() => {})
   }
   const loadAudit = async () => {
     setShowAudit((v) => !v)
@@ -31,8 +49,15 @@ export default function ToolsTab() {
 
   return (
     <div className="space-y-2 text-sm">
+      {loadError && (
+        <div className="text-xs text-rose-400 flex items-center gap-2 mb-2">
+          <span>{loadError}</span>
+          <button type="button" onClick={() => load()} className="underline hover:text-rose-300">Retry</button>
+        </div>
+      )}
+      {saveError && <div className="text-xs text-rose-400">{saveError}</div>}
       <div className="flex items-center justify-between mb-1">
-        <p className="text-slate-500 flex items-center gap-1.5"><Wrench size={13} /> {data.tools.length} tools. Set what the agent may run on its own.</p>
+        <p className="text-slate-500 flex items-center gap-1.5"><Wrench size={13} /> {loaded && !loadError ? `${data.tools.length} tools. ` : ''}Set what the agent may run on its own.</p>
         <button onClick={loadAudit} className="text-xs text-[#e79d7f] hover:underline">{showAudit ? 'Hide' : 'View'} audit log</button>
       </div>
       {showAudit && (
@@ -48,7 +73,7 @@ export default function ToolsTab() {
           ))}
         </div>
       )}
-      {data.tools.map((t) => {
+      {loaded && !loadError && data.tools.map((t) => {
         const effective = data.permissions[t.name] || t.default
         return (
           <div key={t.name} className="flex items-start justify-between gap-3 p-3 rounded-xl border border-white/[0.06] bg-white/[0.02]">

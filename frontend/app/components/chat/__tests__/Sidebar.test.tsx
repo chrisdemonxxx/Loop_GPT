@@ -39,7 +39,7 @@ const base = {
 
 import { I18nProvider } from '../../../lib/i18n'
 
-function renderSidebar(overrides: Partial<typeof base> = {}) {
+function renderSidebar(overrides: Partial<React.ComponentProps<typeof Sidebar>> = {}) {
   const props = { ...base, ...overrides }
   return render(<I18nProvider><Sidebar {...props} /></I18nProvider>)
 }
@@ -78,6 +78,30 @@ describe('Sidebar — share', () => {
     await screen.findByTitle('Link copied')
     expect(base.onShareConversation).toHaveBeenCalledWith('c1')
   })
+
+  it('says the share failed and does not claim the link was copied', async () => {
+    renderSidebar({
+      conversations: [conv('c1', 'Chat', 0)],
+      onShareConversation: vi.fn(async () => ({ error: 'share' as const })),
+    })
+    fireEvent.click(screen.getByTitle('Share public link'))
+    expect(await screen.findByText("Couldn't share this session.")).toBeInTheDocument()
+    expect(screen.queryByTitle('Link copied')).not.toBeInTheDocument()
+    expect(screen.queryByText('No matching commands.')).not.toBeInTheDocument()
+    expect(screen.queryByText('No sessions yet.')).not.toBeInTheDocument()
+    expect(screen.getByText('Chat')).toBeInTheDocument()
+  })
+
+  it('says the copy failed after a link exists and does not claim it was copied', async () => {
+    renderSidebar({
+      conversations: [conv('c1', 'Chat', 0)],
+      onShareConversation: vi.fn(async () => ({ error: 'copy' as const })),
+    })
+    fireEvent.click(screen.getByTitle('Share public link'))
+    expect(await screen.findByText("Couldn't copy the link.")).toBeInTheDocument()
+    expect(screen.queryByTitle('Link copied')).not.toBeInTheDocument()
+    expect(screen.getByText('Chat')).toBeInTheDocument()
+  })
 })
 
 describe('Sidebar — message-body search', () => {
@@ -99,5 +123,80 @@ describe('Sidebar — message-body search', () => {
   it('shows the no-match message for a query with zero hits', () => {
     renderSidebar({ conversations: [], searchQuery: 'nope' })
     expect(screen.getByText(/No chats match "nope"/)).toBeInTheDocument()
+  })
+})
+
+describe('Sidebar ? recents copy and failures', () => {
+  it('keeps buckets in order including Previous 7 days', () => {
+    const { container } = renderSidebar({
+      conversations: [
+        conv('old', 'Ancient chat', 30),
+        conv('week', 'Last week', 3),
+        conv('today', 'Fresh chat', 0),
+        conv('pinned', 'Keep me', 10, true),
+        conv('yday', 'Yesterday chat', 1),
+      ],
+    })
+    const headers = [...container.querySelectorAll('.uppercase.tracking-widest')].map((h) => h.textContent)
+    expect(headers).toEqual(['Pinned', 'Today', 'Yesterday', 'Previous 7 days', 'Older'])
+  })
+
+  it('says No sessions yet when the loaded list is empty', () => {
+    renderSidebar({ conversations: [] })
+    expect(screen.getByText('No sessions yet.')).toBeInTheDocument()
+  })
+
+  it('a failed load is not the empty list and Retry calls back', () => {
+    const onRetrySessions = vi.fn()
+    renderSidebar({ conversations: [], sessionsError: true, onRetrySessions })
+    expect(screen.getByText("Couldn't load sessions.")).toBeInTheDocument()
+    expect(screen.queryByText('No sessions yet.')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(onRetrySessions).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the shown list when a later load failed', () => {
+    renderSidebar({
+      conversations: [conv('c1', 'Fresh chat', 0)],
+      sessionsError: true,
+    })
+    expect(screen.getByText('Fresh chat')).toBeInTheDocument()
+    expect(screen.queryByText('No sessions yet.')).not.toBeInTheDocument()
+    expect(screen.queryByText("Couldn't load sessions.")).not.toBeInTheDocument()
+  })
+
+  it('a failed search is not a no-match and keeps the loaded list', () => {
+    const onRetrySearch = vi.fn()
+    renderSidebar({
+      conversations: [conv('c1', 'Fresh chat', 0)],
+      searchQuery: 'nope',
+      searchError: true,
+      onRetrySearch,
+    })
+    expect(screen.getByText("Couldn't search chats.")).toBeInTheDocument()
+    expect(screen.queryByText(/No chats match/)).not.toBeInTheDocument()
+    expect(screen.getByText('Fresh chat')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(onRetrySearch).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the edited title when rename fails', async () => {
+    const onRenameConversation = vi.fn(async () => false as const)
+    renderSidebar({ conversations: [conv('c1', 'Chat', 0)], onRenameConversation })
+    fireEvent.click(screen.getByTitle('Rename'))
+    fireEvent.change(screen.getByDisplayValue('Chat'), { target: { value: 'Better title' } })
+    fireEvent.blur(screen.getByDisplayValue('Better title'))
+    expect(await screen.findByDisplayValue('Better title')).toBeInTheDocument()
+    expect(onRenameConversation).toHaveBeenCalledWith('c1', 'Better title')
+  })
+
+  it('asks before delete and leaves the session when cancelled', () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderSidebar({ conversations: [conv('c1', 'Chat', 0)], currentConversationId: 'c1' })
+    fireEvent.click(screen.getByTitle('Delete'))
+    expect(confirm).toHaveBeenCalledWith('Delete this session?')
+    expect(base.onDeleteConversation).not.toHaveBeenCalled()
+    expect(screen.getByText('Chat')).toBeInTheDocument()
+    confirm.mockRestore()
   })
 })

@@ -8,7 +8,7 @@ import { Badge, btnGhost, btnPrimary, Card, EmptyState, inputCls, SectionHeader 
 
 interface StyleRow { id: string; name: string; systemPrompt: string; isDefault: boolean }
 
-/** Built-in preset gallery (Claude-style). Selecting one makes it the default
+/** Built-in preset gallery. Selecting one makes it the default
  * style by writing it as the user's active UserStyle. */
 const PRESETS = [
   { key: 'normal', name: 'Normal', prompt: 'Respond in your default, balanced way: clear and natural prose, standard length for the question.', description: 'The default, balanced tone' },
@@ -23,7 +23,7 @@ function loadVoices(): SpeechSynthesisVoice[] {
 }
 
 /**
- * Personalization (Claude-style styles): preset gallery, create-your-own,
+ * Personalization: preset gallery, create-your-own,
  * create-from-writing-sample, active style display, and voice preferences.
  */
 export default function PersonalizationTab() {
@@ -34,6 +34,8 @@ export default function PersonalizationTab() {
   const [sample, setSample] = useState('')
   const [sampleBusy, setSampleBusy] = useState(false)
   const [error, setError] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const [loaded, setLoaded] = useState(false)
 
   // Voice preferences (TTS read-aloud).
   const [voiceName, setVoiceName] = useState('')
@@ -45,7 +47,16 @@ export default function PersonalizationTab() {
   const [serverVoice, setServerVoice] = useState('af_heart')
 
   const load = () =>
-    fetch(`${API_URL}/api/styles`, { headers: authHeaders() }).then((r) => r.json()).then((d) => setStyles(Array.isArray(d) ? d : [])).catch(() => {})
+    fetch(`${API_URL}/api/styles`, { headers: authHeaders() })
+      .then(async (r) => {
+        if (!r.ok) throw new Error('load')
+        const d = await r.json()
+        if (!Array.isArray(d)) throw new Error('load')
+        setStyles(d)
+        setLoadError('')
+      })
+      .catch(() => setLoadError('Could not load styles.'))
+      .finally(() => setLoaded(true))
   useEffect(() => { load() }, [])
 
   // Load saved voice prefs + available voices.
@@ -171,7 +182,14 @@ export default function PersonalizationTab() {
         </div>
       )}
 
-      {styles.filter((s) => !PRESETS.some((p) => p.name.toLowerCase() === s.name.toLowerCase())).length === 0 && creating === null && (
+      {loadError && (
+        <div className="text-xs text-rose-400 flex items-center gap-2">
+          <span>{loadError}</span>
+          <button type="button" onClick={() => load()} className="underline hover:text-rose-300">Retry</button>
+        </div>
+      )}
+
+      {loaded && !loadError && styles.filter((s) => !PRESETS.some((p) => p.name.toLowerCase() === s.name.toLowerCase())).length === 0 && creating === null && (
         <EmptyState
           icon={<Feather size={20} />}
           title="No custom styles yet"

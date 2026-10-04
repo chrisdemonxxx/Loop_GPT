@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { X, Wrench, Puzzle, Blocks, Cable, Brain, Palette, SunMoon } from 'lucide-react'
 import MemoryTab from './settings/MemoryTab'
@@ -15,12 +15,25 @@ interface Props { onClose: () => void; initialTab?: string; workspaceId?: string
 
 /**
  * Agent settings — one modal, one visual system. Tab order matches the frontier
- * IA: Skills · Plugins · Memory · Personalization · Connectors · Tools.
+ * IA: Skills · Plugins · Memory · Personalization · Appearance · Connectors · Tools.
  * (The legacy "Builder" and "Model/BYOK" tabs are gone: custom HTTP tools now
  * live under Connectors, and model routing is server-side only.)
  */
 export default function SettingsPanel({ onClose, initialTab, workspaceId }: Props) {
   const [tab, setTab] = useState(initialTab || 'skills')
+
+  // Escape closes the dialog even when focus is in a field. X and backdrop
+  // stay on their own click handlers.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      // Nested credential sheet, or an edit that already claimed Escape.
+      if (document.querySelector('[data-settings-nested-dialog]')) return
+      onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   const tabs = [
     { id: 'skills', label: 'Skills', Icon: Blocks },
@@ -33,10 +46,10 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId }: Prop
   ]
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[calc(env(safe-area-inset-bottom)+6.5rem)]" onClick={onClose}>
       <motion.div
         initial={{ opacity: 0, scale: 0.96, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="glass-strong rounded-2xl w-full max-w-2xl max-h-[86vh] flex flex-col overflow-hidden shadow-panel"
+        className="glass-strong rounded-2xl w-full max-w-2xl max-h-[min(86vh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-7.5rem))] flex flex-col overflow-hidden shadow-panel"
         onClick={(e) => e.stopPropagation()}
         role="dialog" aria-modal="true" aria-label="Agent settings"
       >
@@ -44,7 +57,7 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId }: Prop
           <h2 className="text-lg font-semibold text-gradient">Agent settings</h2>
           <button onClick={onClose} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400" aria-label="Close settings"><X size={18} /></button>
         </div>
-        <div className="shrink-0 flex border-b border-white/5 text-sm overflow-x-auto no-scrollbar" role="tablist">
+        <div className="min-w-0 flex flex-nowrap border-b border-white/5 text-sm overflow-x-auto no-scrollbar" role="tablist">
           {tabs.map(({ id, label, Icon }) => (
             <button
               key={id}
@@ -59,7 +72,7 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId }: Prop
             </button>
           ))}
         </div>
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
           {tab === 'skills' && <SkillsTab />}
           {tab === 'plugins' && <PluginsTab />}
           {tab === 'memory' && <MemoryTab />}
@@ -68,6 +81,10 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId }: Prop
           {tab === 'connectors' && <ConnectorsTab workspaceId={workspaceId} />}
           {tab === 'tools' && <ToolsTab />}
         </div>
+        {/* P5: the last row was landing under the phone's bottom toolbar
+            (the sheet sat flush at 844). Same env(safe-area-inset-bottom)
+            pattern as the composer footer (page.tsx:615). */}
+        <div className="shrink-0 h-[env(safe-area-inset-bottom)]" aria-hidden="true" />
       </motion.div>
     </div>
   )

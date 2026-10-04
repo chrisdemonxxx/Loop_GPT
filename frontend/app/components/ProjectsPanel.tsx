@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { X, FolderPlus, Trash2, Upload, Check, Database, MessageSquare, ChevronLeft, FileText } from 'lucide-react'
 import { API_URL, authHeaders } from '../lib/api'
@@ -39,14 +39,18 @@ async function readTextFile(file: File): Promise<string> {
 }
 
 /**
- * Projects (Claude-style): a vertical card list with instructions preview,
- * chat counts and last-active, a dedicated creation flow, and a prominent
- * knowledge upload (text files are parsed in the browser).
+ * Projects: a vertical card list with instructions preview, chat counts and
+ * last-active, a dedicated creation flow, and a prominent knowledge upload
+ * (text files are parsed in the browser). Search and sort stay on the client.
  */
 export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, onClose }: Props) {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
+  const [loaded, setLoaded] = useState(false)
+  const [loadError, setLoadError] = useState('')
   const [error, setError] = useState('')
+  const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<'created' | 'updated' | 'name'>('created')
   // Creation flow (dedicated): details step → knowledge step.
   const [creating, setCreating] = useState(false)
   const [step, setStep] = useState<1 | 2>(1)
@@ -71,13 +75,26 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
   }, [onClose])
 
   async function load() {
-    if (!workspaceId) { setProjects([]); setLoading(false); return }
+    if (!workspaceId) {
+      setProjects([])
+      setLoaded(false)
+      setLoadError('')
+      setLoading(false)
+      return
+    }
     setLoading(true)
     try {
       const res = await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects`, { headers: authHeaders() })
+      if (!res.ok) throw new Error('load')
       const data = await res.json()
-      setProjects(Array.isArray(data) ? data : [])
-    } catch { setError('Could not load projects.') } finally { setLoading(false) }
+      if (!Array.isArray(data)) throw new Error('load')
+      setProjects(data)
+      setLoadError('')
+      setLoaded(true)
+    } catch {
+      // Keep whatever list is already on screen. A failure is not an empty library.
+      setLoadError('Could not load projects.')
+    } finally { setLoading(false) }
   }
   useEffect(() => { load() }, [workspaceId]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -91,24 +108,27 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
       })
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to create')
       const project = await res.json()
-      // Optional seed knowledge from the creation flow.
-      for (const file of seedFiles) {
-        const isDoc = /\.(pdf|docx|xlsx)$/i.test(file.name)
-        if (isDoc) {
-          const fd = new FormData()
-          fd.append('file', file)
-          await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${project.id}/ingest-file`, {
-            method: 'POST', headers: authHeaders(false) as Record<string, string>, body: fd,
-          }).catch(() => {})
-        } else {
-          const text = await readTextFile(file).catch(() => '')
-          if (text.trim()) {
-            await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${project.id}/ingest`, {
-              method: 'POST', headers: authHeaders(), body: JSON.stringify({ text }),
+      // The project exists. A later seed-file failure must not delete it.
+      setProjects((prev) => [project, ...prev.filter((item) => item.id !== project.id)])
+      try {
+        for (const file of seedFiles) {
+          const isDoc = /\.(pdf|docx|xlsx)$/i.test(file.name)
+          if (isDoc) {
+            const fd = new FormData()
+            fd.append('file', file)
+            await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${project.id}/ingest-file`, {
+              method: 'POST', headers: authHeaders(false) as Record<string, string>, body: fd,
             }).catch(() => {})
+          } else {
+            const text = await readTextFile(file).catch(() => '')
+            if (text.trim()) {
+              await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${project.id}/ingest`, {
+                method: 'POST', headers: authHeaders(), body: JSON.stringify({ text }),
+              }).catch(() => {})
+            }
           }
         }
-      }
+      } catch { /* seed upload failed; leave the created project in place */ }
       setForm({ name: '', instructions: '' }); setSeedFiles([]); setSeedMsg('')
       setCreating(false); setStep(1)
       await load()
@@ -118,7 +138,8 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
 
   async function remove(id: string) {
     if (!workspaceId || !confirm('Delete this project and its knowledge?')) return
-    await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${id}`, { method: 'DELETE', headers: authHeaders() }).catch(() => {})
+    const res = await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${id}`, { method: 'DELETE', headers: authHeaders() }).catch(() => null)
+    if (!res?.ok) return
     if (activeProjectId === id) onSelect(null)
     load()
   }
@@ -170,6 +191,16 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
     load()
   }
 
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const rows = projects.filter((item) => !q || item.name.toLowerCase().includes(q))
+    return [...rows].sort((a, b) => {
+      if (sort === 'name') return a.name.localeCompare(b.name)
+      if (sort === 'updated') return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    })
+  }, [projects, query, sort])
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <motion.div
@@ -201,7 +232,10 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
               <>
                 <input placeholder="Project name (e.g. Marketing, Thesis)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} aria-label="Project name" />
                 <textarea placeholder="Custom instructions the agent should follow in this project…" rows={3} value={form.instructions} onChange={(e) => setForm({ ...form, instructions: e.target.value })} className={inputCls} aria-label="Project instructions" />
-                <button onClick={() => setStep(2)} disabled={!form.name.trim()} className={btnPrimary}>Continue</button>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setStep(2)} disabled={!form.name.trim()} className={btnPrimary}>Continue</button>
+                  <button type="button" onClick={() => { setCreating(false); setStep(1); setError('') }} className={btnGhost}>Cancel</button>
+                </div>
               </>
             )}
             {step === 2 && (
@@ -238,17 +272,47 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
           </button>
         )}
 
-        {loading && <div className="text-sm text-slate-500 py-4 text-center">Loading…</div>}
+        {loading && projects.length === 0 && !loadError && <div className="text-sm text-slate-500 py-4 text-center">Loading…</div>}
+        {loadError && (
+          <div className="mt-4 text-xs text-rose-400 flex items-center gap-2">
+            <span>Could not load projects.</span>
+            <button type="button" onClick={() => load()} className="underline hover:text-rose-300">Retry</button>
+          </div>
+        )}
 
-        {/* Project cards */}
+        {/* Project cards. Search and sort are client-side — the GET is unchanged. */}
         <div className="mt-4 space-y-2.5">
-          {!loading && projects.length === 0 && (
+          {projects.length > 0 && (
+            <div className="flex gap-2">
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search projects"
+                aria-label="Search projects"
+                className={inputCls}
+              />
+              <select
+                value={sort}
+                onChange={(e) => setSort(e.target.value as 'created' | 'updated' | 'name')}
+                aria-label="Sort projects"
+                className={inputCls + ' !w-auto shrink-0'}
+              >
+                <option value="created">Newest created</option>
+                <option value="updated">Recently updated</option>
+                <option value="name">Name</option>
+              </select>
+            </div>
+          )}
+          {loaded && !loadError && projects.length === 0 && (
             <div className="py-8 text-center">
               <div className="text-sm text-slate-300">No projects yet</div>
               <div className="text-xs text-slate-500 mt-1 max-w-[300px] mx-auto leading-relaxed">Projects scope chats to a set of instructions and a searchable knowledge base.</div>
             </div>
           )}
-          {projects.map((p) => {
+          {projects.length > 0 && visible.length === 0 && (
+            <p className="text-center text-xs text-slate-500 py-6">No projects match “{query.trim()}”.</p>
+          )}
+          {visible.map((p) => {
             const active = activeProjectId === p.id
             return (
               <div

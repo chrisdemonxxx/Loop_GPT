@@ -4,30 +4,40 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { authHeaders } from '../../lib/api'
 import type { ArtifactRef } from '../../lib/stream'
-import { artifactHref, useAuthedUrl } from './artifactUrl'
 
-/** In-panel PDF viewer: the browser's native PDF engine via a blob iframe. */
-export function PdfView({ a }: { a: ArtifactRef }) {
-  const href = artifactHref(a.url)
-  const blobUrl = useAuthedUrl(a.kind === 'pdf' ? href : undefined)
-  if (!blobUrl) return <Loading label="Loading PDF…" />
+/** Failed preview/raw/image/pdf/sheet open. Not the empty list and not a shimmer. */
+export function FileOpenError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+      <p className="text-xs text-rose-400">{"Couldn't open this file."}</p>
+      <button type="button" onClick={onRetry} className="text-xs text-rose-300 underline">Retry</button>
+    </div>
+  )
+}
+
+/** In-panel PDF viewer. The panel owns the fetch so Raw can retry the same URL. */
+export function PdfView({ a, open }: { a: ArtifactRef; open: { url: string | null; error: boolean; retry: () => void } }) {
+  if (open.error) return <FileOpenError onRetry={open.retry} />
+  if (!open.url) return <Loading label="Loading PDF…" />
   return (
     <iframe
       title={`PDF preview: ${a.name}`}
-      src={`${blobUrl}#toolbar=1&view=FitH`}
+      src={`${open.url}#toolbar=1&view=FitH`}
       className="w-full h-full min-h-[320px] rounded-xl border border-white/10 bg-white"
     />
   )
 }
 
-/** In-panel spreadsheet viewer (xlsx/csv) — SheetJS, dynamically imported. */
-export function SheetView({ a }: { a: ArtifactRef }) {
-  const href = artifactHref(a.url)
+/** Spreadsheet bytes for the focused sheet. Stays mounted so Raw can retry it. */
+export function useSheetRows(href: string | undefined) {
   const [rows, setRows] = useState<string[][] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState(false)
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
-    if (!href) return
+    if (!href) { setRows(null); setError(false); return }
     let cancelled = false
+    setError(false)
+    setRows(null)
     ;(async () => {
       try {
         const res = await fetch(href, { headers: authHeaders(false) })
@@ -37,11 +47,16 @@ export function SheetView({ a }: { a: ArtifactRef }) {
         const sheet = wb.Sheets[wb.SheetNames[0]]
         const parsed = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, blankrows: false })
         if (!cancelled) setRows(parsed.map((r) => (r as unknown[]).map((c) => (c === undefined || c === null ? '' : String(c)))))
-      } catch { if (!cancelled) setError('Could not read this spreadsheet.') }
+      } catch { if (!cancelled) setError(true) }
     })()
     return () => { cancelled = true }
-  }, [href])
-  if (error) return <div className="p-4 text-center text-[12px] text-slate-400">{error}</div>
+  }, [href, attempt])
+  return { rows, error, loading: !!href && !error && !rows, retry: () => setAttempt((n) => n + 1) }
+}
+
+/** In-panel spreadsheet viewer (xlsx/csv) — SheetJS, dynamically imported. */
+export function SheetView({ rows, error, onRetry }: { rows: string[][] | null; error: boolean; onRetry: () => void }) {
+  if (error) return <FileOpenError onRetry={onRetry} />
   if (!rows) return <Loading label="Loading spreadsheet…" />
   return (
     <div className="overflow-auto">

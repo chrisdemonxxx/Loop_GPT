@@ -9,8 +9,8 @@ import {
 import { authHeaders } from '../../lib/api'
 import type { ArtifactRef } from '../../lib/stream'
 import Markdown from './Markdown'
-import { artifactHref, artifactFileId, downloadArtifact, openArtifactInNewTab, useAuthedText, useAuthedUrl, isVideoArtifact } from './artifactUrl'
-import { PdfView, SheetView, MermaidView, withErrorBridge, DEVICE_WIDTH, type ArtifactDevice } from './ArtifactViewers'
+import { artifactHref, artifactFileId, downloadArtifact, openArtifactInNewTab, useAuthedText, useAuthedBlob, isVideoArtifact } from './artifactUrl'
+import { PdfView, SheetView, MermaidView, withErrorBridge, DEVICE_WIDTH, FileOpenError, useSheetRows, type ArtifactDevice } from './ArtifactViewers'
 import VideoPlayer from './VideoPlayer'
 import Lightbox from './Lightbox'
 
@@ -98,23 +98,26 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
   const [nonce, setNonce] = useState(0)
   const [published, setPublished] = useState<Record<string, string>>({})
   const [sandboxError, setSandboxError] = useState<string | null>(null)
-  const [diff, setDiff] = useState<{ from: string; to: string; lines: { sign: string; text: string }[] } | null>(null)
+  const [diff, setDiff] = useState<{ from: string; to: string; lines: { sign: string; text: string }[]; failed?: boolean } | null>(null)
   const [lightboxOpen, setLightboxOpen] = useState(false)
+  const [actionError, setActionError] = useState('')
 
-  useEffect(() => { setTab('preview'); setSandboxError(null) }, [focusId])
+  useEffect(() => { setTab('preview'); setSandboxError(null); setActionError('') }, [focusId])
 
   const isHtml = !!(focused && /\.(html?|htm)$/i.test(focused.name))
   const isSheet = !!(focused && (focused.kind === 'xlsx' || focused.kind === 'csv' || /\.(xlsx?|csv)$/i.test(focused.name)))
   const isPdf = focused?.kind === 'pdf' || /\.(pdf)$/i.test(focused?.name || '')
   const isMermaid = !!(focused && (/\.(mmd|mermaid)$/i.test(focused.name) || focused.kind === 'mermaid'))
-  const { text: textContent, loading: textLoading } = useAuthedText(
+  const { text: textContent, loading: textLoading, error: textError, retry: retryText } = useAuthedText(
     focused && focused.kind !== 'image' && !isVideoArtifact(focused) && !isPdf && !isSheet && !isMermaid ? artifactHref(focused.url) : undefined,
   )
   const mermaidText = useAuthedText(isMermaid ? artifactHref(focused?.url) : undefined)
   // Images need authed blob URLs — a raw <img src> would 401. Videos stream
   // via the signed-URL VideoPlayer instead.
   const focusHref = focused ? artifactHref(focused.url) : undefined
-  const focusImage = useAuthedUrl(focused?.kind === 'image' ? focusHref : undefined)
+  const focusImage = useAuthedBlob(focused?.kind === 'image' ? focusHref : undefined)
+  const pdfOpen = useAuthedBlob(isPdf ? focusHref : undefined)
+  const sheetOpen = useSheetRows(isSheet ? focusHref : undefined)
 
   // Sandbox error bridge: uncaught errors inside the previewed document.
   useEffect(() => {
@@ -138,16 +141,31 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
 
   async function togglePublish(a: ArtifactRef) {
     const id = artifactFileId(a)
-    if (!id) return
-    if (published[a.id]) {
-      await fetch(`/api/files/${id}/publish`, { method: 'DELETE', headers: authHeaders() })
-      setPublished((p) => { const n = { ...p }; delete n[a.id]; return n })
-      return
+    const hadLink = !!published[a.id]
+    if (!id) { setActionError(hadLink ? 'Could not unpublish this file.' : 'Could not publish this file.'); return }
+    setActionError('')
+    try {
+      if (hadLink) {
+        const res = await fetch(`/api/files/${id}/publish`, { method: 'DELETE', headers: authHeaders() })
+        if (!res.ok) { setActionError('Could not unpublish this file.'); return }
+        setPublished((p) => { const n = { ...p }; delete n[a.id]; return n })
+        return
+      }
+      const res = await fetch(`/api/files/${id}/publish`, { method: 'POST', headers: authHeaders() })
+      if (!res.ok) { setActionError('Could not publish this file.'); return }
+      const data = await res.json().catch(() => null) as { url?: string } | null
+      const url = data && typeof data.url === 'string' ? data.url : ''
+      if (!url) { setActionError('Could not publish this file.'); return }
+      setPublished((p) => ({ ...p, [a.id]: url }))
+    } catch {
+      setActionError(hadLink ? 'Could not unpublish this file.' : 'Could not publish this file.')
     }
-    const res = await fetch(`/api/files/${id}/publish`, { method: 'POST', headers: authHeaders() })
-    if (!res.ok) return
-    const { url } = await res.json()
-    setPublished((p) => ({ ...p, [a.id]: url }))
+  }
+
+  async function onDownload(a: ArtifactRef) {
+    setActionError('')
+    const ok = await downloadArtifact(a, artifactHref(a.url))
+    if (!ok) setActionError('Could not download this file.')
   }
 
   async function compareVersions(g: { base: string; versions: ArtifactRef[] }) {
@@ -155,11 +173,23 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
     const read = async (a: ArtifactRef) => {
       const href = artifactHref(a.url) || ''
       const res = await fetch(href, { headers: authHeaders(false) })
-      return res.ok ? (await res.text()).split('\n') : []
+      if (!res.ok) throw new Error('open')
+      return (await res.text()).split('\n')
     }
-    const [fromLines, toLines] = await Promise.all([read(older), read(newer)])
-    setDiff({ from: older.name, to: newer.name, lines: lineDiff(fromLines, toLines) })
+    try {
+      const [fromLines, toLines] = await Promise.all([read(older), read(newer)])
+      setDiff({ from: older.name, to: newer.name, lines: lineDiff(fromLines, toLines), failed: false })
+    } catch {
+      setDiff({ from: older.name, to: newer.name, lines: [], failed: true })
+    }
   }
+
+  const rawOpen = !focused ? null
+    : focused.kind === 'image' ? { loading: focusImage.loading || (!focusImage.url && !focusImage.error), error: focusImage.error, retry: focusImage.retry }
+    : isPdf ? { loading: pdfOpen.loading || (!pdfOpen.url && !pdfOpen.error), error: pdfOpen.error, retry: pdfOpen.retry }
+    : isSheet ? { loading: sheetOpen.loading, error: sheetOpen.error, retry: sheetOpen.retry }
+    : isMermaid ? { loading: mermaidText.loading || (!mermaidText.text && !mermaidText.error), error: mermaidText.error, retry: mermaidText.retry }
+    : null
 
   const openInNewTab = focused ? () => openArtifactInNewTab(focused) : undefined
 
@@ -255,34 +285,47 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
             <div className="flex-1 min-h-0 overflow-auto p-3">
               {tab === 'preview' && focused.kind === 'image' && (
                 <div className="relative">
-                  {focusImage ? (
+                  {focusImage.loading || (!focusImage.url && !focusImage.error) ? (
+                    <div className="w-full aspect-[4/3] rounded-xl border border-white/10 shimmer" aria-hidden="true" />
+                  ) : focusImage.error || !focusImage.url ? (
+                    <FileOpenError onRetry={focusImage.retry} />
+                  ) : (
                     <button type="button" onClick={() => setLightboxOpen(true)} className="block w-full group" aria-label={`Open ${focused.name} fullscreen`}>
-                      <img src={focusImage} alt={focused.name} loading="lazy" decoding="async"
+                      <img src={focusImage.url} alt={focused.name} loading="lazy" decoding="async"
                         className="w-full rounded-xl border border-white/10 transition group-hover:border-white/20" />
                       <span className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 text-slate-200 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition" title="Open fullscreen">
                         <Maximize2 size={14} />
                       </span>
                     </button>
-                  ) : (
-                    <div className="w-full aspect-[4/3] rounded-xl border border-white/10 shimmer" aria-hidden="true" />
                   )}
                 </div>
               )}
               {tab === 'preview' && isVideoArtifact(focused) && <VideoPlayer a={focused} className="w-full" />}
-              {tab === 'preview' && isPdf && <PdfView a={focused} />}
-              {tab === 'preview' && isSheet && <SheetView a={focused} />}
-              {tab === 'preview' && isMermaid && (mermaidText.text ? <MermaidView code={mermaidText.text} /> : <LoadingShim />)}
+              {tab === 'preview' && isPdf && <PdfView a={focused} open={pdfOpen} />}
+              {tab === 'preview' && isSheet && <SheetView rows={sheetOpen.rows} error={sheetOpen.error} onRetry={sheetOpen.retry} />}
+              {tab === 'preview' && isMermaid && (
+                mermaidText.loading || (!mermaidText.text && !mermaidText.error) ? <LoadingShim /> :
+                mermaidText.error || !mermaidText.text ? <FileOpenError onRetry={mermaidText.retry} /> :
+                <MermaidView code={mermaidText.text} />
+              )}
               {tab === 'preview' && !isPdf && !isSheet && !isMermaid && focused.kind !== 'image' && !isVideoArtifact(focused) && (
                 textLoading ? <LoadingShim /> :
+                textError ? <FileOpenError onRetry={retryText} /> :
                 /\.(md|txt)$/i.test(focused.name) && textContent !== null ? (
                   <div className="text-[13px] leading-relaxed text-slate-200"><Markdown content={textContent.slice(0, 20000)} /></div>
                 ) : textContent !== null ? (
                   <pre className="text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap font-mono">{textContent.slice(0, 20000)}</pre>
                 ) : null
               )}
-              {tab === 'raw' && (textLoading ? <LoadingShim /> : (
+              {tab === 'raw' && (
+                rawOpen ? (
+                  rawOpen.loading ? <LoadingShim /> :
+                  rawOpen.error ? <FileOpenError onRetry={rawOpen.retry} /> :
+                  null
+                ) : textLoading ? <LoadingShim /> :
+                textError ? <FileOpenError onRetry={retryText} /> :
                 <pre className="text-[12px] leading-relaxed text-slate-400 whitespace-pre-wrap font-mono">{(textContent || '').slice(0, 30000)}</pre>
-              ))}
+              )}
               {tab === 'sandbox' && isHtml && (
                 <div className="h-full flex flex-col gap-2">
                   {sandboxError && (
@@ -296,7 +339,7 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
                     </div>
                   )}
                   <div className="flex-1 min-h-0 flex justify-center">
-                    {textContent !== null ? (
+                    {textLoading ? <LoadingShim /> : textError ? <FileOpenError onRetry={retryText} /> : textContent !== null ? (
                       <iframe
                         key={`${focused.id}-${nonce}`}
                         title={`Sandbox: ${focused.name}`}
@@ -323,7 +366,7 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
                 />
               )}
               <div className="flex gap-2">
-                <button onClick={() => downloadArtifact(focused, artifactHref(focused.url))}
+                <button onClick={() => onDownload(focused)}
                   className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-xl glass hover:bg-white/5 text-[12px] text-slate-200 transition">
                   <DownloadIcon size={13} /> Download
                 </button>
@@ -332,6 +375,7 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
                   <Share2 size={13} /> {published[focused.id] ? 'Unpublish' : 'Publish link'}
                 </button>
               </div>
+              {actionError && <p className="text-xs text-rose-400">{actionError}</p>}
               {published[focused.id] && (
                 <div className="text-[11px] text-slate-400 break-all flex items-center gap-1.5">
                   <a href={published[focused.id]} target="_blank" rel="noreferrer" className="text-sky-400 hover:underline">{published[focused.id]}</a>
@@ -351,17 +395,22 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
                   <div className="text-[11px] text-slate-400 truncate">{diff.from} → {diff.to}</div>
                   <button onClick={() => setDiff(null)} className="text-slate-400 hover:text-slate-300"><X size={13} /></button>
                 </div>
-                <div className="max-h-56 overflow-auto px-3 pb-2 font-mono text-[11px] leading-relaxed">
-                  {diff.lines.map((l, i) => (
-                    <div key={i} className={l.sign === '+' ? 'text-emerald-400' : l.sign === '-' ? 'text-rose-400' : 'text-slate-400'}>
-                      <span className="select-none">{l.sign} </span>{l.text || '\u00a0'}
-                    </div>
-                  ))}
-                </div>
+                {diff.failed ? (
+                  <p className="px-3 pb-2 text-xs text-rose-400">{"Couldn't open this file."}</p>
+                ) : (
+                  <div data-testid="version-diff" className="max-h-56 overflow-auto px-3 pb-2 font-mono text-[11px] leading-relaxed">
+                    {diff.lines.map((l, i) => (
+                      <div key={i} className={l.sign === '+' ? 'text-emerald-400' : l.sign === '-' ? 'text-rose-400' : 'text-slate-400'}>
+                        <span className="select-none">{l.sign} </span>{l.text || '\u00a0'}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
             <div className="flex-1 overflow-y-auto p-3 space-y-1.5 min-h-0">
+              {actionError && <p className="text-xs text-rose-400">{actionError}</p>}
               {/* In-flight artifact builds (per-artifact streaming state) */}
               {buildingKinds.map((k, i) => (
                 <div key={`${k}-${i}`} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5 flex items-center gap-2.5">
@@ -403,7 +452,7 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
                           <GitCompare size={11} /> Compare {g.versions.length} versions
                         </button>
                         {g.versions.map((v) => (
-                          <button key={v.id} onClick={() => downloadArtifact(v, artifactHref(v.url))}
+                          <button key={v.id} onClick={() => onDownload(v)}
                             className="flex items-center gap-2 w-full text-left text-[11px] text-slate-400 hover:text-slate-200 transition py-0.5">
                             <span className="font-mono">v{String(g.versions.indexOf(v) + 1)}</span>
                             <span className="truncate">{v.name}</span>

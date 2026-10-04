@@ -24,7 +24,7 @@ function composeSkillMd(name: string, description: string, triggers: string, too
 }
 
 /**
- * Skills (Claude Agent-Skills style): card list with built-in/custom badges and
+ * Skills: card list with built-in/custom badges and
  * toggles, a detail view with full instructions, an "Edit source" (SKILL.md)
  * editor, and a create flow with live YAML-frontmatter preview.
  */
@@ -38,9 +38,20 @@ export default function SkillsTab() {
   const [form, setForm] = useState({ name: '', description: '', triggers: '', tools: '', instructions: '' })
   const [query, setQuery] = useState('')
   const [error, setError] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const [loaded, setLoaded] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  const load = () => fetch(`${API_URL}/api/agent/skills`, { headers: authHeaders() }).then((r) => r.json()).then(setItems).catch(() => {})
+  const load = () => fetch(`${API_URL}/api/agent/skills`, { headers: authHeaders() })
+    .then(async (r) => {
+      if (!r.ok) throw new Error('load')
+      const d = await r.json()
+      if (!Array.isArray(d)) throw new Error('load')
+      setItems(d)
+      setLoadError('')
+    })
+    .catch(() => setLoadError('Could not load skills.'))
+    .finally(() => setLoaded(true))
   useEffect(() => { load() }, [])
 
   const openDetail = async (id: string) => {
@@ -221,7 +232,14 @@ export default function SkillsTab() {
 
       {items.length > 0 && <SearchInput value={query} onChange={setQuery} placeholder="Search skills…" resultCount={q ? filtered.length : null} />}
 
-      {items.length === 0 && (
+      {loadError && (
+        <div className="text-xs text-rose-400 flex items-center gap-2">
+          <span>{loadError}</span>
+          <button type="button" onClick={() => load()} className="underline hover:text-rose-300">Retry</button>
+        </div>
+      )}
+
+      {loaded && !loadError && items.length === 0 && (
         <EmptyState icon={<Blocks size={22} />} title="No skills yet" body="Skills teach the assistant reusable workflows. Just ask “create a skill for…” in a chat, or use Create skill above." />
       )}
 

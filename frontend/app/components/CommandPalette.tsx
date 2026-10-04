@@ -13,14 +13,24 @@ interface Cmd {
   action: () => void
 }
 
+/** Open the sidebar for chat search. Never toggles a sidebar that is already open. */
+export function openSidebarSearch(setSidebarOpen: (open: boolean) => void) {
+  setSidebarOpen(true)
+  requestAnimationFrame(() => {
+    document.querySelector<HTMLInputElement>('aside[aria-label="Sidebar"] input')?.focus()
+  })
+}
+
 export function CommandPalette({
   onNewSession,
   onToggleSidebar,
+  onSearchChats,
   onOpenSettings,
   onLogout,
 }: {
   onNewSession: () => void
   onToggleSidebar: () => void
+  onSearchChats: () => void
   onOpenSettings: () => void
   onLogout: () => void
 }) {
@@ -30,11 +40,11 @@ export function CommandPalette({
 
   const cmds: Cmd[] = useMemo(() => [
     { key: 'new', label: 'New session', icon: MessageSquare, action: onNewSession },
-    { key: 'search', label: 'Search chats', icon: Search, action: onToggleSidebar },
+    { key: 'search', label: 'Search chats', icon: Search, action: onSearchChats },
     { key: 'sidebar', label: 'Toggle sidebar', icon: PanelRightClose, action: onToggleSidebar },
     { key: 'settings', label: 'Settings', icon: Settings, action: onOpenSettings },
     { key: 'logout', label: 'Sign out', icon: LogOut, action: onLogout },
-  ], [onNewSession, onToggleSidebar, onOpenSettings, onLogout])
+  ], [onNewSession, onToggleSidebar, onSearchChats, onOpenSettings, onLogout])
 
   const filtered = useMemo(
     () => cmds.filter((c) => c.label.toLowerCase().includes(query.toLowerCase())),
@@ -91,7 +101,7 @@ export function CommandPalette({
                 )
               })}
               {filtered.length === 0 && (
-                <p className="px-4 py-6 text-center text-[12px] text-slate-600">No matching commands</p>
+                <p className="px-4 py-6 text-center text-[12px] text-slate-600">No matching commands.</p>
               )}
             </div>
           </motion.div>
