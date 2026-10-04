@@ -1,4 +1,4 @@
-import { ReactNode } from 'react'
+import { ReactNode, useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -9,7 +9,7 @@ import CustomizePage from '../customize/page'
 import RecentsPage from '../recents/page'
 import ArtifactsPage from '../artifacts/page'
 import ArtifactPage from '../artifact/[id]/page'
-import { conversationIdFromLocation, useSelectConversationFromQuery } from '../chat/conversationSelection'
+import { conversationIdFromLocation, useConversationQuery } from '../chat/conversationSelection'
 
 const nav = vi.hoisted(() => ({ push: vi.fn(), id: 'file-1' }))
 
@@ -74,18 +74,53 @@ beforeEach(() => {
   window.history.pushState({}, '', '/chat')
 })
 
+function SelectionHarness() {
+  const [id, setId] = useState<string | null>(null)
+  useConversationQuery(id, setId)
+  return (
+    <>
+      <span data-testid="selected">{id ?? ''}</span>
+      <button type="button" onClick={() => setId('next')}>Pick next</button>
+      <button type="button" onClick={() => setId(null)}>Clear selection</button>
+    </>
+  )
+}
+
 describe('conversation selection', () => {
-  it('reads the conversation id and does not invent one when the query is absent', () => {
+  it('reads an existing id and does not create a conversation', async () => {
     expect(conversationIdFromLocation('?conversation=abc')).toBe('abc')
     expect(conversationIdFromLocation('')).toBeNull()
-    const setId = vi.fn()
-    function Probe() {
-      useSelectConversationFromQuery(setId)
-      return null
-    }
     window.history.pushState({}, '', '/chat?conversation=abc')
-    render(<Probe />)
-    expect(setId).toHaveBeenCalledWith('abc')
+    render(<SelectionHarness />)
+    expect(await screen.findByTestId('selected')).toHaveTextContent('abc')
+    expect(window.location.search).toContain('conversation=abc')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(http.post).not.toHaveBeenCalled()
+  })
+
+  it('drops the query when the selection is cleared so a reload stays on a new session', async () => {
+    window.history.pushState({}, '', '/chat?conversation=abc')
+    const view = render(<SelectionHarness />)
+    expect(await screen.findByTestId('selected')).toHaveTextContent('abc')
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
+    await waitFor(() => expect(window.location.search).not.toContain('conversation'))
+    expect(screen.getByTestId('selected')).toHaveTextContent('')
+    view.unmount()
+    render(<SelectionHarness />)
+    expect(screen.getByTestId('selected')).toHaveTextContent('')
+    expect(window.location.search).not.toContain('abc')
+  })
+
+  it('replaces the query when a different chat is selected', async () => {
+    window.history.pushState({}, '', '/chat?conversation=abc')
+    const view = render(<SelectionHarness />)
+    expect(await screen.findByTestId('selected')).toHaveTextContent('abc')
+    fireEvent.click(screen.getByRole('button', { name: 'Pick next' }))
+    await waitFor(() => expect(window.location.search).toContain('conversation=next'))
+    expect(window.location.search).not.toContain('abc')
+    view.unmount()
+    render(<SelectionHarness />)
+    expect(await screen.findByTestId('selected')).toHaveTextContent('next')
   })
 })
 
@@ -219,6 +254,10 @@ describe('/artifact/:id', () => {
 })
 
 describe('/recents', () => {
+  beforeEach(() => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {} })))
+  })
+
   const row = {
     id: 'c1',
     title: 'Fresh chat',
@@ -238,6 +277,8 @@ describe('/recents', () => {
     expect(screen.getByText('Today')).toBeInTheDocument()
     fireEvent.click(screen.getByText('Fresh chat'))
     expect(nav.push).toHaveBeenCalledWith('/chat?conversation=c1')
+    expect(http.post).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Show sidebar' }))
     fireEvent.click(screen.getByRole('button', { name: 'New session' }))
     expect(nav.push).toHaveBeenCalledWith('/chat')
     expect(String(http.get.mock.calls[0][0])).toContain('/api/conversations')
@@ -283,5 +324,33 @@ describe('/recents', () => {
     expect(await screen.findByText("Couldn't copy the link.")).toBeInTheDocument()
     expect(screen.queryByTitle('Link copied')).not.toBeInTheDocument()
     expect(screen.getByText('Fresh chat')).toBeInTheDocument()
+  })
+
+  it('shows this user and their projects, and hide and sign out do something', async () => {
+    localStorage.setItem('authToken', token())
+    localStorage.setItem('token', 'session')
+    localStorage.setItem('user', JSON.stringify({ id: 'u1', email: 'ada@example.com', name: 'Ada' }))
+    http.post.mockResolvedValue({ data: {} })
+    http.get.mockImplementation((url: string) => {
+      const u = String(url)
+      if (u.endsWith('/api/workspaces')) return Promise.resolve({ data: { workspaces: [{ id: 'ws-1', personalOwnerId: 'u' }] } })
+      if (u.includes('/projects')) return Promise.resolve({ data: [{ id: 'p1', name: 'Thesis', _count: { conversations: 1, knowledgeChunks: 0 } }] })
+      if (u.includes('/search')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [row] })
+    })
+    withQuery(<RecentsPage />)
+    expect(await screen.findByText('Fresh chat')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Projects/ }))
+    expect(await screen.findByText('Thesis')).toBeInTheDocument()
+    expect(screen.queryByText('Create a project')).not.toBeInTheDocument()
+    expect(screen.queryByText('none')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Hide sidebar' }))
+    expect(screen.queryByText('Fresh chat')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Show sidebar' }))
+    expect(await screen.findByText('Fresh chat')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Ada/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+    expect(localStorage.getItem('user')).toBeNull()
+    expect(localStorage.getItem('token')).toBeNull()
   })
 })
