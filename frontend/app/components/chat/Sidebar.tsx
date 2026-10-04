@@ -420,8 +420,8 @@ function ConversationRow({
           <Star size={11} className="text-[#c96442] shrink-0 group-hover:hidden" fill="currentColor" aria-label="Pinned" />
         )}
       </div>
-      {shareKind === 'share' && <p className="px-2.5 pb-1.5 text-[11px] text-rose-400">Couldn't share this session.</p>}
-      {shareKind === 'copy' && <p className="px-2.5 pb-1.5 text-[11px] text-rose-400">Couldn't copy the link.</p>}
+      {shareKind === 'share' && <p className="px-2.5 pb-1.5 text-[11px] text-rose-400">Couldn&apos;t share this session.</p>}
+      {shareKind === 'copy' && <p className="px-2.5 pb-1.5 text-[11px] text-rose-400">Couldn&apos;t copy the link.</p>}
     </div>
   )
 }
