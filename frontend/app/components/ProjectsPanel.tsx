@@ -20,6 +20,8 @@ interface Props {
   activeProjectId: string | null
   onSelect: (id: string | null) => void
   onClose: () => void
+  /** /projects hosts this same panel as a page. Default remains the in-chat dialog. */
+  asPage?: boolean
 }
 
 function timeAgo(iso: string): string {
@@ -43,7 +45,7 @@ async function readTextFile(file: File): Promise<string> {
  * last-active, a dedicated creation flow, and a prominent knowledge upload
  * (text files are parsed in the browser). Search and sort stay on the client.
  */
-export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, onClose }: Props) {
+export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, onClose, asPage = false }: Props) {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [loaded, setLoaded] = useState(false)
@@ -69,10 +71,11 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
   // (e.g. the project name input), so we listen on document, not via useHotkey
   // (which intentionally skips when the target is an INPUT/TEXTAREA).
   useEffect(() => {
+    if (asPage) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, asPage])
 
   async function load() {
     if (!workspaceId) {
@@ -202,12 +205,12 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
   }, [projects, query, sort])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className={asPage ? "min-h-screen bg-[#08080a] text-slate-200" : "fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"} onClick={asPage ? undefined : onClose}>
       <motion.div
         initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
         onClick={(e) => e.stopPropagation()}
-        className="glass-strong rounded-2xl w-full max-w-xl max-h-[85vh] overflow-y-auto border border-white/10 p-5"
-        role="dialog" aria-modal="true" aria-label="Projects"
+        className={asPage ? "w-full max-w-xl mx-auto px-5 py-8" : "glass-strong rounded-2xl w-full max-w-xl max-h-[85vh] overflow-y-auto border border-white/10 p-5"}
+        role={asPage ? "main" : "dialog"} aria-modal={asPage ? undefined : true} aria-label="Projects"
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold text-slate-100">Projects</h2>

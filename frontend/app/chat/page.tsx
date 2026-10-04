@@ -20,6 +20,7 @@ import type { Conversation, Message } from '../components/chat/types'
 import { parseCommand, SLASH_COMMANDS } from '../lib/commands'
 import ProjectsPanel, { type Project } from '../components/ProjectsPanel'
 import ResearchPanel from '../components/ResearchPanel'
+import { useSelectConversationFromQuery } from './conversationSelection'
 import { usePanels, useSidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom, useAttachments, useConversationSearch, useMessageQueue, useWorkspaceConnections, useVoiceMode } from './hooks'
 import { useToast } from '../lib/toast'
 import { useTheme } from '../lib/theme'
@@ -41,6 +42,7 @@ export default function ChatPage() {
 
   // ── Session / UI state ────────────────────────────────────────────────────
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
+  useSelectConversationFromQuery(setCurrentConversationId)
   const [input, setInput] = useState('')
   const [mode, setMode] = useState<AgentMode>('agent')
   const [showSlash, setShowSlash] = useState(false)

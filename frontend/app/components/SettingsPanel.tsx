@@ -11,7 +11,7 @@ import PluginsTab from './settings/PluginsTab'
 import ToolsTab from './settings/ToolsTab'
 import AppearanceTab from './settings/AppearanceTab'
 
-interface Props { onClose: () => void; initialTab?: string; workspaceId?: string | null }
+interface Props { onClose: () => void; initialTab?: string; workspaceId?: string | null; asPage?: boolean }
 
 /**
  * Agent settings — one modal, one visual system. Tab order matches the frontier
@@ -19,12 +19,13 @@ interface Props { onClose: () => void; initialTab?: string; workspaceId?: string
  * (The legacy "Builder" and "Model/BYOK" tabs are gone: custom HTTP tools now
  * live under Connectors, and model routing is server-side only.)
  */
-export default function SettingsPanel({ onClose, initialTab, workspaceId }: Props) {
+export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage = false }: Props) {
   const [tab, setTab] = useState(initialTab || 'skills')
 
   // Escape closes the dialog even when focus is in a field. X and backdrop
   // stay on their own click handlers.
   useEffect(() => {
+    if (asPage) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return
       // Nested credential sheet, or an edit that already claimed Escape.
@@ -33,7 +34,7 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId }: Prop
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, asPage])
 
   const tabs = [
     { id: 'skills', label: 'Skills', Icon: Blocks },
@@ -46,12 +47,12 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId }: Prop
   ]
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[calc(env(safe-area-inset-bottom)+6.5rem)]" onClick={onClose}>
+    <div className={asPage ? "min-h-screen bg-[#08080a] text-slate-200" : "fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"} onClick={asPage ? undefined : onClose}>
       <motion.div
         initial={{ opacity: 0, scale: 0.96, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="glass-strong rounded-2xl w-full max-w-2xl max-h-[min(86vh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-7.5rem))] flex flex-col overflow-hidden shadow-panel"
+        className={asPage ? "w-full max-w-2xl mx-auto min-h-screen flex flex-col" : "glass-strong rounded-2xl w-full max-w-2xl max-h-[min(86vh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-7.5rem))] flex flex-col overflow-hidden shadow-panel"}
         onClick={(e) => e.stopPropagation()}
-        role="dialog" aria-modal="true" aria-label="Agent settings"
+        role={asPage ? "main" : "dialog"} aria-modal={asPage ? undefined : true} aria-label="Agent settings"
       >
         <div className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-white/5">
           <h2 className="text-lg font-semibold text-gradient">Agent settings</h2>

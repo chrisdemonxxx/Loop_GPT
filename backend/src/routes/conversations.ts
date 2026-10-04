@@ -7,12 +7,71 @@ import { memoryStore } from '../services/memoryStore'
 import { validate, validationSchemas } from '../middleware/validation'
 
 const router = express.Router()
+
+function artifactRefsFromMetadata(metadata: unknown): Array<{ id: string; name: string; kind: string; url?: string; mimeType?: string }> {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return []
+  const raw = (metadata as { artifacts?: unknown }).artifacts
+  if (!Array.isArray(raw)) return []
+  const refs: Array<{ id: string; name: string; kind: string; url?: string; mimeType?: string }> = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const row = item as Record<string, unknown>
+    if (typeof row.id !== 'string' || !row.id || typeof row.name !== 'string' || !row.name) continue
+    const ref: { id: string; name: string; kind: string; url?: string; mimeType?: string } = {
+      id: row.id,
+      name: row.name,
+      kind: typeof row.kind === 'string' && row.kind ? row.kind : 'file',
+    }
+    if (typeof row.url === 'string') ref.url = row.url
+    if (typeof row.mimeType === 'string') ref.mimeType = row.mimeType
+    refs.push(ref)
+  }
+  return refs
+}
+
+/** One read of artifact refs already stored on non-incognito message metadata. */
+async function savedArtifactRefs(userId: string) {
+  const seen = new Set<string>()
+  const artifacts: Array<{ id: string; name: string; kind: string; url?: string; mimeType?: string }> = []
+  const push = (metadata: unknown) => {
+    for (const ref of artifactRefsFromMetadata(metadata)) {
+      if (seen.has(ref.id)) continue
+      seen.add(ref.id)
+      artifacts.push(ref)
+    }
+  }
+  if (USE_MEMORY_STORE) {
+    for (const conv of memoryStore.getConversations(userId)) {
+      for (const msg of memoryStore.getMessages(conv.id)) push(msg.metadata)
+    }
+    return artifacts
+  }
+  const conversations = await prisma!.conversation.findMany({
+    where: { userId, incognito: false },
+    select: { messages: { select: { metadata: true } } },
+  })
+  for (const conv of conversations) {
+    for (const msg of conv.messages) push(msg.metadata)
+  }
+  return artifacts
+}
+
 const USE_MEMORY_STORE = !prisma
 
 // Get all conversations for user
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const userId = (req as any).userId
+
+    // Same conversations route. One query of message metadata; not a new table.
+    if (String(req.query.artifacts || '') === '1') {
+      try {
+        return res.json(await savedArtifactRefs(userId))
+      } catch (error) {
+        console.error('Saved artifacts error:', error)
+        return res.status(500).json({ error: 'Internal server error' })
+      }
+    }
 
     if (USE_MEMORY_STORE) {
       const conversations = memoryStore.getConversations(userId)

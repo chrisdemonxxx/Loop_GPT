@@ -200,3 +200,15 @@ describe('Sidebar ? recents copy and failures', () => {
     confirm.mockRestore()
   })
 })
+
+describe('Sidebar workspace links', () => {
+  it('points Projects, Files, Recents, and Customize at their routes', () => {
+    renderSidebar()
+    expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/projects')
+    expect(screen.getByRole('link', { name: 'Files' })).toHaveAttribute('href', '/artifacts')
+    expect(screen.getByRole('link', { name: 'Recents' })).toHaveAttribute('href', '/recents')
+    expect(screen.getByRole('link', { name: 'Customize' })).toHaveAttribute('href', '/customize')
+    expect(screen.getByRole('button', { name: /Projects/ })).toBeInTheDocument()
+  })
+})
+

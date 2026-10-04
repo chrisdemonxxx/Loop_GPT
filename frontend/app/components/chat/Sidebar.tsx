@@ -35,7 +35,7 @@ interface SidebarProps {
   /** Pin/unpin (audit §8-13). */
   onPinConversation: (id: string, pinned: boolean) => void
   /** Mint + copy a share link; resolves with the copied URL (audit §8-15). */
-  onShareConversation: (id: string) => Promise<string | null>
+  onShareConversation: (id: string) => Promise<string | { error: 'share' | 'copy' } | null>
   /** Search box (page-owned so the message-body search hook shares it). */
   searchQuery: string
   onSearchChange: (v: string) => void
@@ -153,6 +153,13 @@ export default function Sidebar({
           <PanelLeft size={16} />
         </button>
       </div>
+
+      <nav aria-label="Workspace" className="px-3 pb-2 grid grid-cols-2 gap-1 shrink-0">
+        <Link href="/projects" className="px-2.5 py-1.5 rounded-lg text-[12.5px] text-slate-300 hover:bg-white/[0.05] hover:text-slate-100 transition">Projects</Link>
+        <Link href="/artifacts" className="px-2.5 py-1.5 rounded-lg text-[12.5px] text-slate-300 hover:bg-white/[0.05] hover:text-slate-100 transition">Files</Link>
+        <Link href="/recents" className="px-2.5 py-1.5 rounded-lg text-[12.5px] text-slate-300 hover:bg-white/[0.05] hover:text-slate-100 transition">Recents</Link>
+        <Link href="/customize" className="px-2.5 py-1.5 rounded-lg text-[12.5px] text-slate-300 hover:bg-white/[0.05] hover:text-slate-100 transition">Customize</Link>
+      </nav>
 
       {/* New chat + search */}
       <div className="px-3 space-y-2 shrink-0">
