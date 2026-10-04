@@ -8,7 +8,7 @@ import ProjectsPage from '../projects/page'
 import CustomizePage from '../customize/page'
 import RecentsPage from '../recents/page'
 import ArtifactsPage from '../artifacts/page'
-import ArtifactPage from '../artifact/[id]/page'
+import ArtifactPage from '../artifact/page'
 import { conversationIdFromLocation, useConversationQuery } from '../chat/conversationSelection'
 
 const nav = vi.hoisted(() => ({ push: vi.fn(), id: 'file-1' }))
@@ -196,7 +196,7 @@ describe('/artifacts', () => {
     })
     render(<ArtifactsPage />)
     const link = await screen.findByRole('link', { name: /report.md/ })
-    expect(link).toHaveAttribute('href', '/artifact/f1')
+    expect(link).toHaveAttribute('href', '/artifact?id=f1')
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/conversations?artifacts=1')
   })
@@ -230,6 +230,7 @@ describe('/artifact/:id', () => {
         json: async () => ({ id: 'file-1', name: 'notes.md', mimeType: 'text/markdown', size: 3, url: '/api/files/file-1/content' }),
       }
     })
+    window.history.pushState({}, '', '/artifact/?id=file-1')
     render(<ArtifactPage />)
     expect(await screen.findByText('notes.md')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Preview' })).toBeInTheDocument()
@@ -240,6 +241,7 @@ describe('/artifact/:id', () => {
 
   it('a missing file is not the empty library and Retry refetches that file', async () => {
     fetchMock.mockResolvedValue({ ok: false, json: async () => ({ error: 'missing' }) })
+    window.history.pushState({}, '', '/artifact/?id=file-1')
     render(<ArtifactPage />)
     expect(await screen.findByText("Couldn't open this file.")).toBeInTheDocument()
     expect(screen.queryByText('Generated files and code snippets appear here as the agent creates them.')).not.toBeInTheDocument()

@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useParams, useRouter } from 'next/navigation'
-import { API_URL, authHeaders } from '../../lib/api'
-import ArtifactsPanel from '../../components/chat/ArtifactsPanel'
-import type { ArtifactRef } from '../../lib/stream'
+import { useRouter } from 'next/navigation'
+import { API_URL, authHeaders } from '../lib/api'
+import ArtifactsPanel from '../components/chat/ArtifactsPanel'
+import type { ArtifactRef } from '../lib/stream'
 
 function kindFor(name: string, mime: string): string {
   const n = name.toLowerCase()
@@ -19,16 +19,27 @@ function kindFor(name: string, mime: string): string {
   return 'file'
 }
 
+/** File id on /artifact/?id=, the static page nginx can serve for any id. */
+function fileIdFromLocation(search: string): string {
+  const raw = search.startsWith('?') ? search.slice(1) : search
+  const id = new URLSearchParams(raw).get('id')
+  return id && id.trim() ? id : ''
+}
+
 /** Open one private file. A miss does not create a file and is not the empty library. */
 export default function ArtifactPage() {
-  const params = useParams<{ id: string }>()
-  const id = decodeURIComponent(String(params?.id || ''))
   const router = useRouter()
+  const [id, setId] = useState<string | null>(null)
   const [artifact, setArtifact] = useState<ArtifactRef | null>(null)
   const [error, setError] = useState(false)
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
+    setId(fileIdFromLocation(window.location.search))
+  }, [])
+
+  useEffect(() => {
+    if (id === null) return
     if (!id) { setError(true); return }
     let cancelled = false
     setError(false)

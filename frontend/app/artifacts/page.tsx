@@ -64,7 +64,7 @@ export default function ArtifactsPage() {
           <ul className="space-y-2">
             {rows.map((a) => (
               <li key={a.id}>
-                <Link href={`/artifact/${encodeURIComponent(a.id)}`} className="flex items-center gap-2 rounded-xl border border-white/[0.06] px-3 py-2 hover:bg-white/[0.04]">
+                <Link href={`/artifact/?id=${encodeURIComponent(a.id)}`} className="flex items-center gap-2 rounded-xl border border-white/[0.06] px-3 py-2 hover:bg-white/[0.04]">
                   <span className="text-sm text-slate-100 truncate">{a.name}</span>
                   <span className="text-[11px] text-slate-500 shrink-0">{a.kind}</span>
                 </Link>
