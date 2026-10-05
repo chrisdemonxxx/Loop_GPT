@@ -102,6 +102,13 @@ app.use('/api', versionRouter)
 // 75MB so /v1/media/publish can carry base64 video payloads (≈50MB decoded cap on the route).
 app.use(express.json({ limit: '75mb' }))
 
+// Operator tooling gets its own generous, separately-bucketed limiter: the
+// admin consoles poll live (admin portal + bot computer pages), and a shared
+// 100/15min bucket would throttle an admin into 429s just for watching.
+// Mounted BEFORE the generic /api limiter so admin traffic never lands in it.
+// requireAdmin inside the router remains the actual gate.
+app.use('/api/admin', rateLimiter(60 * 1000, 600), adminRoutes)
+
 // Rate limiting (100 requests per 15 minutes per user/IP)
 app.use('/api', rateLimiter(15 * 60 * 1000, 100))
 
@@ -127,7 +134,6 @@ app.use('/api/agent', agentRoutes)
 app.use('/api/telemetry', telemetryRoutes)
 app.use('/api/share', rateLimiter(15 * 60 * 1000, 100), shareRouter) // unauthenticated; token-gated transcript reads
 app.use('/api/account', accountRoutes)
-app.use('/api/admin', adminRoutes)
 app.use('/api/billing', billingRoutes)
 app.use('/api/tts', express.json({ limit: '256kb' }), rateLimiter(10 * 1000, 20), ttsRouter)
 app.use('/api/media', mediaRoutes)

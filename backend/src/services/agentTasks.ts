@@ -116,6 +116,7 @@ export async function listAgentTasks(opts: { status?: string; limit?: number } =
       id: true, kind: true, goal: true, status: true, schedule: true, model: true,
       priority: true, attempts: true, failures: true, nextAttemptAt: true,
       cancelRequested: true, lastErrorCode: true, createdBy: true, createdAt: true, updatedAt: true,
+      computer: true,
     },
   })
 }

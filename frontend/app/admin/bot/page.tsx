@@ -22,8 +22,11 @@ interface BotTask {
   cancelRequested: boolean
   lastErrorCode?: string | null
   createdAt: string
+  computer?: { enabled?: boolean; ttlMinutes?: number } | null
   runs?: Array<{ id: string; status: string; error?: string | null; startedAt: string; completedAt?: string | null }>
 }
+
+const ACTIVE = new Set(['queued', 'processing', 'running'])
 
 interface RunView {
   id: string
@@ -75,9 +78,16 @@ export default function AdminBotPage() {
     } catch (e: any) { setError(e.message) }
   }, [])
 
-  useEffect(() => { refresh(); const t = setInterval(refresh, 5000); return () => clearInterval(t) }, [refresh])
+  // List poll: 15s, paused while the tab is hidden. (The shared API bucket is
+  // 100 req/15 min — admin pages must poll like operators, not like websockets.)
+  useEffect(() => {
+    refresh()
+    const t = setInterval(() => { if (!document.hidden) refresh() }, 15000)
+    return () => clearInterval(t)
+  }, [refresh])
 
-  // Poll the selected task's latest run + its computer session.
+  // Detail poll: 5s, only while the selected task is still active, and only
+  // fetch the computer session when the task actually requested one.
   useEffect(() => {
     if (!selected) { setRun(null); setComputerInfo(null); return }
     let stop = false
@@ -90,17 +100,23 @@ export default function AdminBotPage() {
         if (latest) {
           const rv = await apiFetch<RunView>(`/api/admin/bot/runs/${latest.id}`)
           if (!stop) setRun(rv)
-          try {
-            const ci = await apiFetch<ComputerInfo>(`/api/admin/bot/runs/${latest.id}/computer`)
-            if (!stop) setComputerInfo(ci)
-          } catch { if (!stop) setComputerInfo(null) }
+          if (detail.computer?.enabled) {
+            try {
+              const ci = await apiFetch<ComputerInfo>(`/api/admin/bot/runs/${latest.id}/computer`)
+              if (!stop) setComputerInfo(ci)
+            } catch { if (!stop) setComputerInfo(null) }
+          } else if (!stop) setComputerInfo(null)
         }
       } catch { /* task may be gone */ }
     }
     tick()
-    const t = setInterval(tick, 2500)
+    const t = setInterval(() => {
+      if (document.hidden) return
+      if (!ACTIVE.has(selected.status) && run && !ACTIVE.has(run.status)) return // settled: stop polling
+      tick()
+    }, 5000)
     return () => { stop = true; clearInterval(t) }
-  }, [selected?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selected?.id, selected?.status, run?.status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight }) }, [run?.events?.length])
 
