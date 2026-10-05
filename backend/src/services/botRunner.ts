@@ -17,6 +17,7 @@ import { authorizeRunContext } from '../agent/runAuthorization'
 import { ensurePersonalWorkspace } from './workspaces'
 import { saveMessage } from './chatStore'
 import { estimateTokens } from './billing'
+import { DailyCreditError, captureDailyReservation, cleanupDailyReservation, dailyDispatch, reserveDailyCredits } from './dailyReservations'
 import { sanitizeMetadata } from '../agent/guardrails'
 import { startRun, setRunComputer, isRunTakeoverRequested } from './botRuns'
 import { ComputerSession } from './computerSession'
@@ -92,6 +93,29 @@ export function ensureBotIdentity(): Promise<BotIdentity> {
 /** Test hook: drop the cached identity. */
 export function resetBotIdentityCache() { identityPromise = undefined }
 
+/**
+ * Run identity for a claimed task (B3). User-owned tasks run AS that user:
+ * their personal workspace, their memory, their standing "Loop Bot"
+ * conversation (the in-product result feed). System tasks (no owner) keep the
+ * service account's "Ops Bot" conversation.
+ */
+export async function ensureRunIdentity(task: { userId: string | null }): Promise<BotIdentity> {
+  if (!task.userId) return ensureBotIdentity()
+  if (!hasDb || !prisma) throw new AgentTaskError('unavailable')
+  const user = await prisma.user.findUnique({ where: { id: task.userId } })
+  if (!user) throw new AgentTaskError('invalid_request')
+  const workspace = await ensurePersonalWorkspace(user.id)
+  let conversation = await prisma.conversation.findFirst({
+    where: { userId: user.id, workspaceId: workspace.id, title: 'Loop Bot' },
+  })
+  if (!conversation) {
+    conversation = await prisma.conversation.create({
+      data: { userId: user.id, workspaceId: workspace.id, title: 'Loop Bot' },
+    })
+  }
+  return { userId: user.id, workspaceId: workspace.id, conversationId: conversation.id }
+}
+
 class BotAbort extends Error {
   constructor(public readonly reason: 'cancelled' | 'lease_lost' | 'worker_stop' | 'computer_ttl') { super(reason) }
 }
@@ -152,8 +176,18 @@ export async function executeBotTask(
   const artifacts: ArtifactRef[] = []
   let computer: ComputerSession | undefined
   let ttlTimer: ReturnType<typeof setTimeout> | undefined
+  let reservationId: string | undefined
+  const runModel = task.model || process.env.BOT_MODEL || ''
   try {
-    const identity = await ensureBotIdentity()
+    const identity = await ensureRunIdentity(task)
+
+    // B4: user-owned runs bill the owner. Reserve before ANY provisioning
+    // (model or VM); the first model dispatch marks it; capture on success,
+    // release/unknown on failure. System tasks (no owner) are platform-funded.
+    if (task.userId) {
+      const reservation = await reserveDailyCredits(task.userId, 'bot', runModel)
+      reservationId = reservation.id
+    }
     const builtins = availableTools()
     const builtinNames = new Set(builtins.map((tool) => tool.name))
     const requested = Array.isArray(task.allowedTools) ? (task.allowedTools as string[]) : [...BOT_DEFAULT_TOOLS]
@@ -211,7 +245,7 @@ export async function executeBotTask(
     await runAgent({
       messages,
       provider: 'huggingface',
-      model: task.model || process.env.BOT_MODEL || '',
+      model: runModel,
       toolNames: computer ? [...names, ...COMPUTER_TOOL_NAMES] : names,
       systemPrompt: computer ? `${BOT_SYSTEM_PROMPT}\n\n${COMPUTER_SYSTEM_ADDENDUM}` : BOT_SYSTEM_PROMPT,
       maxSteps: task.maxSteps ?? undefined,
@@ -219,10 +253,20 @@ export async function executeBotTask(
       autoApprove: true, // allowlisted tools only; no interactive gate exists off-HTTP
       useMemory: true,
       ctx: authorizedCtx,
+      // The first real model dispatch flips the reservation to dispatched.
+      beforeDispatch: reservationId ? dailyDispatch(reservationId, abort.signal) : undefined,
     })
     if (abort.signal.aborted) throw abort.signal.reason instanceof BotAbort ? abort.signal.reason : new BotAbort('worker_stop')
 
-    const usage = { tokensIn: estimateTokens(task.goal), tokensOut: estimateTokens(finalContent), model: task.model || process.env.BOT_MODEL || undefined }
+    const usage = { tokensIn: estimateTokens(task.goal), tokensOut: estimateTokens(finalContent), model: runModel || undefined }
+    // B4: settle the owner's reservation with the real token evidence. The
+    // settlement worker replays a persisted intent if this capture races a
+    // crash, so a throw here never loses the charge.
+    if (reservationId && task.userId) {
+      await captureDailyReservation(reservationId, task.userId, 'bot', {
+        tokensIn: usage.tokensIn, tokensOut: usage.tokensOut, model: runModel,
+      }).catch((error) => console.error('Bot reservation capture needs reconciliation:', reservationId, error))
+    }
     // The standing "Ops Bot" conversation is the operator-visible result feed.
     await saveMessage(identity.conversationId, {
       role: 'assistant',
@@ -241,6 +285,10 @@ export async function executeBotTask(
     const ack = await completeAgentTask(claim)
     return ack === 'succeeded' ? 'succeeded' : 'lease_lost'
   } catch (error: any) {
+    // B4: every failure path settles the reservation exactly once — release if
+    // never dispatched, unknown if it was (no post-dispatch refund, per the
+    // accounting doctrine).
+    if (reservationId) await cleanupDailyReservation(reservationId)
     const reason = error instanceof BotAbort ? error.reason : undefined
     if (reason === 'lease_lost' || leaseLost) {
       await run.fail('Lease lost mid-run; another worker owns this task')
@@ -261,6 +309,7 @@ export async function executeBotTask(
     }
     const code = error instanceof AgentTaskError ? 'BOT_TASK_INVALID'
       : error instanceof E2BDesktopError ? 'BOT_COMPUTER_UNAVAILABLE'
+      : error instanceof DailyCreditError ? 'BOT_OUT_OF_CREDITS'
       : 'BOT_RUN_FAILED'
     await run.fail((error?.message || code).slice(0, 300))
     return failAgentTask(claim, code, error?.message)

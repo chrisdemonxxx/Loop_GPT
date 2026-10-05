@@ -116,8 +116,30 @@ export function subscribe(runId: string, listener: (event: AgentEvent) => void):
   return () => run.listeners.delete(listener)
 }
 
+/**
+ * Ownership check for user-scoped reads (B1). Returns the owning userId of the
+ * run's task — null for system tasks, undefined when the run doesn't exist.
+ */
+async function runOwnerId(runId: string): Promise<string | null | undefined> {
+  if (!prisma) return undefined
+  try {
+    const row = await prisma.botRun.findUnique({ where: { id: runId }, select: { task: { select: { userId: true } } } })
+    return row ? row.task.userId : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Undefined scope = admin (sees everything). A scoped caller only matches
+ *  their own runs; system tasks (NULL owner) are never user-visible. */
+async function ownedRun(runId: string, scopeUserId?: string): Promise<boolean> {
+  if (!scopeUserId) return true
+  return (await runOwnerId(runId)) === scopeUserId
+}
+
 /** Live view first, then the persisted row. */
-export async function getRun(runId: string): Promise<BotRunView | undefined> {
+export async function getRun(runId: string, scopeUserId?: string): Promise<BotRunView | undefined> {
+  if (!await ownedRun(runId, scopeUserId)) return undefined
   const inMemory = live.get(runId)
   if (inMemory) return inMemory.view
   if (!prisma) return undefined
@@ -197,8 +219,10 @@ export async function isRunTakeoverRequested(runId: string): Promise<boolean> {
   return !!row && row.status === 'running' && row.takeoverRequested
 }
 
-/** Admin side: read session metadata (live view first, then the row). */
-export async function getRunComputer(runId: string): Promise<RunComputerInfo | undefined> {
+/** Admin/user side: read session metadata (live view first, then the row).
+ *  Scoped callers only see their own runs' computers. */
+export async function getRunComputer(runId: string, scopeUserId?: string): Promise<RunComputerInfo | undefined> {
+  if (!await ownedRun(runId, scopeUserId)) return undefined
   const inMemory = runComputers.get(runId)
   if (inMemory) return inMemory
   if (!prisma) return undefined
@@ -213,12 +237,14 @@ export async function getRunComputer(runId: string): Promise<RunComputerInfo | u
   }
 }
 
-/** Admin side: seize/release the VM. The worker's session guard polls this. */
-export async function setRunTakeover(runId: string, requested: boolean): Promise<boolean> {
+/** Seize/release the VM. The worker's session guard polls this flag. Scoped
+ *  callers can only drive their own running VMs (relation filter in the
+ *  guarded update — no separate read to race). */
+export async function setRunTakeover(runId: string, requested: boolean, scopeUserId?: string): Promise<boolean> {
   if (!prisma) return false
   try {
     const updated = await prisma.botRun.updateMany({
-      where: { id: runId, status: 'running' },
+      where: { id: runId, status: 'running', ...(scopeUserId ? { task: { userId: scopeUserId } } : {}) },
       data: { takeoverRequested: requested },
     })
     const info = runComputers.get(runId)

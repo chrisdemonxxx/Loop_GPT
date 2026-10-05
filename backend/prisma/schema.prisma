@@ -79,6 +79,7 @@ model User {
   privateFiles  PrivateFile[]
   personalWorkspace Workspace? @relation("PersonalWorkspace")
   workspaceMemberships WorkspaceMember[]
+  agentTasks    AgentTask[]
 
   @@index([role])
   @@index([plan])
@@ -652,6 +653,12 @@ model AgentTask {
   lastErrorCode   String?
   lastError       String?
   createdBy       String
+  /// Owning account the run executes as (its workspace, memory, credits, live
+  /// view). NULL = system task (service account, admin-enqueued).
+  userId          String?
+  user            User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Cached result-feed conversation (find-or-created by the runner).
+  conversationId  String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @default(now()) @updatedAt
   runs            BotRun[]
@@ -659,6 +666,7 @@ model AgentTask {
   @@index([status, nextAttemptAt])
   @@index([leaseExpiresAt])
   @@index([priority, nextAttemptAt])
+  @@index([userId, status])
 }
 
 /// One execution of an AgentTask. Decoupled from any HTTP response: events

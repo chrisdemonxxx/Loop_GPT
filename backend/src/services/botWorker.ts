@@ -52,12 +52,12 @@ export async function runBotTaskBatch(options: BotWorkerOptions = {}, signal?: A
     claimed: 0, succeeded: 0, retry: 0, cancelled: 0, dead_letter: 0,
     lease_lost: 0, unavailable: 0, unprocessed: 0, aborted: false,
   }
-  // Claim only what we will immediately run — no locally queued leases burning time.
+  // Claim one task per iteration — never a batch: the per-user concurrency
+  // guard in claimAgentTasks is only airtight when claims are evaluated one at
+  // a time (each prior claim is already processing with a live lease before
+  // the next claim is evaluated).
   while (!signal?.aborted && summary.claimed < normalized.batchSize) {
-    const claims = await claimAgentTasks({
-      batchSize: normalized.batchSize - summary.claimed,
-      leaseMs: normalized.leaseMs,
-    })
+    const claims = await claimAgentTasks({ batchSize: 1, leaseMs: normalized.leaseMs })
     if (!claims.length) break
     summary.claimed += claims.length
     for (const claim of claims) {

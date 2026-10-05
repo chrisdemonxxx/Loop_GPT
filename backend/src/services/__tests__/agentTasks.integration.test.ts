@@ -13,10 +13,14 @@ import {
   completeAgentTask,
   enqueueAgentTask,
   failAgentTask,
+  getAgentTask,
   isCancelRequested,
+  listAgentTasks,
   parseScheduleMs,
+  remainingVmMinutes,
   renewAgentTaskLease,
   AGENT_TASK_MAX_ATTEMPTS,
+  BOT_VM_MINUTES_PER_DAY,
 } from '../agentTasks'
 
 const db = prisma!
@@ -189,5 +193,120 @@ describe('heartbeat + cancel', () => {
     const claim = await claimOne()
     await completeAgentTask(claim)
     await expect(cancelAgentTask(task.id)).rejects.toMatchObject({ code: 'conflict' })
+  })
+})
+
+// ── B1: ownership scoping ───────────────────────────────────────────────────
+
+describe('ownership scoping (B1)', () => {
+  let ownerId: string
+  let strangerId: string
+
+  beforeEach(async () => {
+    ownerId = `${prefix}-owner-${randomUUID()}`
+    strangerId = `${prefix}-stranger-${randomUUID()}`
+    await db.user.create({ data: { id: ownerId, email: `${ownerId}@example.test`, password: 'f', name: 'Owner' } })
+    await db.user.create({ data: { id: strangerId, email: `${strangerId}@example.test`, password: 'f', name: 'Stranger' } })
+  })
+
+  it('a user only lists, reads and cancels their own tasks', async () => {
+    const mine = await enqueueAgentTask({ goal: 'mine' } as any, ownerId, ownerId)
+    await enqueueAgentTask({ goal: 'system task' } as any, creatorId) // NULL owner
+
+    const mineList = await listAgentTasks({ scope: { userId: ownerId } })
+    expect(mineList.map((t) => t.id)).toEqual([mine.id])
+    expect(await listAgentTasks({ scope: { userId: strangerId } })).toHaveLength(0)
+
+    await expect(getAgentTask(mine.id, { userId: strangerId })).rejects.toMatchObject({ code: 'not_found' })
+    await expect(cancelAgentTask(mine.id, { userId: strangerId })).rejects.toMatchObject({ code: 'conflict' })
+    expect((await raw(mine.id)).status).toBe('queued') // stranger's cancel touched nothing
+
+    const ownCancel = await cancelAgentTask(mine.id, { userId: ownerId })
+    expect(ownCancel.cancelled).toBe(true)
+    // Admins (no scope) still see and cancel everything.
+    const all = await listAgentTasks()
+    expect(all.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('user-enqueued tasks record the owner; admin-enqueued stay system tasks', async () => {
+    const userTask = await enqueueAgentTask({ goal: 'user task' } as any, ownerId, ownerId)
+    const sysTask = await enqueueAgentTask({ goal: 'system task' } as any, creatorId)
+    expect((await raw(userTask.id)).userId).toBe(ownerId)
+    expect((await raw(sysTask.id)).userId).toBeNull()
+  })
+})
+
+// ── B5: per-user concurrency guard ──────────────────────────────────────────
+
+describe('per-user concurrency guard (B5)', () => {
+  let userA: string
+  let userB: string
+
+  beforeEach(async () => {
+    userA = `${prefix}-a-${randomUUID()}`
+    userB = `${prefix}-b-${randomUUID()}`
+    await db.user.create({ data: { id: userA, email: `${userA}@example.test`, password: 'f', name: 'A' } })
+    await db.user.create({ data: { id: userB, email: `${userB}@example.test`, password: 'f', name: 'B' } })
+  })
+
+  it('never claims a second task for a user with one already processing', async () => {
+    const first = await enqueueAgentTask({ goal: 'A first' } as any, userA, userA)
+    const second = await enqueueAgentTask({ goal: 'A second' } as any, userA, userA)
+    const other = await enqueueAgentTask({ goal: 'B task' } as any, userB, userB)
+
+    const claim1 = await claimOne()
+    expect(claim1.taskId).toBe(first.id)
+
+    // A's second task is blocked while A's first is processing; B is not.
+    const claim2 = await claimOne()
+    expect(claim2.taskId).toBe(other.id)
+    expect((await raw(second.id)).status).toBe('queued')
+
+    // After A's first completes, A's second becomes claimable.
+    await completeAgentTask(claim1)
+    const claim3 = await claimOne()
+    expect(claim3.taskId).toBe(second.id)
+  })
+
+  it('system tasks (NULL owner) never participate in the guard', async () => {
+    await enqueueAgentTask({ goal: 'sys 1' } as any, creatorId)
+    await enqueueAgentTask({ goal: 'sys 2' } as any, creatorId)
+    const first = await claimOne()
+    const second = await claimOne()
+    expect(first.taskId).not.toBe(second.taskId)
+  })
+})
+
+// ── B4: VM-minute budgets ───────────────────────────────────────────────────
+
+describe('VM-minute budgets (B4)', () => {
+  async function makeUser(plan: string, opts: { unlimited?: boolean; role?: string } = {}) {
+    const id = `${prefix}-${plan}-${randomUUID()}`
+    await db.user.create({ data: { id, email: `${id}@example.test`, password: 'f', name: plan, plan, unlimited: opts.unlimited ?? false, role: opts.role || 'user' } })
+    return id
+  }
+  async function burnVmMinutes(userId: string, minutes: number) {
+    const task = await enqueueAgentTask({ goal: 'burn' } as any, userId, userId)
+    await db.botRun.create({ data: { taskId: task.id, status: 'completed', events: [], computer: { minutes } } })
+  }
+
+  it('free plan gets no dedicated computer; pro gets its cap; unlimited bypasses', async () => {
+    const freeUser = await makeUser('free')
+    await expect(remainingVmMinutes(freeUser)).rejects.toMatchObject({ code: 'forbidden' })
+    const proUser = await makeUser('pro')
+    await expect(remainingVmMinutes(proUser)).resolves.toBe(BOT_VM_MINUTES_PER_DAY.pro)
+    const adminUser = await makeUser('free', { unlimited: true })
+    await expect(remainingVmMinutes(adminUser)).resolves.toBe(Number.MAX_SAFE_INTEGER)
+  })
+
+  it('enqueue clamps the TTL to the remaining budget and rejects when exhausted', async () => {
+    const proUser = await makeUser('pro')
+    await burnVmMinutes(proUser, BOT_VM_MINUTES_PER_DAY.pro - 10)
+    await expect(remainingVmMinutes(proUser)).resolves.toBe(10)
+    const clamped = await enqueueAgentTask({ goal: 'clamp me', computer: { enabled: true, ttlMinutes: 60 } } as any, proUser, proUser)
+    expect((await raw(clamped.id)).computer).toMatchObject({ enabled: true, ttlMinutes: 10 })
+    await burnVmMinutes(proUser, 10)
+    await expect(enqueueAgentTask({ goal: 'no budget', computer: { enabled: true } } as any, proUser, proUser))
+      .rejects.toMatchObject({ code: 'quota' })
   })
 })

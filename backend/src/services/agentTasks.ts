@@ -13,13 +13,27 @@
  */
 import { randomUUID } from 'crypto'
 import { z } from 'zod'
+import { Prisma } from '@prisma/client'
 import { prisma, hasDb } from './prisma'
 import { builtinToolNames } from '../agent'
 import { THINKING_EFFORTS } from '../agent/thinking'
 
 export class AgentTaskError extends Error {
-  constructor(public readonly code: 'invalid_request' | 'unavailable' | 'not_found' | 'lease_lost' | 'conflict') { super(code) }
+  constructor(public readonly code: 'invalid_request' | 'unavailable' | 'not_found' | 'lease_lost' | 'conflict' | 'forbidden' | 'quota') { super(code) }
 }
+
+/** Ownership scope for reads/cancels. Users always pass their own id; admins
+ *  pass none (they operate the whole queue, system tasks included). */
+export interface TaskScope { userId?: string }
+
+function scopePredicate(scope?: TaskScope) {
+  return scope?.userId ? Prisma.sql`AND "userId" = ${scope.userId}` : Prisma.empty
+}
+
+/** Per-plan daily dedicated-computer budget (VM minutes). Free tier gets none;
+ *  unlimited/admin bypass. The credit ledger charges the model work separately
+ *  (kind 'bot'); VM minutes are metered on each BotRun and capped here. */
+export const BOT_VM_MINUTES_PER_DAY: Record<string, number> = { free: 0, pro: 30, gold: 120 }
 
 export const AGENT_TASK_MAX_ATTEMPTS = 3
 
@@ -78,7 +92,14 @@ function database() {
 
 // ── Enqueue / read / cancel (API side) ──────────────────────────────────────
 
-export async function enqueueAgentTask(input: EnqueueInput, createdBy: string) {
+/**
+ * Enqueue an autonomous task. `createdBy` is the audit trail (who asked);
+ * `ownerId` is the account the run executes as — its workspace, memory,
+ * credits and live view. NULL owner = system task (service account).
+ * Computer-enabled tasks check the owner's per-plan daily VM-minute budget and
+ * clamp the TTL to what remains.
+ */
+export async function enqueueAgentTask(input: EnqueueInput, createdBy: string, ownerId: string | null = null) {
   if (!createdBy) throw new AgentTaskError('invalid_request')
   const parsed = enqueueInput.parse(input)
   if (parsed.kind === 'scheduled') {
@@ -88,6 +109,13 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string) {
   // Bot v1: reviewed built-ins only. Extension sources come with the user-facing phase.
   const builtins = new Set(builtinToolNames())
   if (parsed.allowedTools?.some((name) => !builtins.has(name))) throw new AgentTaskError('invalid_request')
+
+  let computer = parsed.computer
+  if (computer?.enabled && ownerId) {
+    const remaining = await remainingVmMinutes(ownerId)
+    const ttl = Math.min(computer.ttlMinutes ?? 30, remaining)
+    computer = { ...computer, ttlMinutes: ttl }
+  }
   return database().agentTask.create({
     data: {
       kind: parsed.kind,
@@ -97,17 +125,43 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string) {
       thinking: parsed.thinking ?? null,
       allowedTools: parsed.allowedTools ?? undefined,
       maxSteps: parsed.maxSteps ?? null,
-      computer: parsed.computer ?? undefined,
+      computer: computer ?? undefined,
       priority: parsed.priority,
       createdBy,
+      userId: ownerId,
     },
-    select: { id: true, kind: true, status: true, nextAttemptAt: true },
+    select: { id: true, kind: true, status: true, nextAttemptAt: true, computer: true },
   })
 }
 
-export async function listAgentTasks(opts: { status?: string; limit?: number } = {}) {
+/** Remaining dedicated-computer budget for the owner's current rolling window.
+ *  Throws 'forbidden' (plan has no computer access) or 'quota' (day's minutes
+ *  exhausted) instead of returning a number. Admins/unlimited bypass. */
+export async function remainingVmMinutes(ownerId: string): Promise<number> {
+  const db = database()
+  const user = await db.user.findUnique({
+    where: { id: ownerId },
+    select: { plan: true, role: true, unlimited: true, creditsResetAt: true },
+  })
+  if (!user) throw new AgentTaskError('invalid_request')
+  if (user.role === 'admin' || user.unlimited) return Number.MAX_SAFE_INTEGER
+  const cap = BOT_VM_MINUTES_PER_DAY[user.plan] ?? 0
+  if (cap <= 0) throw new AgentTaskError('forbidden')
+  const rows = await db.$queryRaw<{ used: number | bigint }[]>`
+    SELECT COALESCE(SUM((r."computer"->>'minutes')::int), 0)::bigint AS used
+    FROM "BotRun" r JOIN "AgentTask" t ON t."id" = r."taskId"
+    WHERE t."userId" = ${ownerId} AND r."startedAt" >= ${user.creditsResetAt}`
+  const used = Number(rows[0]?.used ?? 0)
+  const remaining = cap - used
+  if (remaining <= 0) throw new AgentTaskError('quota')
+  return remaining
+}
+
+export async function listAgentTasks(opts: { status?: string; limit?: number; scope?: TaskScope } = {}) {
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200)
-  const where = opts.status ? { status: opts.status } : {}
+  const where: Record<string, unknown> = {}
+  if (opts.status) where.status = opts.status
+  if (opts.scope?.userId) where.userId = opts.scope.userId
   return database().agentTask.findMany({
     where,
     orderBy: [{ status: 'asc' }, { priority: 'desc' }, { nextAttemptAt: 'asc' }],
@@ -116,34 +170,37 @@ export async function listAgentTasks(opts: { status?: string; limit?: number } =
       id: true, kind: true, goal: true, status: true, schedule: true, model: true,
       priority: true, attempts: true, failures: true, nextAttemptAt: true,
       cancelRequested: true, lastErrorCode: true, createdBy: true, createdAt: true, updatedAt: true,
-      computer: true,
+      computer: true, userId: true,
     },
   })
 }
 
-export async function getAgentTask(id: string) {
-  const task = await database().agentTask.findUnique({
-    where: { id },
+export async function getAgentTask(id: string, scope?: TaskScope) {
+  const task = await database().agentTask.findFirst({
+    where: { id, ...(scope?.userId ? { userId: scope.userId } : {}) },
     include: { runs: { orderBy: { startedAt: 'desc' }, take: 10, select: {
       id: true, status: true, error: true, startedAt: true, completedAt: true,
     } } },
   })
+  // Not-found, not forbidden: do not leak that another owner's task exists.
   if (!task) throw new AgentTaskError('not_found')
   return task
 }
 
-/** Operator cancel: queued rows retire immediately; a processing row is
- *  flagged and the worker aborts it on its next heartbeat tick. */
-export async function cancelAgentTask(id: string) {
+/** Cancel: queued rows retire immediately; a processing row is flagged and the
+ *  worker aborts it on its next heartbeat tick. Scoped callers (users) can
+ *  only touch their own tasks; unscoped (admin) can touch any. */
+export async function cancelAgentTask(id: string, scope?: TaskScope) {
   const db = database()
+  const scopeSql = scopePredicate(scope)
   const retired = await db.$executeRaw`
     UPDATE "AgentTask" SET "status" = 'cancelled', "leaseToken" = NULL, "leaseExpiresAt" = NULL,
       "updatedAt" = clock_timestamp()
-    WHERE "id" = ${id} AND "status" = 'queued'`
+    WHERE "id" = ${id} AND "status" = 'queued' ${scopeSql}`
   if (retired === 1) return { cancelled: true, immediate: true }
   const flagged = await db.$executeRaw`
     UPDATE "AgentTask" SET "cancelRequested" = true, "updatedAt" = clock_timestamp()
-    WHERE "id" = ${id} AND "status" = 'processing' AND "cancelRequested" = false`
+    WHERE "id" = ${id} AND "status" = 'processing' AND "cancelRequested" = false ${scopeSql}`
   if (flagged === 1) return { cancelled: true, immediate: false }
   throw new AgentTaskError('conflict')
 }
@@ -157,14 +214,23 @@ export async function isCancelRequested(taskId: string): Promise<boolean> {
 
 export interface AgentTaskClaim { taskId: string; leaseToken: string }
 
-/** Claim only durable rows. Priority first, then due time; expired leases replay. */
+/** Claim only durable rows. Priority first, then due time; expired leases replay.
+ *  Fair queueing (B5): never claim a second task for a user who already has one
+ *  processing — per-user concurrency stays 1 no matter the worker's batch size. */
 export async function claimAgentTasks(options: { batchSize: number; leaseMs: number }): Promise<AgentTaskClaim[]> {
   const token = randomUUID()
   return database().$queryRaw<AgentTaskClaim[]>`
     WITH candidates AS (
       SELECT "id" FROM "AgentTask"
-      WHERE ("status" = 'queued' AND "nextAttemptAt" <= clock_timestamp())
-         OR ("status" = 'processing' AND "leaseExpiresAt" <= clock_timestamp())
+      WHERE (("status" = 'queued' AND "nextAttemptAt" <= clock_timestamp())
+         OR ("status" = 'processing' AND "leaseExpiresAt" <= clock_timestamp()))
+        AND NOT EXISTS (
+          SELECT 1 FROM "AgentTask" busy
+          WHERE busy."status" = 'processing'
+            AND busy."leaseExpiresAt" > clock_timestamp()
+            AND busy."userId" IS NOT NULL
+            AND busy."userId" = "AgentTask"."userId"
+        )
       ORDER BY "priority" DESC,
         CASE WHEN "status" = 'processing' THEN "leaseExpiresAt" ELSE "nextAttemptAt" END, "id"
       LIMIT ${options.batchSize} FOR UPDATE SKIP LOCKED

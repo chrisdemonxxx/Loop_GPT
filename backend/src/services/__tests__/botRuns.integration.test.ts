@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { prisma } from '../prisma'
 import { enqueueAgentTask } from '../agentTasks'
 import {
+  getRun,
   getRunComputer,
   isRunTakeoverRequested,
   setRunComputer,
@@ -22,8 +23,10 @@ let taskId: string
 
 beforeEach(async () => {
   creatorId = `${prefix}-${randomUUID()}`
-  await db.user.create({ data: { id: creatorId, email: `${creatorId}@example.test`, password: 'fixture', name: 'Fixture' } })
-  const task = await enqueueAgentTask({ goal: `goal-${randomUUID()}`, computer: { enabled: true, ttlMinutes: 30 } }, creatorId)
+  // pro plan: the B4 VM-minute gate passes (free gets no dedicated computer).
+  await db.user.create({ data: { id: creatorId, email: `${creatorId}@example.test`, password: 'fixture', name: 'Fixture', plan: 'pro' } })
+  // Owner == creator: this fixture's tasks are user-owned (not system tasks).
+  const task = await enqueueAgentTask({ goal: `goal-${randomUUID()}`, computer: { enabled: true, ttlMinutes: 30 } }, creatorId, creatorId)
   taskId = task.id
 })
 
@@ -67,5 +70,42 @@ describe('cross-process takeover flag', () => {
     const run = await startRun(taskId)
     await run.complete({ content: 'done', artifacts: [], usage: undefined })
     expect(await setRunTakeover(run.runId, true)).toBe(false)
+  })
+})
+
+// ── B1: run ownership scoping ───────────────────────────────────────────────
+
+describe('run ownership scoping (B1)', () => {
+  let strangerId: string
+
+  beforeEach(async () => {
+    strangerId = `${prefix}-stranger-${randomUUID()}`
+    await db.user.create({ data: { id: strangerId, email: `${strangerId}@example.test`, password: 'f', name: 'Stranger' } })
+  })
+
+  it('scoped reads see only their own runs; system runs are invisible to users', async () => {
+    // taskId from the fixture is owned by creatorId (user-owned task)
+    const run = await startRun(taskId)
+    await setRunComputer(run.runId, { sandboxId: 'sbx-owner', viewUrl: 'https://v', interactiveUrl: 'https://i' })
+
+    expect(await getRun(run.runId, creatorId)).toMatchObject({ id: run.runId })
+    expect(await getRun(run.runId, strangerId)).toBeUndefined()
+    expect(await getRunComputer(run.runId, strangerId)).toBeUndefined()
+    expect(await setRunTakeover(run.runId, true, strangerId)).toBe(false)
+    expect(await isRunTakeoverRequested(run.runId)).toBe(false) // stranger touched nothing
+    expect(await setRunTakeover(run.runId, true, creatorId)).toBe(true)
+    // Unscoped (admin) sees it regardless.
+    expect(await getRun(run.runId)).toMatchObject({ id: run.runId })
+    await run.fail('done', true)
+  })
+
+  it('a system task (NULL owner) rejects every scoped access', async () => {
+    const sysTask = await enqueueAgentTask({ goal: 'system' } as any, creatorId)
+    const run = await startRun(sysTask.id)
+    expect(await getRun(run.runId, strangerId)).toBeUndefined()
+    expect(await getRun(run.runId, creatorId)).toBeUndefined() // creator is admin-side, not owner
+    expect(await setRunTakeover(run.runId, true, creatorId)).toBe(false)
+    expect(await getRun(run.runId)).toMatchObject({ id: run.runId }) // admin unscoped
+    await run.fail('done', true)
   })
 })
