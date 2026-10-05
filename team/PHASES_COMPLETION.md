@@ -453,3 +453,22 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   adapter CI suite now runs with the flag (full implementations); suite
   66 files / 1202 green, tsc=0. Calendar/Sheets/Gmail-send/GitHub were
   always fine.
+- **E-S6.9** (still-blocked follow-up, 2026-10-05): our side re-verified clean
+  after the sensitive-only deploy — live authorize URL carries
+  `scope=gmail.send` ONLY (no restricted scope), the registered redirect, and
+  Google answers 302 into the flow (`RUN_oauth_fix_probe.log`). The
+  automation browser has no Google session (console URL ? Google sign-in
+  wall), so the consent screen's actual publishing state cannot be read
+  remotely. Remaining hypotheses, split by ONE observation (see the
+  operator checklist): (a) the consent screen is STILL in Testing status —
+  the "publish" click has now been claimed three times without taking
+  effect, and the tester-gate screen matches "still blocked" exactly; (b)
+  the unverified-app screen IS showing (production, working as designed) and
+  needs the small **Advanced** link; (c) a stale authorize popup was reused
+  instead of a fresh Connect click; (d) Google's 24h systems-update window
+  from the earlier verification rejection still applies to the VERIFICATION
+  retry (not to consent). The 30-second split test: connect fresh with the
+  TEST USER account (mundkhawaja1) vs admin@red-kit.org — consent on the
+  test user but a block on admin = still Testing (publish in the client's
+  own project); unverified-screen with Advanced = production, click through;
+  same tester-gate on BOTH = deeper state.
