@@ -28,7 +28,7 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
 | **S1** close RED gates | media suite 8→28; `team/PERF_P1.md`; `team/RELEASE_P1.md`; GAP-003 serious+ contrast fixes + gate tightened; A6 catalog depth (GAP-029 row 3) | ops-release, perf-eng, qa-verify, core-dev | raw vitest 28/28; both docs hash-verified; axe zero serious+; catalog ≥3 picker rows live | **CLOSED — E-S1.1..E-S1.4** (media 28/28, GAP-003 0C/0S + serious+ gate, PERF_P1/RELEASE_P1 from raw probes, A6 `112fcbd` row 3) |
 | **S2** settings panels (blueprint P6) | hash-routed `#settings/*` panel layer + General, Account, Privacy(+5 sub-panels), Billing, Capabilities, Reflect, Time-and-focus, Claude Code → 12/12 | arch-lead (contract), ui-visual, qa-verify | a11y snapshot per panel matches plan §8; hash back/forward; settings search | **CLOSED — E-S2.1/E-S2.2** (contract `CONTRACT_S2_SETTINGS.md`; 14-panel registry: 8 new + capabilities→tools mapping; sweep 36 runs incl. 7 settings-overlay routes → 0C/0S) |
 | **S3** page parity (blueprint P7/P8) | `/customize/connectors/all` + connector detail; project detail; skill/plugin detail tabs; `/downloads`, `/upgrade`(+pro/max), `/buying-specialist`, `/logout`, `/new` hero + PromptChips; `/code` shell + gates; mobile mirrors | arch-lead, ui-visual, mobile-dev, research-scout (copy seeds) | every §4 route reachable; table-driven route test incl. §4.3 404s; entitlement matrix doc | **CLOSED for web (E-S3.1..E-S3.5)** — connectors directory/detail from the real 44-entry catalog; all §4 routes reachable incl. aliases; **route table spec 36×200 + 5×404 green, 404 policy LIVE on production (verified by probe)**. Honest-by-design deltas documented (checkout frozen, no gate fiction, SkillsTab detail = §9.3 mapping, mobile mirrors → S4) |
-| **S4** primitives + visual lock | ~20 remaining §10 stories; Skeleton/DataTable/Carousel/PromptChips/Tabs/FileViewer; `visual-parity.spec.ts` in CI; new screens captured light+dark × 5 viewports | storybook-dev, core-dev, pixel-measure, qa-verify (keyboard §11) | storybook index complete; parity ≤0.5% all rows; keyboard walkthrough pass | OPEN |
+| **S4** primitives + visual lock | ~20 remaining §10 stories; Skeleton/DataTable/Carousel/PromptChips/Tabs/FileViewer; `visual-parity.spec.ts` in CI; new screens captured light+dark × 5 viewports | storybook-dev, core-dev, pixel-measure, qa-verify (keyboard §11) | storybook index complete; parity ≤0.5% all rows; keyboard walkthrough pass | **CLOSED — E-S4.1** — 53 story entries; **90 baseline rows** (9 screens × 5 × 2) verified 0.0000%; parity gate wired into `npx playwright test`; keyboard walkthrough green (⌘L/⌘B found-advertised-but-dead and bound); Skeleton shipped with a real consumer; `ENTITLEMENTS.md` (A5 matrix); DataTable/Carousel/PromptChips = documented mappings, not dead inventory; mobile ruling recorded (blueprint mobile = responsive web, gated) |
 | **S5** release close | freeze revision post-S3; static+dynamic verdicts pinned to SHA; deploy; read-back both markers; tag; roster/GAP reconciliation; drop `qa2` stash | arch-lead, code-review, qa-verify, ops-release, boss-bot, hr-bot | `/api/version` AND `/version.json` == frozen SHA read back live; GAP-041…070 triaged | OPEN |
 
 ## Evidence log (append-only)
@@ -241,25 +241,39 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   /upgrade /login/ /artifact/ /account/ -> 200 text/html` each. Slashless
   routes 301 to their directory (nginx standard, pre-existing, browsers
   follow). S3 route parity is CLOSED on production.
-- **E-S4.1** (S4 wave 1 � visual lock + keyboard + stories + entitlements,
+- **E-S4.1** (S4 wave 1 � visual lock + keyboard + stories + entitlements,
   2026-10-05): measure.cjs SCREENS grew 3 ? 9 (landing, chat, settings,
   downloads, upgrade, buying-specialist, connectors directory + detail,
-  project) ? **90 rows frozen (9 screens � 5 viewports � 2 themes), verify
+  project) ? **90 rows frozen (9 screens � 5 viewports � 2 themes), verify
   worst delta 0.0000% FAIL 0**; `visual-parity.spec.ts` wires the verify into
-  `npx playwright test` (desktop-chromium only � deterministic render, one
-  2.2m run per suite). **Keyboard walkthrough shipped (�11 mapped to OUR
-  registry)** � and it found a real defect: the ShortcutSheet ADVERTISED ?L
+  `npx playwright test` (desktop-chromium only � deterministic render, one
+  2.2m run per suite). **Keyboard walkthrough shipped (�11 mapped to OUR
+  registry)** � and it found a real defect: the ShortcutSheet ADVERTISED ?L
   and ?B but nothing bound them; both now wired via `useHotkey` in the chat
   page. `tests/e2e/keyboard.spec.ts`: palette ?K?filter?Enter-Settings?dialog,
   Esc-innermost (Effort popover), ?B both directions, ?L, composer
-  Shift+Enter newline / Enter no-newline � 5 passed. Stories 31 ? **53 index
+  Shift+Enter newline / Enter no-newline � 5 passed. Stories 31 ? **53 index
   entries** across 11 groups (primitives incl. new Skeleton, S2 pref panels,
   CommandPalette, SettingsPanel, Markdown/code blocks, ErrorBoundary crash
   state); `build-storybook` exit 0. Skeleton primitive shipped WITH a real
   consumer (connector directory loading state). **`team/ENTITLEMENTS.md`**
-  (blueprint A5 �4): the plan � feature matrix measured from the enforcing
-  lines � headline: nothing is plan-GATED, plans change ALLOWANCES only.
+  (blueprint A5 �4): the plan � feature matrix measured from the enforcing
+  lines � headline: nothing is plan-GATED, plans change ALLOWANCES only.
   Mobile-scope ruling recorded: blueprint mobile parity = responsive web
   (baselined + gated at 390/320); the Expo companion's IA drift is outside
   the blueprint contract. Full gates: tsc=0, vitest 31/269, playwright 206
   passed / 34 skipped, sweep 48 runs 0C/0S.
+- **E-S5.1** (incident, found during the S5 read-back sweep): backend deploys
+  for `35f487a`/`2764d66`/`e7f3a25` **FAILED in production** (03:26�04:22
+  outage window; `GET /api/version` ? 504) � the group-1 commit shipped the
+  `listTypes()` change with a `tsc` error (found and fixed in `e29b750` as a
+  local defect, but the FIX COMMIT LIST shows the broken intermediate had been
+  pushed). The `59eabb0` deploy recovered the service at 04:22:46:
+  `/api/version ? 59eabb0�`, catalog 3 rows, `/healthz ? 200`. Root cause and
+  the structural guard (both tsc+vitest pinned per lane) recorded in
+  `team/ROSTER_CLOSE_20261005.md`. Cost of a skipped gate, paid once.
+- **E-S5.2** (close-out housekeeping): the `qa2` stash (5 files, P2-era
+  PHASES/CONTRACT drafts � superseded by the current board) **dropped**
+  (`341fe60b�`); `docs/GAP_REGISTER.md` GAP-027 row updated to CLOSED (3
+  live picker rows, probe-verified); `team/ROSTER_CLOSE_20261005.md` written
+  (seat ledger + honest residuals + the outage record).
