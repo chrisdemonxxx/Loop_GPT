@@ -6,7 +6,16 @@ import {
   ArrowLeft, Bot, Loader2, MonitorPlay, Play, Plus, RefreshCw, XCircle,
   HandMetal, MonitorOff, TerminalSquare,
 } from 'lucide-react'
-import { apiFetch } from '../../lib/api'
+import { apiFetch, authHeaders } from '../../lib/api'
+
+interface ArtifactRef {
+  id: string
+  name: string
+  url: string
+  kind: string
+  mimeType?: string
+  size?: number
+}
 
 interface BotTask {
   id: string
@@ -35,6 +44,7 @@ interface RunView {
   events: Array<{ type: string; message?: string; text?: string; name?: string; content?: string }>
   result?: string
   error?: string
+  artifacts?: ArtifactRef[]
   startedAt: string
   completedAt?: string
 }
@@ -119,6 +129,36 @@ export default function AdminBotPage() {
   }, [selected?.id, selected?.status, run?.status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight }) }, [run?.events?.length])
+
+  // Live agent frames: image artifacts from the run (computer screenshots,
+  // generated images) fetched with auth and shown newest-first. This is the
+  // "what is the agent doing right now" strip — it updates with the run poll.
+  const [frames, setFrames] = useState<Record<string, string>>({})
+  const artifactKey = (run?.artifacts || []).map((a) => a.id).join(',')
+  useEffect(() => {
+    let stop = false
+    const wanted = new Set<string>()
+    const load = async () => {
+      const images = (run?.artifacts || []).filter((a) => a.kind === 'image' || (a.mimeType || '').startsWith('image/'))
+      for (const art of images) {
+        wanted.add(art.id)
+        if (frames[art.id]) continue
+        try {
+          const res = await fetch(art.url, { headers: authHeaders(false) })
+          if (!res.ok) continue // cross-owner frames are 404 by design
+          const blob = await res.blob()
+          if (stop) return
+          const url = URL.createObjectURL(blob)
+          setFrames((f) => ({ ...f, [art.id]: url }))
+        } catch { /* transient; next poll retries */ }
+      }
+      // Drop frames for artifacts no longer in view.
+      setFrames((f) => Object.fromEntries(Object.entries(f).filter(([id]) => wanted.has(id))))
+    }
+    load()
+    return () => { stop = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [artifactKey])
 
   const enqueue = async () => {
     if (!goal.trim() || submitting) return
@@ -245,6 +285,21 @@ export default function AdminBotPage() {
               <div className="mb-2 text-sm font-medium text-slate-300">
                 {selected ? `Run ${run ? `· ${run.status}` : ''}` : 'Select a task'}
               </div>
+              {Object.keys(frames).length > 0 && (
+                <div className="mb-2">
+                  <div className="mb-1 text-[11px] text-slate-500">Agent frames (what it sees, newest last)</div>
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    {(run?.artifacts || [])
+                      .filter((a) => frames[a.id])
+                      .map((a) => (
+                        <a key={a.id} href={frames[a.id]} target="_blank" rel="noreferrer" className="shrink-0">
+                          <img src={frames[a.id]} alt={a.name} title={a.name}
+                            className="h-24 rounded-md ring-1 ring-slate-700/60 hover:ring-violet-500/70" />
+                        </a>
+                      ))}
+                  </div>
+                </div>
+              )}
               <div ref={feedRef} className="h-56 space-y-1 overflow-y-auto rounded-lg bg-slate-950/60 p-2 font-mono text-[11px]">
                 {feedLines.length ? feedLines : <div className="text-slate-600">No events yet.</div>}
               </div>
@@ -281,6 +336,10 @@ export default function AdminBotPage() {
                     referrerPolicy="no-referrer"
                     title="Bot computer live view"
                   />
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  A black desktop means the agent hasn&apos;t opened a window yet — watch the agent frames above
+                  for what it&apos;s seeing, or take over and drive yourself.
                 </div>
                 {computerInfo.minutes != null && <div className="text-[11px] text-slate-500">Session metered: {computerInfo.minutes} VM-minute(s)</div>}
               </div>
