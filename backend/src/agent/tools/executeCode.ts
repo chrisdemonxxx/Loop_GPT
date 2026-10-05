@@ -19,8 +19,19 @@ import { spawn } from 'child_process'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import sdkFetch from 'node-fetch'
 import { saveArtifact } from '../artifacts'
 import type { ToolDefinition } from '../types'
+import {
+  HfSandboxError,
+  createSandbox,
+  execInSandbox,
+  killSandbox,
+  listSandboxFiles,
+  readSandboxFile,
+  writeSandboxFile,
+  type HfSandboxHandle,
+} from '../../services/hfSandbox'
 
 const MAX_OUTPUT = 60_000
 const MAX_FILES = 8
@@ -33,6 +44,19 @@ const INTERPRETERS: Record<string, string[]> = {
   bash: ['bash'],
 }
 
+/** Sandbox backend selection. SANDBOX_PROVIDER wins; legacy SANDBOX_DOCKER is
+ *  still honored when it is unset; otherwise auto-detect Docker once. */
+export type SandboxProvider = 'hf' | 'docker' | 'subprocess'
+export function sandboxProviderEnv(): 'hf' | 'docker' | 'subprocess' | null {
+  const v = (process.env.SANDBOX_PROVIDER || '').trim().toLowerCase()
+  if (v === 'hf') return 'hf'
+  if (v === 'docker') return 'docker'
+  if (v === 'subprocess') return 'subprocess'
+  if (process.env.SANDBOX_DOCKER === 'true') return 'docker'
+  if (process.env.SANDBOX_DOCKER === 'false') return 'subprocess'
+  return null
+}
+
 let dockerChecked: boolean | undefined
 function dockerAvailable(): Promise<boolean> {
   if (dockerChecked !== undefined) return Promise.resolve(dockerChecked)
@@ -43,11 +67,63 @@ function dockerAvailable(): Promise<boolean> {
   })
 }
 
-/** Tri-state: explicit true/false, else auto-detect Docker. */
-async function chooseContainer(): Promise<boolean> {
-  if (process.env.SANDBOX_DOCKER === 'false') return false
-  if (process.env.SANDBOX_DOCKER === 'true') return true
-  return dockerAvailable()
+/** Provider resolution: explicit env wins, else auto-detect Docker. */
+async function chooseProvider(): Promise<SandboxProvider> {
+  const explicit = sandboxProviderEnv()
+  if (explicit) return explicit
+  return (await dockerAvailable()) ? 'docker' : 'subprocess'
+}
+
+const hfDeps = { fetchImpl: sdkFetch as any }
+
+/** Run the snippet in a dedicated HF Sandbox VM (managed isolation). */
+async function runInHfSandbox(
+  language: string,
+  filename: string,
+  code: string,
+  timeoutSec: number,
+  ctx: Parameters<ToolDefinition['handler']>[1],
+  onChunk: (chunk: string, stream: 'stdout' | 'stderr') => void,
+): Promise<{ result: RunResult; artifacts: any[] }> {
+  ctx.emit({ type: 'status', message: `Provisioning an isolated HF sandbox VM…` })
+  let sandbox: HfSandboxHandle | undefined
+  try {
+    sandbox = await createSandbox(hfDeps, { image: DOCKER_IMAGES[language] })
+    await writeSandboxFile(hfDeps, sandbox, `/work/${filename}`, code)
+    ctx.emit({ type: 'status', message: `Running ${language} in the sandbox VM…` })
+    const argv = language === 'bash' ? ['sh', filename] : [...INTERPRETERS[language], filename]
+    const execResult = await execInSandbox(hfDeps, sandbox, {
+      cmd: argv,
+      shell: false,
+      cwd: '/work',
+      timeoutSecs: timeoutSec,
+      env: { HOME: '/work', TMPDIR: '/work', LANG: 'C.UTF-8', PYTHONUNBUFFERED: '1' },
+      onStdout: (chunk) => onChunk(chunk, 'stdout'),
+      onStderr: (chunk) => onChunk(chunk, 'stderr'),
+      signal: ctx.signal,
+    })
+    // Collect files the snippet produced (excluding the source file).
+    const artifacts: any[] = []
+    try {
+      const entries = await listSandboxFiles(hfDeps, sandbox, '/work')
+      for (const entry of entries) {
+        if (entry.name === filename || entry.type !== 'file' || artifacts.length >= MAX_FILES) continue
+        if (!entry.size || entry.size > MAX_FILE_BYTES) continue
+        try {
+          const bytes = await readSandboxFile(hfDeps, sandbox, entry.path)
+          const artifact = await saveArtifact(entry.name, bytes, { userId: ctx.userId, conversationId: ctx.conversationId })
+          artifacts.push(artifact)
+          ctx.emit({ type: 'artifact', artifact })
+        } catch { /* skip unreadable file */ }
+      }
+    } catch { /* listing failed; output still returns */ }
+    return {
+      result: { stdout: execResult.stdout, stderr: execResult.stderr, exitCode: execResult.exitCode, timedOut: execResult.timedOut },
+      artifacts,
+    }
+  } finally {
+    if (sandbox) await killSandbox(hfDeps, sandbox).catch(() => { /* billing backstop: idle_timeout */ })
+  }
 }
 
 interface RunResult { stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }
@@ -135,12 +211,41 @@ export const executeCodeTool: ToolDefinition = {
     const env: NodeJS.ProcessEnv = { HOME: workdir, TMPDIR: workdir, LANG: 'C.UTF-8',
       PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin', PYTHONUNBUFFERED: '1' }
 
-    const container = await chooseContainer()
+    const provider = await chooseProvider()
     // Live output (audit §8-28): chunks stream to the client as they are
     // produced; the runtime stamps the executing step on each event.
     const batcher = makeOutputBatcher((chunk, stream) => ctx.emit({ type: 'tool_output', chunk, stream }))
     const onChunk = (chunk: string, stream: 'stdout' | 'stderr') => batcher.push(chunk, stream)
     let result: RunResult
+    let artifacts: any[] = []
+    if (provider === 'hf') {
+      // Managed isolation: a dedicated HF Sandbox VM per run. No local workdir.
+      fs.rmSync(workdir, { recursive: true, force: true })
+      try {
+        const hf = await runInHfSandbox(language, filename, code, timeoutSec, ctx, onChunk)
+        result = hf.result
+        artifacts = hf.artifacts
+      } catch (e: any) {
+        batcher.flush()
+        const message = e instanceof HfSandboxError && e.code === 'billing'
+          ? 'HF sandbox unavailable: sandboxes need a positive HF credit balance (Jobs billing 402).'
+          : e instanceof HfSandboxError && e.code === 'auth'
+            ? 'HF sandbox unavailable: HF_TOKEN was rejected for the Jobs API.'
+            : `Sandbox error: ${e?.message || e}`
+        return { content: message, isError: true }
+      }
+      batcher.flush()
+      const header = `exit=${result.exitCode ?? 'null'}${result.timedOut ? ' (timed out)' : ''} · ${language} · hf-sandbox`
+      const out = result.stdout.trim() || '(no stdout)'
+      const err = result.stderr.trim()
+      const summary = artifacts.length ? `\n\nGenerated ${artifacts.length} file(s): ${artifacts.map((a) => a.name).join(', ')}` : ''
+      return {
+        content: `${header}\n\nSTDOUT:\n${out}${err ? `\n\nSTDERR:\n${err}` : ''}${summary}`,
+        data: { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, timedOut: result.timedOut, artifacts, mode: 'hf-sandbox' },
+        isError: (result.exitCode ?? 1) !== 0 || undefined,
+      }
+    }
+    const container = provider === 'docker'
     try {
       if (container) {
         ctx.emit({ type: 'status', message: `Running ${language} in an isolated container…` })
@@ -162,7 +267,6 @@ export const executeCodeTool: ToolDefinition = {
     batcher.flush()
 
     // Collect files the snippet produced (excluding the source file).
-    const artifacts: any[] = []
     try {
       for (const entry of fs.readdirSync(workdir)) {
         if (entry === filename || artifacts.length >= MAX_FILES) continue

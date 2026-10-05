@@ -260,4 +260,136 @@ router.post('/memory-synthesis/run', asyncHandler(async (_req, res) => {
   res.json({ ok: true, result })
 }))
 
+// ── Bot computer (autonomous agent task queue) ─────────────────────────────
+// The worker process claims these rows; these routes only enqueue/observe/cancel.
+// Results land in the service account's standing "Ops Bot" conversation.
+
+/** POST /api/admin/bot/tasks — enqueue an autonomous agent task. */
+router.post('/bot/tasks', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { enqueueAgentTask, enqueueInput, AgentTaskError } = await import('../services/agentTasks')
+  const parsed = enqueueInput.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid bot task', code: 'invalid_request' })
+  try {
+    const task = await enqueueAgentTask(parsed.data, (req as any).userId)
+    res.status(201).json({ ok: true, task })
+  } catch (error) {
+    if (error instanceof AgentTaskError) return res.status(error.code === 'invalid_request' ? 400 : 503).json({ error: error.message, code: error.code })
+    throw error
+  }
+}))
+
+/** GET /api/admin/bot/tasks?status=&limit= — queue + recent state. */
+router.get('/bot/tasks', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { listAgentTasks } = await import('../services/agentTasks')
+  const status = typeof req.query.status === 'string' ? req.query.status : undefined
+  const limit = Number(req.query.limit) || 50
+  res.json({ hasDb: true, tasks: await listAgentTasks({ status, limit }) })
+}))
+
+/** GET /api/admin/bot/tasks/:id — task detail with its last runs. */
+router.get('/bot/tasks/:id', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { getAgentTask, AgentTaskError } = await import('../services/agentTasks')
+  try {
+    res.json(await getAgentTask(req.params.id))
+  } catch (error) {
+    if (error instanceof AgentTaskError && error.code === 'not_found') return res.status(404).json({ error: 'Bot task not found' })
+    throw error
+  }
+}))
+
+/** POST /api/admin/bot/tasks/:id/cancel — retire a queued task or flag a running one. */
+router.post('/bot/tasks/:id/cancel', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { cancelAgentTask, AgentTaskError } = await import('../services/agentTasks')
+  try {
+    res.json(await cancelAgentTask(req.params.id))
+  } catch (error) {
+    if (error instanceof AgentTaskError) return res.status(error.code === 'conflict' ? 409 : 503).json({ error: 'Task is not cancellable in its current state', code: error.code })
+    throw error
+  }
+}))
+
+/** GET /api/admin/bot/runs/:runId — run view (live first, then persisted). */
+router.get('/bot/runs/:runId', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { getRun } = await import('../services/botRuns')
+  const run = await getRun(req.params.runId)
+  if (!run) return res.status(404).json({ error: 'Bot run not found' })
+  res.json(run)
+}))
+
+/** GET /api/admin/bot/runs/:runId/events — SSE: replay buffered events, then
+ *  attach live while the worker is mid-run. Falls back to the persisted row. */
+router.get('/bot/runs/:runId/events', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { subscribe, getRun } = await import('../services/botRuns')
+  const { initSSE, sendEvent, endSSE, startKeepalive } = await import('../agent/streaming')
+  initSSE(res)
+  const stopKeepalive = startKeepalive(res)
+  const detach = subscribe(req.params.runId, (event) => {
+    if (res.writableEnded) return
+    sendEvent(res, event)
+    if (event.type === 'done') { stopKeepalive(); res.end() }
+  })
+  const persisted = await getRun(req.params.runId)
+  if (!persisted) {
+    detach()
+    stopKeepalive()
+    endSSE(res)
+    return
+  }
+  // A run that finished mid-attach already ended the response via subscribe.
+  if (res.writableEnded) return
+  if (persisted.status !== 'running') {
+    // Finished before we attached (or only exists in Postgres): replay then end.
+    detach()
+    for (const event of persisted.events) sendEvent(res, event)
+    sendEvent(res, { type: 'done' })
+    stopKeepalive()
+    res.end()
+    return
+  }
+  res.on('close', () => { detach(); stopKeepalive() })
+}))
+
+// ── Bot computer sessions (dedicated VM live view + takeover) ──────────────
+
+/** GET /api/admin/bot/runs/:runId/computer — session metadata for the live
+ *  view. The interactive URL is only returned while takeover is active. */
+router.get('/bot/runs/:runId/computer', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { getRunComputer } = await import('../services/botRuns')
+  const info = await getRunComputer(req.params.runId)
+  if (!info || !info.sandboxId) return res.status(404).json({ error: 'No computer session for this run' })
+  res.json({
+    active: !info.endedAt,
+    sandboxId: info.sandboxId,
+    viewUrl: info.viewUrl || null,
+    interactiveUrl: info.takeoverRequested ? info.interactiveUrl || null : null,
+    takeoverRequested: info.takeoverRequested === true,
+    minutes: info.minutes ?? null,
+    startedAt: info.startedAt || null,
+    endedAt: info.endedAt || null,
+  })
+}))
+
+/** POST /api/admin/bot/runs/:runId/takeover { takeover: boolean } — seize or
+ *  release the VM. Seizing returns the interactive (drivable) URL; the bot
+ *  pauses between actions and resumes from a fresh screenshot on release. */
+router.post('/bot/runs/:runId/takeover', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const takeover = req.body?.takeover === true
+  const { setRunTakeover, getRunComputer } = await import('../services/botRuns')
+  const ok = await setRunTakeover(req.params.runId, takeover)
+  if (!ok) return res.status(409).json({ error: 'Run is not active' })
+  const info = await getRunComputer(req.params.runId)
+  res.json({
+    takeoverRequested: takeover,
+    interactiveUrl: takeover ? info?.interactiveUrl || null : null,
+  })
+}))
+
 export default router

@@ -627,6 +627,65 @@ model VideoQueuePolicy {
   userActive Int @default(2)
 }
 
+/// Durable autonomous agent work ("bot computer"). The bot worker claims rows
+/// with the same Postgres lease pattern as the settlement workers: DB-clock
+/// leases, SKIP LOCKED, guarded acknowledgements, deterministic backoff.
+model AgentTask {
+  id              String    @id @default(cuid())
+  kind            String    @default("ops") // 'ops' one-shot | 'scheduled' recurring
+  goal            String    @db.Text
+  status          String    @default("queued") // queued | processing | succeeded | dead_letter | cancelled
+  schedule        String?   // recurring interval for kind=scheduled: "<n>m" | "<n>h" | "<n>d"
+  model           String?
+  thinking        String?
+  allowedTools    Json?     // string[] of builtin tool names; null = default bot allowlist
+  maxSteps        Int?
+  /// Reserved for the dedicated-computer phase: { enabled, takeover, ttlMinutes }.
+  computer        Json?
+  priority        Int       @default(0)
+  attempts        Int       @default(0)
+  failures        Int       @default(0)
+  nextAttemptAt   DateTime  @default(now())
+  leaseToken      String?
+  leaseExpiresAt  DateTime?
+  cancelRequested Boolean   @default(false)
+  lastErrorCode   String?
+  lastError       String?
+  createdBy       String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @default(now()) @updatedAt
+  runs            BotRun[]
+
+  @@index([status, nextAttemptAt])
+  @@index([leaseExpiresAt])
+  @@index([priority, nextAttemptAt])
+}
+
+/// One execution of an AgentTask. Decoupled from any HTTP response: events
+/// persist so an operator can replay/observe a run after the fact.
+model BotRun {
+  id          String    @id @default(cuid())
+  taskId      String
+  task        AgentTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  status      String    @default("running") // running | completed | failed | cancelled
+  events      Json      @default("[]")
+  result      String?   @db.Text
+  artifacts   Json?
+  usage       Json?
+  error       String?
+  /// Dedicated-computer session (E2B Desktop): { sandboxId, streamAuthKey,
+  /// viewUrl, interactiveUrl, startedAt, endedAt, minutes }. Admin-scoped.
+  computer    Json?
+  /// Cross-process takeover flag: the admin API sets it, the worker polls it
+  /// between computer actions (the bot pauses while a human drives the VM).
+  takeoverRequested Boolean @default(false)
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([taskId])
+  @@index([status])
+}
+
 model Workspace {
   id String @id @default(uuid())
   name String

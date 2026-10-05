@@ -16,11 +16,13 @@
     "worker:daily-settlement": "node scripts/daily-settlement-worker.mjs",
     "worker:api-settlement": "node scripts/api-settlement-worker.mjs",
     "worker:video": "node scripts/video-job-worker.mjs",
+    "worker:bot": "node scripts/bot-task-worker.mjs",
     "private-storage": "node scripts/private-storage.mjs",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
+    "@e2b/desktop": "^2.4.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@mozilla/readability": "^0.5.0",
     "@prisma/client": "^5.7.1",

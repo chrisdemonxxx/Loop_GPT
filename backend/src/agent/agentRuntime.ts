@@ -326,6 +326,7 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
     // Execute every requested tool (the first reuses this turn's step index so
     // the UI replaces any streamed tool-call text with a tool card).
     const inlineResults: string[] = []
+    const pendingImages: Array<{ name: string; uri: string }> = []
     for (const call of calls) {
       ctx.emit({ type: 'tool_call', step: stepIndex, name: call.name, args: call.args, source: tools.find((tool) => tool.name === call.name)?.source })
 
@@ -405,9 +406,36 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
       } else {
         inlineResults.push(`TOOL_RESULT (${call.name}):\n${result.content}`)
       }
+      // Vision feedback: a tool may hand back a frame (data.imageDataUri) —
+      // e.g. computer_* screenshots. The model must SEE it, so it rides the
+      // next turn as a real image part, not base64 text.
+      const imageDataUri = typeof result.data?.imageDataUri === 'string' && result.data.imageDataUri.startsWith('data:image/')
+        ? result.data.imageDataUri : undefined
+      if (imageDataUri && imageDataUri.length <= 12 * 1024 * 1024) {
+        if (native) {
+          working.push({
+            role: 'user',
+            content: [
+              { type: 'text', text: `[${call.name} frame — observe, then choose the next action]` },
+              { type: 'image_url', image_url: { url: imageDataUri } },
+            ],
+          })
+        } else {
+          pendingImages.push({ name: call.name, uri: imageDataUri })
+        }
+      }
       stepIndex++
     }
     if (!native) working.push({ role: 'user', content: inlineResults.join('\n\n') })
+    if (!native && pendingImages.length) {
+      working.push({
+        role: 'user',
+        content: [
+          { type: 'text', text: `[${pendingImages.length} frame(s) from ${pendingImages.map((i) => i.name).join(', ')} — observe, then choose the next action]` },
+          ...pendingImages.map((i) => ({ type: 'image_url' as const, image_url: { url: i.uri } })),
+        ],
+      })
+    }
   }
 
   if (!finalContent) {

@@ -106,12 +106,17 @@ async function main() {
   const apiPort = integer('STAGING_API_PORT', 3001, 1024, 65535)
   const healthPort = integer('PORT', 3002, 1024, 65535)
   if (apiPort === healthPort) throw new Error('API and readiness ports must differ')
+  const bot = flag('BOT_WORKER_ENABLED')
   const scripts = [
     ['api', 'STAGING_API_SCRIPT', 'server.js', 'dist'],
     ['daily-settlement', 'STAGING_DAILY_SCRIPT', 'daily-settlement-worker.mjs', 'scripts'],
     ['api-settlement', 'STAGING_SETTLEMENT_SCRIPT', 'api-settlement-worker.mjs', 'scripts'],
     ['video', 'STAGING_VIDEO_SCRIPT', 'video-job-worker.mjs', 'scripts'],
   ]
+  // Optional fifth child: the autonomous agent task worker ("bot computer").
+  // Gated so existing candidates keep their exact 4-child topology.
+  if (bot) scripts.push(['bot', 'STAGING_BOT_SCRIPT', 'bot-task-worker.mjs', 'scripts'])
+  const expectedChildren = scripts.length
   for (const [, key, basename] of scripts) {
     // Root basename only, exact allowlist; never shell commands, paths or flags.
     if (env[key] !== undefined && env[key] !== basename) throw new Error(`Invalid ${key}`)
@@ -158,7 +163,7 @@ async function main() {
   const check = createReadinessCheck({
     isStopping: () => stopping,
     report: (ok) => {
-      ready = ok && !stopping && children.size === 4
+      ready = ok && !stopping && children.size === expectedChildren
       checkedAt = Date.now()
     },
     probe: async () => {
@@ -170,7 +175,7 @@ async function main() {
     },
   })
   server = createServer((req, res) => {
-    const ok = !stopping && ready && Date.now() - checkedAt < 20000 && children.size === 4
+    const ok = !stopping && ready && Date.now() - checkedAt < 20000 && children.size === expectedChildren
     res.writeHead(req.url === '/ready' ? (ok ? 200 : 503) : 404, {
       'Content-Type': 'application/json', 'Cache-Control': 'no-store',
     })
@@ -186,7 +191,7 @@ async function main() {
   }
   interval = setInterval(() => { void check() }, 10000)
   void check()
-  console.log('[staging] supervisor started; API plus three essential workers, one PVC, one replica')
+  console.log(`[staging] supervisor started; API plus ${expectedChildren - 1} essential workers, one PVC, one replica`)
 }
 
 async function apiChild() {
