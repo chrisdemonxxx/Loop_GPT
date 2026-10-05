@@ -10,9 +10,14 @@ RUN node -e "const [a,b]=process.versions.node.split('.').map(Number);if(a<22||(
 ARG NEXT_PUBLIC_SENTRY_DSN=""
 ARG NEXT_PUBLIC_POSTHOG_KEY=""
 ARG NEXT_PUBLIC_POSTHOG_HOST=""
-# Served revision of THIS image (contract §F). Set the web service variable
-# GIT_REVISION to the deploy's commit SHA (Railway: ${{RAILWAY_GIT_COMMIT_SHA}}).
+# Served revision of THIS image (contract §F). For repo-triggered builds,
+# Railway injects RAILWAY_GIT_COMMIT_SHA (provided variable) — declare it as
+# an ARG so it reaches the build (the ${{RAILWAY_GIT_COMMIT_SHA}} *reference*
+# in a service variable resolves EMPTY at build time — proven 2026-10-05, the
+# RUN logged `""`). GIT_REVISION stays as the manual override for `railway up`
+# CLI snapshot builds, which carry no git context.
 ARG GIT_REVISION=""
+ARG RAILWAY_GIT_COMMIT_SHA=""
 ENV NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN} \
     NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY} \
     NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
@@ -24,11 +29,12 @@ RUN npm run build && node build/pwa.mjs
 # Served-revision marker (contract §F) — the web half of the deploy gate, with
 # the same field name as backend `GET /api/version`, so a probe compares one
 # vocabulary: revision(/api/version) == revision(/version.json) == git HEAD.
-# An absent or empty build arg writes "unknown" — never a guess. The file lands
-# in out/ as a plain file, which nginx serves through `try_files $uri`; `.json`
-# gets its content-type from mime.types, and its no-store is one `map` entry
-# in web/nginx.template.conf.
-RUN node -e "const fs=require('fs');const r=(process.argv[1]||'').trim();fs.writeFileSync('out/version.json',JSON.stringify({surface:'web',revision:r||'unknown',builtAt:new Date().toISOString()}))" "$GIT_REVISION"
+# An absent or empty build arg writes "unknown" — never a guess. Prefer the
+# explicit GIT_REVISION override, then the Railway git SHA, then "unknown".
+# The file lands in out/ as a plain file, which nginx serves through
+# `try_files $uri`; `.json` gets its content-type from mime.types, and its
+# no-store is one `map` entry in web/nginx.template.conf.
+RUN node -e "const fs=require('fs');const r=(process.argv[1]||process.argv[2]||'').trim();fs.writeFileSync('out/version.json',JSON.stringify({surface:'web',revision:r||'unknown',builtAt:new Date().toISOString()}))" "$GIT_REVISION" "$RAILWAY_GIT_COMMIT_SHA"
 
 FROM nginx:1.28.0-alpine@sha256:30f1c0d78e0ad60901648be663a710bdadf19e4c10ac6782c235200619158284 AS runtime
 COPY --from=build /app/out /usr/share/nginx/html
