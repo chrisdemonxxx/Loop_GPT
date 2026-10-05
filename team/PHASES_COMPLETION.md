@@ -27,7 +27,7 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
 | **S0** bank at-risk work | P5 fix commit + `UI_MOBILE_WEB_ui-visual.md`; gate spec + phone projects committed; baselines/tokens/`.storybook` committed + `.gitignore`; storybook scripts+deps restored; `GIT_REVISION` on web service | ui-visual, qa-verify, pixel-measure, storybook-dev, ops-release | tsc=0; vitest 26/232; mobile gate 12 passed/2 skipped local; `build-storybook` exit 0; `GET /version.json` â†’ real SHA == HEAD | **SHIPPED â€” see E-S0.6/E-S0.7** |
 | **S1** close RED gates | media suite 8â†’28; `team/PERF_P1.md`; `team/RELEASE_P1.md`; GAP-003 serious+ contrast fixes + gate tightened; A6 catalog depth (GAP-029 row 3) | ops-release, perf-eng, qa-verify, core-dev | raw vitest 28/28; both docs hash-verified; axe zero serious+; catalog â‰¥3 picker rows live | **CLOSED â€” E-S1.1..E-S1.4** (media 28/28, GAP-003 0C/0S + serious+ gate, PERF_P1/RELEASE_P1 from raw probes, A6 `112fcbd` row 3) |
 | **S2** settings panels (blueprint P6) | hash-routed `#settings/*` panel layer + General, Account, Privacy(+5 sub-panels), Billing, Capabilities, Reflect, Time-and-focus, Claude Code â†’ 12/12 | arch-lead (contract), ui-visual, qa-verify | a11y snapshot per panel matches plan Â§8; hash back/forward; settings search | **CLOSED â€” E-S2.1/E-S2.2** (contract `CONTRACT_S2_SETTINGS.md`; 14-panel registry: 8 new + capabilitiesâ†’tools mapping; sweep 36 runs incl. 7 settings-overlay routes â†’ 0C/0S) |
-| **S3** page parity (blueprint P7/P8) | `/customize/connectors/all` + connector detail; project detail; skill/plugin detail tabs; `/downloads`, `/upgrade`(+pro/max), `/buying-specialist`, `/logout`, `/new` hero + PromptChips; `/code` shell + gates; mobile mirrors | arch-lead, ui-visual, mobile-dev, research-scout (copy seeds) | every Â§4 route reachable; table-driven route test incl. Â§4.3 404s; entitlement matrix doc | OPEN |
+| **S3** page parity (blueprint P7/P8) | `/customize/connectors/all` + connector detail; project detail; skill/plugin detail tabs; `/downloads`, `/upgrade`(+pro/max), `/buying-specialist`, `/logout`, `/new` hero + PromptChips; `/code` shell + gates; mobile mirrors | arch-lead, ui-visual, mobile-dev, research-scout (copy seeds) | every Â§4 route reachable; table-driven route test incl. Â§4.3 404s; entitlement matrix doc | **CLOSED for web (E-S3.1..E-S3.5)** â€” connectors directory/detail from the real 44-entry catalog; all Â§4 routes reachable incl. aliases; **route table spec 36Ã—200 + 5Ã—404 green, 404 policy LIVE on production (verified by probe)**. Honest-by-design deltas documented (checkout frozen, no gate fiction, SkillsTab detail = Â§9.3 mapping, mobile mirrors â†’ S4) |
 | **S4** primitives + visual lock | ~20 remaining Â§10 stories; Skeleton/DataTable/Carousel/PromptChips/Tabs/FileViewer; `visual-parity.spec.ts` in CI; new screens captured light+dark Ã— 5 viewports | storybook-dev, core-dev, pixel-measure, qa-verify (keyboard Â§11) | storybook index complete; parity â‰¤0.5% all rows; keyboard walkthrough pass | OPEN |
 | **S5** release close | freeze revision post-S3; static+dynamic verdicts pinned to SHA; deploy; read-back both markers; tag; roster/GAP reconciliation; drop `qa2` stash | arch-lead, code-review, qa-verify, ops-release, boss-bot, hr-bot | `/api/version` AND `/version.json` == frozen SHA read back live; GAP-041â€¦070 triaged | OPEN |
 
@@ -155,7 +155,7 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   backend deploy (live `GET /api/models/catalog` goes 2 ? 3 rows; re-check
   after deploy ï¿½ do not trust, re-probe).
 - **E-S2.1** (S2 build, 2026-10-05, `2b23c4a` + popstate fix): contract first
-  (`team/CONTRACT_S2_SETTINGS.md` — panel mapping table, hash wire shapes,
+  (`team/CONTRACT_S2_SETTINGS.md` ï¿½ panel mapping table, hash wire shapes,
   prefs schema, gates), then the code, per the seam discipline.
   Shipped: `lib/settingsHash.ts` (`#settings/<panel>`, `#settings/privacy/<sub>`,
   blueprint aliases capabilities?tools / claude-code?code / time-and-focus?time,
@@ -166,77 +166,77 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   wired to REAL endpoints where they exist (`/api/account/me|usage|redeem`,
   TOTP setup, `/api/billing/config` frozen state shown honestly, conversations
   share filter, files listing) and to client prefs where the platform has no
-  backend yet (time-and-focus enforcement explicitly pending — no fake copy),
+  backend yet (time-and-focus enforcement explicitly pending ï¿½ no fake copy),
   `SettingsPanel` 14-panel registry (Settings + Customize groups),
   chat-page hash listener (dialog opens from any `#settings/*` deep link).
-  Gates, raw: `tsc`=0 · `vitest` **28 files / 248 tests** (+16 new: prefs store
-  fallbacks, hash round-trip/alias/leave, panel smokes, deep-link mount) ·
+  Gates, raw: `tsc`=0 ï¿½ `vitest` **28 files / 248 tests** (+16 new: prefs store
+  fallbacks, hash round-trip/alias/leave, panel smokes, deep-link mount) ï¿½
   `npx playwright test` **56 passed / 16 skipped** (app.spec 44 across 4
-  projects incl. the new settings deep-link + back-walks-panels e2e) ·
+  projects incl. the new settings deep-link + back-walks-panels e2e) ï¿½
   axe sweep extended with 7 settings-overlay routes ? **36 runs, 0 critical /
-  0 serious / 0 render errors** · parity re-frozen (settings screen default
-  tab changed by design) and verified `rows 30 · worst delta 0.0000% · FAIL 0`.
+  0 serious / 0 render errors** ï¿½ parity re-frozen (settings screen default
+  tab changed by design) and verified `rows 30 ï¿½ worst delta 0.0000% ï¿½ FAIL 0`.
 - **E-S2.2** (S2 defect found by the e2e and fixed): back/forward between
   pushState entries fires `popstate`, and Chromium fires `hashchange` there
-  too (probe logged both) — but the first e2e run failed because `out/` was
+  too (probe logged both) ï¿½ but the first e2e run failed because `out/` was
   stale (built before the fix). Lesson re-confirmed: gates must run against a
   fresh build of HEAD, never a leftover `out/`. Panel + page now listen to
   BOTH events (idempotent handler). Also noted: the chat shell creates one
-  extra history entry at load (entries=2 before any push) — harmless, tracked
+  extra history entry at load (entries=2 before any push) ï¿½ harmless, tracked
   for the S3 route-test pass.
-- **E-S3.1** (S3 group 1 — connector directory, 2026-10-05, `35f487a`):
+- **E-S3.1** (S3 group 1 ï¿½ connector directory, 2026-10-05, `35f487a`):
   contract `team/CONTRACT_S3_CONNECTORS.md` (amended: `listTypes()` adds
-  `tools:[{suffix,description}]` + `docs` — summaries only, no request
+  `tools:[{suffix,description}]` + `docs` ï¿½ summaries only, no request
   templates). Shipped `/customize/connectors/all` (directory: search +
   category filter + real catalog cards with lifecycle states) and the
   `?type=` detail view (Tools region, related connectors, connected instances
-  with test/disconnect, same OAuth/credential request shapes as the tab —
+  with test/disconnect, same OAuth/credential request shapes as the tab ï¿½
   one flow, two surfaces, tests pin both). 7 new tests; suite 29 files / 255;
   sweep extended ? 40 runs 0C/0S; backend re-run 65/1192.
-- **E-S3.2** (S3 group 2 — remaining §4 routes, contract
+- **E-S3.2** (S3 group 2 ï¿½ remaining ï¿½4 routes, contract
   `team/CONTRACT_S3_ROUTES.md`): `/downloads` (PWA install is the real
   desktop story; mobile honestly "in development"; extension honestly not
-  shipped), `/upgrade` (§9.7 structure: audience radios, free/pro/gold with
-  our REAL plan ids, FROZEN-checkout truth + voucher path — no fake payment),
-  `/buying-specialist` (contact shell — no fake sales bot), `/logout`
+  shipped), `/upgrade` (ï¿½9.7 structure: audience radios, free/pro/gold with
+  our REAL plan ids, FROZEN-checkout truth + voucher path ï¿½ no fake payment),
+  `/buying-specialist` (contact shell ï¿½ no fake sales bot), `/logout`
   (clears authToken ? /login), and the blueprint aliases `/new`?/chat,
   `/code`?/developer, `/code/artifacts`?/artifacts,
-  `/code/customize`?/customize (no UpgradeGate fiction — nothing is
+  `/code/customize`?/customize (no UpgradeGate fiction ï¿½ nothing is
   plan-gated today). Sidebar account menu gains "Get apps and extensions" +
-  "Upgrade plan" (§5.2 footer parity). 8 new tests incl. logout token clear
+  "Upgrade plan" (ï¿½5.2 footer parity). 8 new tests incl. logout token clear
   and all four redirects; the module-scope `vi.stubGlobal` + afterEach
   `unstubAllGlobals` trap found and fixed (stub re-applied per test). Gates,
-  raw: tsc=0 · vitest **30 files / 263** · sweep 46 runs **0C/0S** (two
+  raw: tsc=0 ï¿½ vitest **30 files / 263** ï¿½ sweep 46 runs **0C/0S** (two
   more link-in-text fixes: accent links underlined at rest app-wide, a
-  learned GAP-003 pattern) · playwright 56/16 · parity re-frozen 30 rows
+  learned GAP-003 pattern) ï¿½ playwright 56/16 ï¿½ parity re-frozen 30 rows
   0.0000 FAIL 0.
-- **E-S3.3** (S3 group 3a — real 404s + the §4 route table): the SPA
-  fallback served unknown paths the landing page with a 200 (the §6.2 probe
-  hazard, blueprint §4.3 violated). Shipped the honest policy: nginx
+- **E-S3.3** (S3 group 3a ï¿½ real 404s + the ï¿½4 route table): the SPA
+  fallback served unknown paths the landing page with a 200 (the ï¿½6.2 probe
+  hazard, blueprint ï¿½4.3 violated). Shipped the honest policy: nginx
   `try_files $uri $uri/ =404` + `error_page 404 /404.html` (every app route
-  has its own index.html from the export — the fallback only ever hid
+  has its own index.html from the export ï¿½ the fallback only ever hid
   mistakes), and `serve-out.cjs` mirrors it so the e2e sees production
   behavior. New `tests/e2e/routes.spec.ts`: **35 routes ? 200 + text/html
-  asserted, 5 §4.3 non-routes (/usage /tasks /upgrade/team /upgrade/enterprise
+  asserted, 5 ï¿½4.3 non-routes (/usage /tasks /upgrade/team /upgrade/enterprise
   /cowork) ? real 404 with the 404 page**, settings hash deep link ? 200.
   Discriminator learned: every app page embeds Next's serialized notFound
   template, so only `<title>404:` distinguishes the real 404 page. Gates:
   route spec **140 passed across 4 projects**; full playwright **196 passed /
   16 skipped**; tsc=0; vitest 30/263.
-- **E-S3.4** (S3 group 3b — project detail + registry type fix): `/project?id=`
-  page (blueprint §A2.3): real PATCH instructions editor, knowledge card
-  (count + text ingest + file upload + vector search — all shipped endpoints),
+- **E-S3.4** (S3 group 3b ï¿½ project detail + registry type fix): `/project?id=`
+  page (blueprint ï¿½A2.3): real PATCH instructions editor, knowledge card
+  (count + text ingest + file upload + vector search ï¿½ all shipped endpoints),
   project-scoped chat list (client filter; `projectId` added to the
-  conversation list select — additive backend change), honest missing state,
+  conversation list select ï¿½ additive backend change), honest missing state,
   Open-in-chat hand-off; ProjectsPanel rows gain the detail link. 6 tests,
   all first-run green. Skill/plugin detail = the SkillsTab detail view
-  (instructions/triggers/tools/versions/revert already shipped) — documented
+  (instructions/triggers/tools/versions/revert already shipped) ï¿½ documented
   mapping in `CONTRACT_S3_ROUTES.md`, no duplicate route. Gates: tsc=0 (after
-  fixing the registry `ConnectorType` interface missed in E-S3.1 — the backend
+  fixing the registry `ConnectorType` interface missed in E-S3.1 ï¿½ the backend
   tsc gate was not run for that commit; both suites re-run green 65/1192 +
   frontend 31/269), sweep 48 runs 0C/0S, playwright 200 passed (route table
   grew to 36 routes).
-- **E-S3.5** (404 policy LIVE, `e7f3a25` deploy verified): probe raw output —
+- **E-S3.5** (404 policy LIVE, `e7f3a25` deploy verified): probe raw output ï¿½
   `/usage -> 404 text/html`; `/chat/ /downloads /customize/connectors/all
   /upgrade /login/ /artifact/ /account/ -> 200 text/html` each. Slashless
   routes 301 to their directory (nginx standard, pre-existing, browsers
