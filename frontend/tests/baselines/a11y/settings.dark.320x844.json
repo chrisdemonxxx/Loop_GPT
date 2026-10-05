@@ -164,18 +164,55 @@
     },
     {
       "role": "tablist",
+      "name": "Settings sections",
       "children": [
+        {
+          "role": "tab",
+          "name": "General"
+        },
+        {
+          "role": "tab",
+          "name": "Account"
+        },
+        {
+          "role": "tab",
+          "name": "Privacy"
+        },
+        {
+          "role": "tab",
+          "name": "Billing"
+        },
+        {
+          "role": "tab",
+          "name": "Tools"
+        },
+        {
+          "role": "tab",
+          "name": "Memory"
+        },
+        {
+          "role": "tab",
+          "name": "Reflect"
+        },
+        {
+          "role": "tab",
+          "name": "Time and focus"
+        },
+        {
+          "role": "tab",
+          "name": "Loop Code"
+        },
         {
           "role": "tab",
           "name": "Skills"
         },
         {
           "role": "tab",
-          "name": "Plugins"
+          "name": "Connectors"
         },
         {
           "role": "tab",
-          "name": "Memory"
+          "name": "Plugins"
         },
         {
           "role": "tab",
@@ -184,32 +221,119 @@
         {
           "role": "tab",
           "name": "Appearance"
-        },
-        {
-          "role": "tab",
-          "name": "Connectors"
-        },
-        {
-          "role": "tab",
-          "name": "Tools"
         }
       ]
     },
     {
-      "role": "text",
-      "name": "Skills inject expert instructions when their triggers match. Ask “create a skill” in any chat, or add one here."
-    },
-    {
-      "role": "button",
-      "name": "Create skill"
-    },
-    {
-      "role": "text",
-      "name": "Could not load skills."
-    },
-    {
-      "role": "button",
-      "name": "Retry"
+      "role": "generic",
+      "children": [
+        {
+          "role": "text",
+          "name": "APPEARANCE & MOTION"
+        },
+        {
+          "role": "radio",
+          "name": "System Follows your device setting"
+        },
+        {
+          "role": "radio",
+          "name": "Reduced Calm the interface down"
+        },
+        {
+          "role": "text",
+          "name": "CHAT FONT"
+        },
+        {
+          "role": "radio",
+          "name": "Compact More on screen"
+        },
+        {
+          "role": "radio",
+          "name": "Comfortable The default"
+        },
+        {
+          "role": "radio",
+          "name": "Spacious Easier to read"
+        },
+        {
+          "role": "text",
+          "name": "NOTIFICATIONS"
+        },
+        {
+          "role": "text",
+          "name": "Response completions"
+        },
+        {
+          "role": "text",
+          "name": "Notify when a long-running reply finishes"
+        },
+        {
+          "role": "switch",
+          "name": "Response completions"
+        },
+        {
+          "role": "text",
+          "name": "VOICE"
+        },
+        {
+          "role": "text",
+          "name": "Dictation language"
+        },
+        {
+          "role": "combobox",
+          "name": "Dictation language",
+          "children": [
+            {
+              "role": "option",
+              "name": "en-US"
+            },
+            {
+              "role": "option",
+              "name": "en-GB"
+            },
+            {
+              "role": "option",
+              "name": "es-ES"
+            },
+            {
+              "role": "option",
+              "name": "fr-FR"
+            },
+            {
+              "role": "option",
+              "name": "de-DE"
+            },
+            {
+              "role": "option",
+              "name": "pt-BR"
+            },
+            {
+              "role": "option",
+              "name": "tr-TR"
+            },
+            {
+              "role": "option",
+              "name": "zh-CN"
+            }
+          ]
+        },
+        {
+          "role": "text",
+          "name": "Speech speed"
+        },
+        {
+          "role": "slider",
+          "name": "Speech speed"
+        },
+        {
+          "role": "text",
+          "name": "1.00"
+        },
+        {
+          "role": "text",
+          "name": "×"
+        }
+      ]
     }
   ]
 }

@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import axios from 'axios'
 
 import { API_URL, authHeaders, getStoredUser, getToken, getModelTier, setModelTier, type AgentMode } from '../lib/api'
+import { pushSettingsHash, readCurrentSettingsHash } from '../lib/settingsHash'
 import type { EffortValue } from '../components/chat/composer/EffortSelector'
 import { getDraft, setDraft, deleteDraft } from '../lib/drafts'
 import SettingsPanel from '../components/SettingsPanel'
@@ -33,14 +34,14 @@ import type { QueuedMessage } from '../components/chat/types'
  * activity/artifacts overlays. All run mechanics live in ./hooks; presenters
  * live in ../components/chat. */
 export default function ChatPage() {
-  // ── Panels (sidebar / artifacts + tablet/desktop breakpoints) ────────────
+  // â”€â”€ Panels (sidebar / artifacts + tablet/desktop breakpoints) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const panels = usePanels()
   const sidebarWidth = useSidebarWidth()
   const [sidebarResizing, setSidebarResizing] = useState(false)
   // Lifts the composer above the on-screen keyboard (iOS, audit P6).
   useKeyboardSafeBottom()
 
-  // ── Session / UI state ────────────────────────────────────────────────────
+  // â”€â”€ Session / UI state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
   useConversationQuery(currentConversationId, setCurrentConversationId)
   const [input, setInput] = useState('')
@@ -49,15 +50,28 @@ export default function ChatPage() {
   const [showPlus, setShowPlus] = useState(false)
   const [showModeMenu, setShowModeMenu] = useState(false)
   const [runMode, setRunMode] = useState<'auto' | 'plan' | 'accept' | 'step'>('auto')
-  // ── Per-run capability toggles (§8-25/26): auto = server default.
+  // â”€â”€ Per-run capability toggles (Â§8-25/26): auto = server default.
   const [webSearch, setWebSearch] = useState<'auto' | 'on' | 'off'>('auto')
-  // Effort union (contract §A): auto/low/medium/high/xhigh/off —
+  // Effort union (contract Â§A): auto/low/medium/high/xhigh/off â€”
   // the 6-way selector that replaced the tri-state Brain toggle.
   const [thinking, setThinking] = useState<EffortValue>('auto')
   const [incognito, setIncognito] = useState(false)
   const [modelTier, setModelTierState] = useState('')
   const [showSettings, setShowSettings] = useState(false)
   const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined)
+  // S2: `#settings/*` opens/closes the dialog â€” every open path pushes the
+  // hash (contract team/CONTRACT_S2_SETTINGS.md Â§2), so back/forward walks
+  // panels and a deep link works from any bookmark.
+  useEffect(() => {
+    const onHash = () => {
+      const route = readCurrentSettingsHash()
+      if (route) { setShowSettings(true); setSettingsTab(route.panel) }
+      else setShowSettings(false)
+    }
+    window.addEventListener('hashchange', onHash)
+    if (readCurrentSettingsHash()) onHash()
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
   const [projectsOpen, setProjectsOpen] = useState(false)
   const [researchOpen, setResearchOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
@@ -66,24 +80,24 @@ export default function ChatPage() {
    * focused and "Back to list" clears it while staying open. */
   const [focusedArtifactId, setFocusedArtifactId] = useState<string | null>(null)
 
-  // ── Attachments: uploaded at attach-time with progress + visible errors
+  // â”€â”€ Attachments: uploaded at attach-time with progress + visible errors
   //    (audit P2.7); the send consumes the ready server ids.
   const uploads = useAttachments(currentConversationId)
   /** Per-chat tool selection (null = all tools, the server default). */
   const [selectedTools, setSelectedTools] = useState<Set<string> | null>(null)
 
-  // ── Data ──────────────────────────────────────────────────────────────────
+  // â”€â”€ Data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const { workspaceId, projects, activeProjectId, setActiveProjectId, refreshProjects } = useWorkspaceProjects()
   const { conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages, branchVersions, selectVersion, sessionsError, sessionsPending, retrySessions } =
     useConversationsData(currentConversationId, (id) => { if (currentConversationId === id) setCurrentConversationId(null) })
   const chat = useChatStream()
-  // §8-40: workspace-connection chips — recent-use-first, pin for next run.
+  // Â§8-40: workspace-connection chips â€” recent-use-first, pin for next run.
   const workspaceConnections = useWorkspaceConnections(workspaceId)
   /** Freshest live steps for post-run bookkeeping (the hook object in a
    *  closure goes stale across an await; the ref never does). */
   const liveStepsRef = useRef(chat.liveSteps)
   liveStepsRef.current = chat.liveSteps
-  // §8-44 hands-free voice mode: speak each answer, re-listen, auto-send.
+  // Â§8-44 hands-free voice mode: speak each answer, re-listen, auto-send.
   const autoSpeech = useSpeech()
   const voiceMode = useVoiceMode({
     running: chat.running,
@@ -98,14 +112,14 @@ export default function ChatPage() {
       requestAnimationFrame(() => { void handleSend() })
     },
   })
-  // §8-39: messages sent while a run is active queue up instead of being
+  // Â§8-39: messages sent while a run is active queue up instead of being
   // dropped; the drain fires on every run completion (FIFO).
   const toast = useToast()
   const messageQueue = useMessageQueue(chat.running, (entry) => { void dispatchSend(entry) })
-  // ── Sidebar search: title filter locally + server-side message-body hits
+  // â”€â”€ Sidebar search: title filter locally + server-side message-body hits
   const [sidebarSearch, setSidebarSearch] = useState('')
   const { hits: messageHits, error: searchError, retry: retrySearch } = useConversationSearch(sidebarSearch)
-  /** §8-22 pending branch edit: when set (string | null), the NEXT send
+  /** Â§8-22 pending branch edit: when set (string | null), the NEXT send
    * becomes a sibling prompt version under this parent (null = first turn).
    * undefined = a normal send. Set by the Edit action, cleared by send,
    * conversation switch, or the banner's cancel. */
@@ -134,9 +148,9 @@ export default function ChatPage() {
       .catch(() => {})
   }, [])
 
-  // ── Conversation helpers ──────────────────────────────────────────────────
+  // â”€â”€ Conversation helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   function selectConversation(id: string | null) {
-    // Drafts (§2.5): stash the in-progress text for the outgoing chat, then
+    // Drafts (Â§2.5): stash the in-progress text for the outgoing chat, then
     // restore whatever was in progress for the incoming one.
     if (typeof window !== 'undefined') {
       const prevKey = `draft:${currentConversationId || 'new'}`
@@ -147,13 +161,13 @@ export default function ChatPage() {
     }
     setCurrentConversationId(id)
     setPendingBranch(undefined)
-    // §8-39: queued messages belong to the conversation they were typed in.
+    // Â§8-39: queued messages belong to the conversation they were typed in.
     messageQueue.clear()
     chat.resetLive()
     panels.setArtifactsOpen(false)
   }
 
-  // ── Message branching (audit §8-22) ───────────────────────────────────────
+  // â”€â”€ Message branching (audit Â§8-22) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /** Version arrows: switch the active path to a sibling version row. The
    * server resolves + persists the new active leaf (run context follows);
@@ -163,8 +177,8 @@ export default function ChatPage() {
     selectVersion.mutate({ conversationId, messageId })
   }
 
-  /** Re-answer a stored turn WITHOUT destroying the old answer (§8-22): the
-   * new response becomes a sibling — <2/3> arrows flip between versions.
+  /** Re-answer a stored turn WITHOUT destroying the old answer (Â§8-22): the
+   * new response becomes a sibling â€” <2/3> arrows flip between versions.
    * Text turns re-run immediately with the stored prompt; image/document
    * turns fall back to the composer (the send then branches under the same
    * parent). `beforeIndex` is a transcript index (the assistant row, or the
@@ -196,8 +210,8 @@ export default function ChatPage() {
     }).then(() => invalidateConversations())
   }
 
-  /** Edit a prompt in place (§8-22): the composer loads the stored text and
-   * the NEXT send becomes a sibling version under the same parent — the old
+  /** Edit a prompt in place (Â§8-22): the composer loads the stored text and
+   * the NEXT send becomes a sibling version under the same parent â€” the old
    * prompt + answer stay reachable through the arrows. */
   function editMessageAt(messageId: string, content: string) {
     const row = (messages as Message[]).find((m) => m.id === messageId)
@@ -206,7 +220,7 @@ export default function ChatPage() {
     requestAnimationFrame(() => document.querySelector('textarea')?.focus())
   }
 
-  // ── Composer / send ────────────────────────────────────────────────────────
+  // â”€â”€ Composer / send â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   /** Attach files (picker, screenshot, drag-drop, paste): the useAttachments
    *  hook uploads immediately with per-chip progress and visible errors. */
   function handleImagesSelected(files: File[]) {
@@ -242,8 +256,8 @@ export default function ChatPage() {
   }
 
   /** The actual dispatch: one run, from either the composer or the queue
-   *  drain (§8-39). `snapshot` carries the full send intent as captured at
-   *  enqueue/send time — the run config it was sent with, not whatever the
+   *  drain (Â§8-39). `snapshot` carries the full send intent as captured at
+   *  enqueue/send time â€” the run config it was sent with, not whatever the
    *  toggles say now. */
   async function dispatchSend(snapshot: QueuedMessage) {
     setMode(snapshot.sendMode)
@@ -253,7 +267,7 @@ export default function ChatPage() {
     if (snapshot.sendMode === 'research') setResearchOpen(true)
     if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
 
-    // §8-40: a pinned connection joins agent runs. workspaceId rides ONLY a
+    // Â§8-40: a pinned connection joins agent runs. workspaceId rides ONLY a
     // NEW conversation (existing conversations resolve their own workspace
     // server-side; sending a mismatched one would 409 the run).
     const pinnedForRun = snapshot.connectionIds?.length ? snapshot.connectionIds : undefined
@@ -265,10 +279,10 @@ export default function ChatPage() {
       runMode: snapshot.runMode, modelTier: snapshot.modelTier,
       selectedTools: snapshot.selectedTools, incognito: snapshot.incognito,
       projectId: snapshot.projectId,
-      // Explicit overrides only (§8-25/26): undefined keeps the server default.
+      // Explicit overrides only (Â§8-25/26): undefined keeps the server default.
       webSearch: snapshot.webSearch === 'auto' ? undefined : snapshot.webSearch === 'on',
-      // Effort union (contract §A): auto→undefined, off→false,
-      // low..xhigh pass through; 'medium'→true keeps legacy clients 200ing
+      // Effort union (contract Â§A): autoâ†’undefined, offâ†’false,
+      // low..xhigh pass through; 'medium'â†’true keeps legacy clients 200ing
       // (the old tri-state's 'on').
       thinking: snapshot.thinking === 'auto' ? undefined
         : snapshot.thinking === 'medium' ? true
@@ -280,7 +294,7 @@ export default function ChatPage() {
       ensureConversation,
     })
 
-    // §8-40: remember which connections this run actually used (their tools
+    // Â§8-40: remember which connections this run actually used (their tools
     // carry source "connection:<id>") so the chip row orders by recent use.
     const used = new Set<string>()
     for (const s of liveStepsRef.current) {
@@ -294,7 +308,7 @@ export default function ChatPage() {
     e?.preventDefault()
     const hasAttachments = uploads.attachments.length > 0
     if (!input.trim() && !hasAttachments) return
-    // While a chip is still uploading, wait — its id is what the stream
+    // While a chip is still uploading, wait â€” its id is what the stream
     // inlines; sending early would silently drop the attachment.
     if (uploads.uploading) return
     const { mode: sendMode, text: content, tools: commandTools } = parseCommand(input.trim())
@@ -304,14 +318,14 @@ export default function ChatPage() {
     const readyIds = uploads.readyIds
     const previews = uploads.attachments.filter((a) => a.kind === 'image' && a.previewUrl).map((a) => a.previewUrl!)
     const docNames = uploads.attachments.filter((a) => a.kind === 'doc' && a.status === 'done').map((a) => a.name)
-    // §8-22: an edit-in-flight re-sends as a sibling version under the
+    // Â§8-22: an edit-in-flight re-sends as a sibling version under the
     // remembered parent; the intent is consumed by this send.
     const branchParent = pendingBranch
     setPendingBranch(undefined)
 
-    // §8-39: while a run is active the message is QUEUED (full intent
-    // snapshotted), not dropped — it auto-sends when the run completes.
-    // §8-40: the pinned connection (agent runs only) rides the snapshot.
+    // Â§8-39: while a run is active the message is QUEUED (full intent
+    // snapshotted), not dropped â€” it auto-sends when the run completes.
+    // Â§8-40: the pinned connection (agent runs only) rides the snapshot.
     const connectionIds = workspaceConnections.pinnedId && sendMode === 'agent' ? [workspaceConnections.pinnedId] : undefined
     if (chat.running) {
       messageQueue.enqueue({
@@ -327,7 +341,7 @@ export default function ChatPage() {
       setInput('')
       uploads.reset()
       if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
-      toast.push('info', 'Added to queue — it sends when the current run finishes')
+      toast.push('info', 'Added to queue â€” it sends when the current run finishes')
       return
     }
 
@@ -345,7 +359,7 @@ export default function ChatPage() {
     })
   }
 
-  /** Mint + copy a public read-only share link (audit §8-15). */
+  /** Mint + copy a public read-only share link (audit Â§8-15). */
   async function handleShareConversation(id: string): Promise<string | { error: 'share' | 'copy' }> {
     let link = ''
     try {
@@ -373,7 +387,7 @@ export default function ChatPage() {
         h1{font-size:22px;margin-bottom:4px} .meta{color:#888;font-size:12px;margin-bottom:28px}
         .msg{margin:18px 0;padding:14px;border-left:3px solid #c96442;background:#faf9f8;border-radius:6px;white-space:pre-wrap;word-break:break-word}
         .user{border-left-color:#1a1a1e;background:#f4f4f5} .who{font-weight:600;font-size:12px;color:#777;margin-bottom:6px}
-      </style></head><body><h1>${title}</h1><div class="meta">Loop GPT transcript · ${new Date().toLocaleString()}</div>
+      </style></head><body><h1>${title}</h1><div class="meta">Loop GPT transcript Â· ${new Date().toLocaleString()}</div>
       ${messages.map((m) => `<div class="msg ${m.role === 'user' ? 'user' : ''}"><div class="who">${m.role === 'user' ? 'You' : 'Loop GPT'}</div>${m.content.replace(/</g, '&lt;')}</div>`).join('')}
       </body></html>`)
       w.document.close()
@@ -399,15 +413,15 @@ export default function ChatPage() {
     switch (def.cmd) {
       case '/new': selectConversation(null); break
       case '/export': exportConversation('md'); break
-      case '/settings': setSettingsTab(undefined); setShowSettings(true); break
-      case '/skills': setSettingsTab('skills'); setShowSettings(true); break
-      case '/plugins': setSettingsTab('plugins'); setShowSettings(true); break
-      case '/connectors': setSettingsTab('connectors'); setShowSettings(true); break
+      case '/settings': pushSettingsHash('general'); break
+      case '/skills': pushSettingsHash('skills'); break
+      case '/plugins': pushSettingsHash('plugins'); break
+      case '/connectors': pushSettingsHash('connectors'); break
       case '/projects': setProjectsOpen(true); break
       case '/model': (document.querySelector('button[title="Choose model"]') as HTMLElement | null)?.click(); break
       case '/undo': {
-        // Non-destructive (§8-22): the last prompt goes back in the composer
-        // as a pending branch edit — re-sending keeps the old turn as a
+        // Non-destructive (Â§8-22): the last prompt goes back in the composer
+        // as a pending branch edit â€” re-sending keeps the old turn as a
         // version instead of deleting it.
         const pathMsgs = messages as Message[]
         const lastUser = [...pathMsgs].reverse().find((m) => m.role === 'user')
@@ -426,10 +440,10 @@ export default function ChatPage() {
     }
   }
 
-  // ── Derived ────────────────────────────────────────────────────────────────
+  // â”€â”€ Derived â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const user = getStoredUser()
   const theme = useTheme()
-  /** §8-35: cycle light → dark → system from the header. */
+  /** Â§8-35: cycle light â†’ dark â†’ system from the header. */
   const cycleTheme = () => {
     const next = theme.choice === 'light' ? 'dark' : theme.choice === 'dark' ? 'system' : 'light'
     theme.setChoice(next)
@@ -444,7 +458,7 @@ export default function ChatPage() {
     setFocusedArtifactId(a.id)
     panels.setArtifactsOpen(true)
   }
-  /** §8-28: per-step "View in panel" links resolve artifact names to refs
+  /** Â§8-28: per-step "View in panel" links resolve artifact names to refs
    *  (live-run artifacts first, then the stored conversation's). */
   const openArtifactByName = (name: string) => {
     const found = allArtifacts.find((a) => a.name === name)
@@ -456,7 +470,7 @@ export default function ChatPage() {
     setInput(prompt)
     requestAnimationFrame(() => document.querySelector('textarea')?.focus())
   }
-  /** Per-artifact "Building…" placeholders: artifact-producing tools that are
+  /** Per-artifact "Buildingâ€¦" placeholders: artifact-producing tools that are
    * in flight in the live turn (create_document/generate_image/video/style). */
   const ARTIFACT_TOOLS = new Set(['create_document', 'generate_image', 'generate_video', 'generate_style'])
   const buildingKinds = chat.running
@@ -468,12 +482,12 @@ export default function ChatPage() {
     ...chat.liveArtifacts,
   ]
   const convTitle = (conversations as Conversation[]).find((c) => c.id === currentConversationId)?.title
-  // Context meter (§2.5): honest estimate — chars/4 over the conversation,
+  // Context meter (Â§2.5): honest estimate â€” chars/4 over the conversation,
   // against the standard 32k window (the large tier has more headroom).
   const contextTokens = Math.ceil(((messages as Message[]).reduce((n, m) => n + (m.content?.length || 0), 0) + chat.liveAnswer.length) / 4)
   const contextPct = Math.min(100, Math.round((contextTokens / 32_768) * 100))
 
-  // Sidebar contents — shared by the docked column (md+) and the mobile drawer.
+  // Sidebar contents â€” shared by the docked column (md+) and the mobile drawer.
   const sidebarContents = (
     <Sidebar
       conversations={conversations}
@@ -483,7 +497,7 @@ export default function ChatPage() {
       activeProjectId={activeProjectId}
       onSelectConversation={(id) => { selectConversation(id); panels.closeOverlays() }}
       onClose={() => panels.setSidebarOpen(false)}
-      onOpenSettings={() => setShowSettings(true)}
+      onOpenSettings={() => pushSettingsHash('general')}
       onLogout={logout}
       onRenameConversation={async (id, title) => { try { await updateConv.mutateAsync({ id, title }) } catch { return false } }}
       onDeleteConversation={(id) => deleteConv.mutate(id)}
@@ -505,7 +519,7 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-[100dvh] overflow-hidden text-slate-200 bg-[#08080a]">
-      {/* Mobile backdrop — only below the tablet breakpoint; from 768px up
+      {/* Mobile backdrop â€” only below the tablet breakpoint; from 768px up
           the sidebar is a persistent column and the artifacts panel is the
           only overlay. */}
       {(panels.sidebarOpen || panels.artifactsOpen) && !panels.isTablet && (
@@ -515,11 +529,11 @@ export default function ChatPage() {
         />
       )}
 
-      {/* ── Left sidebar — a docked column from 768px up, a drawer below.
+      {/* â”€â”€ Left sidebar â€” a docked column from 768px up, a drawer below.
           The docked case is a plain flex column toggled by WIDTH: a
           transform (the old approach) is paint-only, so the panel could sit
-          off-screen while its 320px of flow stayed reserved — which is what
-          pushed the whole transcript off-centre. ───────────────────────── */}
+          off-screen while its 320px of flow stayed reserved â€” which is what
+          pushed the whole transcript off-centre. â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       {panels.isTablet ? (
         <aside
           aria-label="Sidebar"
@@ -605,7 +619,7 @@ export default function ChatPage() {
         )}
       </AnimatePresence>
 
-      {/* ── Center: conversation ─────────────────────────────────────────── */}
+      {/* â”€â”€ Center: conversation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <main className="flex-1 flex flex-col h-full min-w-0 relative pt-[env(safe-area-inset-top)]">
         <ChatHeader
           sidebarOpen={panels.sidebarOpen}
@@ -616,7 +630,7 @@ export default function ChatPage() {
           onToggleIncognito={() => {
             const next = !incognito
             setIncognito(next)
-            // Toggling applies to the next conversation — leave the current one.
+            // Toggling applies to the next conversation â€” leave the current one.
             if (currentConversationId) { setCurrentConversationId(null); setPendingBranch(undefined); messageQueue.clear(); chat.clearTurn(); setInput('') }
           }}
           hasMessages={messages.length > 0}
@@ -641,13 +655,13 @@ export default function ChatPage() {
           liveAnswer={chat.liveAnswer}
           liveThinking={chat.liveThinking}
           liveArtifacts={chat.liveArtifacts}
-          /** §8-22: while a retry/edit run streams, the transcript truncates
+          /** Â§8-22: while a retry/edit run streams, the transcript truncates
            * at this row and the live turn renders in its place. */
           liveReplaceAfterId={chat.liveAnchorId}
-          /** §8-22 version arrows: per-row sibling info + the switch handler. */
+          /** Â§8-22 version arrows: per-row sibling info + the switch handler. */
           versions={branchVersions}
           onSelectVersion={(messageId) => selectVersionRow(currentConversationId, messageId)}
-          /** §8-39: messages queued behind the active run (pending bubbles). */
+          /** Â§8-39: messages queued behind the active run (pending bubbles). */
           queued={messageQueue.queue}
           onRemoveQueued={messageQueue.remove}
           onStartPrompt={(prompt) => { setInput(prompt); setTimeout(() => document.querySelector('textarea')?.focus(), 100) }}
@@ -658,23 +672,23 @@ export default function ChatPage() {
           onApprove={() => { chat.pendingApproval?.approve(true).then(() => chat.setPendingApproval(null)) }}
           onDeny={() => { chat.pendingApproval?.approve(false).then(() => chat.setPendingApproval(null)) }}
           toolCount={toolCount}
-          onOpenTools={() => { setSettingsTab('tools'); setShowSettings(true) }}
+          onOpenTools={() => pushSettingsHash('tools') }
           onOpenArtifact={openArtifact}
           onOpenArtifactByName={openArtifactByName}
           onEditMessage={editMessageAt}
           onRetryBefore={retryBefore}
         />
 
-        {/* Composer — bottom padding lifts above the iOS keyboard via the
+        {/* Composer â€” bottom padding lifts above the iOS keyboard via the
             --kb-offset variable from useKeyboardSafeBottom (audit P6). */}
         <div className="border-t border-white/[0.05] px-3 sm:px-4 py-3 sm:py-4 pb-[max(0.75rem,calc(env(safe-area-inset-bottom)+var(--kb-offset)))] bg-[#08080a]">
           <div className="max-w-[48rem] mx-auto">
-            {/* §8-22 pending-branch banner: an edited prompt is loaded and the
-                next send starts a new version — visible + cancellable. */}
+            {/* Â§8-22 pending-branch banner: an edited prompt is loaded and the
+                next send starts a new version â€” visible + cancellable. */}
             {pendingBranch !== undefined && (
               <div data-testid="branch-edit-banner" className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-[#c96442]/30 bg-[#c96442]/[0.07] px-3 py-2 text-[12.5px] text-[#e79d7f]">
-                <span>Editing a message — your next send starts a new version of this turn.</span>
-                <button type="button" onClick={() => setPendingBranch(undefined)} className="shrink-0 rounded-md px-1.5 py-0.5 hover:bg-white/[0.06] transition" aria-label="Cancel edit">✕</button>
+                <span>Editing a message â€” your next send starts a new version of this turn.</span>
+                <button type="button" onClick={() => setPendingBranch(undefined)} className="shrink-0 rounded-md px-1.5 py-0.5 hover:bg-white/[0.06] transition" aria-label="Cancel edit">âœ•</button>
               </div>
             )}
             <Composer
@@ -704,8 +718,8 @@ export default function ChatPage() {
               onToggleModeMenu={() => setShowModeMenu((v) => !v)}
               onCloseModeMenu={() => setShowModeMenu(false)}
               onRunModeChange={setRunMode}
-              onOpenConnectors={() => { setShowPlus(false); setSettingsTab('connectors'); setShowSettings(true) }}
-              onOpenSettingsTab={(tab) => { setShowPlus(false); setSettingsTab(tab); setShowSettings(true) }}
+              onOpenConnectors={() => { setShowPlus(false); pushSettingsHash('connectors') }}
+              onOpenSettingsTab={(tab) => { setShowPlus(false); pushSettingsHash(tab) }}
               toolSelectionCount={selectedTools ? selectedTools.size : null}
               connections={workspaceConnections.connections}
               pinnedConnectionId={workspaceConnections.pinnedId}
@@ -719,8 +733,8 @@ export default function ChatPage() {
         </div>
       </main>
 
-      {/* ── Right: Artifacts panel (viewable output only — agent activity is
-          inline per turn, audit P1/P2). ─────────────────────────────────── */}
+      {/* â”€â”€ Right: Artifacts panel (viewable output only â€” agent activity is
+          inline per turn, audit P1/P2). â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <AnimatePresence initial={false}>
         {panels.artifactsOpen && (
           <ArtifactsPanel
@@ -747,11 +761,11 @@ export default function ChatPage() {
         onNewSession={() => { setCurrentConversationId(null); panels.setSidebarOpen(false) }}
         onSearchChats={() => openSidebarSearch(panels.setSidebarOpen)}
         onToggleSidebar={() => panels.setSidebarOpen((s) => !s)}
-        onOpenSettings={() => { setSettingsTab(undefined); setShowSettings(true) }}
+        onOpenSettings={() => pushSettingsHash('general') }
         onLogout={() => { logout(); panels.setSidebarOpen(false) }}
       />
       <ShortcutSheet open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
-      {/* ⌘K ? — keyboard glyph, so it is hidden where there is no
+      {/* âŒ˜K ? â€” keyboard glyph, so it is hidden where there is no
           keyboard (P5: was visible over the composer border on phones). */}
       <button
         type="button"
@@ -760,7 +774,7 @@ export default function ChatPage() {
         className="fixed bottom-4 right-4 z-30 p-2 rounded-lg text-slate-500 hover:text-slate-400 hover:bg-white/[0.04] transition text-[12px] font-mono max-sm:hidden"
         title="Keyboard shortcuts (?)"
       >
-        ⌘K ?
+        âŒ˜K ?
       </button>
     </div>
   )

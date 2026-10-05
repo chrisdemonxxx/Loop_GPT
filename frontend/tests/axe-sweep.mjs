@@ -3,7 +3,11 @@ import AxeBuilder from '@axe-core/playwright'
 import fs from 'fs'
 
 const BASE = 'http://127.0.0.1:4123'
-const ROUTES = ['/', '/login/', '/signup/', '/chat/', '/account/', '/admin/', '/onboarding/', '/share/', '/verify/', '/forgot/', '/reset/']
+const ROUTES = ['/', '/login/', '/signup/', '/chat/', '/account/', '/admin/', '/onboarding/', '/share/', '/verify/', '/forgot/', '/reset/',
+  // S2 settings overlays: the chat page's hash listener opens the dialog on
+  // these deep links, so the new panels get scanned like any route.
+  '/chat/#settings/general', '/chat/#settings/account', '/chat/#settings/privacy/uploaded-files',
+  '/chat/#settings/billing', '/chat/#settings/time', '/chat/#settings/code', '/chat/#settings/reflect']
 
 const out = fs.openSync('axe-results.json', 'w')
 const w = o => fs.writeSync(out, JSON.stringify(o) + '\n')

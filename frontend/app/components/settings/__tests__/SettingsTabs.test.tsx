@@ -17,18 +17,61 @@ function jsonOnce(body: any) {
 
 describe('SettingsPanel shell', () => {
   beforeEach(() => { jsonOnce([]) }) // Skills list fetch inside the default tab
-  it('has the frontier tab order and no Builder/Model tabs', () => {
+  it('has the blueprint (§8) panel order and no Builder/Model tabs', () => {
     render(<SettingsPanel onClose={() => {}} />)
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.trim())
-    expect(tabs).toEqual(['Skills', 'Plugins', 'Memory', 'Personalization', 'Appearance', 'Connectors', 'Tools'])
+    // S2 registry (team/CONTRACT_S2_SETTINGS.md §1): Settings group then
+    // Customize group; "Capabilities" maps to Tools, "Claude Code" to Loop Code.
+    expect(tabs).toEqual([
+      'General', 'Account', 'Privacy', 'Billing', 'Tools', 'Memory', 'Reflect', 'Time and focus', 'Loop Code',
+      'Skills', 'Connectors', 'Plugins', 'Personalization', 'Appearance',
+    ])
     expect(tabs).not.toContain('Builder')
     expect(tabs).not.toContain('Model')
     expect(tabs).not.toContain('Styles')
   })
 
-  it('defaults to the Skills tab', () => {
+  it('defaults to the General tab', () => {
     render(<SettingsPanel onClose={() => {}} />)
-    expect((screen.getAllByRole('tab')[0] as HTMLElement).getAttribute('aria-selected')).toBe('true')
+    const general = screen.getByRole('tab', { name: /General/ }) as HTMLElement
+    expect(general.getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('derives the panel from a #settings/<panel> deep link on mount', () => {
+    window.location.hash = '#settings/billing'
+    try {
+      render(<SettingsPanel onClose={() => {}} />)
+      const billing = screen.getByRole('tab', { name: 'Billing' }) as HTMLElement
+      expect(billing.getAttribute('aria-selected')).toBe('true')
+      expect(screen.getByText('Current plan')).toBeInTheDocument()
+    } finally {
+      window.location.hash = ''
+    }
+  })
+
+  it('derives the privacy sub-panel from #settings/privacy/<sub>', async () => {
+    window.location.hash = '#settings/privacy/shared-chats'
+    try {
+      render(<SettingsPanel onClose={() => {}} />)
+      expect(screen.getByText('Shared chats')).toBeInTheDocument()
+      // The sub-panel's back affordance targets the Privacy root.
+      expect(screen.getByRole('button', { name: 'Privacy' })).toBeInTheDocument()
+    } finally {
+      window.location.hash = ''
+    }
+  })
+
+  it('selecting a tab pushes the settings hash; leaving it fires onClose', () => {
+    window.location.hash = ''
+    const onClose = vi.fn()
+    render(<SettingsPanel onClose={onClose} />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Memory' }))
+    expect(window.location.hash).toBe('#settings/memory')
+    // Simulate browser back (hash empties): the panel closes through onClose.
+    expect(onClose).not.toHaveBeenCalled()
+    window.location.hash = ''
+    fireEvent(window, new HashChangeEvent('hashchange'))
+    expect(onClose).toHaveBeenCalledOnce()
   })
 })
 

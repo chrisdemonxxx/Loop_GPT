@@ -49,6 +49,32 @@
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+   PREFS SIDE-EFFECTS (S2, lib/prefs.ts applyPrefsSideEffects). The data
+   attributes are set on <html>; these rules consume them. Defaults (no
+   attribute or unknown value) keep today's look exactly.
+   ────────────────────────────────────────────────────────────────────────── */
+/* Chat font scale — message body text (prose blocks keep their own ramp). */
+html[data-chat-font='compact'] .prose-chat { font-size: 0.875rem; }
+html[data-chat-font='spacious'] .prose-chat { font-size: 1.0625rem; line-height: 1.75; }
+
+/* Motion: reduced honors the intent globally, on top of any component rules. */
+html[data-motion='reduced'] *, html[data-motion='reduced'] *::before, html[data-motion='reduced'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Code block appearance: dark is the atom-one-dark default; light flips the
+   surface for rendered code inside a dark page too (explicit choice). */
+html[data-code-theme='light'] pre code, html[data-code-theme='light'] pre {
+  background: #f6f6f8 !important;
+  color: #33333a;
+}
+html[data-code-font='serif-mono'] pre code, html[data-code-font='serif-mono'] code { font-family: ui-monospace, 'Cascadia Mono', 'SF Mono', Menlo, Consolas, monospace; }
+html[data-code-font='system-mono'] pre code, html[data-code-font='system-mono'] code { font-family: monospace; }
+
+/* ──────────────────────────────────────────────────────────────────────────
    DARK CONTRAST (GAP-003, axe serious+ sweep 2026-10-05). The muted text scale
    fails WCAG AA on the dark glass surfaces (slate-500 #64748b = 3.83–3.99 on
    #151518/#111113/#101015; slate-600 is darker still), the terracotta accent
@@ -184,6 +210,7 @@ html[data-theme='light'] .surface {
 }
 html[data-theme='light'] .surface-hover:hover { background: #f4f4f5; }
 html[data-theme='light'] .bg-ink-800 { background-color: #ffffff; }
+html[data-theme='light'] .bg-\[\#14141f\] { background-color: #ffffff; }
 html[data-theme='light'] .bg-ink-900 { background-color: #f4f4f5; }
 html[data-theme='light'] .bg-ink-900\/50 { background-color: #f4f4f5; }
 html[data-theme='light'] .placeholder-slate-400::placeholder { color: #6b6b74; }

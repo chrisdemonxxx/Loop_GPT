@@ -2,7 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { X, Wrench, Puzzle, Blocks, Cable, Brain, Palette, SunMoon } from 'lucide-react'
+import {
+  X, Wrench, Puzzle, Blocks, Cable, Brain, Palette, SunMoon,
+  Settings2, UserRound, ShieldCheck, CreditCard, Clock, Terminal, Sparkles,
+} from 'lucide-react'
 import MemoryTab from './settings/MemoryTab'
 import PersonalizationTab from './settings/PersonalizationTab'
 import SkillsTab from './settings/SkillsTab'
@@ -10,17 +13,49 @@ import ConnectorsTab from './settings/ConnectorsTab'
 import PluginsTab from './settings/PluginsTab'
 import ToolsTab from './settings/ToolsTab'
 import AppearanceTab from './settings/AppearanceTab'
+import GeneralTab from './settings/GeneralTab'
+import AccountTab from './settings/AccountTab'
+import PrivacyTab from './settings/PrivacyTab'
+import BillingTab from './settings/BillingTab'
+import ReflectTab from './settings/ReflectTab'
+import TimeFocusTab from './settings/TimeFocusTab'
+import CodeTab from './settings/CodeTab'
+import { pushSettingsHash, readCurrentSettingsHash, parseSettingsHash, type PrivacySub } from '../lib/settingsHash'
 
 interface Props { onClose: () => void; initialTab?: string; workspaceId?: string | null; asPage?: boolean }
 
 /**
- * Agent settings — one modal, one visual system. Tab order matches the frontier
- * IA: Skills · Plugins · Memory · Personalization · Appearance · Connectors · Tools.
- * (The legacy "Builder" and "Model/BYOK" tabs are gone: custom HTTP tools now
- * live under Connectors, and model routing is server-side only.)
+ * Agent settings — one dialog, one visual system, every panel addressable by
+ * URL hash (S2, blueprint §8; contract team/CONTRACT_S2_SETTINGS.md).
+ *
+ * Tab groups (blueprint IA): Settings — general · account · privacy · billing ·
+ * tools(≡capabilities) · memory · reflect · time · code; Customize — skills ·
+ * connectors · plugins · personalization · appearance.
+ *
+ * `#settings/<panel>` / `#settings/privacy/<sub>` drive the active panel:
+ * selecting pushes a history entry (back/forward walks panels), and leaving
+ * the hash (browser back, Esc, X) closes the dialog.
  */
 export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage = false }: Props) {
-  const [tab, setTab] = useState(initialTab || 'skills')
+  const hashRoute = readCurrentSettingsHash()
+  const [tab, setTab] = useState(initialTab || hashRoute?.panel || 'general')
+  const [privacySub, setPrivacySub] = useState<PrivacySub | undefined>(hashRoute?.sub)
+
+  // Hash → panel: back/forward and typed URLs select panels; an emptied hash
+  // closes the dialog (only in dialog mode).
+  useEffect(() => {
+    const onHash = () => {
+      const route = readCurrentSettingsHash()
+      if (route) {
+        setTab(route.panel)
+        setPrivacySub(route.sub)
+      } else if (!asPage) {
+        onClose()
+      }
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [onClose, asPage])
 
   // Escape closes the dialog even when focus is in a field. X and backdrop
   // stay on their own click handlers.
@@ -30,24 +65,57 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
       if (e.key !== 'Escape' || e.defaultPrevented) return
       // Nested credential sheet, or an edit that already claimed Escape.
       if (document.querySelector('[data-settings-nested-dialog]')) return
-      onClose()
+      close()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [onClose, asPage])
+  }) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const tabs = [
-    { id: 'skills', label: 'Skills', Icon: Blocks },
-    { id: 'plugins', label: 'Plugins', Icon: Puzzle },
-    { id: 'memory', label: 'Memory', Icon: Brain },
-    { id: 'personalization', label: 'Personalization', Icon: Palette },
-    { id: 'appearance', label: 'Appearance', Icon: SunMoon },
-    { id: 'connectors', label: 'Connectors', Icon: Cable },
-    { id: 'tools', label: 'Tools', Icon: Wrench },
+  /** Select a panel (and optional privacy sub-panel) — hash is the truth. */
+  const selectTab = (id: string, sub?: PrivacySub) => {
+    setTab(id)
+    setPrivacySub(sub)
+    pushSettingsHash(id, sub)
+  }
+
+  /** Close: with a settings hash present (dialog mode), history.back()
+   *  empties it and the hashchange handler closes; otherwise close directly.
+   *  asPage has no dialog semantics — X always hands off to onClose. */
+  const close = () => {
+    if (!asPage && parseSettingsHash(window.location.hash)) window.history.back()
+    else onClose()
+  }
+
+  const groups: Array<{ label: string; tabs: Array<{ id: string; label: string; Icon: typeof Wrench }> }> = [
+    {
+      label: 'Settings',
+      tabs: [
+        { id: 'general', label: 'General', Icon: Settings2 },
+        { id: 'account', label: 'Account', Icon: UserRound },
+        { id: 'privacy', label: 'Privacy', Icon: ShieldCheck },
+        { id: 'billing', label: 'Billing', Icon: CreditCard },
+        { id: 'tools', label: 'Tools', Icon: Wrench },
+        { id: 'memory', label: 'Memory', Icon: Brain },
+        { id: 'reflect', label: 'Reflect', Icon: Sparkles },
+        { id: 'time', label: 'Time and focus', Icon: Clock },
+        { id: 'code', label: 'Loop Code', Icon: Terminal },
+      ],
+    },
+    {
+      label: 'Customize',
+      tabs: [
+        { id: 'skills', label: 'Skills', Icon: Blocks },
+        { id: 'connectors', label: 'Connectors', Icon: Cable },
+        { id: 'plugins', label: 'Plugins', Icon: Puzzle },
+        { id: 'personalization', label: 'Personalization', Icon: Palette },
+        { id: 'appearance', label: 'Appearance', Icon: SunMoon },
+      ],
+    },
   ]
+  const allTabs = groups.flatMap((g) => g.tabs)
 
   return (
-    <div className={asPage ? "min-h-screen bg-[#08080a] text-slate-200" : "fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"} onClick={asPage ? undefined : onClose}>
+    <div className={asPage ? "min-h-screen bg-[#08080a] text-slate-200" : "fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"} onClick={asPage ? undefined : close}>
       <motion.div
         initial={{ opacity: 0, scale: 0.96, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }}
         className={asPage ? "w-full max-w-2xl mx-auto min-h-screen flex flex-col" : "glass-strong rounded-2xl w-full max-w-2xl max-h-[min(86vh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-7.5rem))] flex flex-col overflow-hidden shadow-panel"}
@@ -56,16 +124,16 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
       >
         <div className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-white/5">
           <h2 className="text-lg font-semibold text-gradient">Agent settings</h2>
-          <button onClick={onClose} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400" aria-label="Close settings"><X size={18} /></button>
+          <button onClick={close} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400" aria-label="Close settings"><X size={18} /></button>
         </div>
-        <div className="min-w-0 flex flex-nowrap border-b border-white/5 text-sm overflow-x-auto no-scrollbar" role="tablist">
-          {tabs.map(({ id, label, Icon }) => (
+        <div className="min-w-0 flex flex-nowrap border-b border-white/5 text-sm overflow-x-auto no-scrollbar" role="tablist" aria-label="Settings sections">
+          {allTabs.map(({ id, label, Icon }) => (
             <button
               key={id}
               role="tab"
               aria-selected={tab === id}
-              onClick={() => setTab(id)}
-              className={`shrink-0 flex items-center gap-1.5 px-4 py-2.5 whitespace-nowrap border-b-2 transition ${
+              onClick={() => selectTab(id)}
+              className={`shrink-0 flex items-center gap-1.5 px-3.5 py-2.5 whitespace-nowrap border-b-2 transition ${
                 tab === id ? 'border-[#c96442] text-slate-100' : 'border-transparent text-slate-500 hover:text-slate-200'
               }`}
             >
@@ -74,13 +142,20 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
           ))}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
-          {tab === 'skills' && <SkillsTab />}
-          {tab === 'plugins' && <PluginsTab />}
+          {tab === 'general' && <GeneralTab />}
+          {tab === 'account' && <AccountTab />}
+          {tab === 'privacy' && <PrivacyTab sub={privacySub} onOpenSub={(sub) => selectTab('privacy', sub)} onOpenMemory={() => selectTab('memory')} />}
+          {tab === 'billing' && <BillingTab />}
+          {tab === 'tools' && <ToolsTab />}
           {tab === 'memory' && <MemoryTab />}
+          {tab === 'reflect' && <ReflectTab onOpenMemory={() => selectTab('memory')} />}
+          {tab === 'time' && <TimeFocusTab />}
+          {tab === 'code' && <CodeTab />}
+          {tab === 'skills' && <SkillsTab />}
+          {tab === 'connectors' && <ConnectorsTab workspaceId={workspaceId} />}
+          {tab === 'plugins' && <PluginsTab />}
           {tab === 'personalization' && <PersonalizationTab />}
           {tab === 'appearance' && <AppearanceTab />}
-          {tab === 'connectors' && <ConnectorsTab workspaceId={workspaceId} />}
-          {tab === 'tools' && <ToolsTab />}
         </div>
         {/* P5: the last row was landing under the phone's bottom toolbar
             (the sheet sat flush at 844). Same env(safe-area-inset-bottom)
