@@ -59,6 +59,51 @@ Google's consent screen.)
 
 ## 3. Verification (removes the "unverified" screen + the 100-user cap)
 
+### 3a. The two rejections Google actually returned (2026-10-05) and their fixes
+
+Google's verification attempt came back with exactly two findings:
+
+> 1. *The website of your home page URL `https://loop-gpt.cyou/` is not
+>    registered to you.* → **Search Console ownership is missing.**
+> 2. *The app name `loop-search` configured for your OAuth consent screen
+>    does not match the app name on your home page.* → **The consent
+>    screen's App name is a stale brand (`loop-search`); the homepage's
+>    brand is `Loop GPT`** (title: `Loop GPT - AI Chat Assistant`, header:
+>    `Loop GPT` — verified in `frontend/app/layout.tsx` and
+>    `frontend/app/page.tsx`).
+
+**Fix for rejection 2 (console edit, 1 minute):** OAuth consent screen →
+App information → **App name: `Loop GPT`** — exactly the homepage brand.
+Google's compliance check matches the consent-screen name against the name
+displayed on the homepage, so it must be the string `Loop GPT` (not the
+domain, not `loop-search`).
+
+**Fix for rejection 1 (Search Console, 5 minutes, split between us):**
+1. Open https://search.google.com/search-console with the SAME Google
+   account that is **Project Owner** of the GCP project owning client
+   `673922779423-…`. Google blocks verification when the Search Console
+   owner and the project owner differ.
+2. **Add property → URL prefix → `https://loop-gpt.cyou`**.
+3. Pick a verification method:
+   - **HTML file (recommended — we host it):** Google offers a file named
+     `google<hash>.html`. Send the REPO AGENT the filename (its content is
+     the standard `google-site-verification: google<hash>.html` line);
+     it goes into `frontend/public/` and serves at
+     `https://loop-gpt.cyou/google<hash>.html` on the next deploy
+     (mechanism verified live: `manifest.webmanifest` → 200 from the same
+     path). Then click **Verify** in Search Console.
+   - **HTML tag:** send the agent the `content` token and it gets added as
+     `<meta name="google-site-verification">` in the layout head.
+   - **DNS TXT:** yours to add at the registrar/Cloudflare; the agent can
+     confirm propagation by DNS query before you click Verify.
+4. After BOTH fixes: **wait 24 hours** (Google's own instruction — their
+   systems update), then **retry** the verification submission.
+
+While verification pends, remember the separate lever: **PUBLISH APP** on the
+Audience page flips the status to In production immediately (no review) —
+that is what removes the tester list and the 7-day token expiry; the
+verification fixes above only remove the warning screen and the user cap.
+
 Do this when the product is going public — not required to launch:
 
 1. **Search Console**: verify ownership of `loop-gpt.cyou` with an account

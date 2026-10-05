@@ -399,3 +399,19 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   operator's first consent click (Connect ? Gmail ? Advanced ? approve) —
   everything after that click is code-verified (delegation, exchange,
   dual-write, popup postMessage, connected card).
+- **E-S6.6** (verification rejections, 2026-10-05): Google returned exactly
+  two findings on the app's verification attempt — (1) homepage
+  `https://loop-gpt.cyou/` "not registered to you" (Search Console ownership
+  missing; the verifying account must also be Project Owner of the OAuth
+  project), and (2) the consent screen's App name is the STALE brand
+  `loop-search`, mismatching the homepage brand `Loop GPT` (title
+  `Loop GPT - AI Chat Assistant`; header `Loop GPT` — verified in
+  `layout.tsx`/`page.tsx`). Fixes shipped into the kit
+  (`docs/GOOGLE_VERIFICATION_KIT.md` §3a): console rename to `Loop GPT`, and
+  a split Search Console flow — the operator picks the method and hands the
+  agent the token/file; the app hosts it (mechanism verified live:
+  `frontend/public/` serves at the domain root,
+  `manifest.webmanifest ? 200 application/manifest+json`), then Verify, then
+  Google's required 24h wait, then retry. Reminder recorded: PUBLISH APP
+  (no review) is the separate lever that removes the tester list now;
+  verification only removes the warning screen + the 100-user cap.
