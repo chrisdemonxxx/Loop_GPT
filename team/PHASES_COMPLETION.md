@@ -354,3 +354,20 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   "request was denied" sentence (covered by `oauthPopup.test.ts`). No code
   change was needed for this gate — verified the failure path is the tested
   one.
+- **E-S6.3** (operator question: "do we have to add every user's email
+  manually?"): **No — publish the app.** Verified against Google's official
+  docs (fetched 2026-10-05): Testing status = manual test-user list (=100) +
+  7-day refresh-token expiry (the 403 gate the operator hit); **In
+  production** = any user can connect, no manual list, no 7-day expiry, but
+  the "unverified app" warning screen appears (users click
+  Advanced ? Continue) and Google caps unverified apps at **100 new users**.
+  Scope classification confirmed from Google's own table: `gmail.readonly`
+  and `drive.readonly` are RESTRICTED (full verification + CASA security
+  assessment to remove the warning); `gmail.send`, `drive.file`,
+  `calendar.events`, `calendar.readonly`, `spreadsheets` are only SENSITIVE.
+  The decision tree (publish now ? verify when public ? CASA-free
+  scope-reduction alternative ? Workspace Internal option) is in
+  `docs/CONNECTOR_SETUP.md`. Shipped with it: an in-app hint under every
+  OAuth connect button (tab + directory detail) explaining the unverified ?
+  Advanced step, so beta users are not scared off by Google's warning.
+  Gates: tsc=0, vitest 32/275, fresh `next build` exit 0.

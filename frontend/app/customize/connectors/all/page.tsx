@@ -254,6 +254,9 @@ export default function ConnectorDirectoryPage() {
                 >
                   {busy ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />} Connect {selected.name} with OAuth
                 </button>
+                <p className="mt-1.5 text-[11px] leading-snug text-slate-600">
+                  If Google shows an &ldquo;unverified app&rdquo; screen, choose <span className="text-slate-500">Advanced → Continue</span>. It disappears once our verification completes.
+                </p>
               </div>
             ) : selected.fields.length > 0 && (
               <div className="rounded-xl border border-white/[0.06] p-3.5">

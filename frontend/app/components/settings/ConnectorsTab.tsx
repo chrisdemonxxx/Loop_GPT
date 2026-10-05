@@ -234,13 +234,18 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
                   onClick={t.oauth ? undefined : () => { setAddType(t.type); setFields({}); setError('') }}
                   actions={t.oauth ? (
                     OAUTH_LABEL[t.type] ? (
-                      <button
-                        onClick={() => startOAuth(t.type)}
-                        disabled={oauthBusy === t.type}
-                        className="flex items-center gap-1 text-xs text-[#e79d7f] hover:underline self-start disabled:opacity-50"
-                      >
-                        {oauthBusy === t.type ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Connect with {OAUTH_LABEL[t.type]}
-                      </button>
+                      <div className="space-y-1">
+                        <button
+                          onClick={() => startOAuth(t.type)}
+                          disabled={oauthBusy === t.type}
+                          className="flex items-center gap-1 text-xs text-[#e79d7f] hover:underline self-start disabled:opacity-50"
+                        >
+                          {oauthBusy === t.type ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Connect with {OAUTH_LABEL[t.type]}
+                        </button>
+                        <p className="text-[10px] leading-snug text-slate-600 max-w-[16rem]">
+                          If Google shows an &ldquo;unverified app&rdquo; screen, choose <span className="text-slate-500">Advanced → Continue</span>. It disappears once our verification completes.
+                        </p>
+                      </div>
                     ) : null
                   ) : (
                     <button className="flex items-center gap-1 text-xs text-[#e79d7f] hover:underline self-start"><Plus size={12} /> Add</button>
