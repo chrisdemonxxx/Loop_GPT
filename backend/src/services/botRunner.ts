@@ -308,6 +308,7 @@ export async function executeBotTask(
       return failAgentTask(claim, 'BOT_COMPUTER_TTL', 'Computer session TTL reached')
     }
     const code = error instanceof AgentTaskError ? 'BOT_TASK_INVALID'
+      : error instanceof E2BDesktopError && error.code === 'auth' ? 'BOT_COMPUTER_UNCONFIGURED'
       : error instanceof E2BDesktopError ? 'BOT_COMPUTER_UNAVAILABLE'
       : error instanceof DailyCreditError ? 'BOT_OUT_OF_CREDITS'
       : 'BOT_RUN_FAILED'

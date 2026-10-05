@@ -17,9 +17,13 @@ import { Prisma } from '@prisma/client'
 import { prisma, hasDb } from './prisma'
 import { builtinToolNames } from '../agent'
 import { THINKING_EFFORTS } from '../agent/thinking'
+import { isE2BConfigured } from './e2bDesktop'
 
 export class AgentTaskError extends Error {
-  constructor(public readonly code: 'invalid_request' | 'unavailable' | 'not_found' | 'lease_lost' | 'conflict' | 'forbidden' | 'quota') { super(code) }
+  constructor(
+    public readonly code: 'invalid_request' | 'unavailable' | 'not_found' | 'lease_lost' | 'conflict' | 'forbidden' | 'quota',
+    detail?: string,
+  ) { super(detail || code) }
 }
 
 /** Ownership scope for reads/cancels. Users always pass their own id; admins
@@ -111,10 +115,17 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string, o
   if (parsed.allowedTools?.some((name) => !builtins.has(name))) throw new AgentTaskError('invalid_request')
 
   let computer = parsed.computer
-  if (computer?.enabled && ownerId) {
-    const remaining = await remainingVmMinutes(ownerId)
-    const ttl = Math.min(computer.ttlMinutes ?? 30, remaining)
-    computer = { ...computer, ttlMinutes: ttl }
+  if (computer?.enabled) {
+    // Fail fast: an unconfigured provider would dead-letter this task after
+    // pointless retries. Refuse at the API where the caller can act on it.
+    if (!isE2BConfigured()) {
+      throw new AgentTaskError('unavailable', 'Dedicated computer sessions are not configured on this deployment (E2B_API_KEY missing). Uncheck "Dedicated computer" or ask the operator to set it.')
+    }
+    if (ownerId) {
+      const remaining = await remainingVmMinutes(ownerId)
+      const ttl = Math.min(computer.ttlMinutes ?? 30, remaining)
+      computer = { ...computer, ttlMinutes: ttl }
+    }
   }
   return database().agentTask.create({
     data: {
@@ -274,6 +285,12 @@ export async function completeAgentTask(claim: AgentTaskClaim): Promise<'succeed
 
 export type AgentTaskOutcome = 'succeeded' | 'cancelled' | 'retry' | 'dead_letter' | 'lease_lost'
 
+/** Permanent failure codes: the condition cannot heal inside a retry window
+ *  (missing provider config, invalid task, out of daily credits) — dead-letter
+ *  on the FIRST attempt instead of burning three. Transient codes keep the
+ *  deterministic backoff. */
+export const BOT_PERMANENT_FAILURES = ['BOT_TASK_INVALID', 'BOT_COMPUTER_UNCONFIGURED', 'BOT_OUT_OF_CREDITS'] as const
+
 /** Failure recording with deterministic DB-clock backoff; mirrors the settlement
  *  workers: never reset a row we no longer own, never resurrect a dead letter. */
 export async function failAgentTask(claim: AgentTaskClaim, code: string, message?: string): Promise<'retry' | 'cancelled' | 'dead_letter' | 'lease_lost'> {
@@ -282,10 +299,12 @@ export async function failAgentTask(claim: AgentTaskClaim, code: string, message
     UPDATE "AgentTask"
     SET "status" = CASE
           WHEN ${code} = 'BOT_TASK_CANCELLED' THEN 'cancelled'
+          WHEN ${code} IN ('BOT_TASK_INVALID', 'BOT_COMPUTER_UNCONFIGURED', 'BOT_OUT_OF_CREDITS') THEN 'dead_letter'
           WHEN "attempts" >= ${AGENT_TASK_MAX_ATTEMPTS} THEN 'dead_letter'
           ELSE 'queued' END,
         "nextAttemptAt" = CASE
-          WHEN ${code} = 'BOT_TASK_CANCELLED' OR "attempts" >= ${AGENT_TASK_MAX_ATTEMPTS} THEN "nextAttemptAt"
+          WHEN ${code} = 'BOT_TASK_CANCELLED' OR "attempts" >= ${AGENT_TASK_MAX_ATTEMPTS}
+               OR ${code} IN ('BOT_TASK_INVALID', 'BOT_COMPUTER_UNCONFIGURED', 'BOT_OUT_OF_CREDITS') THEN "nextAttemptAt"
           ELSE statement_timestamp() + (LEAST(300000, 1000 * power(2, LEAST("attempts" - 1, 9))) * interval '1 millisecond') END,
         "failures" = "failures" + CASE WHEN ${code} = 'BOT_TASK_CANCELLED' THEN 0 ELSE 1 END,
         "cancelRequested" = false,

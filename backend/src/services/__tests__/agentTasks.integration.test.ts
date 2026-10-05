@@ -24,6 +24,7 @@ import {
 } from '../agentTasks'
 
 const db = prisma!
+process.env.E2B_API_KEY ||= 'integration-test-key'
 const prefix = `bottask-${randomUUID()}`
 let creatorId: string
 const LEASE_MS = 60_000
@@ -153,6 +154,19 @@ describe('complete / fail', () => {
     expect(row.attempts).toBe(0)
     expect(row.nextAttemptAt.getTime()).toBeGreaterThan(Date.now() + parseScheduleMs('5m') - 15_000)
     expect(row.nextAttemptAt.getTime()).toBeLessThan(Date.now() + parseScheduleMs('5m') + 15_000)
+  })
+
+  it('permanent failure codes dead-letter on the FIRST attempt (no retries)', async () => {
+    for (const code of ['BOT_TASK_INVALID', 'BOT_COMPUTER_UNCONFIGURED', 'BOT_OUT_OF_CREDITS']) {
+      const task = await enqueue()
+      const claim = await claimOne()
+      expect((await raw(task.id)).attempts).toBe(1)
+      expect(await failAgentTask(claim, code, 'permanent condition')).toBe('dead_letter')
+      const row = await raw(task.id)
+      expect(row.status, code).toBe('dead_letter')
+      expect(row.failures, code).toBe(1)
+      expect(row.lastErrorCode).toBe(code)
+    }
   })
 })
 

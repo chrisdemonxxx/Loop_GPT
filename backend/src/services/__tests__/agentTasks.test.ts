@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { builtinToolNames } from '../../agent'
 import {
   AgentTaskError,
   BOT_DEFAULT_TOOLS,
+  BOT_PERMANENT_FAILURES,
+  enqueueAgentTask,
   enqueueInput,
   parseScheduleMs,
 } from '../../services/agentTasks'
@@ -79,5 +81,21 @@ describe('BOT_DEFAULT_TOOLS', () => {
     for (const excluded of ['generate_image', 'generate_video', 'speak_text', 'create_skill', 'create_custom_tool']) {
       expect(BOT_DEFAULT_TOOLS).not.toContain(excluded)
     }
+  })
+})
+
+describe('computer enqueue gate (fail fast)', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('rejects computer tasks when the provider is not configured, with an actionable message', async () => {
+    vi.stubEnv('E2B_API_KEY', '')
+    await expect(enqueueAgentTask({ goal: 'browse', computer: { enabled: true } }, 'tester'))
+      .rejects.toMatchObject({ code: 'unavailable' })
+    await expect(enqueueAgentTask({ goal: 'browse', computer: { enabled: true } }, 'tester'))
+      .rejects.toThrow(/E2B_API_KEY/)
+  })
+
+  it('names the permanent failure codes (no pointless retries)', () => {
+    expect(BOT_PERMANENT_FAILURES).toEqual(['BOT_TASK_INVALID', 'BOT_COMPUTER_UNCONFIGURED', 'BOT_OUT_OF_CREDITS'])
   })
 })

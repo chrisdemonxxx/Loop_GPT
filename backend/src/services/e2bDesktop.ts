@@ -43,6 +43,13 @@ export function e2bApiKey(): string {
   return key
 }
 
+/** Cheap config probe for the enqueue gate: is a dedicated-computer provider
+ *  configured at all? Lets the API refuse computer tasks up front instead of
+ *  letting them dead-letter after pointless retries. */
+export function isE2BConfigured(): boolean {
+  return !!process.env.E2B_API_KEY
+}
+
 /** Real E2B implementation. Dynamic import keeps the SDK out of unit-test
  *  processes and lets the backend boot without the package configured. */
 export async function createDesktop(opts: { timeoutMs: number }): Promise<DesktopClient> {

@@ -17,6 +17,7 @@ import {
 } from '../botRuns'
 
 const db = prisma!
+process.env.E2B_API_KEY ||= 'integration-test-key'
 const prefix = `botcomputer-${randomUUID()}`
 let creatorId: string
 let taskId: string
