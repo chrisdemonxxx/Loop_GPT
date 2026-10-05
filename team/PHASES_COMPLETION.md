@@ -371,3 +371,18 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   OAuth connect button (tab + directory detail) explaining the unverified ?
   Advanced step, so beta users are not scared off by Google's warning.
   Gates: tsc=0, vitest 32/275, fresh `next build` exit 0.
+- **E-S6.4** (publish-request, 2026-10-05): "Publish app" is a console-only
+  action (Google exposes no API for the consent-screen publishing status) —
+  shipped the operator everything around it instead:
+  `docs/GOOGLE_VERIFICATION_KIT.md` — the exact click path (Audience ?
+  PUBLISH APP), the console-hygiene field values (all three URLs verified
+  live: `/` `/privacy/` `/terms/` ? 200; the registered redirect
+  re-probed ? authorize endpoint 302), the EXACT 7-scope declaration list
+  with paste-ready per-scope justifications (config/request mismatch itself
+  triggers the unverified screen), the CASA consequence of the two
+  restricted scopes (`gmail.readonly`, `drive.readonly`), the CASA-free
+  scope-reduction alternative, the Workspace-Internal alternative, and the
+  post-publish confirmation steps (unverified screen ? Advanced ? consent
+  ? connected card). Prerequisite probe raw:
+  `/ -> 200 text/html · /privacy -> 301?200 · /terms -> 301?200 ·
+  authorize(registered redirect_uri) -> 302`.
