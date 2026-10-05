@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { spawnSync } from 'node:child_process'
 import { createReadinessCheck } from '../../backend/scripts/staging-runtime.mjs'
@@ -125,4 +126,20 @@ test('successful removal commands with residual resources still fail cleanup', a
     return ''
   } }), AggregateError)
   assert.equal(volumes, 2)
+})
+
+// Bot worker packaging guard (regression for the BOT_WORKER_ENABLED crash-loop):
+// every .mjs the supervisor can spawn by default must be present in the
+// staging runtime image COPY line, or the missing essential child kills the
+// deployment at boot.
+test('every supervisor-spawnable script is shipped in the backend image', () => {
+  const runtime = readFileSync(new URL('../../backend/scripts/staging-runtime.mjs', import.meta.url), 'utf8')
+  const dockerfile = readFileSync(new URL('./backend.Dockerfile', import.meta.url), 'utf8')
+  const copyLine = dockerfile.split('\n').find((line) => line.startsWith('COPY backend/scripts/'))
+  assert.ok(copyLine, 'runtime COPY line not found in backend.Dockerfile')
+  const basenames = [...runtime.matchAll(/'([a-z-]+(?:-worker)?\.mjs)'/g)].map((m) => m[1])
+    .concat(['staging-runtime.mjs', 'private-storage.mjs'])
+  for (const name of new Set(basenames)) {
+    assert.ok(copyLine.includes('backend/scripts/' + name), 'image COPY list is missing backend/scripts/' + name)
+  }
 })

@@ -18,6 +18,7 @@ import { prisma, hasDb } from './prisma'
 import { builtinToolNames } from '../agent'
 import { THINKING_EFFORTS } from '../agent/thinking'
 import { isE2BConfigured } from './e2bDesktop'
+import { matchSkillsForGoal } from '../agent/skills/skillLoader'
 
 export class AgentTaskError extends Error {
   constructor(
@@ -37,7 +38,10 @@ function scopePredicate(scope?: TaskScope) {
 /** Per-plan daily dedicated-computer budget (VM minutes). Free tier gets none;
  *  unlimited/admin bypass. The credit ledger charges the model work separately
  *  (kind 'bot'); VM minutes are metered on each BotRun and capped here. */
-export const BOT_VM_MINUTES_PER_DAY: Record<string, number> = { free: 0, pro: 30, gold: 120 }
+/** Per-plan daily dedicated-computer budget (VM minutes). The free tier gets
+ *  a 5-minute daily teaser so every user can taste the computer (product
+ *  decision 2026-10-05); pro/gold are the working budgets. */
+export const BOT_VM_MINUTES_PER_DAY: Record<string, number> = { free: 5, pro: 30, gold: 120 }
 
 export const AGENT_TASK_MAX_ATTEMPTS = 3
 
@@ -72,18 +76,18 @@ export function parseScheduleMs(schedule: string): number {
 
 export const enqueueInput = z.object({
   goal: z.string().trim().min(1).max(20_000),
-  kind: z.enum(['ops', 'scheduled']).default('ops'),
+  kind: z.enum(['ops', 'scheduled', 'teach']).default('ops'),
   schedule: z.string().regex(SCHEDULE_RE).optional(),
   model: z.string().regex(/^[A-Za-z0-9._:/-]{1,120}$/).optional(),
   thinking: z.string().refine((v) => (THINKING_EFFORTS as readonly string[]).includes(v)).optional(),
   allowedTools: z.array(z.string().regex(/^[A-Za-z0-9_]{1,64}$/)).max(32).optional(),
   maxSteps: z.number().int().min(1).max(64).optional(),
-  /** Dedicated computer session (E2B Desktop): a per-run cloud VM the agent
-   *  drives via computer_* tools; admins watch live and can take over. */
   computer: z.object({
     enabled: z.boolean(),
     ttlMinutes: z.number().int().min(5).max(240).optional(),
   }).optional(),
+  /** Attach an existing skill as the run's operating procedure. */
+  skillId: z.string().regex(/^[a-zA-Z0-9-]{1,64}$/).optional(),
   priority: z.number().int().min(-100).max(100).default(0),
 })
 
@@ -110,6 +114,9 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string, o
     if (!parsed.schedule) throw new AgentTaskError('invalid_request')
     parseScheduleMs(parsed.schedule) // bounds check
   } else if (parsed.schedule) throw new AgentTaskError('invalid_request')
+  // Teach tasks are demonstrations on the dedicated computer — computer-less
+  // teach is meaningless.
+  if (parsed.kind === 'teach' && !parsed.computer?.enabled) throw new AgentTaskError('invalid_request')
   // Bot v1: reviewed built-ins only. Extension sources come with the user-facing phase.
   const builtins = new Set(builtinToolNames())
   if (parsed.allowedTools?.some((name) => !builtins.has(name))) throw new AgentTaskError('invalid_request')
@@ -127,7 +134,7 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string, o
       computer = { ...computer, ttlMinutes: ttl }
     }
   }
-  return database().agentTask.create({
+  const created = await database().agentTask.create({
     data: {
       kind: parsed.kind,
       goal: parsed.goal,
@@ -137,12 +144,21 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string, o
       allowedTools: parsed.allowedTools ?? undefined,
       maxSteps: parsed.maxSteps ?? null,
       computer: computer ?? undefined,
+      skillId: parsed.skillId ?? null,
       priority: parsed.priority,
       createdBy,
       userId: ownerId,
     },
-    select: { id: true, kind: true, status: true, nextAttemptAt: true, computer: true },
+    select: { id: true, kind: true, status: true, nextAttemptAt: true, computer: true, skillId: true },
   })
+  // Auto-suggest (confirm-before-apply): when no explicit skill is attached,
+  // surface trigger-matching skills the owner could attach instead. Carried on
+  // the returned task row so callers that only read .id stay source-compatible.
+  const task: any = created
+  task.suggestedSkills = ownerId && !parsed.skillId && parsed.kind !== 'teach'
+    ? matchSkillsForGoal(ownerId, parsed.goal)
+    : []
+  return task
 }
 
 /** Remaining dedicated-computer budget for the owner's current rolling window.

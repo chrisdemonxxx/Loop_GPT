@@ -17,6 +17,9 @@ export class ComputerTakeoverTimeout extends Error {
   constructor() { super('Operator takeover did not end within the allowed window') }
 }
 
+/** Fallback display geometry when xdpyinfo is unavailable at boot. */
+export const COMPUTER_FALLBACK_SCREEN = { width: 1024, height: 768 }
+
 export interface ComputerSessionOptions {
   runId: string
   userId: string
@@ -34,26 +37,65 @@ export interface ComputerSessionOptions {
 }
 
 export class ComputerSession {
+  /** True display geometry, read from the VM at boot (xdpyinfo) — the
+   *  coordinate tools clamp against this instead of a static env guess. */
+  readonly screen: { width: number; height: number }
+
   private constructor(
     private readonly client: DesktopClient,
     readonly info: DesktopStreamInfo,
     private readonly opts: ComputerSessionOptions,
     private readonly startedAt: number,
+    screen: { width: number; height: number },
     private screenshots = 0,
     private endedAt?: number,
-  ) {}
+  ) {
+    this.screen = screen
+  }
+
+  /** Parse "dimensions: 1024x768 pixels" style xdpyinfo output. */
+  static parseScreenDimensions(stdout: string): { width: number; height: number } {
+    const match = /dimensions:\s*(\d+)x(\d+)/i.exec(stdout)
+    if (!match) return { width: COMPUTER_FALLBACK_SCREEN.width, height: COMPUTER_FALLBACK_SCREEN.height }
+    const width = Number(match[1])
+    const height = Number(match[2])
+    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 320 || height < 240) {
+      return { width: COMPUTER_FALLBACK_SCREEN.width, height: COMPUTER_FALLBACK_SCREEN.height }
+    }
+    return { width, height }
+  }
 
   static async start(opts: ComputerSessionOptions): Promise<ComputerSession> {
     const create = opts.createDesktopFn || createDesktop
     const now = opts.now || (() => Date.now())
     const client = await create({ timeoutMs: opts.ttlMinutes * 60_000 })
     try {
+      opts.emit({ type: 'status', message: 'Dedicated computer booted; starting the live stream…' })
       const info = await client.startStream()
-      return new ComputerSession(client, info, opts, now())
+      opts.emit({ type: 'status', message: 'Live stream up; preparing the desktop (screen wake + Chrome)…' })
+      // Wake discipline: an idle desktop blanks into a black screen that reads
+      // as a failure — disable power management blanking, then open Chrome so
+      // the session starts on a meaningful workspace (Grok-style boot).
+      await client.runCommand('xset s off && xset -dpms 0 0').catch(() => { /* best effort */ })
+      try {
+        await client.launch('google-chrome')
+      } catch {
+        opts.emit({ type: 'status', message: 'Chrome is not available in this image; continuing without it.' })
+      }
+      const probe = await client.runCommand('xdpyinfo | grep -i dimensions').catch(() => ({ stdout: '', stderr: '', exitCode: 1 }))
+      const screen = ComputerSession.parseScreenDimensions(probe.stdout)
+      opts.emit({ type: 'status', message: `Desktop ready (${screen.width}x${screen.height}) — the agent is taking over.` })
+      return new ComputerSession(client, info, opts, now(), screen)
     } catch (error) {
       await client.kill().catch(() => { /* best effort */ })
       throw error
     }
+  }
+
+  /** Capture the screen WITHOUT persisting or emitting (teach-mode recording
+   *  buffer); the runner decides which frames become artifacts or model parts. */
+  async captureSilent(): Promise<Buffer> {
+    return this.client.screenshot()
   }
 
   /** Whole-minutes metered for the run record (rounded up). */

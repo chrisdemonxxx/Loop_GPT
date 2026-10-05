@@ -29,16 +29,18 @@ export const createSkillTool: ToolDefinition = {
     },
     required: ['name', 'instructions'],
   },
-  async handler(args) {
+  async handler(args, ctx) {
     const name = String(args.name || '').trim()
     const instructions = String(args.instructions || '').trim()
     if (!name || !instructions) return { content: 'Error: a skill needs a name and instructions.', isError: true }
+    // Owner-scoped write: the skill belongs to the account that created it
+    // (teach mode + chat both run as the user), so taught skills stay private.
     const skill = createUserSkill({
       name,
       description: String(args.description || '').trim(),
       instructions,
       triggers: asStringArray(args.triggers),
-    })
+    }, ctx?.userId)
     // Enable it immediately so it takes effect.
     const set = new Set(configStore.getEnabledSkills())
     set.add(skill.id)

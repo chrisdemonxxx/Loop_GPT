@@ -30,6 +30,8 @@ export interface DesktopClient {
   press(keys: string | string[]): Promise<void>
   launch(application: string): Promise<void>
   wait(ms: number): Promise<void>
+  /** One shell command inside the VM (boot tasks: blanking off, xdpyinfo). */
+  runCommand(command: string): Promise<{ stdout: string; stderr: string; exitCode: number | null }>
   kill(): Promise<void>
 }
 
@@ -99,6 +101,10 @@ export async function createDesktop(opts: { timeoutMs: number }): Promise<Deskto
     async press(keys) { await desktop.press(keys) },
     async launch(application) { await desktop.launch(application) },
     async wait(ms) { await desktop.wait(ms) },
+    async runCommand(command) {
+      const result = await desktop.commands.run(command)
+      return { stdout: result.stdout || '', stderr: result.stderr || '', exitCode: result.exitCode ?? null }
+    },
     async kill() { await desktop.kill() },
   }
   return client

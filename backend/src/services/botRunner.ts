@@ -12,7 +12,7 @@ import { randomUUID } from 'crypto'
 import bcrypt from 'bcryptjs'
 import { prisma, hasDb } from './prisma'
 import { runAgent } from '../agent/agentRuntime'
-import { availableTools } from '../agent'
+import { availableTools, toolRegistry } from '../agent'
 import { authorizeRunContext } from '../agent/runAuthorization'
 import { ensurePersonalWorkspace } from './workspaces'
 import { saveMessage } from './chatStore'
@@ -23,6 +23,9 @@ import { startRun, setRunComputer, isRunTakeoverRequested } from './botRuns'
 import { ComputerSession } from './computerSession'
 import { E2BDesktopError } from './e2bDesktop'
 import { COMPUTER_TOOLS, COMPUTER_TOOL_NAMES } from '../agent/tools/computerTools'
+import { builtinToolNames } from '../agent'
+import { saveArtifact } from '../agent/artifacts'
+import { loadSkillsForUser } from '../agent/skills/skillLoader'
 import {
   AgentTaskError,
   BOT_DEFAULT_TOOLS,
@@ -57,6 +60,34 @@ const COMPUTER_SYSTEM_ADDENDUM = [
   'Launch apps with computer_launch, then computer_wait and look before interacting.',
   'Before each action, state in one short line what you see and what you are about to do.',
 ].join('\n')
+
+/** Teach-mode phase 1: announce readiness and stop. The runner handles the
+ *  wait + recording; phase 2 gets the distilled demo. */
+const TEACH_READY_PROMPT = [
+  'You are in TEACH MODE on a dedicated cloud desktop.',
+  'Say in one short sentence: "Ready — take over the live computer and demonstrate the task; press Release when done." Then STOP — do not take any actions, call no tools, end your turn immediately.',
+].join('\n')
+
+/** Teach-mode phase 2: distill the demonstration into a reusable Skill. */
+function teachDistillPrompt(frameCount: number): string {
+  return [
+    'You are in TEACH MODE. The operator just demonstrated a task on the dedicated cloud desktop; the attached frames are the recorded screen timeline (in order, with timestamps).',
+    `Write a reusable Skill that automates this task end-to-end: call create_skill with a clear name, a one-line description, trigger keywords a user might say, and complete step-by-step instructions derived from the demo (exact sites, exact text to type, keyboard-first shortcuts, what "done" looks like). ${frameCount} frames were recorded.`,
+    'Then reply with: the skill name, its trigger keywords, and a 2-3 sentence summary of the procedure you distilled. Do not ask questions; make reasonable assumptions and state them.',
+  ].join('\n')
+}
+
+/** Load an attached skill and fold it into the run: instructions into the
+ *  system prompt, its tools into the allowlist (validated against builtins). */
+function attachSkill(task: { userId: string | null; skillId: string | null }, names: string[], systemPrompt: string): { names: string[]; systemPrompt: string } | null {
+  if (!task.userId || !task.skillId) return null
+  const skill = loadSkillsForUser(task.userId).find((s) => s.id === task.skillId)
+  if (!skill) return null
+  const builtins = new Set(builtinToolNames())
+  const merged = [...new Set([...names, ...(skill.tools || []).filter((t) => builtins.has(t))])]
+  const prompt = `${systemPrompt}\n\nATTACHED SKILL — follow this operating procedure exactly:\n---\n${skill.name}: ${skill.description}\n${skill.instructions}\n---`
+  return { names: merged, systemPrompt: prompt }
+}
 
 export interface BotIdentity { userId: string; workspaceId: string; conversationId: string }
 
@@ -214,6 +245,7 @@ export async function executeBotTask(
         userId: identity.userId,
         conversationId: identity.conversationId,
         ttlMinutes: computerCfg.ttlMinutes,
+        takeoverTimeoutMs: Number(process.env.BOT_TAKEOVER_TIMEOUT_MS || 30 * 60_000),
         emit,
         isTakeoverRequested: isRunTakeoverRequested,
       })
@@ -237,17 +269,24 @@ export async function executeBotTask(
       scratch: computer ? { computer } : {},
     }
     const grantedTools = computer ? [...tools, ...COMPUTER_TOOLS] : tools
+    // Teach runs distill skills; grant the writer. Skill-attached runs follow
+    // their procedure. Both stay inside the reviewed builtin catalog.
+    const isTeach = task.kind === 'teach'
+    if (isTeach) grantedTools.push(toolRegistry.get('create_skill')!)
+    let runNames = computer ? [...names, ...COMPUTER_TOOL_NAMES] : names
+    let systemPrompt = computer ? `${BOT_SYSTEM_PROMPT}\n\n${COMPUTER_SYSTEM_ADDENDUM}` : BOT_SYSTEM_PROMPT
+    const attached = attachSkill(task, runNames, systemPrompt)
+    if (attached) { runNames = attached.names; systemPrompt = attached.systemPrompt }
     const authorizedCtx = await authorizeRunContext(ctx, identity.workspaceId, grantedTools)
     run.emit({ type: 'run', runId: run.runId } as AgentEvent)
     run.emit({ type: 'status', message: `task:${task.id}` } as AgentEvent)
 
-    const messages: ChatMessage[] = [{ role: 'user', content: task.goal }]
-    await runAgent({
+    const runAgentOnce = async (messages: ChatMessage[], prompt: string, names: string[]) => runAgent({
       messages,
       provider: 'huggingface',
       model: runModel,
-      toolNames: computer ? [...names, ...COMPUTER_TOOL_NAMES] : names,
-      systemPrompt: computer ? `${BOT_SYSTEM_PROMPT}\n\n${COMPUTER_SYSTEM_ADDENDUM}` : BOT_SYSTEM_PROMPT,
+      toolNames: names,
+      systemPrompt: prompt,
       maxSteps: task.maxSteps ?? undefined,
       thinking: (task.thinking || undefined) as ThinkingInput,
       autoApprove: true, // allowlisted tools only; no interactive gate exists off-HTTP
@@ -256,6 +295,64 @@ export async function executeBotTask(
       // The first real model dispatch flips the reservation to dispatched.
       beforeDispatch: reservationId ? dailyDispatch(reservationId, abort.signal) : undefined,
     })
+
+    let messages: ChatMessage[] = [{ role: 'user', content: task.goal }]
+    if (isTeach && computer) {
+      // Phase 1: announce readiness, then wait for the operator's demo.
+      await runAgentOnce([{ role: 'user', content: 'Announce teach readiness now.' }], `${BOT_SYSTEM_PROMPT}\n\n${TEACH_READY_PROMPT}`, runNames)
+      if (abort.signal.aborted) throw abort.signal.reason instanceof BotAbort ? abort.signal.reason : new BotAbort('worker_stop')
+      emit({ type: 'status', message: 'Waiting for the operator to take over and demonstrate… (the session records what you do)' })
+      // Phase 1.5: record the takeover demonstration. Screen-state timeline:
+      // frames every ~1.5s while the operator drives, capped, then distilled.
+      const recording: Array<{ at: number; png: Buffer }> = []
+      const takeoverDeadline = Date.now() + (Number(process.env.BOT_TAKEOVER_TIMEOUT_MS || 30 * 60_000))
+      let sawTakeover = false
+      while (Date.now() < takeoverDeadline && recording.length < 40 && !abort.signal.aborted) {
+        const takeover = await isRunTakeoverRequested(run.runId).catch(() => false)
+        if (takeover) {
+          sawTakeover = true
+          try { recording.push({ at: Date.now(), png: await computer.captureSilent() }) } catch { /* transient */ }
+          emit({ type: 'status', message: `Recording the demonstration… ${recording.length} frame(s)` })
+        } else if (sawTakeover) {
+          break // released: the demo is done
+        }
+        await new Promise((r) => setTimeout(r, 1500))
+      }
+      if (abort.signal.aborted) throw abort.signal.reason instanceof BotAbort ? abort.signal.reason : new BotAbort('worker_stop')
+      if (!sawTakeover) {
+        await run.fail('Teach session ended without a demonstration — no takeover happened during the wait window', true)
+        return failAgentTask(claim, 'BOT_TEACH_NO_DEMO', 'Operator never took over')
+      }
+      // Persist a few key frames as artifacts so the operator sees the demo.
+      const stride = Math.max(1, Math.floor(recording.length / 6))
+      for (let i = 0; i < recording.length; i += stride) {
+        const png = recording[i].png
+        const artifact = await saveArtifact(`teach-frame-${String(i + 1).padStart(2, '0')}.png`, png,
+          { userId: identity.userId, conversationId: identity.conversationId })
+        artifacts.push(artifact)
+        emit({ type: 'artifact', artifact })
+      }
+      // Phase 2: distill the timeline into a Skill. The model sees up to 10
+      // frames (newest-biased spread) as real image parts via the first message.
+      const picked: number[] = []
+      if (recording.length <= 10) picked.push(...recording.map((_, i) => i))
+      else {
+        const step = recording.length / 10
+        for (let i = 0; i < 10; i++) picked.push(Math.min(recording.length - 1, Math.floor(i * step)))
+      }
+      const timelineText = picked.map((i) => `frame ${i + 1}/${recording.length} at +${Math.round((recording[i].at - recording[0].at) / 1000)}s`).join(', ')
+      const teachMessage: ChatMessage = {
+        role: 'user',
+        content: [
+          { type: 'text', text: `${task.goal}\n\n${teachDistillPrompt(recording.length)}\n\nTimeline: ${timelineText}.` },
+          ...picked.map((i) => ({ type: 'image_url' as const, image_url: { url: `data:image/png;base64,${recording[i].png.toString('base64')}` } })),
+        ],
+      }
+      messages = [teachMessage]
+      await runAgentOnce(messages, systemPrompt, runNames)
+    } else {
+      await runAgentOnce(messages, systemPrompt, runNames)
+    }
     if (abort.signal.aborted) throw abort.signal.reason instanceof BotAbort ? abort.signal.reason : new BotAbort('worker_stop')
 
     const usage = { tokensIn: estimateTokens(task.goal), tokensOut: estimateTokens(finalContent), model: runModel || undefined }

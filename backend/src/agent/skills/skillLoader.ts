@@ -77,6 +77,66 @@ export function loadUserSkills(): Skill[] {
   return out
 }
 
+/** Per-user skill directory (teach-mode ownership): data/skills/<userId>/<id>.
+ *  Taught skills are private to the account that demonstrated them. */
+function userSkillDir(userId: string) {
+  return path.join(USER_SKILL_DIR, userId)
+}
+
+export function loadSkillsForUser(userId: string): Skill[] {
+  const out: Skill[] = []
+  try {
+    const dir = userSkillDir(userId)
+    if (!fs.existsSync(dir)) return out
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        const skill = parseSkillMd(path.join(dir, entry.name), entry.name)
+        if (skill) out.push(skill)
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return out
+}
+
+/** Admin view: every per-user skill across the deployment, tagged with owner. */
+export function loadAllUserSkills(): Array<Skill & { ownerId: string }> {
+  const out: Array<Skill & { ownerId: string }> = []
+  try {
+    if (!fs.existsSync(USER_SKILL_DIR)) return out
+    for (const owner of fs.readdirSync(USER_SKILL_DIR, { withFileTypes: true })) {
+      if (!owner.isDirectory()) continue
+      for (const entry of fs.readdirSync(path.join(USER_SKILL_DIR, owner.name), { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          const skill = parseSkillMd(path.join(USER_SKILL_DIR, owner.name, entry.name), entry.name)
+          if (skill) out.push({ ...skill, ownerId: owner.name })
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return out
+}
+
+export function deleteUserSkillForUser(userId: string, id: string): boolean {
+  const dir = path.join(userSkillDir(userId), id)
+  if (fs.existsSync(dir)) {
+    fs.rmSync(dir, { recursive: true, force: true })
+    return true
+  }
+  return false
+}
+
+/** Trigger-keyword match for enqueue auto-suggest (confirm-before-apply). */
+export function matchSkillsForGoal(userId: string, goal: string): Skill[] {
+  const lower = goal.toLowerCase()
+  return loadSkillsForUser(userId).filter((skill) =>
+    (skill.triggers || []).some((trigger) => lower.includes(trigger.toLowerCase())),
+  )
+}
+
 export function getAllSkills(): Skill[] {
   return [...BUILTIN_SKILLS.map((s) => ({ ...s, builtin: true })), ...loadUserSkills()]
 }
@@ -93,9 +153,11 @@ export function createUserSkill(input: {
   instructions: string
   triggers?: string[]
   tools?: string[]
-}): Skill {
+}, ownerId?: string): Skill {
   const id = input.id || slugify(input.name)
-  const dir = path.join(USER_SKILL_DIR, id)
+  // Per-user ownership: taught/created skills live under the creating account's
+  // directory so they are private to that user (admins can still see all).
+  const dir = ownerId ? path.join(userSkillDir(ownerId), id) : path.join(USER_SKILL_DIR, id)
   fs.mkdirSync(dir, { recursive: true })
   const fm = [
     '---',

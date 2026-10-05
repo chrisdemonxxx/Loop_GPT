@@ -272,11 +272,25 @@ router.post('/bot/tasks', asyncHandler(async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: 'Invalid bot task', code: 'invalid_request' })
   try {
     const task = await enqueueAgentTask(parsed.data, (req as any).userId)
-    res.status(201).json({ ok: true, task })
+    res.status(201).json({ ok: true, task, suggestedSkills: task.suggestedSkills })
   } catch (error) {
     if (error instanceof AgentTaskError) return res.status(error.code === 'invalid_request' ? 400 : 503).json({ error: error.message, code: error.code })
     throw error
   }
+}))
+
+/** GET /api/admin/bot/skills — every user's taught skill across the deployment. */
+router.get('/bot/skills', asyncHandler(async (_req, res) => {
+  const { loadAllUserSkills } = await import('../agent/skills/skillLoader')
+  res.json({ skills: loadAllUserSkills() })
+}))
+
+/** DELETE /api/admin/bot/skills/:ownerId/:id — remove any user's taught skill. */
+router.delete('/bot/skills/:ownerId/:id', asyncHandler(async (req, res) => {
+  const { deleteUserSkillForUser } = await import('../agent/skills/skillLoader')
+  const ok = deleteUserSkillForUser(req.params.ownerId, req.params.id)
+  if (!ok) return res.status(404).json({ error: 'Skill not found' })
+  res.json({ ok: true })
 }))
 
 /** GET /api/admin/bot/tasks?status=&limit= — queue + recent state. */

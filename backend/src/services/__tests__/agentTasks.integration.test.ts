@@ -1,6 +1,6 @@
-/**
+﻿/**
  * Bot task queue integration: lease claim, guarded acks, retry/dead-letter
- * backoff, scheduled requeue, operator cancel, and lease heartbeat — against
+ * backoff, scheduled requeue, operator cancel, and lease heartbeat â€” against
  * the dedicated loop_foundation_test database (requires the bot_tasks
  * migration applied, same contract as the settlement suites).
  */
@@ -121,7 +121,7 @@ describe('complete / fail', () => {
 
   it('failure retries with backoff, then dead-letters at max attempts', async () => {
     const task = await enqueue()
-    // attempt 1 → retry; attempt 2 → retry; attempt 3 → dead_letter
+    // attempt 1 â†’ retry; attempt 2 â†’ retry; attempt 3 â†’ dead_letter
     const first = await claimOne()
     expect(await failAgentTask(first, 'BOT_RUN_FAILED', 'boom')).toBe('retry')
     let row = await raw(task.id)
@@ -210,7 +210,7 @@ describe('heartbeat + cancel', () => {
   })
 })
 
-// ── B1: ownership scoping ───────────────────────────────────────────────────
+// â”€â”€ B1: ownership scoping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('ownership scoping (B1)', () => {
   let ownerId: string
@@ -250,7 +250,7 @@ describe('ownership scoping (B1)', () => {
   })
 })
 
-// ── B5: per-user concurrency guard ──────────────────────────────────────────
+// â”€â”€ B5: per-user concurrency guard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('per-user concurrency guard (B5)', () => {
   let userA: string
@@ -267,7 +267,6 @@ describe('per-user concurrency guard (B5)', () => {
     const first = await enqueueAgentTask({ goal: 'A first' } as any, userA, userA)
     const second = await enqueueAgentTask({ goal: 'A second' } as any, userA, userA)
     const other = await enqueueAgentTask({ goal: 'B task' } as any, userB, userB)
-
     const claim1 = await claimOne()
     expect(claim1.taskId).toBe(first.id)
 
@@ -291,7 +290,7 @@ describe('per-user concurrency guard (B5)', () => {
   })
 })
 
-// ── B4: VM-minute budgets ───────────────────────────────────────────────────
+// â”€â”€ B4: VM-minute budgets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('VM-minute budgets (B4)', () => {
   async function makeUser(plan: string, opts: { unlimited?: boolean; role?: string } = {}) {
@@ -304,9 +303,9 @@ describe('VM-minute budgets (B4)', () => {
     await db.botRun.create({ data: { taskId: task.id, status: 'completed', events: [], computer: { minutes } } })
   }
 
-  it('free plan gets no dedicated computer; pro gets its cap; unlimited bypasses', async () => {
+  it('free plan gets the 5-minute teaser; pro gets its cap; unlimited bypasses', async () => {
     const freeUser = await makeUser('free')
-    await expect(remainingVmMinutes(freeUser)).rejects.toMatchObject({ code: 'forbidden' })
+    await expect(remainingVmMinutes(freeUser)).resolves.toBe(5)
     const proUser = await makeUser('pro')
     await expect(remainingVmMinutes(proUser)).resolves.toBe(BOT_VM_MINUTES_PER_DAY.pro)
     const adminUser = await makeUser('free', { unlimited: true })

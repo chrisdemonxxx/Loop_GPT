@@ -37,10 +37,57 @@ router.post('/tasks', asyncHandler(async (req, res) => {
   const userId = (req as any).userId as string
   try {
     const task = await enqueueAgentTask(parsed.data, userId, userId)
-    res.status(201).json({ ok: true, task })
+    res.status(201).json({ ok: true, task, suggestedSkills: task.suggestedSkills })
   } catch (error) {
     return botError(res, error)
   }
+}))
+
+/** GET /api/bot/skills — the caller's own skill library (taught + picked). */
+router.get('/skills', asyncHandler(async (req, res) => {
+  const { loadSkillsForUser } = await import('../agent/skills/skillLoader')
+  res.json({ skills: loadSkillsForUser((req as any).userId) })
+}))
+
+/** DELETE /api/bot/skills/:id — remove one of the caller's own skills. */
+router.delete('/skills/:id', asyncHandler(async (req, res) => {
+  const { deleteUserSkillForUser } = await import('../agent/skills/skillLoader')
+  const ok = deleteUserSkillForUser((req as any).userId, req.params.id)
+  if (!ok) return res.status(404).json({ error: 'Skill not found' })
+  res.json({ ok: true })
+}))
+
+/** GET /api/bot/quota — your dedicated-computer budget for today (read-only):
+ *  the daily cap, minutes used, minutes remaining, and whether the plan can
+ *  provision computers at all. Powers the honest quota UI (no guessing from
+ *  enqueue errors). */
+router.get('/quota', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const userId = (req as any).userId as string
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { plan: true, role: true, unlimited: true, creditsResetAt: true },
+  })
+  if (!user) return res.status(404).json({ error: 'User not found' })
+  const { BOT_VM_MINUTES_PER_DAY } = await import('../services/agentTasks')
+  const unlimited = user.role === 'admin' || user.unlimited
+  const cap = unlimited ? null : (BOT_VM_MINUTES_PER_DAY[user.plan] ?? 0)
+  const rows = await prisma.$queryRaw<{ used: number | bigint }[]>`
+    SELECT COALESCE(SUM((r."computer"->>'minutes')::int), 0)::bigint AS used
+    FROM "BotRun" r JOIN "AgentTask" t ON t."id" = r."taskId"
+    WHERE t."userId" = ${userId} AND r."startedAt" >= ${user.creditsResetAt}`
+  const used = Number(rows[0]?.used ?? 0)
+  const { isE2BConfigured } = await import('../services/e2bDesktop')
+  res.json({
+    plan: user.plan,
+    unlimited,
+    computerAllowed: unlimited || (cap !== null && cap > 0),
+    computerConfigured: isE2BConfigured(),
+    cap,
+    used,
+    remaining: unlimited ? null : Math.max(0, (cap ?? 0) - used),
+    resetsAt: user.creditsResetAt,
+  })
 }))
 
 /** GET /api/bot/tasks?status=&limit= — your queue only. */

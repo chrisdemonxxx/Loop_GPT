@@ -22,6 +22,12 @@ function session(ctx: ToolContext): ComputerSession | null {
   return value && typeof value.act === 'function' ? (value as ComputerSession) : null
 }
 
+/** Live display bounds from the session (synced from the VM at boot), with
+ *  the static env-configured values as fallback for old sessions/tests. */
+function screenBounds(s: ComputerSession): { width: number; height: number } {
+  return s.screen || { width: COMPUTER_SCREEN_W, height: COMPUTER_SCREEN_H }
+}
+
 function noSession(): ToolResult {
   return { content: 'No dedicated computer is attached to this run. Enable the computer session for this task first.', isError: true }
 }
@@ -72,8 +78,9 @@ export const computerClickTool: ToolDefinition = {
   handler: async (args, ctx) => {
     const s = session(ctx)
     if (!s) return noSession()
-    const x = clampInt(args.x, 0, COMPUTER_SCREEN_W, 'x')
-    const y = clampInt(args.y, 0, COMPUTER_SCREEN_H, 'y')
+    const bounds = screenBounds(s)
+    const x = clampInt(args.x, 0, bounds.width, 'x')
+    const y = clampInt(args.y, 0, bounds.height, 'y')
     const button = ['left', 'right', 'middle', 'double'].includes(String(args.button)) ? String(args.button) as 'left' | 'right' | 'middle' | 'double' : 'left'
     return withShot(ctx, `${button === 'double' ? 'Double-clicked' : `${button[0].toUpperCase() + button.slice(1)}-clicked`} at (${x}, ${y})`, (ses) =>
       ses.act(`click(${x},${y})`, (client) => client.click(x, y, button)))
@@ -95,8 +102,9 @@ export const computerMoveTool: ToolDefinition = {
   handler: async (args, ctx) => {
     const s = session(ctx)
     if (!s) return noSession()
-    const x = clampInt(args.x, 0, COMPUTER_SCREEN_W, 'x')
-    const y = clampInt(args.y, 0, COMPUTER_SCREEN_H, 'y')
+    const bounds = screenBounds(s)
+    const x = clampInt(args.x, 0, bounds.width, 'x')
+    const y = clampInt(args.y, 0, bounds.height, 'y')
     return withShot(ctx, `Moved the pointer to (${x}, ${y})`, (ses) => ses.act(`move(${x},${y})`, (client) => client.moveMouse(x, y)))
   },
 }
@@ -136,8 +144,9 @@ export const computerDragTool: ToolDefinition = {
   handler: async (args, ctx) => {
     const s = session(ctx)
     if (!s) return noSession()
-    const from: [number, number] = [clampInt(args.from_x, 0, COMPUTER_SCREEN_W, 'from_x'), clampInt(args.from_y, 0, COMPUTER_SCREEN_H, 'from_y')]
-    const to: [number, number] = [clampInt(args.to_x, 0, COMPUTER_SCREEN_W, 'to_x'), clampInt(args.to_y, 0, COMPUTER_SCREEN_H, 'to_y')]
+    const bounds = screenBounds(s)
+    const from: [number, number] = [clampInt(args.from_x, 0, bounds.width, 'from_x'), clampInt(args.from_y, 0, bounds.height, 'from_y')]
+    const to: [number, number] = [clampInt(args.to_x, 0, bounds.width, 'to_x'), clampInt(args.to_y, 0, bounds.height, 'to_y')]
     return withShot(ctx, `Dragged from (${from[0]}, ${from[1]}) to (${to[0]}, ${to[1]})`, (ses) => ses.act(`drag(${from}→${to})`, (client) => client.drag(from, to)))
   },
 }

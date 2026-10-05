@@ -659,6 +659,8 @@ model AgentTask {
   user            User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Cached result-feed conversation (find-or-created by the runner).
   conversationId  String?
+  /// Attached skill whose instructions become the run's operating procedure.
+  skillId         String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @default(now()) @updatedAt
   runs            BotRun[]

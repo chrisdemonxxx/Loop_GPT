@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Bot run computer metadata + cross-process takeover (DB-gated integration):
  * the admin process writes via the same services the API uses; the worker
  * polls the same row. Covers the Phase 3 rendezvous contract.
@@ -55,7 +55,7 @@ describe('run computer metadata', () => {
 })
 
 describe('cross-process takeover flag', () => {
-  it('admin set → worker poll observes; release clears', async () => {
+  it('admin set â†’ worker poll observes; release clears', async () => {
     const run = await startRun(taskId)
     expect(await isRunTakeoverRequested(run.runId)).toBe(false)
     expect(await setRunTakeover(run.runId, true)).toBe(true)
@@ -74,7 +74,7 @@ describe('cross-process takeover flag', () => {
   })
 })
 
-// ── B1: run ownership scoping ───────────────────────────────────────────────
+// â”€â”€ B1: run ownership scoping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('run ownership scoping (B1)', () => {
   let strangerId: string

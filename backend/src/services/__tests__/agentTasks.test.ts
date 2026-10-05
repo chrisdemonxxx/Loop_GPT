@@ -69,6 +69,12 @@ describe('enqueueInput schema', () => {
     expect(() => enqueueInput.parse({ ...base, computer: { enabled: true, ttlMinutes: 241 } })).toThrow()
     expect(() => enqueueInput.parse({ ...base, computer: { ttlMinutes: 30 } })).toThrow()
   })
+
+  it('accepts teach tasks and skillId links; teach must carry a computer', () => {
+    expect(enqueueInput.parse({ ...base, kind: 'teach', computer: { enabled: true } }).kind).toBe('teach')
+    expect(enqueueInput.parse({ ...base, skillId: 'cold-email-writer' }).skillId).toBe('cold-email-writer')
+    expect(() => enqueueInput.parse({ ...base, skillId: 'bad id!' })).toThrow()
+  })
 })
 
 describe('BOT_DEFAULT_TOOLS', () => {

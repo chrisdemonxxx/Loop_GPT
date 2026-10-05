@@ -4,7 +4,7 @@ vi.mock('../../agent/artifacts', () => ({
   saveArtifact: vi.fn(async (name: string, bytes: Buffer) => ({ id: 'a1', kind: 'file', name, size: bytes.length })),
 }))
 
-import { ComputerSession, ComputerTakeoverTimeout } from '../../services/computerSession'
+import { ComputerSession, ComputerTakeoverTimeout, COMPUTER_FALLBACK_SCREEN } from '../../services/computerSession'
 import type { DesktopClient } from '../../services/e2bDesktop'
 import { saveArtifact } from '../../agent/artifacts'
 
@@ -22,8 +22,13 @@ function fakeClient(calls: string[] = []): DesktopClient {
     drag: async () => { calls.push('drag') },
     typeText: async () => { calls.push('type') },
     press: async () => { calls.push('press') },
-    launch: async () => { calls.push('launch') },
+    launch: async (application: string) => { calls.push(`launch:${application}`) },
     wait: async (ms) => { calls.push(`wait:${ms}`) },
+    runCommand: async (command: string) => {
+      calls.push(`cmd:${command.split(' ')[0]}`)
+      if (command.includes('xdpyinfo')) return { stdout: '  dimensions: 1280x800 pixels', stderr: '', exitCode: 0 }
+      return { stdout: '', stderr: '', exitCode: 0 }
+    },
     kill: async () => { calls.push('kill') },
   }
 }
@@ -47,15 +52,36 @@ function makeOpts(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => vi.clearAllMocks())
 
-describe('ComputerSession.start', () => {
-  it('creates the desktop with the TTL and starts the stream', async () => {
+describe('ComputerSession.start (Grok-style boot sequence)', () => {
+  it('boots: stream → blanking off → Chrome → real screen sync, with staged statuses', async () => {
     const calls: string[] = []
     const createDesktopFn = vi.fn(async () => fakeClient(calls))
-    const { opts } = makeOpts({ createDesktopFn })
+    const { events, opts } = makeOpts({ createDesktopFn })
     const session = await ComputerSession.start(opts)
-    expect(createDesktopFn).toHaveBeenCalledWith({ timeoutMs: 30 * 60_000 })
-    expect(calls).toContain('startStream')
+    expect(calls).toEqual([
+      'startStream', 'cmd:xset', 'launch:google-chrome', 'cmd:xdpyinfo',
+    ])
+    expect(session.screen).toEqual({ width: 1280, height: 800 })
+    const statuses = events.filter((e) => e.type === 'status').map((e) => e.message)
+    expect(statuses.some((m: string) => m.includes('booted'))).toBe(true)
+    expect(statuses.some((m: string) => m.includes('Desktop ready (1280x800)'))).toBe(true)
     expect(session.info.viewUrl).toBe('https://v')
+    await session.close()
+  })
+
+  it('survives a missing Chrome and falls back to default geometry', async () => {
+    const calls: string[] = []
+    const client = fakeClient(calls)
+    client.launch = async () => { throw new Error('no chrome') }
+    client.runCommand = async (command: string) => {
+      calls.push(`cmd:${command.split(' ')[0]}`)
+      if (command.includes('xdpyinfo')) return { stdout: 'garbage', stderr: '', exitCode: 1 }
+      return { stdout: '', stderr: '', exitCode: 0 }
+    }
+    const { events, opts } = makeOpts({ createDesktopFn: async () => client })
+    const session = await ComputerSession.start(opts)
+    expect(session.screen).toEqual(COMPUTER_FALLBACK_SCREEN)
+    expect(events.some((e) => e.type === 'status' && e.message.includes('Chrome is not available'))).toBe(true)
     await session.close()
   })
 
@@ -66,6 +92,14 @@ describe('ComputerSession.start', () => {
     const { opts } = makeOpts({ createDesktopFn: async () => client })
     await expect(ComputerSession.start(opts)).rejects.toThrow('vnc down')
     expect(calls).toContain('kill')
+  })
+})
+
+describe('parseScreenDimensions', () => {
+  it('parses xdpyinfo output and rejects junk', () => {
+    expect(ComputerSession.parseScreenDimensions('  dimensions:    1920x1080 pixels (508mm x 285mm)')).toEqual({ width: 1920, height: 1080 })
+    expect(ComputerSession.parseScreenDimensions('no dimensions here')).toEqual(COMPUTER_FALLBACK_SCREEN)
+    expect(ComputerSession.parseScreenDimensions('dimensions: 10x10 pixels')).toEqual(COMPUTER_FALLBACK_SCREEN)
   })
 })
 
