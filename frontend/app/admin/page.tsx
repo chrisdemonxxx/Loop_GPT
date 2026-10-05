@@ -113,14 +113,14 @@ export default function AdminPage() {
     <div className="min-h-screen px-5 py-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
-          <Link href="/chat" className="text-slate-400 hover:text-slate-200"><ArrowLeft size={18} /></Link>
+          <Link href="/chat" aria-label="Back to chat" className="text-slate-400 hover:text-slate-200"><ArrowLeft size={18} /></Link>
           <h1 className="text-xl font-semibold text-slate-100 flex items-center gap-2"><ShieldCheck size={18} className="text-[#c96442]" /> Admin Portal</h1>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setLive((v) => !v)} className={`text-xs px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${live ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' : 'text-slate-400 border-white/10'}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${live ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} /> {live ? 'Live' : 'Paused'}
           </button>
-          <button onClick={refresh} className="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-400 hover:text-slate-200"><RefreshCw size={13} /></button>
+          <button onClick={refresh} aria-label="Refresh stats" className="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-400 hover:text-slate-200"><RefreshCw size={13} /></button>
         </div>
       </div>
 

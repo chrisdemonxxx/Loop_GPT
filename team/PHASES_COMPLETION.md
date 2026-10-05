@@ -86,6 +86,34 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   `builtAt`/etag) is CLOSED for repo-triggered deploys. The pre-session "5
   failed deploys" were the `/artifact/[id]` missing-`generateStaticParams` build
   error, already fixed at `45d6b3d` (SUCCESS 23:59:59) — not a live defect.
+- **E-S1.1** (S1/media suite, 2026-10-05): the 8 RED tests in
+  `generateMediaTransport.test.ts` shared **one root cause** — vitest loads
+  `backend/.env` into `process.env`, and `HF_VIDEO_API=lightx2v` (added
+  2026-09-29, cf. `.env.bak.pre-lightx2v-20260929`) sent every "video provider
+  migration" test down the task-API path ("Missing video task id"). One-line
+  hermeticity fix: `vi.stubEnv('HF_VIDEO_API','')` in the shared `beforeEach`
+  (commit `5d00827`). Also deleted the 0-byte scratch `backend/src/chatModel.test.ts`
+  ("No test suite found" suite failure). **Backend suite: 65 files / 1192
+  passed / 5 skipped, `tsc`=0** — the S1 media item is CLOSED.
+- **E-S1.2** (S1/GAP-003, 2026-10-05): sweep after fix —
+  `node tests/axe-sweep.mjs` (22 runs, hydration-settled: the sweep previously
+  scanned the pre-hydration flash and reported dark colors on light pages;
+  now waits networkidle + fonts + 500 ms) → **0 critical / 0 serious** across
+  11 routes × 2 themes (was 1 C + ~90 S; first pass left 12, second 10, third
+  0 — every residual measured and fixed, none waived). Fixes: dark-theme
+  utility remaps (slate-500→#8b9bb0 6.06:1, slate-600→#7c8ba1 4.95, accent
+  text→#d97757 5.51, CTA fill→#b5593a 4.70 + hover #a34d2f), light-theme
+  completion (.surface/.bg-ink-800/.bg-ink-900(/50) → white/#f4f4f5 — the
+  text scale was already light, the input wells stayed dark: 1.11:1; chip
+  #b0bdcc→#5d5d66; placeholders→#6b6b74; amber→#a34a08; terracotta light
+  →#a34d2f; underlined rest-state accent links for link-in-text), ErrorBoundary
+  reload #19c37d→#0f7a55 (2.29→5.36), admin refresh `aria-label="Refresh
+  stats"` + back-link `aria-label="Back to chat"`. Gate tightened:
+  `app.spec.ts` now asserts **serious+** with settle — `npx playwright test`
+  → **52 passed / 16 skipped** (app.spec 40 across 4 projects + mobile gate);
+  `vitest` 26/232; `tsc`=0. Parity re-frozen at the contrast revision and
+  verified: `rows 30 · worst delta 0.0000% · FAIL 0`. `GAP_REGISTER.md`
+  GAP-003 row updated to Working.
 - **E-S0.7** (P5 LIVE legs + parity re-freeze): with
   `LIVE_BASE_URL=https://loop-gpt.cyou`,
   `npx playwright test tests/e2e/mobile-composer.spec.ts --project=phone-390 --project=phone-360`

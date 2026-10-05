@@ -49,6 +49,22 @@
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+   DARK CONTRAST (GAP-003, axe serious+ sweep 2026-10-05). The muted text scale
+   fails WCAG AA on the dark glass surfaces (slate-500 #64748b = 3.83–3.99 on
+   #151518/#111113/#101015; slate-600 is darker still), the terracotta accent
+   #c96442 as text is 4.40 on its /10 chip, and white-on-#c96442 buttons are
+   3.90. Same remap pattern as the light theme below — override the utilities
+   under the dark scope (html:not([data-theme='light'])), no call-site churn.
+   Ratios: #8b9bb0 on #151518 = 6.06 · #7c8ba1 = 4.95 · #d97757 on #231918 =
+   5.51 · white on #b5593a = 4.70 · white on #a34d2f (hover) = 5.74.
+   ────────────────────────────────────────────────────────────────────────── */
+html:not([data-theme='light']) .text-slate-500 { color: #8b9bb0; }
+html:not([data-theme='light']) .text-slate-600 { color: #7c8ba1; }
+html:not([data-theme='light']) .text-\[\#c96442\] { color: #d97757; }
+html:not([data-theme='light']) .bg-\[\#c96442\] { background-color: #b5593a; }
+html:not([data-theme='light']) .hover\:bg-\[\#b5593a\]:hover { background-color: #a34d2f; }
+
+/* ──────────────────────────────────────────────────────────────────────────
    LIGHT THEME (audit §8-35). The app is dark-first: this layer re-maps the
    utility classes themselves under <html data-theme="light"> — no call-site
    churn across ~600 usages. The selector prefix (html[data-theme="light"])
@@ -73,12 +89,12 @@ html[data-theme='light'] .hover\:text-slate-100:hover { color: #1f1f23; }
 html[data-theme='light'] .hover\:text-slate-200:hover { color: #33333a; }
 html[data-theme='light'] .hover\:text-slate-300:hover { color: #1f1f23; }
 html[data-theme='light'] .hover\:text-slate-400:hover { color: #33333a; }
-html[data-theme='light'] .placeholder-slate-500::placeholder { color: #8a8a92; }
-html[data-theme='light'] .placeholder-slate-600::placeholder { color: #8a8a92; }
+html[data-theme='light'] .placeholder-slate-500::placeholder { color: #6b6b74; }
+html[data-theme='light'] .placeholder-slate-600::placeholder { color: #6b6b74; }
 
 /* Accent text (terracotta family) darkened for AA on light surfaces */
 html[data-theme='light'] .text-\[\#e79d7f\] { color: #a84e2c; }
-html[data-theme='light'] .text-\[\#c96442\] { color: #b05432; }
+html[data-theme='light'] .text-\[\#c96442\] { color: #a34d2f; }
 html[data-theme='light'] .text-\[\#d8a08a\] { color: #9c4a2b; }
 html[data-theme='light'] .text-\[\#6ee7a0\] { color: #047857; }
 
@@ -90,8 +106,8 @@ html[data-theme='light'] .text-emerald-400 { color: #047857; }
 html[data-theme='light'] .text-emerald-300 { color: #047857; }
 html[data-theme='light'] .text-emerald-200 { color: #065f46; }
 html[data-theme='light'] .text-emerald-400\/80 { color: rgba(4, 120, 87, 0.85); }
-html[data-theme='light'] .text-amber-400 { color: #b45309; }
-html[data-theme='light'] .text-amber-400\/90 { color: rgba(180, 83, 9, 0.95); }
+html[data-theme='light'] .text-amber-400 { color: #a34a08; }
+html[data-theme='light'] .text-amber-400\/90 { color: rgba(163, 74, 8, 0.95); }
 html[data-theme='light'] .text-sky-400 { color: #0369a1; }
 html[data-theme='light'] .text-sky-400\/80 { color: rgba(3, 105, 161, 0.85); }
 html[data-theme='light'] .text-red-400 { color: #b91c1c; }
@@ -157,6 +173,46 @@ html[data-theme='light'] .glass-strong {
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid rgba(0, 0, 0, 0.08);
 }
+
+/* Input surfaces go light too (GAP-003 sweep 2026-10-05): the text scale
+   above is remapped light, so a dark input well would pair dark text with a
+   dark surface (auth inputs 1.11:1, composer textarea 1.15:1). */
+html[data-theme='light'] .surface {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: none;
+}
+html[data-theme='light'] .surface-hover:hover { background: #f4f4f5; }
+html[data-theme='light'] .bg-ink-800 { background-color: #ffffff; }
+html[data-theme='light'] .bg-ink-900 { background-color: #f4f4f5; }
+html[data-theme='light'] .bg-ink-900\/50 { background-color: #f4f4f5; }
+html[data-theme='light'] .placeholder-slate-400::placeholder { color: #6b6b74; }
+html[data-theme='light'] .text-gray-400 { color: #6b6b74; }
+
+/* Empty-state hero + CTA link literals (chat shell). */
+html[data-theme='light'] .text-\[\#f4f4f6\] { color: #1f1f23; }
+html[data-theme='light'] .text-\[\#f0b39a\] { color: #a84e2c; }
+
+/* Chip control color: #b0bdcc is 1.9:1 on the now-white .surface. */
+html[data-theme='light'] .chip {
+  color: #5d5d66;
+  background: #f4f4f5;
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+/* The onboarding CTA link sits inside muted body copy — color alone cannot
+   reach 3:1 against it in either theme, so underline it at rest. */
+a.text-\[\#f0b39a\] { text-decoration: underline; }
+
+/* Accent CTA fills: white on #c96442 is 3.89:1 — darken the fill for AA
+   (4.70 on #b5593a; the hover step keeps a visible state change at 5.74). */
+html[data-theme='light'] .bg-\[\#c96442\] { background-color: #b5593a; }
+html[data-theme='light'] .hover\:bg-\[\#b5593a\]:hover { background-color: #a34d2f; }
+
+/* Accent links sit inside muted body text (#6b6b74); no terracotta reaches
+   the 3:1 link-vs-text minimum against it, so underline them at rest
+   (axe link-in-text) instead of relying on color alone. */
+html[data-theme='light'] a.text-\[\#c96442\] { text-decoration: underline; }
 html[data-theme='light'] .text-gradient {
   background: linear-gradient(100deg, #d8846a, #b5593a 60%, #c96442);
   -webkit-background-clip: text;

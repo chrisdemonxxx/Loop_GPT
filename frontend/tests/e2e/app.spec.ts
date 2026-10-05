@@ -1,16 +1,29 @@
 import { test, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 
+/** Settle after domcontentloaded: hydration swaps theme/text a beat later, and
+ *  scanning the pre-hydration flash reports the wrong theme's colors
+ *  (proven in the GAP-003 sweep, 2026-10-05). */
+async function settle(page: import('@playwright/test').Page) {
+  await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {})
+  await page.waitForTimeout(300)
+}
+
+/** GAP-003 gate: zero `critical` AND `serious` violations (the sweep artifact
+ *  is tests/axe-sweep.mjs, 11 routes × 2 themes — both went to zero 2026-10-05). */
+function serious(v: { impact?: string | null }) {
+  return v.impact === 'critical' || v.impact === 'serious'
+}
+
 test.describe('public pages', () => {
   for (const path of ['/', '/login/', '/signup/']) {
-    test(`${path} renders and has no critical a11y violations`, async ({ page }) => {
+    test(`${path} renders and has no serious+ a11y violations`, async ({ page }) => {
       await page.goto(path)
       await page.waitForLoadState('domcontentloaded')
+      await settle(page)
       const results = await new AxeBuilder({ page }).analyze()
-      // Gate on `critical` only; `serious` contrast issues are tracked in the
-      // design pass (GAP-003) and surfaced via the report artifact.
-      const critical = results.violations.filter((v) => v.impact === 'critical')
-      expect(critical, JSON.stringify(critical.map((v) => `${v.id}: ${v.nodes.map((n) => n.html).join(' | ')}`))).toHaveLength(0)
+      const blocking = results.violations.filter((v) => v.impact && serious(v))
+      expect(blocking, JSON.stringify(blocking.map((v) => `${v.id}: ${v.nodes.map((n) => n.html).join(' | ')}`))).toHaveLength(0)
     })
   }
 
@@ -28,14 +41,15 @@ test.describe('public pages', () => {
     await expect(page.getByRole('button', { name: /google/i })).toBeVisible()
   })
 
-  test('chat shell has no critical a11y violations', async ({ page }) => {
+  test('chat shell has no serious+ a11y violations', async ({ page }) => {
     await page.goto('/chat/')
     await page.waitForLoadState('domcontentloaded')
+    await settle(page)
     // The API is stubbed in this suite, so the page may show its auth/loading
     // state; the gate is accessibility on whatever renders.
     const results = await new AxeBuilder({ page }).analyze()
-    const critical = results.violations.filter((v) => v.impact === 'critical')
-    expect(critical, JSON.stringify(critical.map((v) => `${v.id}: ${v.nodes.map((n) => n.html).join(' | ')}`))).toHaveLength(0)
+    const blocking = results.violations.filter((v) => v.impact && serious(v))
+    expect(blocking, JSON.stringify(blocking.map((v) => `${v.id}: ${v.nodes.map((n) => n.html).join(' | ')}`))).toHaveLength(0)
   })
 })
 
@@ -50,13 +64,14 @@ test.describe('theme switcher (§8-35)', () => {
     expect(bg).toBe('rgb(250, 250, 250)')
   })
 
-  test('light theme has no critical a11y violations', async ({ page }) => {
+  test('light theme has no serious+ a11y violations', async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('loop-theme', 'light'))
     await page.goto('/')
     await page.waitForLoadState('domcontentloaded')
+    await settle(page)
     const results = await new AxeBuilder({ page }).analyze()
-    const critical = results.violations.filter((v) => v.impact === 'critical')
-    expect(critical, JSON.stringify(critical.map((v) => `${v.id}: ${v.nodes.map((n) => n.html).join(' | ')}`))).toHaveLength(0)
+    const blocking = results.violations.filter((v) => v.impact && serious(v))
+    expect(blocking, JSON.stringify(blocking.map((v) => `${v.id}: ${v.nodes.map((n) => n.html).join(' | ')}`))).toHaveLength(0)
   })
 
   test('dark remains the default with no stored choice', async ({ page }) => {

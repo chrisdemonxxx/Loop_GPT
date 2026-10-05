@@ -46,6 +46,14 @@ for (const theme of ['dark', 'light']) {
       gotoErr = e.message
     }
 
+    // Settle before scanning: hydration swaps the theme attribute and node
+    // text a beat after domcontentloaded — scanning earlier reports the
+    // pre-hydration flash (GAP-003 2026-10-05: light runs showed dark-theme
+    // colors on a few nodes while every settled node read light).
+    await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {})
+    await page.evaluate(() => (document.fonts ? document.fonts.ready : Promise.resolve())).catch(() => {})
+    await page.waitForTimeout(500)
+
     let axeErr = null
     let r
     try {
