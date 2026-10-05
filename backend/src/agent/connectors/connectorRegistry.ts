@@ -176,6 +176,11 @@ class ConnectorRegistry {
         icon: t.icon || null,
         oauth: !!t.oauth,
         fields: t.fields,
+        // Additive (S3, CONTRACT_S3_CONNECTORS §1 amendment): tool summaries
+        // for the directory detail view. suffix + description only — never
+        // request templates (no URL/auth shape leakage into the client).
+        tools: (t.tools || []).map((tool) => ({ suffix: tool.suffix, description: tool.description })),
+        docs: t.docs || null,
       }))
   }
 

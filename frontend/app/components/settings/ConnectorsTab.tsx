@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import {
   Cable, Check, ChevronDown, ExternalLink, Globe, Loader2, Plug, Plus, RefreshCw, X,
 } from 'lucide-react'
@@ -158,6 +159,11 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
 
   return (
     <div className="space-y-4 text-sm">
+      {/* Directory hand-off (blueprint §9.4: "Browse connectors"). */}
+      <Link href="/customize/connectors/all" className="inline-flex items-center gap-1.5 text-[12px] text-[#e79d7f] hover:underline">
+        <Globe size={12} /> Browse the full connector directory
+      </Link>
+
       {/* Connected */}
       <SectionHeader title="Connected" count={data.configured.length} />
       {loaded && !loadError && data.configured.length === 0 && (
