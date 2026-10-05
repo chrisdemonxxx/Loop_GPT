@@ -13,6 +13,33 @@ export default defineConfig({
   projects: [
     { name: 'desktop-chromium', use: { ...devices['Desktop Chrome'] } },
     { name: 'mobile-chromium', use: { ...devices['Pixel 5'] } },
+    {
+      // P5 phone gate (audit P6): the two live phone viewports, Pixel-5-ish
+      // UA, isMobile + Android 14. 390x844 is the user's phone, 360x800 the
+      // small one.
+      name: 'phone-390',
+      use: {
+        ...devices['Pixel 5'],
+        viewport: { width: 390, height: 844 },
+        isMobile: true,
+        hasTouch: true,
+        userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36',
+        locale: 'en-US',
+        timezoneId: 'America/New_York',
+      },
+    },
+    {
+      name: 'phone-360',
+      use: {
+        ...devices['Pixel 5'],
+        viewport: { width: 360, height: 800 },
+        isMobile: true,
+        hasTouch: true,
+        userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36',
+        locale: 'en-US',
+        timezoneId: 'America/New_York',
+      },
+    },
   ],
   webServer: {
     command: 'node ./tests/serve-out.cjs',
