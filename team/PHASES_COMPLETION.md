@@ -45,3 +45,25 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   real test `backend/src/services/__tests__/chatModels.test.ts` (3,755 B) tracked.
   `backend/src/chatModel.test.ts` (0 B) and `service-chatModels.ts.bak` are
   scratch junk — excluded from commits, left on disk.
+- **E-S0.3** (S0 commits, 7, pushed `45d6b3d..66afe43`, `@{u}..HEAD` = 0):
+  `1c45527` CommandPalette.test tsc fix · `392dd50` P5 composer fix + owed note
+  (8 files, +115/−8) · `34e16ae` P5 gate spec + phone projects (+282) ·
+  `90f51db` measurement lane (65 files, +40,908 — tokens.json, 62 baselines,
+  measure.cjs/tokens.cjs) · `4005e07` Storybook restore (11 files — config,
+  5 stories, package.json+lock with `storybook@^8.6.14`/`@storybook/nextjs`/
+  addon-essentials/addon-interactions/@storybook/test/react-docgen-typescript,
+  `bin.build-storybook`, `.gitignore` for `storybook-static/`+`*.out`) ·
+  `ab8f6a6` docs close-out (PHASES_COMPLETION.md + 8 team notes + GAP-029 row) ·
+  `66afe43` SessionList.test.tsx (was untracked but counted in the 26/232 gate).
+- **E-S0.4** Storybook gate re-run after restore:
+  `npx build-storybook --quiet` → `info => Preview built (26 s)`,
+  `SB_EXIT=0` (bundle-size warnings only). `npm install --package-lock-only` →
+  exit 0 (node_modules already carried 8.6.14).
+- **E-S0.5** Railway: `web` service is repo-connected to
+  `chrisdemonxxx/Loop_GPT` @ `release/owned-staging-20260917` (Dockerfile
+  `web/Dockerfile`, healthcheck `/healthz`), so the push itself triggered a
+  deploy of `66afe43`. Set `GIT_REVISION=${{RAILWAY_GIT_COMMIT_SHA}}` on web
+  (production) — was absent from its 6 variables; variable-triggered rebuild
+  `ccd95cf0` [BUILDING] alongside push-triggered `b36d99d2` [BUILDING].
+  **Exit criterion still open:** `GET /version.json` → `revision == 66afe43…`
+  (assert the 40-hex, never `builtAt`) + the 2 LIVE legs of the P5 gate re-run.
