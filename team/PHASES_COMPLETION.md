@@ -298,3 +298,29 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   `/ /chat/ ? 200`, `/downloads /upgrade /customize/connectors/all /project
   ? 301?200` (nginx directory redirect), `/usage ? 404`. Operator-gated
   residuals carried in `ROSTER_CLOSE_20261005.md`. **S0–S5 COMPLETE.**
+- **E-S6.1** (operator-reported live defect, 2026-10-05: Gmail and other
+  Google connectors died at Google with `Error 400: redirect_uri_mismatch`):
+  root cause — the connector flow sent a DEDICATED redirect
+  (`{FRONTEND_URL}/api/oauth-connector/callback`) that was never registered
+  in the Google Cloud client, while the sign-in flow's callback
+  (`{OAUTH_CALLBACK_BASE}/api/auth/oauth/{google|github}/callback`) was the
+  registered one. Fix (no console access needed): platform connectors now
+  ride the SIGN-IN redirect URI — `loginProviderForConnector()` maps
+  google_* and github ? their login provider, `oauthRedirectUri(type)`
+  returns the auth-callback URL for platform types and keeps the dedicated
+  callback for marketplace types, and the login callback
+  (`routes/oauth.ts` `handleCallback`) **delegates hex connector states to
+  `completeConnectorCallback`** before its JWT path (JWT vs PKCE-hex states
+  are disjoint). One registration now covers login AND all Google connectors.
+  Plus the requested UX: connector sign-in opens in a **centered popup**
+  (`lib/oauthPopup.ts` + `via:'popup'` init flag) — the backend callback
+  postMessages `{source:'loop-oauth', ok, connectorType}` to the opener and
+  closes itself (popup-closer page for both success and error; blocked
+  popups and user-closed popups get honest copy, cancel is silent).
+  Gates: backend tsc=0 + **66 files / 1198** (+6: URI routing per tier,
+  state disjointness, invalid-state path); frontend tsc=0 + **32/275**
+  (+6 popup helper: postMessage resolution, cross-window rejection, closed
+  watcher, notice mapping); playwright 206/34; sweep 48 runs 0C/0S;
+  `docs/CONNECTOR_SETUP.md` rewritten for the unified design.
+  **Live check pending deploy:** the gmail authorizeUrl must carry the
+  registered URI and Google must render the consent screen (not Error 400).

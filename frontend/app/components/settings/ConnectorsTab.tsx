@@ -6,6 +6,7 @@ import {
   Cable, Check, ChevronDown, ExternalLink, Globe, Loader2, Plug, Plus, RefreshCw, X,
 } from 'lucide-react'
 import { API_URL, authHeaders } from '../../lib/api'
+import { openOAuthPopup, oauthPopupNotice } from '../../lib/oauthPopup'
 import { Badge, btnGhost, btnPrimary, Card, EmptyState, inputCls, SearchInput, SectionHeader, StatusDot } from '../ui/primitives'
 
 interface ConnectorField { key: string; label: string; secret?: boolean; required?: boolean; placeholder?: string }
@@ -102,11 +103,19 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
     try {
       const res = await fetch(`${API_URL}/api/oauth-connector/init/${type}`, {
         method: 'POST', headers: authHeaders(),
-        body: JSON.stringify({ workspaceId, redirectTo: '/chat', ...(creds || {}) }),
+        body: JSON.stringify({ workspaceId, redirectTo: '/chat', via: 'popup', ...(creds || {}) }),
       })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { setError('Could not start the sign-in flow.'); return false }
-      window.location.href = d.authorizeUrl
+      // Popup flow (2026-10-05): the provider consent opens in a centered
+      // popup; the backend callback postMessages the outcome and closes.
+      const providerName = selected?.name || data.configured.find((c) => c.type === type)?.name || 'That connector'
+      const popup = openOAuthPopup(d.authorizeUrl, (result) => {
+        const note = oauthPopupNotice(result, providerName)
+        if (note.kind === 'ok') { setError(''); load() }
+        else if (note.kind === 'error') setError(note.text)
+      })
+      if (!popup) { setError(oauthPopupNotice({ ok: false, error: 'popup_blocked' }, providerName).text); return false }
       return true
     } catch { setError('Could not start the sign-in flow.'); return false } finally { setOauthBusy(null) }
   }

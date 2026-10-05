@@ -7,6 +7,7 @@ import {
   ArrowLeft, Cable, ChevronLeft, ExternalLink, Loader2, Plug, Plus, RefreshCw, Wrench,
 } from 'lucide-react'
 import { API_URL, authHeaders } from '../../../lib/api'
+import { openOAuthPopup, oauthPopupNotice } from '../../../lib/oauthPopup'
 import { useWorkspaceProjects } from '../../../chat/hooks'
 import { Badge, EmptyState, SectionHeader, Skeleton } from '../../../components/ui/primitives'
 
@@ -102,18 +103,25 @@ export default function ConnectorDirectoryPage() {
     if (typeFromLocation(window.location.search)) router.push('/customize/connectors/all')
   }
 
-  // One flow, same shapes as ConnectorsTab (contract §3).
+  // One flow, same shapes as ConnectorsTab (contract §3) — popup mode: the
+  // provider consent opens in a centered popup and the backend callback
+  // postMessages the outcome back (2026-10-05).
   const startOAuth = async (t: ConnectorType) => {
-    setActionError(''); setBusy(true)
+    setActionError(''); setNotice(''); setBusy(true)
     try {
       if (!workspaceId) { setActionError('Open a project first (Projects in the sidebar), then connect.'); return }
       const res = await fetch(`${API_URL}/api/oauth-connector/init/${t.type}`, {
         method: 'POST', headers: authHeaders(),
-        body: JSON.stringify({ workspaceId, redirectTo: '/chat' }),
+        body: JSON.stringify({ workspaceId, redirectTo: '/chat', via: 'popup' }),
       })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { setActionError('Could not start the sign-in flow.'); return }
-      window.location.href = d.authorizeUrl
+      const popup = openOAuthPopup(d.authorizeUrl, (result) => {
+        const note = oauthPopupNotice(result, t.name)
+        if (note.kind === 'ok') { setNotice(note.text); setActionError(''); load() }
+        else if (note.kind === 'error') setActionError(note.text)
+      })
+      if (!popup) setActionError(oauthPopupNotice({ ok: false, error: 'popup_blocked' }, t.name).text)
     } catch { setActionError('Could not start the sign-in flow.') } finally { setBusy(false) }
   }
 

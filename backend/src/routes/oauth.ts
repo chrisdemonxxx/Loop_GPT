@@ -8,6 +8,7 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { prisma, hasDb } from '../services/prisma'
 import { enabledProviders, providerEnabled, authorizeUrl, callbackUrl, exchangeCode, type OAuthProvider } from '../services/oauth'
+import { connectorStateExists, completeConnectorCallback } from './oauthConnector'
 import { welcomeEmail, alertEmail, verifyEmail, resetPasswordEmail } from '../services/email'
 import { createToken, consumeToken } from '../services/tokens'
 import { authenticateToken } from './auth'
@@ -64,8 +65,12 @@ async function handleCallback(req: express.Request, res: express.Response) {
   const provider = req.params.provider as OAuthProvider
   const code = (req.query.code || (req.body && req.body.code)) as string
   const state = (req.query.state || (req.body && req.body.state)) as string
-
-  // OAuth bridge relay: when OAUTH_BRIDGE_TARGET is set, this callback acts as a
+  // Connector OAuth rides this same registered callback (the
+  // redirect_uri_mismatch fix, 2026-10-05): connector states are hex PKCE
+  // handles, login states are JWTs — check the connector store FIRST.
+  if (state && connectorStateExists(state)) {
+    return completeConnectorCallback(code, state, res)
+  }  // OAuth bridge relay: when OAUTH_BRIDGE_TARGET is set, this callback acts as a
   // transparent passthrough for the Google-registered redirect_uri
   // (https://api.loop-gpt.cyou/api/auth/oauth/<provider>/callback). It 302s the
   // browser — carrying code/state verbatim — to the active app's callback

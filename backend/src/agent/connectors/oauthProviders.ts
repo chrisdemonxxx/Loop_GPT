@@ -140,6 +140,19 @@ export const ALL_OAUTH_PROVIDERS: Record<string, OAuthProviderSpec> = {
   ...MARKETPLACE_OAUTH_PROVIDERS,
 }
 
+/**
+ * The sign-in provider whose OAuth client a platform connector rides on.
+ * Platform connectors (Google Drive, Gmail, Calendar, Sheets, GitHub) reuse
+ * the SIGN-IN flow's redirect URI — the one already registered in the
+ * provider console — so no second console registration exists to drift out
+ * of sync (the redirect_uri_mismatch fix, 2026-10-05). Marketplace
+ * connectors run on the user's own app and keep the dedicated callback.
+ */
+export function loginProviderForConnector(type: string): 'google' | 'github' | null {
+  if (!PLATFORM_OAUTH_PROVIDERS[type]) return null
+  return type === 'github' ? 'github' : 'google'
+}
+
 /** Marketplace display catalog for the Connectors tab (sorted by name). */
 export const MARKETPLACE_LIST = Object.values(MARKETPLACE_OAUTH_PROVIDERS).map((p) => ({
   type: p.type,

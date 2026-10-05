@@ -8,15 +8,24 @@ Connectors → Marketplace dialog, and sign in. Every connected card exposes a
 
 ## Platform OAuth (click Connect — no credentials needed)
 
-Verified live 2026-09-22: all four return a valid Google consent URL.
+**2026-10-05 fix:** platform connectors now ride the SIGN-IN flow's redirect
+URI — the one registered in the provider console — instead of a dedicated
+connector callback that had never been registered (every Google connector
+connect died with `Error 400: redirect_uri_mismatch` before the consent
+screen). Connector states are hex handles; login states are JWTs; the login
+callback delegates connector states to the connector completion. Sign-in now
+opens in a **centered popup** that posts the result back and closes itself.
 
-| Connector | Redirect URI to register in the provider console |
+| Connector | Redirect URI actually sent (== the sign-in flow's registered URI) |
 |---|---|
-| Google Drive / Gmail / Calendar / Sheets | `https://loop-gpt.cyou/api/oauth-connector/callback` |
-| GitHub (token or OAuth) | `https://loop-gpt.cyou/api/oauth-connector/callback` |
+| Google Drive / Gmail / Calendar / Sheets | `https://api.loop-gpt.cyou/api/auth/oauth/google/callback` |
+| GitHub (token or OAuth) | `https://api.loop-gpt.cyou/api/auth/oauth/github/callback` |
 
 > The Google client (`673922779423-…`) is shared across all four; the granted
-> scopes differ per connector. Reconnect any time to re-consent.
+> scopes differ per connector. Reconnect any time to re-consent. **If Google
+> still shows `redirect_uri_mismatch`, the sign-in URI itself is missing from
+> the Google Cloud client's authorized list — add the table row above (one
+> registration now covers BOTH login and every Google connector).**
 
 ## Sign-in OAuth (login — separate from connectors)
 

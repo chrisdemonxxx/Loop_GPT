@@ -15,8 +15,13 @@
  * (existing flow) AND as a config-store connector entry, so the Settings →
  * Connectors tab shows the live connection and the agent tools register.
  *
- * Redirect URL to configure in OAuth provider apps:
- *   {FRONTEND_URL}/api/oauth-connector/callback
+ * Redirect URIs (2026-10-05, the redirect_uri_mismatch fix):
+ *  - Platform connectors ride the sign-in flow's registered callback:
+ *    {OAUTH_CALLBACK_BASE}/api/auth/oauth/{google|github}/callback — the
+ *    login-callback handler delegates connector states here. No separate
+ *    console registration exists to drift.
+ *  - Marketplace connectors (user-owned OAuth apps) register:
+ *    {FRONTEND_URL}/api/oauth-connector/callback
  */
 import express from 'express'
 import { asyncHandler } from '../middleware/errorLogger'
@@ -26,7 +31,8 @@ import { encryptConnectionConfig } from '../services/credentialVault'
 import { prisma } from '../services/prisma'
 import { configStore } from '../agent/configStore'
 import { connectorRegistry } from '../agent/connectors/connectorRegistry'
-import { ALL_OAUTH_PROVIDERS, PLATFORM_OAUTH_PROVIDERS, MARKETPLACE_OAUTH_PROVIDERS } from '../agent/connectors/oauthProviders'
+import { ALL_OAUTH_PROVIDERS, PLATFORM_OAUTH_PROVIDERS, MARKETPLACE_OAUTH_PROVIDERS, loginProviderForConnector } from '../agent/connectors/oauthProviders'
+import { publicCallbackBase } from '../services/oauth'
 
 export const oauthConnectorRouter = express.Router()
 
@@ -44,8 +50,18 @@ interface PkceStore {
   /** Marketplace connectors: the user's own OAuth app credentials. */
   userClientId?: string
   userClientSecret?: string
+  /** Frontend opened the flow in a popup: the callback answers with a
+   *  postMessage-and-close page instead of a redirect. */
+  viaPopup?: boolean
 }
 const pkceStore = new Map<string, PkceStore>()
+
+/** True when the state belongs to a connector flow (vs the login JWT state). */
+export function connectorStateExists(state: string | undefined | null): boolean {
+  if (!state) return false
+  const pkce = pkceStore.get(state)
+  return !!pkce && pkce.expiresAt >= Date.now()
+}
 
 function generateState(): string { return crypto.randomBytes(32).toString('hex') }
 function generateVerifier(): string { return crypto.randomBytes(32).toString('base64url') }
@@ -71,9 +87,37 @@ function baseUrl(): string {
   return process.env.BASE_URL || process.env.FRONTEND_URL?.split(',')?.[0]?.trim() || 'http://127.0.0.1:3000'
 }
 
-/** The exact redirect URL to register in each OAuth provider app settings. */
-export function oauthRedirectUri(): string {
+/**
+ * The redirect_uri each connector flow sends. PLATFORM connectors (Google
+ * Drive/Gmail/Calendar/Sheets, GitHub) ride the SIGN-IN flow's registered
+ * callback — `{OAUTH_CALLBACK_BASE}/api/auth/oauth/{google|github}/callback`
+ * — the same string the provider console already trusts (this is the
+ * redirect_uri_mismatch fix, 2026-10-05: the old dedicated
+ * /api/oauth-connector/callback was never registered in Google's console,
+ * so every Gmail/Drive connect died with Error 400 before consent).
+ * MARKETPLACE connectors run on the user's own OAuth app and keep the
+ * dedicated callback documented in CONNECTOR_SETUP.md.
+ *
+ * The string MUST be identical at authorize and at token exchange — both
+ * call sites use this function.
+ */
+export function oauthRedirectUri(type: string): string {
+  const loginProvider = loginProviderForConnector(type)
+  if (loginProvider) return `${publicCallbackBase('')}/api/auth/oauth/${loginProvider}/callback`
   return `${baseUrl()}/api/oauth-connector/callback`
+}
+
+/** The response when the flow runs in a popup: postMessage the opener, close. */
+function popupCloser(res: express.Response, payload: { ok: boolean; connectorType: string; error?: string }): void {
+  const data = JSON.stringify({ source: 'loop-oauth', ...payload })
+  res.set('Cache-Control', 'no-store')
+  res.set('Content-Type', 'text/html; charset=utf-8')
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Connected</title></head>
+<body><script>
+(function(){try{if(window.opener&&!window.opener.closed){window.opener.postMessage(${data},'*')}}catch(e){}}try{window.close()}catch(e){}})();
+</script>
+<p style="font-family:system-ui,sans-serif;color:#666">You can close this window.</p>
+</body></html>`)
 }
 
 // ---------------------------------------------------------------------------
@@ -105,16 +149,16 @@ oauthConnectorRouter.post('/init/:connectorType', authenticateToken, asyncHandle
   const codeVerifier = generateVerifier()
   const codeChallenge = sha256(codeVerifier)
   pkceStore.set(state, { state, codeVerifier, redirectTo: req.body?.redirectTo || '/chat', connectorType, userId, workspaceId,
-    userClientId, userClientSecret, expiresAt: Date.now() + 600_000 })
+    userClientId, userClientSecret, viaPopup: req.body?.via === 'popup', expiresAt: Date.now() + 600_000 })
 
   const params = new URLSearchParams({
-    client_id: clientIdFor(connectorType, pkceStore.get(state))!, redirect_uri: oauthRedirectUri(),
+    client_id: clientIdFor(connectorType, pkceStore.get(state))!, redirect_uri: oauthRedirectUri(connectorType),
     response_type: 'code', scope: provider.scopes.join(' '), state,
     code_challenge: codeChallenge, code_challenge_method: 'S256',
     access_type: 'offline', prompt: 'consent',
     ...(provider.extraAuthorizeParams || {}),
   })
-  return res.json({ authorizeUrl: `${provider.authorizeUrl}?${params.toString()}` })
+  return res.json({ authorizeUrl: `${provider.authorizeUrl}?${params.toString()}`, redirectUri: oauthRedirectUri(connectorType) })
 }))
 
 /** Best-effort display name for the connected account (shown on the card). */
@@ -149,19 +193,30 @@ async function fetchAccountLabel(type: string, accessToken: string): Promise<str
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/oauth-connector/callback — OAuth provider redirects here
+// Shared completion — called from BOTH callback paths:
+//   GET /api/oauth-connector/callback          (marketplace connectors)
+//   GET /api/auth/oauth/{provider}/callback    (platform connectors; the
+//     login-callback handler delegates when the state is a connector state)
 // ---------------------------------------------------------------------------
-oauthConnectorRouter.get('/callback', asyncHandler(async (req, res) => {
-  const { code, state, error } = req.query as Record<string, string | undefined>
-  if (error) return res.redirect(`/chat/?oauth_error=${encodeURIComponent(error)}`)
-  if (!code || !state) return res.status(400).send('Missing code or state.')
 
-  const pkce = pkceStore.get(state)
-  if (!pkce || pkce.expiresAt < Date.now()) { pkceStore.delete(state || ''); return res.status(400).send('Invalid or expired state.') }
-  pkceStore.delete(state)
+/** Respond for a completed/failed flow: popup closer or legacy redirect. */
+function flowDone(pkce: PkceStore, res: express.Response, payload: { ok: boolean; error?: string }): void {
+  const target = pkce.redirectTo?.startsWith('/') ? pkce.redirectTo : '/chat'
+  if (pkce.viaPopup) {
+    popupCloser(res, { ok: payload.ok, connectorType: pkce.connectorType, error: payload.error })
+    return
+  }
+  if (payload.ok) return res.redirect(`/chat/?oauth=connected&type=${pkce.connectorType}`)
+  res.redirect(`/chat/?oauth_error=${encodeURIComponent(payload.error || 'oauth_failed')}&type=${pkce.connectorType}`)
+}
+
+export async function completeConnectorCallback(code: string | undefined, state: string | undefined, res: express.Response): Promise<void> {
+  const pkce = state ? pkceStore.get(state) : undefined
+  if (!pkce || pkce.expiresAt < Date.now()) { if (state) pkceStore.delete(state); return flowDone({ redirectTo: '/chat', viaPopup: false } as PkceStore, res, { ok: false, error: 'invalid_state' }) }
+  if (state) pkceStore.delete(state)
 
   const provider = ALL_OAUTH_PROVIDERS[pkce.connectorType]
-  if (!provider) return res.status(500).send('Unknown provider.')
+  if (!provider) return flowDone(pkce, res, { ok: false, error: 'unknown_provider' })
 
   try {
     const tokenRes = await fetch(provider.tokenUrl, {
@@ -169,11 +224,11 @@ oauthConnectorRouter.get('/callback', asyncHandler(async (req, res) => {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
       body: new URLSearchParams({
         client_id: clientIdFor(pkce.connectorType, pkce) || '', client_secret: clientSecretFor(pkce.connectorType, pkce) || '',
-        code, code_verifier: pkce.codeVerifier, grant_type: 'authorization_code', redirect_uri: oauthRedirectUri(),
+        code: code || '', code_verifier: pkce.codeVerifier, grant_type: 'authorization_code', redirect_uri: oauthRedirectUri(pkce.connectorType),
       }).toString(),
     })
     const tokens = await tokenRes.json()
-    if (!tokens.access_token) return res.status(502).send(`Token exchange failed: ${tokens.error || tokens.error_description || 'unknown'}`)
+    if (!tokens.access_token) return flowDone(pkce, res, { ok: false, error: tokens.error || 'token_exchange_failed' })
 
     const config: Record<string, string> = {
       access_token: tokens.access_token,
@@ -212,8 +267,24 @@ oauthConnectorRouter.get('/callback', asyncHandler(async (req, res) => {
     configStore.saveConnectors(existingEntry ? list.map((c) => (c.id === entry.id ? entry : c)) : [...list, entry])
     connectorRegistry.activate(entry as any)
 
-    return res.redirect(`/chat/?oauth=connected&type=${pkce.connectorType}`)
+    return flowDone(pkce, res, { ok: true })
   } catch (e: any) {
-    return res.status(502).send(`Token exchange failed: ${e.message}`)
+    return flowDone(pkce, res, { ok: false, error: e?.message || 'token_exchange_failed' })
   }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/oauth-connector/callback — marketplace connectors land here
+// ---------------------------------------------------------------------------
+oauthConnectorRouter.get('/callback', asyncHandler(async (req, res) => {
+  const { code, state, error } = req.query as Record<string, string | undefined>
+  if (error) {
+    // A provider error arrives without a state lookup — answer in the same
+    // shape the flow started in (popup vs redirect) when we can.
+    const pkce = state ? pkceStore.get(state) : undefined
+    if (pkce) { pkceStore.delete(state || ''); return flowDone(pkce, res, { ok: false, error }) }
+    return res.redirect(`/chat/?oauth_error=${encodeURIComponent(error)}`)
+  }
+  if (!code || !state) return res.status(400).send('Missing code or state.')
+  return completeConnectorCallback(code, state, res)
 }))
