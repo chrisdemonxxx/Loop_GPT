@@ -360,8 +360,8 @@ const WORKING: CatalogConnector[] = [
 // ---------------------------------------------------------------------------
 
 const PLATFORM_OAUTH: CatalogConnector[] = [
-  { type: 'google_drive', name: 'Google Drive', description: 'Search and read files from Google Drive.', category: 'Productivity', icon: '📁', oauth: true },
-  { type: 'gmail', name: 'Gmail', description: 'Read and send email from Gmail.', category: 'Communication', icon: '📧', oauth: true },
+  { type: 'google_drive', name: 'Google Drive', description: 'Save files to Google Drive. Full Drive search arrives once Google verification completes.', category: 'Productivity', icon: '📁', oauth: true },
+  { type: 'gmail', name: 'Gmail', description: 'Send email from Gmail. Inbox reading arrives once Google verification completes.', category: 'Communication', icon: '📧', oauth: true },
   { type: 'google_calendar', name: 'Google Calendar', description: 'Read and create calendar events.', category: 'Productivity', icon: '📅', oauth: true },
   { type: 'google_sheets', name: 'Google Sheets', description: 'Read and write spreadsheet data.', category: 'Data', icon: '📊', oauth: true },
 ]

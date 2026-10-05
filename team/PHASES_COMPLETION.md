@@ -435,3 +435,21 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   the brand was shut down 2026-03-19 per gcloud's deprecation warning); the
   exact two clicks are in the kit. Google's own 24h systems-update wait then
   applies before the verification RETRY.
+- **E-S6.8** (the restricted-scope wall, 2026-10-05): with the app published
+  but restricted-scope verification pending (Google: ~6 weeks + CASA), the two
+  RESTRICTED scopes (`gmail.readonly`, `drive.readonly` — confirmed on
+  Google's Restricted Scopes page; every Gmail READ scope is restricted)
+  put every consent behind Google's hard "Access blocked" wall — the
+  sensitive-class bypass does not apply. Shipped the unambiguous fix:
+  **sensitive-only scopes by default** — `requestedScopes()` in
+  oauthProviders drops the restricted scopes until
+  `GOOGLE_FULL_READ_SCOPES=true` (the operator flips it when verification
+  lands; users re-consent and the read tools return). Tools match the grant
+  honestly: Gmail registers **send-only** (gmail.send, sensitive) and Drive
+  registers a NEW **drive_create_file** (drive.file, sensitive — agent saves
+  files to the user's Drive); inbox search/read and full-Drive listing
+  return with the flag. Catalog descriptions updated to the honest copy.
+  Tests: 4 new gating tests (default vs flag, scopes + tool lists); the
+  adapter CI suite now runs with the flag (full implementations); suite
+  66 files / 1202 green, tsc=0. Calendar/Sheets/Gmail-send/GitHub were
+  always fine.

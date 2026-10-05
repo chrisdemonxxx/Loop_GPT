@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { oauthRedirectUri, connectorStateExists, completeConnectorCallback } from '../../../routes/oauthConnector'
-import { loginProviderForConnector, PLATFORM_OAUTH_PROVIDERS } from '../oauthProviders'
+import { loginProviderForConnector, PLATFORM_OAUTH_PROVIDERS, requestedScopes, googleFullReadScopesEnabled } from '../oauthProviders'
+import { gmailConnectorTools, googleDriveConnectorTools } from '../googleAdapters'
 
 /** Env fixture: the production shapes (OAUTH_CALLBACK_BASE wins for the
  *  platform URI; FRONTEND_URL carries the marketplace base). */
@@ -52,5 +53,40 @@ describe('connector state routing (login-callback delegation)', () => {
     // Legacy redirect path for an un-started flow (no popup flag known).
     expect(res.redirect).toHaveBeenCalled()
     expect(String(res.redirect.mock.calls[0][0])).toContain('oauth_error=invalid_state')
+  })
+})
+
+describe('sensitive-only scope default (the restricted-scope wall fix, 2026-10-05)', () => {
+  beforeEach(() => { vi.stubEnv('GOOGLE_FULL_READ_SCOPES', '') })
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('the default requests NO restricted scopes for Gmail/Drive', () => {
+    expect(googleFullReadScopesEnabled()).toBe(false)
+    expect(requestedScopes('gmail')).toEqual(['https://www.googleapis.com/auth/gmail.send'])
+    expect(requestedScopes('google_drive')).toEqual(['https://www.googleapis.com/auth/drive.file'])
+    // Calendar/Sheets were always sensitive — unchanged
+    expect(requestedScopes('google_calendar')).toContain('https://www.googleapis.com/auth/calendar.events')
+  })
+
+  it('the flag restores the full read scopes', () => {
+    vi.stubEnv('GOOGLE_FULL_READ_SCOPES', 'true')
+    expect(googleFullReadScopesEnabled()).toBe(true)
+    expect(requestedScopes('gmail')).toContain('https://www.googleapis.com/auth/gmail.readonly')
+    expect(requestedScopes('google_drive')).toContain('https://www.googleapis.com/auth/drive.readonly')
+  })
+
+  it('default Gmail tools are send-only; Drive tools are create-only', () => {
+    const gmail = gmailConnectorTools({ id: 't1', type: 'gmail', name: 'Gmail', enabled: true, config: {} } as any)
+    expect(gmail.map((t) => t.name)).toEqual(['connector__t1__gmail_send'])
+    const drive = googleDriveConnectorTools({ id: 't2', type: 'google_drive', name: 'Drive', enabled: true, config: {} } as any)
+    expect(drive.map((t) => t.name)).toEqual(['connector__t2__drive_create_file'])
+  })
+
+  it('the flag restores the read tools', () => {
+    vi.stubEnv('GOOGLE_FULL_READ_SCOPES', 'true')
+    const gmail = gmailConnectorTools({ id: 't1', type: 'gmail', name: 'Gmail', enabled: true, config: {} } as any)
+    expect(gmail.map((t) => t.name)).toEqual(['connector__t1__gmail_search', 'connector__t1__gmail_read', 'connector__t1__gmail_send'])
+    const drive = googleDriveConnectorTools({ id: 't2', type: 'google_drive', name: 'Drive', enabled: true, config: {} } as any)
+    expect(drive.map((t) => t.name)).toEqual(['connector__t2__drive_list_files', 'connector__t2__drive_read_file'])
   })
 })

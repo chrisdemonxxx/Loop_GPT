@@ -31,7 +31,7 @@ import { encryptConnectionConfig } from '../services/credentialVault'
 import { prisma } from '../services/prisma'
 import { configStore } from '../agent/configStore'
 import { connectorRegistry } from '../agent/connectors/connectorRegistry'
-import { ALL_OAUTH_PROVIDERS, PLATFORM_OAUTH_PROVIDERS, MARKETPLACE_OAUTH_PROVIDERS, loginProviderForConnector } from '../agent/connectors/oauthProviders'
+import { ALL_OAUTH_PROVIDERS, PLATFORM_OAUTH_PROVIDERS, MARKETPLACE_OAUTH_PROVIDERS, loginProviderForConnector, requestedScopes } from '../agent/connectors/oauthProviders'
 import { publicCallbackBase } from '../services/oauth'
 
 export const oauthConnectorRouter = express.Router()
@@ -153,7 +153,7 @@ oauthConnectorRouter.post('/init/:connectorType', authenticateToken, asyncHandle
 
   const params = new URLSearchParams({
     client_id: clientIdFor(connectorType, pkceStore.get(state))!, redirect_uri: oauthRedirectUri(connectorType),
-    response_type: 'code', scope: provider.scopes.join(' '), state,
+    response_type: 'code', scope: requestedScopes(connectorType).join(' '), state,
     code_challenge: codeChallenge, code_challenge_method: 'S256',
     access_type: 'offline', prompt: 'consent',
     ...(provider.extraAuthorizeParams || {}),

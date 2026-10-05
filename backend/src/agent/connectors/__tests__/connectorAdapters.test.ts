@@ -10,7 +10,14 @@ import type { ToolContext } from '../../agent/types'
  * no DB; regressions in URL/shape/auth are caught here. */
 
 const fetchMock = vi.fn()
-beforeEach(() => { vi.stubGlobal('fetch', fetchMock) })
+beforeEach(() => {
+  vi.stubGlobal('fetch', fetchMock)
+  // The read tools (gmail_search/read, drive_list/read) register only with
+  // GOOGLE_FULL_READ_SCOPES (restricted-scope verification pending). These
+  // tests exercise the FULL implementations — the default (sensitive-only)
+  // shape is pinned in oauthRedirectRouting.test.ts.
+  vi.stubEnv('GOOGLE_FULL_READ_SCOPES', 'true')
+})
 afterEach(() => { vi.unstubAllGlobals(); fetchMock.mockReset() })
 
 const ctx = { signal: undefined, emit: () => {} } as unknown as ToolContext

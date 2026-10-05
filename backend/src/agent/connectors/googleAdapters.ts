@@ -7,6 +7,7 @@
  */
 import type { ToolDefinition } from '../types'
 import { configStore, type ConnectorConfig } from '../configStore'
+import { googleFullReadScopesEnabled } from './oauthProviders'
 
 const GOOGLE_CLIENT_ID = () => process.env.GOOGLE_CLIENT_ID
 const GOOGLE_CLIENT_SECRET = () => process.env.GOOGLE_CLIENT_SECRET
@@ -59,6 +60,39 @@ function summarizeList(items: any[], field: (i: any) => string, empty = 'No resu
 export function googleDriveConnectorTools(cfg: ConnectorConfig): ToolDefinition[] {
   const id = cfg.id
   const base = 'https://www.googleapis.com/drive/v3'
+  // drive.file only (pre-verification): the agent can CREATE files in the
+  // connected Drive — those files are visible to the user and re-readable by
+  // the app. Whole-Drive listing/read needs the RESTRICTED drive.readonly
+  // scope, which returns with GOOGLE_FULL_READ_SCOPES after verification.
+  if (!googleFullReadScopesEnabled()) {
+    return [
+      {
+        name: `connector__${id}__drive_create_file`,
+        source: `connector:${id}`,
+        description: '[Google Drive] Create a text file in the connected Drive. Args: name, content.',
+        parameters: { type: 'object', properties: { name: { type: 'string' }, content: { type: 'string' } }, required: ['name', 'content'] },
+        async handler(args, ctx) {
+          const token = await ensureGoogleToken(cfg)
+          if (!token) return { content: 'Google Drive not connected.', isError: true }
+          const boundary = `loop${Date.now()}`
+          const meta = { name: String(args.name), mimeType: 'text/plain' }
+          const body = [
+            `--${boundary}`, 'Content-Type: application/json; charset=UTF-8', '', JSON.stringify(meta),
+            `--${boundary}`, 'Content-Type: text/plain', '', String(args.content), `--${boundary}--`,
+          ].join('\r\n')
+          const res = await fetch(`${base}/files?uploadType=multipart`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
+            body, signal: ctx.signal,
+          })
+          const text = await res.text()
+          if (!res.ok) return { content: `[Google Drive] HTTP ${res.status}: ${text.slice(0, 400)}`, isError: true }
+          const created = JSON.parse(text)
+          return { content: `Saved "${meta.name}" to Google Drive${created.webViewLink ? `: ${created.webViewLink}` : ''}.` }
+        },
+      },
+    ]
+  }
   return [
     {
       name: `connector__${id}__drive_list_files`,
@@ -94,6 +128,33 @@ export function googleDriveConnectorTools(cfg: ConnectorConfig): ToolDefinition[
 export function gmailConnectorTools(cfg: ConnectorConfig): ToolDefinition[] {
   const id = cfg.id
   const base = 'https://gmail.googleapis.com/gmail/v1/users/me'
+
+  // gmail.send is SENSITIVE — always granted. The read tools need the
+  // RESTRICTED gmail.readonly scope; they register only after restricted-
+  // scope verification (GOOGLE_FULL_READ_SCOPES) completes.
+  const sendTool: ToolDefinition = {
+    name: `connector__${id}__gmail_send`,
+    source: `connector:${id}`,
+    description: '[Gmail] Send an email from the connected account. Args: to, subject, body.',
+    parameters: { type: 'object', properties: { to: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' } }, required: ['to', 'subject', 'body'] },
+    async handler(args, ctx) {
+      const token = await ensureGoogleToken(cfg)
+      if (!token) return { content: 'Gmail not connected.', isError: true }
+      const mime = [`To: ${args.to}`, `Subject: ${args.subject}`, 'Content-Type: text/plain; charset="UTF-8"', '', args.body].join('\r\n')
+      const raw = Buffer.from(mime).toString('base64url')
+      const res = await fetch(`${base}/messages/send`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ raw }), signal: ctx.signal,
+      })
+      const text = await res.text()
+      if (!res.ok) return { content: `[Gmail] HTTP ${res.status}: ${text.slice(0, 400)}`, isError: true }
+      return { content: `Email sent to ${args.to}.` }
+    },
+  }
+
+  if (!googleFullReadScopesEnabled()) return [sendTool]
+
   return [
     {
       name: `connector__${id}__gmail_search`,
@@ -126,26 +187,7 @@ export function gmailConnectorTools(cfg: ConnectorConfig): ToolDefinition[] {
         return { content: `From: ${get('from')}\nSubject: ${get('subject')}\nDate: ${get('date')}\n\n${body.slice(0, 4000)}` }
       },
     },
-    {
-      name: `connector__${id}__gmail_send`,
-      source: `connector:${id}`,
-      description: '[Gmail] Send an email from the connected account. Args: to, subject, body.',
-      parameters: { type: 'object', properties: { to: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' } }, required: ['to', 'subject', 'body'] },
-      async handler(args, ctx) {
-        const token = await ensureGoogleToken(cfg)
-        if (!token) return { content: 'Gmail not connected.', isError: true }
-        const mime = [`To: ${args.to}`, `Subject: ${args.subject}`, 'Content-Type: text/plain; charset="UTF-8"', '', args.body].join('\r\n')
-        const raw = Buffer.from(mime).toString('base64url')
-        const res = await fetch(`${base}/messages/send`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ raw }), signal: ctx.signal,
-        })
-        const text = await res.text()
-        if (!res.ok) return { content: `[Gmail] HTTP ${res.status}: ${text.slice(0, 400)}`, isError: true }
-        return { content: `Email sent to ${args.to}.` }
-      },
-    },
+    sendTool,
   ]
 }
 

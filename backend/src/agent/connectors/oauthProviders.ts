@@ -153,6 +153,31 @@ export function loginProviderForConnector(type: string): 'google' | 'github' | n
   return type === 'github' ? 'github' : 'google'
 }
 
+// ---------------------------------------------------------------------------
+// Effective scope set (2026-10-05, the restricted-scope wall)
+// ---------------------------------------------------------------------------
+
+/** RESTRICTED read scopes drop until Google's restricted-scope verification
+ *  (6 weeks + CASA assessment) completes: gmail.readonly and drive.readonly
+ *  put the app behind Google's hard "access blocked" wall for every user
+ *  while unverified. The SENSITIVE set (gmail.send, drive.file, calendar.*,
+ *  spreadsheets) keeps the documented unverified-app bypass. The operator
+ *  flips GOOGLE_FULL_READ_SCOPES=true once verification lands; users then
+ *  re-consent and the read tools return. */
+export function googleFullReadScopesEnabled(): boolean {
+  return /^(1|true|yes)$/i.test((process.env.GOOGLE_FULL_READ_SCOPES || '').trim())
+}
+
+/** The scopes an OAuth connector requests TODAY (flag-aware). */
+export function requestedScopes(type: string): string[] {
+  const provider = ALL_OAUTH_PROVIDERS[type]
+  if (!provider) return []
+  if (googleFullReadScopesEnabled()) return provider.scopes
+  if (type === 'gmail') return ['https://www.googleapis.com/auth/gmail.send']
+  if (type === 'google_drive') return ['https://www.googleapis.com/auth/drive.file']
+  return provider.scopes
+}
+
 /** Marketplace display catalog for the Connectors tab (sorted by name). */
 export const MARKETPLACE_LIST = Object.values(MARKETPLACE_OAUTH_PROVIDERS).map((p) => ({
   type: p.type,
