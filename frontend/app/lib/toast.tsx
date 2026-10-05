@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react'
@@ -60,7 +60,14 @@ export function useToast(): ToastApi {
 }
 
 function ToastViewport({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
-  if (typeof document === 'undefined') return null
+  // P0 (hydration #418/#423): the portal rendered during the initial client
+  // render injected a <div> into <body> that the server HTML doesn't have —
+  // React failed hydration and re-rendered the whole root client-side on
+  // every page. Render nothing until mounted so server and first client
+  // render match exactly.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+  if (!mounted) return null
   return createPortal(
     <div role="region" aria-label="Notifications" aria-live="polite" className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[60] flex flex-col items-center gap-2 pointer-events-none">
       <AnimatePresence initial={false}>

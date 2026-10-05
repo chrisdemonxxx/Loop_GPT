@@ -31,11 +31,20 @@ function timeAgo(iso: string | null): string {
   return `${Math.floor(s / 86400)}d ago`
 }
 
-/** Letter avatar instead of emoji icons — consistent iconography. */
+/** Letter avatar instead of emoji icons — consistent iconography. Known
+ *  services get distinct monograms (first-two-letters collided: GitHub and
+ *  GitLab both rendered "GI", both Google services rendered "G"). */
+const MONOGRAMS: Record<string, string> = {
+  GitHub: 'GH', GitLab: 'GL', 'Google Drive': 'GD', 'Google Calendar': 'GC',
+  Gmail: 'GM', 'HTTP API': 'HT', Sentry: 'SE', Notion: 'NO', Todoist: 'TD',
+  Slack: 'SL', Discord: 'DC', Jira: 'JI', Figma: 'FG', Zoom: 'ZM',
+  Dropbox: 'DB', Linear: 'LN', Asana: 'AS', Salesforce: 'SF',
+  'Microsoft Outlook': 'MO', OneDrive: 'OD',
+}
 function Avatar({ name }: { name: string }) {
   return (
     <span className="w-7 h-7 rounded-lg bg-ink-800 border border-white/5 flex items-center justify-center text-[11px] font-semibold text-slate-300 shrink-0" aria-hidden>
-      {name.slice(0, 2).toUpperCase()}
+      {MONOGRAMS[name] || name.slice(0, 2).toUpperCase()}
     </span>
   )
 }
@@ -232,25 +241,28 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
                   description={t.description}
                   badge={connected ? <Badge tone="green">connected</Badge> : undefined}
                   onClick={t.oauth ? undefined : () => { setAddType(t.type); setFields({}); setError('') }}
-                  actions={t.oauth ? (
-                    OAUTH_LABEL[t.type] ? (
-                      <div className="space-y-1">
-                        <button
-                          onClick={() => startOAuth(t.type)}
-                          disabled={oauthBusy === t.type}
-                          className="flex items-center gap-1 text-xs text-[#e79d7f] hover:underline self-start disabled:opacity-50"
-                        >
-                          {oauthBusy === t.type ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Connect with {OAUTH_LABEL[t.type]}
-                        </button>
-                        <p className="text-[10px] leading-snug text-slate-600 max-w-[16rem]">
-                          If Google shows an &ldquo;unverified app&rdquo; screen, choose <span className="text-slate-500">Advanced → Continue</span>. It disappears once our verification completes.
-                        </p>
-                      </div>
-                    ) : null
-                  ) : (
+                  actions={t.oauth ? undefined : (
                     <button className="flex items-center gap-1 text-xs text-[#e79d7f] hover:underline self-start"><Plus size={12} /> Add</button>
                   )}
-                />
+                >
+                  {/* OAuth CTA lives BELOW the content (children slot), not in
+                      the right-side actions slot — the 16rem disclaimer stack
+                      squeezed the title column to zero width on 2-col cards. */}
+                  {t.oauth && OAUTH_LABEL[t.type] && (
+                    <div className="mt-2 space-y-1">
+                      <button
+                        onClick={() => startOAuth(t.type)}
+                        disabled={oauthBusy === t.type}
+                        className="flex items-center gap-1 text-xs text-[#e79d7f] hover:underline self-start disabled:opacity-50"
+                      >
+                        {oauthBusy === t.type ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Connect with {OAUTH_LABEL[t.type]}
+                      </button>
+                      <p className="text-[10px] leading-snug text-slate-600">
+                        If Google shows an &ldquo;unverified app&rdquo; screen, choose <span className="text-slate-500">Advanced → Continue</span>. It disappears once our verification completes.
+                      </p>
+                    </div>
+                  )}
+                </Card>
               )
             })}
           </div>

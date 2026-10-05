@@ -8,7 +8,7 @@ import { SectionHeader, Badge } from '../ui/primitives'
 interface BillingConfig {
   enabled: boolean; checkoutEnabled: boolean; plans?: Record<string, boolean>; topUps?: boolean
 }
-interface Me { plan?: string; credits?: number; imageCredits?: number; unlimited?: boolean }
+interface Me { plan?: string; credits?: number; imageCredits?: number; unlimited?: boolean; limits?: { credits: number; imageCredits: number } }
 
 /**
  * Billing (blueprint §8): the current plan card + the honest state of the
@@ -19,14 +19,24 @@ interface Me { plan?: string; credits?: number; imageCredits?: number; unlimited
 export default function BillingTab() {
   const [config, setConfig] = useState<BillingConfig | null>(null)
   const [me, setMe] = useState<Me | null>(null)
+  // P0: a slow/failed /me fetch used to render "Credits: —" indistinguishable
+  // from "no data" (the Account page showed real numbers at the same time).
+  const [meState, setMeState] = useState<'loading' | 'error' | 'ok'>('loading')
   const [code, setCode] = useState('')
   const [redeemState, setRedeemState] = useState<'idle' | 'working' | 'ok' | 'error'>('idle')
   const [redeemMsg, setRedeemMsg] = useState('')
 
+  const loadMe = () => {
+    setMeState('loading')
+    fetch(`${API_URL}/api/account/me`, { headers: authHeaders() })
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json() })
+      .then((d) => { setMe(d); setMeState('ok') })
+      .catch(() => { setMe(null); setMeState('error') })
+  }
+
   useEffect(() => {
     fetch(`${API_URL}/api/billing/config`).then((r) => r.json()).then(setConfig).catch(() => setConfig(null))
-    fetch(`${API_URL}/api/account/me`, { headers: authHeaders() })
-      .then((r) => (r.ok ? r.json() : null)).then(setMe).catch(() => setMe(null))
+    loadMe()
   }, [])
 
   const redeem = async () => {
@@ -39,10 +49,20 @@ export default function BillingTab() {
     const body = res ? await res.json().catch(() => ({})) : {}
     if (res?.ok) {
       setRedeemState('ok'); setRedeemMsg(body.message || 'Voucher applied.')
-      fetch(`${API_URL}/api/account/me`, { headers: authHeaders() }).then((r) => (r.ok ? r.json() : null)).then(setMe).catch(() => {})
+      loadMe()
     } else {
       setRedeemState('error'); setRedeemMsg(body.error || 'Could not redeem that voucher.')
     }
+  }
+
+  const creditsLine = (kind: 'credits' | 'imageCredits') => {
+    if (meState === 'loading') return '…'
+    if (meState === 'error') return '—'
+    if (me?.unlimited) return 'Unlimited'
+    const value = me?.[kind]
+    const limit = me?.limits?.[kind]
+    if (value === undefined) return '—'
+    return limit !== undefined ? `${value} of ${limit}/day` : String(value)
   }
 
   return (
@@ -57,9 +77,15 @@ export default function BillingTab() {
           {me?.unlimited && <Badge tone="green">unlimited</Badge>}
         </div>
         <div className="mt-2.5 grid grid-cols-2 gap-y-1 text-[12px] tabular-nums text-slate-400">
-          <span>Credits: {me?.unlimited ? 'Unlimited' : (me?.credits ?? '—')}</span>
-          <span>Image credits: {me?.unlimited ? 'Unlimited' : (me?.imageCredits ?? '—')}</span>
+          <span>Credits: {creditsLine('credits')}</span>
+          <span>Image credits: {creditsLine('imageCredits')}</span>
         </div>
+        {meState === 'error' && (
+          <div className="mt-2 flex items-center gap-2 text-[12px] text-rose-400">
+            Could not load your plan.
+            <button type="button" onClick={loadMe} className="text-[#e79d7f] hover:underline">Retry</button>
+          </div>
+        )}
       </div>
 
       {config && !config.enabled && (

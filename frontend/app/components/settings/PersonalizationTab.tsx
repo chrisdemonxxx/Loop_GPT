@@ -154,7 +154,6 @@ export default function PersonalizationTab() {
             description={p.description}
             active={activePreset === p.key}
             onClick={() => applyPreset(p.key)}
-            badge={activePreset === p.key ? <Badge tone="accent">active</Badge> : undefined}
           />
         ))}
       </div>
