@@ -117,6 +117,7 @@ export default function AdminPage() {
           <h1 className="text-xl font-semibold text-slate-100 flex items-center gap-2"><ShieldCheck size={18} className="text-[#c96442]" /> Admin Portal</h1>
         </div>
         <div className="flex items-center gap-2">
+          <Link href="/admin/bot" className="text-xs px-3 py-1.5 rounded-lg border text-violet-300 border-violet-500/30 bg-violet-500/10 hover:bg-violet-500/20">Bot computer</Link>
           <button onClick={() => setLive((v) => !v)} className={`text-xs px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${live ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' : 'text-slate-400 border-white/10'}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${live ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} /> {live ? 'Live' : 'Paused'}
           </button>
