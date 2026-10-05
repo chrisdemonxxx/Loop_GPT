@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { CommandPalette, openSidebarSearch } from '../CommandPalette'
@@ -6,10 +6,17 @@ import { CommandPalette, openSidebarSearch } from '../CommandPalette'
 // Exit motion never finishes in jsdom, so a closed palette would stay mounted.
 vi.mock('framer-motion', () => {
   const React = require('react')
-  const Div = ({ children, initial, animate, exit, transition, ...rest }) =>
+  type MockDivProps = {
+    children?: ReactNode
+    initial?: unknown
+    animate?: unknown
+    exit?: unknown
+    transition?: unknown
+  }
+  const Div = ({ children, initial, animate, exit, transition, ...rest }: MockDivProps) =>
     React.createElement('div', rest, children)
   return {
-    AnimatePresence: ({ children }) => children,
+    AnimatePresence: ({ children }: { children?: ReactNode }) => children,
     motion: { div: Div },
   }
 })
