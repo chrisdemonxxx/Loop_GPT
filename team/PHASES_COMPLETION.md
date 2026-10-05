@@ -25,7 +25,7 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
 | step | deliverable | owners | gate (raw evidence required) | status |
 |---|---|---|---|---|
 | **S0** bank at-risk work | P5 fix commit + `UI_MOBILE_WEB_ui-visual.md`; gate spec + phone projects committed; baselines/tokens/`.storybook` committed + `.gitignore`; storybook scripts+deps restored; `GIT_REVISION` on web service | ui-visual, qa-verify, pixel-measure, storybook-dev, ops-release | tsc=0; vitest 26/232; mobile gate 12 passed/2 skipped local; `build-storybook` exit 0; `GET /version.json` → real SHA == HEAD | **SHIPPED — see E-S0.6/E-S0.7** |
-| **S1** close RED gates | media suite 8→28; `team/PERF_P1.md`; `team/RELEASE_P1.md`; GAP-003 serious+ contrast fixes + gate tightened; A6 catalog depth (GAP-029 row 3) | ops-release, perf-eng, qa-verify, core-dev | raw vitest 28/28; both docs hash-verified; axe zero serious+; catalog ≥3 picker rows live | OPEN |
+| **S1** close RED gates | media suite 8→28; `team/PERF_P1.md`; `team/RELEASE_P1.md`; GAP-003 serious+ contrast fixes + gate tightened; A6 catalog depth (GAP-029 row 3) | ops-release, perf-eng, qa-verify, core-dev | raw vitest 28/28; both docs hash-verified; axe zero serious+; catalog ≥3 picker rows live | **4 of 5 CLOSED** — media 28/28 (E-S1.1), GAP-003 0C/0S + gate serious+ (E-S1.2), `PERF_P1.md` + `RELEASE_P1.md` written from raw probes (E-S1.3). Remaining: A6 catalog depth |
 | **S2** settings panels (blueprint P6) | hash-routed `#settings/*` panel layer + General, Account, Privacy(+5 sub-panels), Billing, Capabilities, Reflect, Time-and-focus, Claude Code → 12/12 | arch-lead (contract), ui-visual, qa-verify | a11y snapshot per panel matches plan §8; hash back/forward; settings search | OPEN |
 | **S3** page parity (blueprint P7/P8) | `/customize/connectors/all` + connector detail; project detail; skill/plugin detail tabs; `/downloads`, `/upgrade`(+pro/max), `/buying-specialist`, `/logout`, `/new` hero + PromptChips; `/code` shell + gates; mobile mirrors | arch-lead, ui-visual, mobile-dev, research-scout (copy seeds) | every §4 route reachable; table-driven route test incl. §4.3 404s; entitlement matrix doc | OPEN |
 | **S4** primitives + visual lock | ~20 remaining §10 stories; Skeleton/DataTable/Carousel/PromptChips/Tabs/FileViewer; `visual-parity.spec.ts` in CI; new screens captured light+dark × 5 viewports | storybook-dev, core-dev, pixel-measure, qa-verify (keyboard §11) | storybook index complete; parity ≤0.5% all rows; keyboard walkthrough pass | OPEN |
@@ -127,3 +127,17 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   FAIL 0**; MANIFEST sha256 `9cc849b7…` headRevision `71b7415`.
   `team/VISUAL_PARITY.md` RE-FREEZE section appended; `pending P5` retired
   from both the ledger and `measure.cjs`.
+- **E-S1.3** (S1 artifacts, 2026-10-05): `team/PERF_P1.md` written from raw
+  probes � edge handshake (time_starttransfer - time_appconnect) **~0.33 s**
+  on every route (5� per route, 20 raw runs pasted), mermaid-lazy verified
+  shipped (2,535,990 B trio ABSENT from the 24-chunk `/chat` first-load, only
+  a 33,827 B viewer-chunk regex remains), xlsx-lazy shipped (413,791 B chunk
+  built but unreferenced by `/chat/index.html`); hljs-subset + framer-motion +
+  TTFT + LCP/CLS named OPEN, not claimed. `team/RELEASE_P1.md` written �
+  healthz 200, **Sentry deliberate error HTTP 200 live** (event
+  `d2044fd5�` via the v7 envelope endpoint; the bare `/store/` payload is a
+  400 � probe recipe corrected; first scan's "no DSN" was a URL-concat bug,
+  �6.2 trap re-confirmed), Stripe frozen re-verified, stale RUNBOOK restore
+  footer fixed in the same commit, deploy read-back CLOSED via the revision
+  markers (baseline's chunk-set procedure superseded). Oldest open P1
+  artifacts are no longer absent.

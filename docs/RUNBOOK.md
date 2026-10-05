@@ -141,4 +141,6 @@ service, restore the latest dump per §3a steps 3–4, then repoint backend
 **Rewritten:** 2026-09-26 — matches the in-place swap path actually used,
 platform-accurate backup claims, tested restore steps recorded.
 **Status:** postgres-ssl:16 swap executed; volume backups Daily (operator
-confirmed in dashboard); scratch-restore rehearsal pending DATABASE_URL.
+confirmed in dashboard); restore rehearsal **CLOSED** per
+`docs/PROGRESS.md` Phase-1 close-out (33/33 tables restored in the scratch
+rehearsal) — `DATABASE_URL` is present in the prod backend env.
