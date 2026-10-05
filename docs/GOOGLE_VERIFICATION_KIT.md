@@ -113,9 +113,20 @@ Do this when the product is going public — not required to launch:
 2. On the consent screen, click **Submit** / the **Verification required**
    dialog; paste the justifications above for each scope.
 3. **Restricted scopes trigger the security assessment (CASA):** our two
-   restricted scopes are `gmail.readonly` and `drive.readonly`. Expect the
-   annual CASA tiered assessment (authorized-lab scan of the app; slowest,
-   costliest part of going fully public).
+   restricted scopes were `gmail.readonly` and `drive.readonly`. **SHIPPED
+   (2026-10-05, `67e9005`): the app now requests SENSITIVE-ONLY scopes by
+   default** — Gmail consents to `gmail.send` (send-only tools), Drive to
+   `drive.file` (the agent saves files via the new `drive_create_file`
+   tool); Calendar/Sheets/GitHub unchanged. This removes Google's hard
+   "Access blocked" wall for every user TODAY (sensitive-class requests get
+   the documented unverified-screen → Advanced bypass).
+   **When restricted-scope verification completes (~6 weeks + CASA —
+   submit with the justifications above):** set
+   `GOOGLE_FULL_READ_SCOPES=true` on the Railway **backend** service.
+   `requestedScopes()` restores the read scopes, the Gmail adapter
+   re-registers search/read, the Drive adapter re-registers list/read, and
+   users re-consent once. The full-implementation tests already run with
+   the flag (`connectorAdapters.test.ts`), so the restore path is gated-green.
 4. **CASA-free alternative (code change we can make on request):** drop
    `gmail.readonly` (Gmail becomes send-only) and swap `drive.readonly` →
    `drive.file`-only (assistant sees files the user opens with it, not the
