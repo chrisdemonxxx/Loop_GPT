@@ -39,4 +39,11 @@ next-env.d.ts
 test-results/
 playwright-report/
 
+# storybook build output (the index is committed in evidence notes, not the tree)
+storybook-static/
+
+# local probe/scratch outputs (never commit)
+*.out
+outSrv.txt
+
 
