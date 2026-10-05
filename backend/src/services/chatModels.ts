@@ -48,9 +48,9 @@ const LARGE_CONTEXT = Number(process.env.HF_LARGE_CONTEXT_TOKENS) || 262_144
  *
  *   loop-large (Large Looper)  — the flagship, vision-capable tier.
  *   loop-small (Small Looper)  — the fast tier.
- *
- * A dedicated VLM tier still resolves internally (see `vision` below) but is not
- * listed in the picker; image turns route to the large tier by default.
+ *   loop-vision (Large Looper (Vision)) — the dedicated VLM tier; listed in
+ *   the picker only when HF_VISION_ENDPOINT_URL is configured (otherwise
+ *   image turns route to the large tier, which sees images natively).
  */
 export const CHAT_MODELS: Record<ChatTier, ChatModelSpec> = {
   standard: {
@@ -134,9 +134,15 @@ export function smartRouteTask(
   return resolveChatTarget('standard')
 }
 
-/** The picker lists exactly the two Loopers (vision resolves internally). */
+/** The picker lists the two Loopers; a configured dedicated VLM endpoint adds
+ *  the vision row (A6 catalog depth, GAP-029 row 3). Without one, image turns
+ *  already route to the large tier — emitting a lookalike row would be a fake.
+ *  The row must carry the canonical id `loop-vision`, never the bare string
+ *  'vision' (shadowed to large by the alias table — see resolveChatTarget). */
 export function availableChatModels(): ChatModelSpec[] {
-  return [CHAT_MODELS.large, CHAT_MODELS.standard]
+  const rows = [CHAT_MODELS.large, CHAT_MODELS.standard]
+  if (process.env.HF_VISION_ENDPOINT_URL) rows.splice(1, 0, CHAT_MODELS.vision)
+  return rows
 }
 
 /** Normalise a base URL to the OpenAI-compatible `/v1` root.

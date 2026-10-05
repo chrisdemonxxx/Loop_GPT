@@ -14,16 +14,38 @@ afterEach(() => vi.unstubAllEnvs())
 const ABSENT = ''
 
 describe('chat model catalog', () => {
-  it('lists exactly two Loopers', () => {
+  it('lists exactly two Loopers when no dedicated VLM endpoint is configured', () => {
+    vi.stubEnv('HF_VISION_ENDPOINT_URL', ABSENT)
     const models = availableChatModels()
     expect(models).toHaveLength(2)
     expect(models.map((m) => m.label)).toEqual(['Large Looper', 'Small Looper'])
     expect(models.map((m) => m.id)).toEqual(['loop-large', 'loop-small'])
+    expect(models.some((m) => m.tier === 'vision')).toBe(false)
+    expect(chatModelCatalog()).toHaveLength(2)
   })
 
-  it('never exposes the vision tier in the picker', () => {
-    expect(availableChatModels().some((m) => m.tier === 'vision')).toBe(false)
-    expect(chatModelCatalog()).toHaveLength(2)
+  it('adds the vision row when a dedicated VLM endpoint is configured (A6 / GAP-029 row 3)', () => {
+    vi.stubEnv('HF_LARGE_ENDPOINT_URL', 'https://large.example.test')
+    vi.stubEnv('HF_LARGE_MODEL', 'large-upstream')
+    vi.stubEnv('HF_VISION_ENDPOINT_URL', 'https://vlm.example.test/')
+    vi.stubEnv('HF_VISION_MODEL', 'vlm-upstream')
+
+    // The row is emitted between the flagship and the fast tier, with the
+    // canonical id — never the bare alias string 'vision'.
+    expect(availableChatModels().map((m) => m.id)).toEqual(['loop-large', 'loop-vision', 'loop-small'])
+    expect(availableChatModels()[1]).toMatchObject({
+      id: 'loop-vision',
+      tier: 'vision',
+      label: 'Large Looper (Vision)',
+    })
+    // The catalog projection (/v1/models + picker) carries the same row.
+    expect(chatModelCatalog().map((m) => m.id)).toEqual(['loop-large', 'loop-vision', 'loop-small'])
+    // And the row is selectable end-to-end: id -> vision tier -> VLM target.
+    expect(resolveChatTarget(CHAT_MODELS.vision.id)).toMatchObject({
+      tier: 'vision',
+      model: 'vlm-upstream',
+      baseUrl: 'https://vlm.example.test/v1',
+    })
   })
 
   it('maps ids, aliases and the legacy "vision" value onto the two tiers', () => {
