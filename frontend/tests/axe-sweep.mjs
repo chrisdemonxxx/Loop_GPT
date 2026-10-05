@@ -12,7 +12,7 @@ const ROUTES = ['/', '/login/', '/signup/', '/chat/', '/account/', '/admin/', '/
   // empty catalog, so these scan the honest empty/loading renders).
   '/customize/connectors/all', '/customize/connectors/all?type=notion',
   // S3 group 2: the new §4 routes.
-  '/downloads', '/upgrade', '/buying-specialist']
+  '/downloads', '/upgrade', '/buying-specialist', '/project']
 
 const out = fs.openSync('axe-results.json', 'w')
 const w = o => fs.writeSync(out, JSON.stringify(o) + '\n')

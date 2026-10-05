@@ -96,6 +96,9 @@ router.get('/', authenticateToken, async (req, res) => {
         createdAt: true,
         updatedAt: true,
         pinned: true,
+        // Additive (S3, project detail page): lets the client scope the
+        // conversation list to a project without a second query.
+        projectId: true,
       },
     })
 

@@ -223,3 +223,21 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   template, so only `<title>404:` distinguishes the real 404 page. Gates:
   route spec **140 passed across 4 projects**; full playwright **196 passed /
   16 skipped**; tsc=0; vitest 30/263.
+- **E-S3.4** (S3 group 3b — project detail + registry type fix): `/project?id=`
+  page (blueprint §A2.3): real PATCH instructions editor, knowledge card
+  (count + text ingest + file upload + vector search — all shipped endpoints),
+  project-scoped chat list (client filter; `projectId` added to the
+  conversation list select — additive backend change), honest missing state,
+  Open-in-chat hand-off; ProjectsPanel rows gain the detail link. 6 tests,
+  all first-run green. Skill/plugin detail = the SkillsTab detail view
+  (instructions/triggers/tools/versions/revert already shipped) — documented
+  mapping in `CONTRACT_S3_ROUTES.md`, no duplicate route. Gates: tsc=0 (after
+  fixing the registry `ConnectorType` interface missed in E-S3.1 — the backend
+  tsc gate was not run for that commit; both suites re-run green 65/1192 +
+  frontend 31/269), sweep 48 runs 0C/0S, playwright 200 passed (route table
+  grew to 36 routes).
+- **E-S3.5** (404 policy LIVE, `e7f3a25` deploy verified): probe raw output —
+  `/usage -> 404 text/html`; `/chat/ /downloads /customize/connectors/all
+  /upgrade /login/ /artifact/ /account/ -> 200 text/html` each. Slashless
+  routes 301 to their directory (nginx standard, pre-existing, browsers
+  follow). S3 route parity is CLOSED on production.

@@ -25,6 +25,10 @@ export interface ConnectorType {
   oauth?: boolean
   /** Config fields the UI should collect (secret fields are write-only). */
   fields: Array<{ key: string; label: string; secret?: boolean; required?: boolean; placeholder?: string }>
+  /** Tool summaries for the directory detail view (S3 additive): suffix +
+   *  description only — never request templates. */
+  tools?: Array<{ suffix: string; description: string }>
+  docs?: string | null
   createTools: (cfg: ConnectorConfig) => ToolDefinition[]
 }
 

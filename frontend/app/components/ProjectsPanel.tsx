@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { X, FolderPlus, Trash2, Upload, Check, Database, MessageSquare, ChevronLeft, FileText } from 'lucide-react'
+import { X, FolderPlus, Trash2, Upload, Check, Database, MessageSquare, ChevronLeft, FileText, ExternalLink } from 'lucide-react'
 import { API_URL, authHeaders } from '../lib/api'
 import { Badge, btnGhost, btnPrimary, inputCls } from './ui/primitives'
 
@@ -345,7 +346,15 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
                     >
                       {active ? <><Check size={12} /> Active</> : 'Open'}
                     </button>
-                    <button onClick={() => remove(p.id)} title="Delete project" aria-label="Delete project" className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-white/5 transition"><Trash2 size={13} /></button>
+                    <div className="flex items-center gap-1.5">
+                      <Link
+                        href={`/project?id=${encodeURIComponent(p.id)}`}
+                        title="Project detail"
+                        aria-label={`Open project detail for ${p.name}`}
+                        className="p-1.5 rounded-lg text-slate-500 transition hover:text-slate-200 hover:bg-white/5"
+                      ><ExternalLink size={13} /></Link>
+                      <button onClick={() => remove(p.id)} title="Delete project" aria-label="Delete project" className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-white/5 transition"><Trash2 size={13} /></button>
+                    </div>
                   </div>
                 </div>
 

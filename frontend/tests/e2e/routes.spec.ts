@@ -8,7 +8,7 @@ import { test, expect } from '@playwright/test'
  * query-param adaptation (documented in the contracts).
  */
 const APP_ROUTES = [
-  '/', '/new', '/chat/', '/recents/', '/projects/', '/artifacts/', '/artifact/',
+  '/', '/new', '/chat/', '/recents/', '/projects/', '/project', '/artifacts/', '/artifact/',
   '/customize/', '/customize/connectors/all',
   '/downloads', '/upgrade', '/buying-specialist',
   '/code', '/code/artifacts', '/code/customize',
