@@ -27,6 +27,18 @@ test.describe('public pages', () => {
     })
   }
 
+  test('settings deep link opens the dialog on the requested panel (S2 §2)', async ({ page }) => {
+    await page.goto('/chat/#settings/billing')
+    await expect(page.getByRole('dialog', { name: 'Agent settings' })).toBeVisible()
+    const billing = page.getByRole('tab', { name: 'Billing' })
+    await expect(billing).toHaveAttribute('aria-selected', 'true')
+    // Selecting another panel pushes a hash entry; browser back returns.
+    await page.getByRole('tab', { name: 'Memory' }).click()
+    await expect(page).toHaveURL(/#settings\/memory$/)
+    await page.goBack()
+    await expect(page.getByRole('tab', { name: 'Billing' })).toHaveAttribute('aria-selected', 'true')
+  })
+
   test('landing has a working sign-up CTA', async ({ page }) => {
     await page.goto('/')
     await expect(page).toHaveTitle(/Loop GPT/i)

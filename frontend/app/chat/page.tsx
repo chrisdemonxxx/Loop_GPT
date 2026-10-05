@@ -68,9 +68,15 @@ export default function ChatPage() {
       if (route) { setShowSettings(true); setSettingsTab(route.panel) }
       else setShowSettings(false)
     }
+    // popstate covers back/forward between pushState entries (our tab pushes);
+    // hashchange covers typed/anchor navigation. Handler is idempotent.
     window.addEventListener('hashchange', onHash)
+    window.addEventListener('popstate', onHash)
     if (readCurrentSettingsHash()) onHash()
-    return () => window.removeEventListener('hashchange', onHash)
+    return () => {
+      window.removeEventListener('hashchange', onHash)
+      window.removeEventListener('popstate', onHash)
+    }
   }, [])
   const [projectsOpen, setProjectsOpen] = useState(false)
   const [researchOpen, setResearchOpen] = useState(false)

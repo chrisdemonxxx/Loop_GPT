@@ -42,7 +42,10 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
   const [privacySub, setPrivacySub] = useState<PrivacySub | undefined>(hashRoute?.sub)
 
   // Hash → panel: back/forward and typed URLs select panels; an emptied hash
-  // closes the dialog (only in dialog mode).
+  // closes the dialog (only in dialog mode). popstate AND hashchange are both
+  // wired: traversing history between pushState entries (our tab pushes)
+  // fires popstate; anchor/typed navigation fires hashchange. The handler is
+  // idempotent, so a double fire is harmless.
   useEffect(() => {
     const onHash = () => {
       const route = readCurrentSettingsHash()
@@ -54,7 +57,11 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
       }
     }
     window.addEventListener('hashchange', onHash)
-    return () => window.removeEventListener('hashchange', onHash)
+    window.addEventListener('popstate', onHash)
+    return () => {
+      window.removeEventListener('hashchange', onHash)
+      window.removeEventListener('popstate', onHash)
+    }
   }, [onClose, asPage])
 
   // Escape closes the dialog even when focus is in a field. X and backdrop

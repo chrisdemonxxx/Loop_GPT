@@ -1,5 +1,5 @@
 {
-  "headRevision": "a6c5e7047422416cd549d2ac9d70336dbb04d20c",
+  "headRevision": "2b23c4a877ee1d3729ce0dec19200725a36005f2",
   "command": "node tests/visual/measure.cjs --verify",
   "rows": [
     {

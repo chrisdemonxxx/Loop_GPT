@@ -26,7 +26,7 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
 |---|---|---|---|---|
 | **S0** bank at-risk work | P5 fix commit + `UI_MOBILE_WEB_ui-visual.md`; gate spec + phone projects committed; baselines/tokens/`.storybook` committed + `.gitignore`; storybook scripts+deps restored; `GIT_REVISION` on web service | ui-visual, qa-verify, pixel-measure, storybook-dev, ops-release | tsc=0; vitest 26/232; mobile gate 12 passed/2 skipped local; `build-storybook` exit 0; `GET /version.json` â†’ real SHA == HEAD | **SHIPPED â€” see E-S0.6/E-S0.7** |
 | **S1** close RED gates | media suite 8â†’28; `team/PERF_P1.md`; `team/RELEASE_P1.md`; GAP-003 serious+ contrast fixes + gate tightened; A6 catalog depth (GAP-029 row 3) | ops-release, perf-eng, qa-verify, core-dev | raw vitest 28/28; both docs hash-verified; axe zero serious+; catalog â‰¥3 picker rows live | **CLOSED â€” E-S1.1..E-S1.4** (media 28/28, GAP-003 0C/0S + serious+ gate, PERF_P1/RELEASE_P1 from raw probes, A6 `112fcbd` row 3) |
-| **S2** settings panels (blueprint P6) | hash-routed `#settings/*` panel layer + General, Account, Privacy(+5 sub-panels), Billing, Capabilities, Reflect, Time-and-focus, Claude Code â†’ 12/12 | arch-lead (contract), ui-visual, qa-verify | a11y snapshot per panel matches plan Â§8; hash back/forward; settings search | OPEN |
+| **S2** settings panels (blueprint P6) | hash-routed `#settings/*` panel layer + General, Account, Privacy(+5 sub-panels), Billing, Capabilities, Reflect, Time-and-focus, Claude Code â†’ 12/12 | arch-lead (contract), ui-visual, qa-verify | a11y snapshot per panel matches plan Â§8; hash back/forward; settings search | **CLOSED â€” E-S2.1/E-S2.2** (contract `CONTRACT_S2_SETTINGS.md`; 14-panel registry: 8 new + capabilitiesâ†’tools mapping; sweep 36 runs incl. 7 settings-overlay routes â†’ 0C/0S) |
 | **S3** page parity (blueprint P7/P8) | `/customize/connectors/all` + connector detail; project detail; skill/plugin detail tabs; `/downloads`, `/upgrade`(+pro/max), `/buying-specialist`, `/logout`, `/new` hero + PromptChips; `/code` shell + gates; mobile mirrors | arch-lead, ui-visual, mobile-dev, research-scout (copy seeds) | every Â§4 route reachable; table-driven route test incl. Â§4.3 404s; entitlement matrix doc | OPEN |
 | **S4** primitives + visual lock | ~20 remaining Â§10 stories; Skeleton/DataTable/Carousel/PromptChips/Tabs/FileViewer; `visual-parity.spec.ts` in CI; new screens captured light+dark Ã— 5 viewports | storybook-dev, core-dev, pixel-measure, qa-verify (keyboard Â§11) | storybook index complete; parity â‰¤0.5% all rows; keyboard walkthrough pass | OPEN |
 | **S5** release close | freeze revision post-S3; static+dynamic verdicts pinned to SHA; deploy; read-back both markers; tag; roster/GAP reconciliation; drop `qa2` stash | arch-lead, code-review, qa-verify, ops-release, boss-bot, hr-bot | `/api/version` AND `/version.json` == frozen SHA read back live; GAP-041â€¦070 triaged | OPEN |
@@ -144,13 +144,43 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
 - **E-S1.4** (S1/A6, 2026-10-05, `112fcbd`): `availableChatModels()` now
   emits `loop-vision` between the flagship and the fast tier **iff
   `HF_VISION_ENDPOINT_URL` is configured** (canonical id, never the shadowed
-  alias — contract §1). Without a dedicated VLM the row stays hidden (image
+  alias ï¿½ contract ï¿½1). Without a dedicated VLM the row stays hidden (image
   turns already route to large; a lookalike row would be a fake). Catalog
   tests rewritten to pin BOTH shapes and the end-to-end select
   (`loop-vision` ? vision tier ? VLM target); the two old tests pinned the
-  pre-A6 truth and had to change — that is the contract's own row-3 spec, not
+  pre-A6 truth and had to change ï¿½ that is the contract's own row-3 spec, not
   a test dodge. Suite re-run: **65 files / 1192 passed, tsc=0**. The picker
   nesting (per-row Effort submenu, vision badge, More-models footer) had
-  already shipped in `ModelSelector.tsx` — row 3 renders live on the next
+  already shipped in `ModelSelector.tsx` ï¿½ row 3 renders live on the next
   backend deploy (live `GET /api/models/catalog` goes 2 ? 3 rows; re-check
-  after deploy — do not trust, re-probe).
+  after deploy ï¿½ do not trust, re-probe).
+- **E-S2.1** (S2 build, 2026-10-05, `2b23c4a` + popstate fix): contract first
+  (`team/CONTRACT_S2_SETTINGS.md` — panel mapping table, hash wire shapes,
+  prefs schema, gates), then the code, per the seam discipline.
+  Shipped: `lib/settingsHash.ts` (`#settings/<panel>`, `#settings/privacy/<sub>`,
+  blueprint aliases capabilities?tools / claude-code?code / time-and-focus?time,
+  unknown?general+warn; `pushSettingsHash` pushes history + dispatches
+  hashchange), `lib/prefs.ts` (`loop-prefs/v1` versioned localStorage store,
+  per-key fallbacks, subscription fan-out, `reloadPrefs`), 7 new panels
+  (General/Account/Privacy+5 subs/Billing/Reflect/Time-and-focus/Loop Code)
+  wired to REAL endpoints where they exist (`/api/account/me|usage|redeem`,
+  TOTP setup, `/api/billing/config` frozen state shown honestly, conversations
+  share filter, files listing) and to client prefs where the platform has no
+  backend yet (time-and-focus enforcement explicitly pending — no fake copy),
+  `SettingsPanel` 14-panel registry (Settings + Customize groups),
+  chat-page hash listener (dialog opens from any `#settings/*` deep link).
+  Gates, raw: `tsc`=0 · `vitest` **28 files / 248 tests** (+16 new: prefs store
+  fallbacks, hash round-trip/alias/leave, panel smokes, deep-link mount) ·
+  `npx playwright test` **56 passed / 16 skipped** (app.spec 44 across 4
+  projects incl. the new settings deep-link + back-walks-panels e2e) ·
+  axe sweep extended with 7 settings-overlay routes ? **36 runs, 0 critical /
+  0 serious / 0 render errors** · parity re-frozen (settings screen default
+  tab changed by design) and verified `rows 30 · worst delta 0.0000% · FAIL 0`.
+- **E-S2.2** (S2 defect found by the e2e and fixed): back/forward between
+  pushState entries fires `popstate`, and Chromium fires `hashchange` there
+  too (probe logged both) — but the first e2e run failed because `out/` was
+  stale (built before the fix). Lesson re-confirmed: gates must run against a
+  fresh build of HEAD, never a leftover `out/`. Panel + page now listen to
+  BOTH events (idempotent handler). Also noted: the chat shell creates one
+  extra history entry at load (entries=2 before any push) — harmless, tracked
+  for the S3 route-test pass.
