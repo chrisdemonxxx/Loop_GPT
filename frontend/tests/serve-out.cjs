@@ -13,11 +13,15 @@ const mime = {
 http.createServer((req, res) => {
   const urlPath = decodeURIComponent((req.url || '/').split('?')[0])
   let file = path.join(root, urlPath)
+  let missing = false
   try { if (fs.statSync(file).isDirectory()) file = path.join(file, 'index.html') } catch {
-    try { const asHtml = path.join(root, urlPath + '.html'); fs.statSync(asHtml); file = asHtml } catch { file = path.join(root, 'index.html') }
+    try { const asHtml = path.join(root, urlPath + '.html'); fs.statSync(asHtml); file = asHtml } catch { missing = true; file = path.join(root, '404.html') }
   }
   fs.readFile(file, (err, buf) => {
     if (err) { res.statusCode = 404; return res.end('not found') }
+    // Mirrors the nginx 404 policy: unknown routes serve the exported 404
+    // page WITH the 404 status (blueprint §4.3; the route spec asserts both).
+    if (missing) res.statusCode = 404
     res.setHeader('Content-Type', mime[path.extname(file)] || 'application/octet-stream')
     res.end(buf)
   })

@@ -210,3 +210,16 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   more link-in-text fixes: accent links underlined at rest app-wide, a
   learned GAP-003 pattern) · playwright 56/16 · parity re-frozen 30 rows
   0.0000 FAIL 0.
+- **E-S3.3** (S3 group 3a — real 404s + the §4 route table): the SPA
+  fallback served unknown paths the landing page with a 200 (the §6.2 probe
+  hazard, blueprint §4.3 violated). Shipped the honest policy: nginx
+  `try_files $uri $uri/ =404` + `error_page 404 /404.html` (every app route
+  has its own index.html from the export — the fallback only ever hid
+  mistakes), and `serve-out.cjs` mirrors it so the e2e sees production
+  behavior. New `tests/e2e/routes.spec.ts`: **35 routes ? 200 + text/html
+  asserted, 5 §4.3 non-routes (/usage /tasks /upgrade/team /upgrade/enterprise
+  /cowork) ? real 404 with the 404 page**, settings hash deep link ? 200.
+  Discriminator learned: every app page embeds Next's serialized notFound
+  template, so only `<title>404:` distinguishes the real 404 page. Gates:
+  route spec **140 passed across 4 projects**; full playwright **196 passed /
+  16 skipped**; tsc=0; vitest 30/263.
