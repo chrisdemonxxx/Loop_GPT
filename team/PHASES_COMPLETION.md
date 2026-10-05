@@ -29,7 +29,7 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
 | **S2** settings panels (blueprint P6) | hash-routed `#settings/*` panel layer + General, Account, Privacy(+5 sub-panels), Billing, Capabilities, Reflect, Time-and-focus, Claude Code → 12/12 | arch-lead (contract), ui-visual, qa-verify | a11y snapshot per panel matches plan §8; hash back/forward; settings search | **CLOSED — E-S2.1/E-S2.2** (contract `CONTRACT_S2_SETTINGS.md`; 14-panel registry: 8 new + capabilities→tools mapping; sweep 36 runs incl. 7 settings-overlay routes → 0C/0S) |
 | **S3** page parity (blueprint P7/P8) | `/customize/connectors/all` + connector detail; project detail; skill/plugin detail tabs; `/downloads`, `/upgrade`(+pro/max), `/buying-specialist`, `/logout`, `/new` hero + PromptChips; `/code` shell + gates; mobile mirrors | arch-lead, ui-visual, mobile-dev, research-scout (copy seeds) | every §4 route reachable; table-driven route test incl. §4.3 404s; entitlement matrix doc | **CLOSED for web (E-S3.1..E-S3.5)** — connectors directory/detail from the real 44-entry catalog; all §4 routes reachable incl. aliases; **route table spec 36×200 + 5×404 green, 404 policy LIVE on production (verified by probe)**. Honest-by-design deltas documented (checkout frozen, no gate fiction, SkillsTab detail = §9.3 mapping, mobile mirrors → S4) |
 | **S4** primitives + visual lock | ~20 remaining §10 stories; Skeleton/DataTable/Carousel/PromptChips/Tabs/FileViewer; `visual-parity.spec.ts` in CI; new screens captured light+dark × 5 viewports | storybook-dev, core-dev, pixel-measure, qa-verify (keyboard §11) | storybook index complete; parity ≤0.5% all rows; keyboard walkthrough pass | **CLOSED — E-S4.1** — 53 story entries; **90 baseline rows** (9 screens × 5 × 2) verified 0.0000%; parity gate wired into `npx playwright test`; keyboard walkthrough green (⌘L/⌘B found-advertised-but-dead and bound); Skeleton shipped with a real consumer; `ENTITLEMENTS.md` (A5 matrix); DataTable/Carousel/PromptChips = documented mappings, not dead inventory; mobile ruling recorded (blueprint mobile = responsive web, gated) |
-| **S5** release close | freeze revision post-S3; static+dynamic verdicts pinned to SHA; deploy; read-back both markers; tag; roster/GAP reconciliation; drop `qa2` stash | arch-lead, code-review, qa-verify, ops-release, boss-bot, hr-bot | `/api/version` AND `/version.json` == frozen SHA read back live; GAP-041…070 triaged | OPEN |
+| **S5** release close | freeze revision post-S3; static+dynamic verdicts pinned to SHA; deploy; read-back both markers; tag; roster/GAP reconciliation; drop `qa2` stash | arch-lead, code-review, qa-verify, ops-release, boss-bot, hr-bot | `/api/version` AND `/version.json` == frozen SHA read back live; GAP-041…070 triaged | **CLOSED — E-S5.1..E-S5.4** — read-back PASSED at `31053b6` (both surfaces == HEAD, raw probe + curl); incident #1 recorded (03:26–04:22 backend outage, root cause + guard); incident #2 recorded (story hooks broke the web build — caught by the deploy pipeline, no user impact, fresh-build gate restored); live P5 gate re-run **14/14 incl. LIVE login leg**; route spot-check 200s + `/usage` → 404; `qa2` stash dropped; GAP-027 closed; `ROSTER_CLOSE_20261005.md`; **tagged `v2026.10.05-full-parity` at the verified SHA** |
 
 ## Evidence log (append-only)
 
@@ -264,27 +264,37 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   the blueprint contract. Full gates: tsc=0, vitest 31/269, playwright 206
   passed / 34 skipped, sweep 48 runs 0C/0S.
 - **E-S5.1** (incident, found during the S5 read-back sweep): backend deploys
-  for `35f487a`/`2764d66`/`e7f3a25` **FAILED in production** (03:26�04:22
-  outage window; `GET /api/version` ? 504) � the group-1 commit shipped the
+  for `35f487a`/`2764d66`/`e7f3a25` **FAILED in production** (03:26�04:22
+  outage window; `GET /api/version` ? 504) � the group-1 commit shipped the
   `listTypes()` change with a `tsc` error (found and fixed in `e29b750` as a
   local defect, but the FIX COMMIT LIST shows the broken intermediate had been
   pushed). The `59eabb0` deploy recovered the service at 04:22:46:
-  `/api/version ? 59eabb0�`, catalog 3 rows, `/healthz ? 200`. Root cause and
+  `/api/version ? 59eabb0�`, catalog 3 rows, `/healthz ? 200`. Root cause and
   the structural guard (both tsc+vitest pinned per lane) recorded in
   `team/ROSTER_CLOSE_20261005.md`. Cost of a skipped gate, paid once.
 - **E-S5.2** (close-out housekeeping): the `qa2` stash (5 files, P2-era
-  PHASES/CONTRACT drafts � superseded by the current board) **dropped**
-  (`341fe60b�`); `docs/GAP_REGISTER.md` GAP-027 row updated to CLOSED (3
+  PHASES/CONTRACT drafts � superseded by the current board) **dropped**
+  (`341fe60b�`); `docs/GAP_REGISTER.md` GAP-027 row updated to CLOSED (3
   live picker rows, probe-verified); `team/ROSTER_CLOSE_20261005.md` written
   (seat ledger + honest residuals + the outage record).
 - **E-S5.3** (incident #2, found by the deploy pipeline): the web deploys for
-  `59eabb0`/`5ec8bd1` **FAILED** � `primitives.stories.tsx`'s Search story
+  `59eabb0`/`5ec8bd1` **FAILED** � `primitives.stories.tsx`'s Search story
   called `React.useState` inside a story `render` arrow (rules-of-hooks ERROR
   under `next build`), and the story batch had NOT been gated by a local
-  `next build` (the earlier verify ran against a pre-story `out/` � stale
+  `next build` (the earlier verify ran against a pre-story `out/` � stale
   bits again). Production stayed on the last good build (`42ec7cb`) the
-  whole time � no user impact, but S4 code was not live. Fix: stateful
+  whole time � no user impact, but S4 code was not live. Fix: stateful
   wrapper component; gates re-run on FRESH bits: `next build` exit 0
   **with stories in the tree**, verify **90 rows 0.0000% FAIL 0**, tsc=0.
   Lesson recorded a third time: every lane ends with a fresh-build gate,
   and the verify is only honest against the bits it just built.
+- **E-S5.4** (final read-back, 2026-10-05, tag `v2026.10.05-full-parity` @
+  `31053b6`): raw �
+  `GET /version.json` ? `{"surface":"web","revision":"31053b639eca600754f24157cb8844ac4507d6a9","builtAt":"2026-10-05T04:35:13.616Z"}`
+  `GET /api/version` ? `{"service":"loop-gpt-backend","revision":"31053b639eca600754f24157cb8844ac4507d6a9","startedAt":"2026-10-05T04:33:51.125Z",�}`
+  � `revision(/version.json) == revision(/api/version) == git HEAD`. Final
+  live battery: mobile-composer gate **14 passed incl. the LIVE login leg**
+  (fixture `hr.mobile.probe.20260929`, phone-390/360); route spot-check
+  `/ /chat/ ? 200`, `/downloads /upgrade /customize/connectors/all /project
+  ? 301?200` (nginx directory redirect), `/usage ? 404`. Operator-gated
+  residuals carried in `ROSTER_CLOSE_20261005.md`. **S0�S5 COMPLETE.**
