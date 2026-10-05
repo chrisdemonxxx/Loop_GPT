@@ -10,7 +10,9 @@ const ROUTES = ['/', '/login/', '/signup/', '/chat/', '/account/', '/admin/', '/
   '/chat/#settings/billing', '/chat/#settings/time', '/chat/#settings/code', '/chat/#settings/reflect',
   // S3: connector directory + detail (API-driven; the stub server serves an
   // empty catalog, so these scan the honest empty/loading renders).
-  '/customize/connectors/all', '/customize/connectors/all?type=notion']
+  '/customize/connectors/all', '/customize/connectors/all?type=notion',
+  // S3 group 2: the new §4 routes.
+  '/downloads', '/upgrade', '/buying-specialist']
 
 const out = fs.openSync('axe-results.json', 'w')
 const w = o => fs.writeSync(out, JSON.stringify(o) + '\n')

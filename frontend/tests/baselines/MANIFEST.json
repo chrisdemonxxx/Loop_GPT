@@ -1,6 +1,6 @@
 {
-  "headRevision": "2b23c4a877ee1d3729ce0dec19200725a36005f2",
-  "capturedAt": "2026-10-05T02:36:08.089Z",
+  "headRevision": "35f487a2710f65ba85c2f8f580cc0f831cae99ff",
+  "capturedAt": "2026-10-05T03:21:27.311Z",
   "command": "node tests/visual/measure.cjs",
   "entries": [
     {

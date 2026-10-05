@@ -184,3 +184,29 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   BOTH events (idempotent handler). Also noted: the chat shell creates one
   extra history entry at load (entries=2 before any push) — harmless, tracked
   for the S3 route-test pass.
+- **E-S3.1** (S3 group 1 — connector directory, 2026-10-05, `35f487a`):
+  contract `team/CONTRACT_S3_CONNECTORS.md` (amended: `listTypes()` adds
+  `tools:[{suffix,description}]` + `docs` — summaries only, no request
+  templates). Shipped `/customize/connectors/all` (directory: search +
+  category filter + real catalog cards with lifecycle states) and the
+  `?type=` detail view (Tools region, related connectors, connected instances
+  with test/disconnect, same OAuth/credential request shapes as the tab —
+  one flow, two surfaces, tests pin both). 7 new tests; suite 29 files / 255;
+  sweep extended ? 40 runs 0C/0S; backend re-run 65/1192.
+- **E-S3.2** (S3 group 2 — remaining §4 routes, contract
+  `team/CONTRACT_S3_ROUTES.md`): `/downloads` (PWA install is the real
+  desktop story; mobile honestly "in development"; extension honestly not
+  shipped), `/upgrade` (§9.7 structure: audience radios, free/pro/gold with
+  our REAL plan ids, FROZEN-checkout truth + voucher path — no fake payment),
+  `/buying-specialist` (contact shell — no fake sales bot), `/logout`
+  (clears authToken ? /login), and the blueprint aliases `/new`?/chat,
+  `/code`?/developer, `/code/artifacts`?/artifacts,
+  `/code/customize`?/customize (no UpgradeGate fiction — nothing is
+  plan-gated today). Sidebar account menu gains "Get apps and extensions" +
+  "Upgrade plan" (§5.2 footer parity). 8 new tests incl. logout token clear
+  and all four redirects; the module-scope `vi.stubGlobal` + afterEach
+  `unstubAllGlobals` trap found and fixed (stub re-applied per test). Gates,
+  raw: tsc=0 · vitest **30 files / 263** · sweep 46 runs **0C/0S** (two
+  more link-in-text fixes: accent links underlined at rest app-wide, a
+  learned GAP-003 pattern) · playwright 56/16 · parity re-frozen 30 rows
+  0.0000 FAIL 0.

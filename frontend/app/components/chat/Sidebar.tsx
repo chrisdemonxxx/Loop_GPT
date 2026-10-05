@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import {
   Plus, PanelLeft, Search, MessageSquare, Edit2, Trash2, Star, Share2, Check,
-  Settings, CreditCard, ShieldCheck, LogOut, ChevronDown, Sparkles, FolderOpen, Terminal,
+  Settings, CreditCard, ShieldCheck, LogOut, ChevronDown, Sparkles, FolderOpen, Terminal, Download,
 } from 'lucide-react'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -342,6 +342,19 @@ export default function Sidebar({
                   label="Developer API"
                   href="/developer"
                   onClick={() => setShowUserMenu(false)}
+                />
+                <MenuItem
+                  icon={Download}
+                  label="Get apps and extensions"
+                  href="/downloads"
+                  onClick={() => setShowUserMenu(false)}
+                />
+                <MenuItem
+                  icon={Sparkles}
+                  label="Upgrade plan"
+                  href="/upgrade"
+                  onClick={() => setShowUserMenu(false)}
+                  accent
                 />
                 {user?.role === 'admin' && (
                   <MenuItem

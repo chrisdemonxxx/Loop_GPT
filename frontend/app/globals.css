@@ -227,9 +227,10 @@ html[data-theme='light'] .chip {
   border-color: rgba(0, 0, 0, 0.08);
 }
 
-/* The onboarding CTA link sits inside muted body copy — color alone cannot
-   reach 3:1 against it in either theme, so underline it at rest. */
+/* Accent links sit inside muted body copy — color alone cannot reach 3:1
+   against it in either theme, so underline them at rest (axe link-in-text). */
 a.text-\[\#f0b39a\] { text-decoration: underline; }
+a.text-\[\#e79d7f\] { text-decoration: underline; }
 
 /* Accent CTA fills: white on #c96442 is 3.89:1 — darken the fill for AA
    (4.70 on #b5593a; the hover step keeps a visible state change at 5.74). */
