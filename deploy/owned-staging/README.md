@@ -15,8 +15,9 @@ new HTTPS owned-web origin -> nginx:8080 -> backend API:3001
                            |- compiled API (graceful wrapper)
                            |- daily-settlement-worker.mjs
                            |- api-settlement-worker.mjs
-                           `- video-job-worker.mjs
-                         all four share /private-store/files
+                           |- video-job-worker.mjs
+                           `- bot-task-worker.mjs   (optional, BOT_WORKER_ENABLED=true)
+                         all children share /private-store/files
                                               |
                                   new staging PostgreSQL
 ```
@@ -253,6 +254,14 @@ never runs `--init`, `db push`, `migrate dev`, or `migrate deploy`.
 | `STAGING_DAILY_SCRIPT` | Optional exact basename `daily-settlement-worker.mjs` only |
 | `STAGING_SETTLEMENT_SCRIPT` | Optional exact basename `api-settlement-worker.mjs` only |
 | `STAGING_VIDEO_SCRIPT` | Optional exact basename `video-job-worker.mjs` only |
+| `BOT_WORKER_ENABLED` | Default false. When true the supervisor runs a fifth essential child, `bot-task-worker.mjs`, the autonomous agent task worker ("bot computer"). Readiness then requires five live children. Requires the `bot_tasks` migration applied. |
+| `STAGING_BOT_SCRIPT` | Optional exact basename `bot-task-worker.mjs` only |
+| `BOT_USER_EMAIL` | Service account identity for bot runs (find-or-created; never logs in). Default `ops-bot@loop-gpt.cyou`. |
+| `BOT_MODEL` | Optional model override for bot runs; defaults to the HF chat model. |
+| `E2B_API_KEY` | E2B account key for dedicated-computer bot tasks (`task.computer.enabled`): one Desktop VM per run, admin live view + takeover via `/admin/bot`. Computer tasks fail with `BOT_COMPUTER_UNAVAILABLE` and retry when unset. |
+| `SANDBOX_DOCKER` | Set `false` on Railway (no Docker daemon): `execute_code` uses its hardened subprocess mode. |
+| `SANDBOX_PROVIDER` | `execute_code` backend: empty = auto (docker → subprocess), `hf` = dedicated HF Sandbox VM per run (real isolation; needs positive HF credit balance), `docker`, `subprocess`. |
+| `HF_HUB_ENDPOINT` / `HF_SANDBOX_NAMESPACE` / `HF_SANDBOX_IDLE_TIMEOUT` / `HF_SANDBOX_START_TIMEOUT` | HF Sandbox provider tuning: hub endpoint (default `https://huggingface.co`), job namespace (default: token owner's), server idle watchdog seconds (default 600), startup readiness deadline (default 120). |
 
 Entry basenames are exact allowlisted values, resolved relative to the image's
 application root, never a shell command or arbitrary env-supplied path. The API

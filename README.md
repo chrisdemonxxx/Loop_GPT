@@ -49,7 +49,8 @@ UI from `frontend/` (Next static export) via the `web` service, which proxies
 
 Railway project (active): `loop-gpt-owned-staging-20260917`
 (id `8584f5ac-2000-4311-9dae-ae283b70216f`, production env `2faec73c-12aa-47c9-9a6c-94a9276eb6d5`).
-Services: `web` (product UI), `backend` (Express + agent runtime), `postgres`
+Services: `web` (product UI), `backend` (Express + agent runtime + three
+settlement/video workers + optional autonomous bot task worker), `postgres`
 (`loop_staging`), `cf-tunnel` (Cloudflare connector, spare path). The legacy
 `loop-gpt` project (`c4381399-…`, services `frontend`/`librechat`/`backend`)
 is the older topology and no longer owns the apex domains.
