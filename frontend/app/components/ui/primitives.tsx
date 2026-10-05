@@ -118,6 +118,33 @@ export function SearchInput({
   )
 }
 
+/** Loading skeleton: the pulse stands in for content that is on its way.
+ *  `lines` renders stacked bars; `card` renders one directory-card shape. */
+export function Skeleton({ variant = 'lines', count = 2 }: { variant?: 'lines' | 'card'; count?: number }) {
+  if (variant === 'card') {
+    return (
+      <div aria-hidden className="animate-pulse rounded-xl border border-white/[0.06] bg-white/[0.02] p-3.5">
+        <div className="flex items-start gap-2.5">
+          <div className="h-8 w-8 shrink-0 rounded-lg bg-white/[0.06]" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="h-3 w-1/3 rounded bg-white/[0.06]" />
+            <div className="h-2.5 w-full rounded bg-white/[0.04]" />
+            <div className="h-2.5 w-2/3 rounded bg-white/[0.04]" />
+          </div>
+        </div>
+        <div className="mt-3 h-2.5 w-16 rounded bg-white/[0.04]" />
+      </div>
+    )
+  }
+  return (
+    <div aria-hidden className="animate-pulse space-y-2">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="h-2.5 rounded bg-white/[0.05]" style={{ width: i === count - 1 ? '60%' : '100%' }} />
+      ))}
+    </div>
+  )
+}
+
 /** Proper empty state: illustration block, heading, copy, optional action. */
 export function EmptyState({ icon, title, body, action }: { icon?: ReactNode; title: string; body?: string; action?: ReactNode }) {
   return (

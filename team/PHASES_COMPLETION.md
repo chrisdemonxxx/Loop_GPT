@@ -241,3 +241,25 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   /upgrade /login/ /artifact/ /account/ -> 200 text/html` each. Slashless
   routes 301 to their directory (nginx standard, pre-existing, browsers
   follow). S3 route parity is CLOSED on production.
+- **E-S4.1** (S4 wave 1 — visual lock + keyboard + stories + entitlements,
+  2026-10-05): measure.cjs SCREENS grew 3 ? 9 (landing, chat, settings,
+  downloads, upgrade, buying-specialist, connectors directory + detail,
+  project) ? **90 rows frozen (9 screens × 5 viewports × 2 themes), verify
+  worst delta 0.0000% FAIL 0**; `visual-parity.spec.ts` wires the verify into
+  `npx playwright test` (desktop-chromium only — deterministic render, one
+  2.2m run per suite). **Keyboard walkthrough shipped (§11 mapped to OUR
+  registry)** — and it found a real defect: the ShortcutSheet ADVERTISED ?L
+  and ?B but nothing bound them; both now wired via `useHotkey` in the chat
+  page. `tests/e2e/keyboard.spec.ts`: palette ?K?filter?Enter-Settings?dialog,
+  Esc-innermost (Effort popover), ?B both directions, ?L, composer
+  Shift+Enter newline / Enter no-newline — 5 passed. Stories 31 ? **53 index
+  entries** across 11 groups (primitives incl. new Skeleton, S2 pref panels,
+  CommandPalette, SettingsPanel, Markdown/code blocks, ErrorBoundary crash
+  state); `build-storybook` exit 0. Skeleton primitive shipped WITH a real
+  consumer (connector directory loading state). **`team/ENTITLEMENTS.md`**
+  (blueprint A5 §4): the plan × feature matrix measured from the enforcing
+  lines — headline: nothing is plan-GATED, plans change ALLOWANCES only.
+  Mobile-scope ruling recorded: blueprint mobile parity = responsive web
+  (baselined + gated at 390/320); the Expo companion's IA drift is outside
+  the blueprint contract. Full gates: tsc=0, vitest 31/269, playwright 206
+  passed / 34 skipped, sweep 48 runs 0C/0S.

@@ -71,6 +71,33 @@ const SCREENS = [
       await page.locator('[role="dialog"][aria-label="Agent settings"] h2').waitFor({ state: 'visible' })
     },
   },
+  // S4: the new S3 routes join the visual lock. The stub server serves an
+  // empty connector catalog and no auth, so these baselines are the honest
+  // empty/loading renders — that IS the render a signed-out user sees.
+  {
+    id: 'downloads', url: '/downloads',
+    masks: [],
+  },
+  {
+    id: 'upgrade', url: '/upgrade',
+    masks: [],
+  },
+  {
+    id: 'buying-specialist', url: '/buying-specialist',
+    masks: [],
+  },
+  {
+    id: 'connectors-all', url: '/customize/connectors/all',
+    masks: [],
+  },
+  {
+    id: 'connectors-detail', url: '/customize/connectors/all?type=notion',
+    masks: [],
+  },
+  {
+    id: 'project', url: '/project',
+    masks: [],
+  },
 ]
 
 /** Click a locator that may be swapped out by a hydration re-render. */

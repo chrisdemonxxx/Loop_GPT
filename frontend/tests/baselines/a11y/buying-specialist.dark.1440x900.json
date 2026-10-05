@@ -1,0 +1,54 @@
+{
+  "role": "WebArea",
+  "name": "Talk to us - Loop GPT",
+  "children": [
+    {
+      "role": "region",
+      "name": "Notifications"
+    },
+    {
+      "role": "link",
+      "name": "Return to plans"
+    },
+    {
+      "role": "heading",
+      "name": "Talk to our buying specialist"
+    },
+    {
+      "role": "text",
+      "name": "Team and Enterprise plans, volume pricing, and rollout help."
+    },
+    {
+      "role": "text",
+      "name": "Tell us what you are building and how many seats you need. A specialist replies with a plan recommendation and pricing — usually within one business day."
+    },
+    {
+      "role": "text",
+      "name": "Seat count and expected usage (messages, images, videos)"
+    },
+    {
+      "role": "text",
+      "name": "Which connectors your team depends on"
+    },
+    {
+      "role": "text",
+      "name": "Any compliance or deployment requirements"
+    },
+    {
+      "role": "link",
+      "name": "Email the buying specialist"
+    },
+    {
+      "role": "text",
+      "name": "Prefer self-service? Individual plans are available on the "
+    },
+    {
+      "role": "link",
+      "name": "plans page"
+    },
+    {
+      "role": "text",
+      "name": "."
+    }
+  ]
+}

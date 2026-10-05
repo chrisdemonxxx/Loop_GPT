@@ -1,0 +1,150 @@
+{
+  "role": "WebArea",
+  "name": "Plans - Loop GPT",
+  "children": [
+    {
+      "role": "region",
+      "name": "Notifications"
+    },
+    {
+      "role": "link",
+      "name": "Back to chat"
+    },
+    {
+      "role": "heading",
+      "name": "Plans that grow with you"
+    },
+    {
+      "role": "text",
+      "name": "Start free. Move up when your daily work needs more headroom. Your plan applies to every surface — web, installed app, and API."
+    },
+    {
+      "role": "radio",
+      "name": "Individual"
+    },
+    {
+      "role": "radio",
+      "name": "Team and Enterprise"
+    },
+    {
+      "role": "heading",
+      "name": "Free"
+    },
+    {
+      "role": "text",
+      "name": "$0"
+    },
+    {
+      "role": "text",
+      "name": "forever"
+    },
+    {
+      "role": "text",
+      "name": "Daily credits for chat and images"
+    },
+    {
+      "role": "text",
+      "name": "Memory and connectors included"
+    },
+    {
+      "role": "text",
+      "name": "Community support"
+    },
+    {
+      "role": "link",
+      "name": "Start free"
+    },
+    {
+      "role": "heading",
+      "name": "Pro"
+    },
+    {
+      "role": "text",
+      "name": "$20"
+    },
+    {
+      "role": "text",
+      "name": "per month"
+    },
+    {
+      "role": "text",
+      "name": "More credits every day"
+    },
+    {
+      "role": "text",
+      "name": "Video generation"
+    },
+    {
+      "role": "text",
+      "name": "Priority access to new models"
+    },
+    {
+      "role": "text",
+      "name": "Everything in Free"
+    },
+    {
+      "role": "link",
+      "name": "Get Pro"
+    },
+    {
+      "role": "heading",
+      "name": "Gold"
+    },
+    {
+      "role": "text",
+      "name": "$100"
+    },
+    {
+      "role": "text",
+      "name": "per month"
+    },
+    {
+      "role": "text",
+      "name": "The largest credit allowance"
+    },
+    {
+      "role": "text",
+      "name": "Highest-priority generation queue"
+    },
+    {
+      "role": "text",
+      "name": "Early access features"
+    },
+    {
+      "role": "text",
+      "name": "Everything in Pro"
+    },
+    {
+      "role": "link",
+      "name": "Get Gold"
+    },
+    {
+      "role": "text",
+      "name": "Paid checkout is "
+    },
+    {
+      "role": "text",
+      "name": "not enabled yet"
+    },
+    {
+      "role": "text",
+      "name": " — the Get buttons open Billing, where voucher codes already work. When checkout goes live, monthly and yearly options appear on each card."
+    },
+    {
+      "role": "text",
+      "name": "Have a voucher?"
+    },
+    {
+      "role": "text",
+      "name": "Voucher codes work today — redeem them in "
+    },
+    {
+      "role": "link",
+      "name": "Settings → Billing"
+    },
+    {
+      "role": "text",
+      "name": "."
+    }
+  ]
+}

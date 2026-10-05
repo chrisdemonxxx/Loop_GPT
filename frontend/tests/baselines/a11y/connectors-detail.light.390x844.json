@@ -1,0 +1,38 @@
+{
+  "role": "WebArea",
+  "name": "Loop GPT - AI Chat Assistant",
+  "children": [
+    {
+      "role": "region",
+      "name": "Notifications"
+    },
+    {
+      "role": "link",
+      "name": "Connectors"
+    },
+    {
+      "role": "button",
+      "name": "All connectors"
+    },
+    {
+      "role": "text",
+      "name": "That connector does not exist"
+    },
+    {
+      "role": "text",
+      "name": "No directory entry matches type \"notion\". It may have been removed."
+    },
+    {
+      "role": "button",
+      "name": "Back to the directory"
+    },
+    {
+      "role": "text",
+      "name": "Could not load the connector directory."
+    },
+    {
+      "role": "button",
+      "name": "Retry"
+    }
+  ]
+}

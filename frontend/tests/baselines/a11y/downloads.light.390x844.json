@@ -1,0 +1,62 @@
+{
+  "role": "WebArea",
+  "name": "Apps & extensions - Loop GPT",
+  "children": [
+    {
+      "role": "region",
+      "name": "Notifications"
+    },
+    {
+      "role": "link",
+      "name": "Back"
+    },
+    {
+      "role": "heading",
+      "name": "Do more with Loop GPT, everywhere you work"
+    },
+    {
+      "role": "text",
+      "name": "One account, every surface. The chat you start in the browser continues on your installed app."
+    },
+    {
+      "role": "heading",
+      "name": "Desktop — install the app"
+    },
+    {
+      "role": "text",
+      "name": "Loop GPT ships as an installable web app: your browser installs it from this site — no separate download, always current. Works offline for your recent chats."
+    },
+    {
+      "role": "button",
+      "name": "Install"
+    },
+    {
+      "role": "heading",
+      "name": "iOS & Android"
+    },
+    {
+      "role": "text",
+      "name": "The mobile app is in development. Today, install the web app from your phone's browser menu (“Add to Home Screen”) — the phone layout is first-class."
+    },
+    {
+      "role": "heading",
+      "name": "Browser extension"
+    },
+    {
+      "role": "text",
+      "name": "Not shipped yet — when it lands it will appear here first."
+    },
+    {
+      "role": "heading",
+      "name": "Loop Code — the developer surface"
+    },
+    {
+      "role": "text",
+      "name": "API keys, usage, and the developer console for building on Loop GPT."
+    },
+    {
+      "role": "link",
+      "name": "Open Loop Code"
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "role": "WebArea",
+  "name": "Loop GPT - AI Chat Assistant",
+  "children": [
+    {
+      "role": "region",
+      "name": "Notifications"
+    },
+    {
+      "role": "link",
+      "name": "Connectors"
+    },
+    {
+      "role": "heading",
+      "name": "Connector directory"
+    },
+    {
+      "role": "text",
+      "name": "Browse every integration. Connected tools become callable by the agent."
+    },
+    {
+      "role": "link",
+      "name": "Manage connected"
+    },
+    {
+      "role": "searchbox",
+      "name": "Search connectors"
+    },
+    {
+      "role": "combobox",
+      "name": "Filter by category",
+      "children": [
+        {
+          "role": "option",
+          "name": "All categories"
+        }
+      ]
+    },
+    {
+      "role": "text",
+      "name": "Could not load the connector directory."
+    },
+    {
+      "role": "button",
+      "name": "Retry"
+    }
+  ]
+}

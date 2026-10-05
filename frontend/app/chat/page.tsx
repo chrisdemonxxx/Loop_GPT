@@ -8,6 +8,7 @@ import { API_URL, authHeaders, getStoredUser, getToken, getModelTier, setModelTi
 import { pushSettingsHash, readCurrentSettingsHash } from '../lib/settingsHash'
 import type { EffortValue } from '../components/chat/composer/EffortSelector'
 import { getDraft, setDraft, deleteDraft } from '../lib/drafts'
+import { useHotkey } from '../lib/useHotkey'
 import SettingsPanel from '../components/SettingsPanel'
 import { CommandPalette, openSidebarSearch } from '../components/CommandPalette'
 import { ShortcutSheet } from '../components/ShortcutSheet'
@@ -38,6 +39,11 @@ export default function ChatPage() {
   const panels = usePanels()
   const sidebarWidth = useSidebarWidth()
   const [sidebarResizing, setSidebarResizing] = useState(false)
+
+  // S4: the ShortcutSheet advertises ⌘L (new conversation) and ⌘B (toggle
+  // sidebar) — these were listed but never bound. Same registry, now real.
+  useHotkey({ key: 'l', meta: true }, () => { setCurrentConversationId(null); panels.setSidebarOpen(false) })
+  useHotkey({ key: 'b', meta: true }, () => panels.setSidebarOpen((open: boolean) => !open))
   // Lifts the composer above the on-screen keyboard (iOS, audit P6).
   useKeyboardSafeBottom()
 

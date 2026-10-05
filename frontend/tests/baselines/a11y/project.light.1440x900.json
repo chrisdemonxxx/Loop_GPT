@@ -1,0 +1,14 @@
+{
+  "role": "WebArea",
+  "name": "Loop GPT - AI Chat Assistant",
+  "children": [
+    {
+      "role": "region",
+      "name": "Notifications"
+    },
+    {
+      "role": "link",
+      "name": "Projects"
+    }
+  ]
+}

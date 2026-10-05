@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { API_URL, authHeaders } from '../../../lib/api'
 import { useWorkspaceProjects } from '../../../chat/hooks'
-import { Badge, EmptyState, SectionHeader } from '../../../components/ui/primitives'
+import { Badge, EmptyState, SectionHeader, Skeleton } from '../../../components/ui/primitives'
 
 interface ConnectorField { key: string; label: string; secret?: boolean; required?: boolean; placeholder?: string }
 interface ToolSummary { suffix: string; description: string }
@@ -370,6 +370,11 @@ export default function ConnectorDirectoryPage() {
           Could not load the connector directory.
           <button type="button" onClick={load} className="ml-1.5 underline hover:text-rose-300">Retry</button>
         </p>
+      )}
+      {!loaded && !loadError && (
+        <div className="mt-4 grid grid-cols-2 gap-2.5 max-sm:grid-cols-1" role="status" aria-label="Loading connectors">
+          {[0, 1, 2, 3].map((i) => <Skeleton key={i} variant="card" />)}
+        </div>
       )}
       {loaded && !loadError && filtered.length === 0 && (
         <p className="mt-6 text-center text-[13px] text-slate-600">
