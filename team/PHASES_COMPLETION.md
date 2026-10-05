@@ -386,3 +386,16 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   ? connected card). Prerequisite probe raw:
   `/ -> 200 text/html · /privacy -> 301?200 · /terms -> 301?200 ·
   authorize(registered redirect_uri) -> 302`.
+- **E-S6.5** (production, 2026-10-05): the operator moved the Google OAuth
+  consent screen to **In production**. Post-publish regression probe (raw,
+  `team/RUN_oauth_fix_probe.log`): `init gmail ? HTTP 200`, redirect_uri =
+  the registered sign-in callback, authorize endpoint ? HTTP 302 into the
+  sign-in/consent flow (mismatch=false, no 403 in the unauthenticated
+  probe). With publishing status In production: no manual test-user list,
+  no 7-day refresh-token expiry (a Testing-mode rule), any user can connect
+  via the unverified-app screen (Advanced ? Continue — in-app hint shipped),
+  Google caps unverified apps at 100 new users until verification (kit:
+  `docs/GOOGLE_VERIFICATION_KIT.md`). The one remaining human step: the
+  operator's first consent click (Connect ? Gmail ? Advanced ? approve) —
+  everything after that click is code-verified (delegation, exchange,
+  dual-write, popup postMessage, connected card).
