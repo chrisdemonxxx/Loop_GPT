@@ -54,7 +54,6 @@ const baseArgs = {
   onToggleThinking: noop,
   showSlash: false,
   showPlus: false,
-  showModeMenu: false,
   onInputChange: noop,
   onSelectSlashCommand: noop,
   onSend: noop,
@@ -62,12 +61,9 @@ const baseArgs = {
   onImagesSelected: noop,
   onTogglePlus: noop,
   onClosePlus: noop,
-  onToggleModeMenu: noop,
-  onCloseModeMenu: noop,
   onRunModeChange: noop,
   onOpenConnectors: noop,
   onOpenSettingsTab: noop,
-  toolSelectionCount: null,
 } satisfies Partial<React.ComponentProps<typeof Composer>>
 
 const meta = {
@@ -105,10 +101,9 @@ export const SlashPaletteOpen: Story = { args: { input: '/', showSlash: true } }
 /** Attachments at every upload state: uploading, done, error-with-retry. */
 export const Attachments: Story = { args: { attachments } }
 
-/** Per-chat tool count + pinned workspace-connection chips. */
+/** Pinned workspace-connection chips. */
 export const ToolsAndConnections: Story = {
   args: {
-    toolSelectionCount: 4,
     connections: [
       { id: 'w1', name: 'Loop GPT repo', type: 'github' },
       { id: 'w2', name: 'Launch sheet', type: 'google_sheets' },
@@ -125,6 +120,19 @@ export const VoiceMode: Story = {
 /** Incognito run + a half-full context meter (the amber state begins past 85%). */
 export const IncognitoWithContext: Story = {
   args: { incognito: true, contextPct: 42, contextTokens: 13400 },
+}
+
+/** SendButton — ready: accent + glow, paper-plane. */
+export const SendReady: Story = { args: { input: 'Ship the redesign.' } }
+
+/** SendButton — running: ■ stop glyph + terracotta pulse ring. */
+export const SendRunning: Story = {
+  args: { input: 'Summarise the incident timeline.', running: true, statusMsg: 'Searching…' } as never,
+}
+
+/** SendButton — queued: stop state + count badge (2 behind the active run). */
+export const SendQueued: Story = {
+  args: { input: 'And the follow-up.', running: true, queuedCount: 2 } as never,
 }
 
 /** High context usage — the meter turns amber. */
