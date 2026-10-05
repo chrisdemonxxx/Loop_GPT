@@ -19,7 +19,7 @@ RUN npm ci --omit=dev --no-audit --no-fund
 COPY backend/prisma ./prisma
 RUN npx --no-install prisma generate
 COPY --from=build /app/dist ./dist
-COPY backend/scripts/staging-runtime.mjs backend/scripts/private-storage.mjs backend/scripts/daily-settlement-worker.mjs backend/scripts/api-settlement-worker.mjs backend/scripts/video-job-worker.mjs ./scripts/
+COPY backend/scripts/staging-runtime.mjs backend/scripts/private-storage.mjs backend/scripts/daily-settlement-worker.mjs backend/scripts/api-settlement-worker.mjs backend/scripts/video-job-worker.mjs backend/scripts/bot-task-worker.mjs ./scripts/
 COPY deploy/owned-staging/prepare-storage.mjs ./scripts/prepare-storage.mjs
 RUN mkdir -p /app/data /app/uploads /private-store && chown node:node /app/data /app/uploads /private-store
 USER node
