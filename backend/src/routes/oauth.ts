@@ -67,7 +67,9 @@ async function handleCallback(req: express.Request, res: express.Response) {
   const state = (req.query.state || (req.body && req.body.state)) as string
   // Connector OAuth rides this same registered callback (the
   // redirect_uri_mismatch fix, 2026-10-05): connector states are hex PKCE
-  // handles, login states are JWTs — check the connector store FIRST.
+  // handles, login states are JWTs — check the connector store FIRST and
+  // BEFORE the bridge relay below, or a bridge target (if ever configured)
+  // would swallow every connector completion into a login-app hop.
   if (state && connectorStateExists(state)) {
     return completeConnectorCallback(code, state, res)
   }  // OAuth bridge relay: when OAUTH_BRIDGE_TARGET is set, this callback acts as a
