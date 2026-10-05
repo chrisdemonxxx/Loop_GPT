@@ -3,12 +3,32 @@
   "name": "Loop GPT - AI Chat Assistant",
   "children": [
     {
+      "role": "region",
+      "name": "Notifications"
+    },
+    {
       "role": "text",
       "name": "Loop GPT"
     },
     {
       "role": "button",
-      "name": "Close sidebar"
+      "name": "Hide sidebar"
+    },
+    {
+      "role": "link",
+      "name": "Projects"
+    },
+    {
+      "role": "link",
+      "name": "Files"
+    },
+    {
+      "role": "link",
+      "name": "Recents"
+    },
+    {
+      "role": "link",
+      "name": "Customize"
     },
     {
       "role": "button",
@@ -24,11 +44,23 @@
     },
     {
       "role": "text",
-      "name": "No sessions yet"
+      "name": "Couldn't load sessions."
+    },
+    {
+      "role": "button",
+      "name": "Retry"
     },
     {
       "role": "button",
       "name": "U Anonymous"
+    },
+    {
+      "role": "separator",
+      "name": "Resize sidebar"
+    },
+    {
+      "role": "button",
+      "name": "Hide sidebar"
     },
     {
       "role": "text",
@@ -177,11 +209,11 @@
     },
     {
       "role": "text",
-      "name": "No skills yet"
+      "name": "Could not load skills."
     },
     {
-      "role": "text",
-      "name": "Skills teach the assistant reusable workflows. Just ask “create a skill for…” in a chat, or use Create skill above."
+      "role": "button",
+      "name": "Retry"
     },
     {
       "role": "button",

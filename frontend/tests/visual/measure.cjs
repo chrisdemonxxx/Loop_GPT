@@ -52,10 +52,9 @@ const SCREENS = [
   {
     id: 'chat-shell', url: '/chat/',
     // The chat shell stands in for /chat/:uuid — the static stub carries no
-    // conversation rows, so the empty shell is the only render (§4.1).
-    // IN-FLIGHT: the P5 composer-overflow fix (Send 70px past a 390px
-    // viewport) has NOT landed, so the 390/320 rows carry the defect.
-    pending: 'pending P5',
+    // conversation rows, so the empty shell is the only render (A4.1).
+    // P5 composer-overflow fix LANDED (392dd50, 2026-10-05): the 390/320
+    // baselines are the fixed layout; no row is pending.
     masks: ['aside div.w-7'],
   },
   {

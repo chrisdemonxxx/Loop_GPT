@@ -24,7 +24,7 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
 
 | step | deliverable | owners | gate (raw evidence required) | status |
 |---|---|---|---|---|
-| **S0** bank at-risk work | P5 fix commit + `UI_MOBILE_WEB_ui-visual.md`; gate spec + phone projects committed; baselines/tokens/`.storybook` committed + `.gitignore`; storybook scripts+deps restored; `GIT_REVISION` on web service | ui-visual, qa-verify, pixel-measure, storybook-dev, ops-release | tsc=0; vitest 26/232; mobile gate 12 passed/2 skipped local; `build-storybook` exit 0; `GET /version.json` → real SHA == HEAD | **IN FLIGHT — gates re-run green this pass; commits landing now** |
+| **S0** bank at-risk work | P5 fix commit + `UI_MOBILE_WEB_ui-visual.md`; gate spec + phone projects committed; baselines/tokens/`.storybook` committed + `.gitignore`; storybook scripts+deps restored; `GIT_REVISION` on web service | ui-visual, qa-verify, pixel-measure, storybook-dev, ops-release | tsc=0; vitest 26/232; mobile gate 12 passed/2 skipped local; `build-storybook` exit 0; `GET /version.json` → real SHA == HEAD | **SHIPPED — see E-S0.6/E-S0.7** |
 | **S1** close RED gates | media suite 8→28; `team/PERF_P1.md`; `team/RELEASE_P1.md`; GAP-003 serious+ contrast fixes + gate tightened; A6 catalog depth (GAP-029 row 3) | ops-release, perf-eng, qa-verify, core-dev | raw vitest 28/28; both docs hash-verified; axe zero serious+; catalog ≥3 picker rows live | OPEN |
 | **S2** settings panels (blueprint P6) | hash-routed `#settings/*` panel layer + General, Account, Privacy(+5 sub-panels), Billing, Capabilities, Reflect, Time-and-focus, Claude Code → 12/12 | arch-lead (contract), ui-visual, qa-verify | a11y snapshot per panel matches plan §8; hash back/forward; settings search | OPEN |
 | **S3** page parity (blueprint P7/P8) | `/customize/connectors/all` + connector detail; project detail; skill/plugin detail tabs; `/downloads`, `/upgrade`(+pro/max), `/buying-specialist`, `/logout`, `/new` hero + PromptChips; `/code` shell + gates; mobile mirrors | arch-lead, ui-visual, mobile-dev, research-scout (copy seeds) | every §4 route reachable; table-driven route test incl. §4.3 404s; entitlement matrix doc | OPEN |
@@ -67,3 +67,35 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   `ccd95cf0` [BUILDING] alongside push-triggered `b36d99d2` [BUILDING].
   **Exit criterion still open:** `GET /version.json` → `revision == 66afe43…`
   (assert the 40-hex, never `builtAt`) + the 2 LIVE legs of the P5 gate re-run.
+- **E-S0.6** (the `unknown` root cause, found and fixed): the
+  `GIT_REVISION=${{RAILWAY_GIT_COMMIT_SHA}}` reference **resolves EMPTY at
+  Docker-build time** — the `398cae70` (`3260a24`) build log shows
+  `[build 8/8] RUN node -e "…" ""` and the live `/version.json` served
+  `revision:"unknown"` at `builtAt 00:55:38`. Docs
+  (docs.railway.com/builds/dockerfiles): Railway-provided variables are
+  injectable at build **only via a matching `ARG`** — the reference path doesn't
+  apply. Fix: `web/Dockerfile` now declares `ARG RAILWAY_GIT_COMMIT_SHA=""` and
+  the marker step prefers `GIT_REVISION` (manual CLI override) then the git SHA.
+  Committed `71b7415`, pushed, build `35abb027` log shows the proof:
+  `[build 8/8] RUN node -e "…" "" "71b74151a809bcaa2f30ec50f71e6a8bb28d4dc1"`.
+  **Both surfaces read back live and equal:**
+  `GET /version.json` → `{"surface":"web","revision":"71b74151a809bcaa2f30ec50f71e6a8bb28d4dc1",…}`
+  and `GET /api/version` → `{"service":"loop-gpt-backend","revision":"71b74151a809bcaa2f30ec50f71e6a8bb28d4dc1",…}`
+  — `revision(/version.json) == revision(/api/version) == git HEAD`. The M1
+  served-revision gate (`surface:web` + revision == SHA pinned at deploy, never
+  `builtAt`/etag) is CLOSED for repo-triggered deploys. The pre-session "5
+  failed deploys" were the `/artifact/[id]` missing-`generateStaticParams` build
+  error, already fixed at `45d6b3d` (SUCCESS 23:59:59) — not a live defect.
+- **E-S0.7** (P5 LIVE legs + parity re-freeze): with
+  `LIVE_BASE_URL=https://loop-gpt.cyou`,
+  `npx playwright test tests/e2e/mobile-composer.spec.ts --project=phone-390 --project=phone-360`
+  → **14 passed (12.0s), PW_EXIT=0** — the two LIVE login legs ran against
+  production (fixture `hr.mobile.probe.20260929`, 401 negative path + 200
+  login + `/api/account/me` + empty conversations). Visual parity re-frozen at
+  HEAD `71b7415` (three stale causes: P5 fix, `b5d655e` settings redesign,
+  SlashPalette `role="menu"` schema change — old settings rows drifted
+  21.58–52.24%, stale baselines not regressions):
+  `node tests/visual/measure.cjs --verify` → **rows 30 · worst delta 0.0000% ·
+  FAIL 0**; MANIFEST sha256 `9cc849b7…` headRevision `71b7415`.
+  `team/VISUAL_PARITY.md` RE-FREEZE section appended; `pending P5` retired
+  from both the ledger and `measure.cjs`.

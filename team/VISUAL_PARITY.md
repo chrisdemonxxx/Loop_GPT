@@ -96,3 +96,34 @@ find frontend/tests/baselines -name '*.png' | sort | xargs sha256sum
   next artifact for this seat; `frontend/tests/e2e/app.spec.ts` stays `qa-verify`'s.
 
 _generated from MANIFEST.json + deltas.json at 2026-09-30T02:19:53.485372Z — no number transcribed by hand._
+
+---
+
+## RE-FREEZE at HEAD `71b7415` (2026-10-05, S0 close-out)
+
+The `48e613d` baseline set was stale against HEAD for three landed causes, all
+intentional — so the whole set was re-frozen at `71b7415` and re-verified:
+
+1. **P5 fix landed** (`392dd50`) — `chat-shell` 390x844/320x844 changed pixels by
+   design (wrap row, nowrap chips, bottom-sheet popovers). Both rows re-captured;
+   the geometry gate is green: `mobile-composer.spec.ts` phone-390/phone-360
+   **14/14 passed incl. both LIVE legs** against `https://loop-gpt.cyou`.
+2. **Settings redesign landed** (`b5d655e`, after the `48e613d` freeze) — the old
+   settings baselines measured **21.58–52.24%** pixel delta vs HEAD, i.e.
+   stale-baseline drift, not a regression. Re-captured.
+3. **A11y schema change** — SlashPalette gained `role="menu"` +
+   `aria-label="Slash commands"` (P5 a11y parity) → every screen's normalized
+   a11y tree differs by exactly 1 node vs the old freeze. Re-captured.
+
+Raw verify (fresh `npm run build` of `71b7415`, then):
+
+```
+$ node tests/visual/measure.cjs --verify
+rows 30 · worst delta 0.0000% · FAIL 0
+```
+
+**MANIFEST (re-frozen): sha256 `9cc849b743f35976b30155f3244a643e6c50ece50efe017007a69f4ae4f8f990`, 12,633 B, headRevision `71b7415…`.**
+
+`pending P5` is retired: no row carries it. Next artifacts for this seat are
+unchanged: `visual-parity.spec.ts`, frontier pixel-delta capture, and the 9
+missing §4 route trees as they land in S2/S3.

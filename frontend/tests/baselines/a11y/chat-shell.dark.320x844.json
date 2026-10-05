@@ -3,8 +3,12 @@
   "name": "Loop GPT - AI Chat Assistant",
   "children": [
     {
+      "role": "region",
+      "name": "Notifications"
+    },
+    {
       "role": "button",
-      "name": "Open sidebar"
+      "name": "Show sidebar"
     },
     {
       "role": "text",
@@ -101,10 +105,6 @@
     {
       "role": "text",
       "name": "Loop GPT can make mistakes. Verify important info."
-    },
-    {
-      "role": "button",
-      "name": "Keyboard shortcuts"
     }
   ]
 }
