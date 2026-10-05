@@ -29,8 +29,9 @@ const FIXTURE = {
 
 const POPOVERS = [
   { id: 'plus', name: 'PlusMenu', btn: 'button[aria-label="Add attachments and actions"]' },
-  { id: 'mode', name: 'RunModePicker', btn: 'button.chip[title^="Agent decides and uses tools"]' },
-  { id: 'effort', name: 'EffortSelector', btn: 'button.chip[aria-label^="Reasoning effort"]' },
+  // Option A (redesign): Mode/Web/Reason merged into the one Run-settings
+  // popover — the separate RunModePicker and EffortSelector are gone.
+  { id: 'settings', name: 'RunSettings', btn: 'button.chip[aria-label^="Run settings"]' },
   { id: 'slash', name: 'SlashPalette', btn: 'textarea[aria-label*="Message Loop GPT"]' },
 ] as const
 
@@ -89,7 +90,9 @@ async function readRow(page: Page) {
     let n: HTMLElement | null = plus as HTMLElement | null
     for (let i = 0; i < 6 && n; i++) {
       n = n.parentElement
-      if (n && String(n.className).includes('flex') && n.children.length >= 5) { row = n; break }
+      // The composer's control row (exact class string) — not an outer flex
+      // container; the Option-A row has fewer children than the old 3-chip row.
+      if (n && String(n.className).includes('flex items-center gap-1.5 px-3')) { row = n; break }
     }
     const children = row ? [...row.children].map((c) => ({
       tag: c.tagName,
@@ -188,14 +191,19 @@ test.describe('P5 mobile composer gate', () => {
   test('chips: label spans stay on one line inside the 32px chip', async ({ page }) => {
     await openChat(page)
     const m = await readRow(page)
-    expect(m.chips.length).toBe(3)
+    // Option A: one labeled chip (Run settings) + icon-only chips (no span).
+    expect(m.chips.length, `expected ≥1 label-bearing chip, got ${m.chips.length}`).toBeGreaterThanOrEqual(1)
     const wrap = m.chips.filter((c) => c.spanWS === 'normal' || (c.spanH ?? 0) > 16)
     expect(wrap.map((c) => `${c.aria}: span h=${c.spanH} white-space=${c.spanWS}`),
       'chip labels do not wrap inside the fixed-height chip').toHaveLength(0)
   })
 
   for (const p of POPOVERS) {
-    test(`popover ${p.name}: on screen and clear of suggestion cards`, async ({ page }) => {
+    /* Redesign (2.3): phone menus are bottom SHEETS — opaque, grip-handled,
+       70dvh-capped. They may cover the content below (that is what sheets
+       do); the gates are: on-screen, inside the viewport, and fully opaque
+       (the old translucent sheet bled the composer text through). */
+    test(`popover ${p.name}: on screen, inside viewport, fully opaque`, async ({ page }) => {
       await openChat(page)
       if (p.id === 'slash') {
         await page.locator('textarea').first().click()
@@ -206,9 +214,19 @@ test.describe('P5 mobile composer gate', () => {
       await expect(page.locator('[role="menu"]').first()).toBeVisible()
       const m = await readMenu(page, p.name)
       expect(m.menu, `open ${p.name}: role=menu rendered`).toBeTruthy()
-      expect(m.menu!.cls).toContain('left-0')
       expect(m.fitsRight, `${p.name} right=${m.menu!.right} in a ${m.innerWidth}px viewport`).toBe(true)
-      expect(m.overlapsCards, `${p.name} intersects suggestion cards ${JSON.stringify(m.overlapsCards)} (menu y=${m.menu!.y} bottom=${m.menu!.bottom})`).toHaveLength(0)
+      // The sheet stays inside the viewport (bottom included)…
+      expect(m.menu!.bottom, `${p.name} bottom=${m.menu!.bottom} past ${m.innerWidth ? 'viewport' : ''}`).toBeLessThanOrEqual(844)
+      // …and it is fully opaque — no composer text bleeding through (the
+      // Phase-0 phone bug: the old sheet was 86% translucent).
+      const opaque = await page.evaluate(() => {
+        const el = document.querySelector('[role="menu"]')
+        if (!el) return null
+        const bg = getComputedStyle(el).backgroundColor
+        const match = /rgba?\((\d+), (\d+), (\d+)(?:, ([\d.]+))?\)/.exec(bg)
+        return match ? (match[4] === undefined ? 1 : Number(match[4])) : null
+      })
+      expect(opaque, `${p.name} sheet background alpha (was 0.86 translucent)`).toBeGreaterThanOrEqual(0.96)
     })
   }
 

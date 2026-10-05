@@ -6,6 +6,7 @@ import { MotionConfig } from 'framer-motion'
 import { I18nProvider } from './lib/i18n'
 import { ToastProvider } from './lib/toast'
 import { ThemeProvider } from './lib/theme'
+import { RemindersEngine } from './components/RemindersEngine'
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -33,7 +34,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <MotionConfig reducedMotion="user">
         <ThemeProvider>
           <I18nProvider>
-            <ToastProvider>{children}</ToastProvider>
+            <ToastProvider>
+              <RemindersEngine />
+              {children}
+            </ToastProvider>
           </I18nProvider>
         </ThemeProvider>
       </MotionConfig>

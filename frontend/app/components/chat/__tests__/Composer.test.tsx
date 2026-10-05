@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import Composer from '../Composer'
 import type { PendingAttachment } from '../../../chat/hooks'
 
@@ -21,7 +21,6 @@ const base = {
   onToggleThinking: () => {},
   showSlash: false,
   showPlus: false,
-  showModeMenu: false,
   onInputChange: () => {},
   onSelectSlashCommand: () => {},
   onSend: () => {},
@@ -29,12 +28,9 @@ const base = {
   onImagesSelected: () => {},
   onTogglePlus: () => {},
   onClosePlus: () => {},
-  onToggleModeMenu: () => {},
-  onCloseModeMenu: () => {},
   onRunModeChange: () => {},
   onOpenConnectors: () => {},
   onOpenSettingsTab: () => {},
-  toolSelectionCount: null as number | null,
   connections: undefined as Array<{ id: string; name: string; type: string }> | undefined,
   pinnedConnectionId: undefined as string | null | undefined,
   onTogglePinConnection: undefined as ((id: string) => void) | undefined,
@@ -112,76 +108,63 @@ describe('Composer', () => {
     expect(onImagesSelected).toHaveBeenCalledWith([file])
   })
 
-  it('shows all four run modes in the mode menu', () => {
-    renderComposer({ showModeMenu: true })
-    for (const label of ['Auto', 'Plan', 'Ask first', 'Accept edits']) {
-      expect(screen.getAllByText(label).length).toBeGreaterThanOrEqual(1)
+  it('Run settings (Option A): one chip opens one panel with all three axes', () => {
+    renderComposer()
+    const chip = screen.getByRole('button', { name: /run settings/i })
+    expect(chip.textContent).toContain('Auto')
+    fireEvent.click(chip)
+    expect(chip.getAttribute('aria-expanded')).toBe('true')
+    const menu = screen.getByRole('menu', { name: 'Run settings' })
+    // Autonomy: all four run modes
+    for (const label of ['Plan', 'Ask first', 'Accept edits']) {
+      expect(within(menu).getByText(label)).toBeInTheDocument()
+    }
+    // Web search: the 3-way segmented control
+    expect(within(menu).getByRole('radiogroup', { name: 'Web search' })).toBeInTheDocument()
+    // Reasoning: all six positions
+    for (const label of ['Low', 'Medium', 'High', 'XHigh', 'Off']) {
+      expect(within(menu).getByText(label)).toBeInTheDocument()
     }
   })
 
-  it('marks the non-default active mode on the collapsed button', () => {
-    renderComposer({ runMode: 'step' })
-    expect(screen.getByTitle('Confirm before every action').textContent).toContain('Ask first')
-  })
-
-  it('renders the web-search tri-state and the 6-way effort selector', () => {
+  it('Run settings: picking autonomy / web / reasoning dispatches each handler', () => {
+    const onRunModeChange = vi.fn()
     const onToggleWebSearch = vi.fn()
     const onToggleThinking = vi.fn()
-    renderComposer({ onToggleWebSearch, onToggleThinking })
-    const web = screen.getByRole('button', { name: /web search: auto/i })
-    const brain = screen.getByRole('button', { name: /reasoning effort: auto/i })
-    expect(web).toBeInTheDocument()
-    expect(brain).toBeInTheDocument()
-    // Cycle the web tri-state: auto → on → off → auto.
-    fireEvent.click(web)
+    renderComposer({ onRunModeChange, onToggleWebSearch, onToggleThinking })
+    const chip = screen.getByRole('button', { name: /run settings/i })
+    fireEvent.click(chip)
+    const menu = screen.getByRole('menu', { name: 'Run settings' })
+    fireEvent.click(within(menu).getByText('Ask first'))
+    expect(onRunModeChange).toHaveBeenCalledWith('step')
+    fireEvent.click(within(menu).getByRole('radio', { name: 'on' }))
     expect(onToggleWebSearch).toHaveBeenCalledWith('on')
-    renderComposer({ webSearch: 'on', onToggleWebSearch, onToggleThinking })
-    fireEvent.click(screen.getByRole('button', { name: /web search: on/i }))
-    expect(onToggleWebSearch).toHaveBeenCalledWith('off')
-    renderComposer({ webSearch: 'off', onToggleWebSearch, onToggleThinking })
-    fireEvent.click(screen.getByRole('button', { name: /web search: off/i }))
-    expect(onToggleWebSearch).toHaveBeenCalledWith('auto')
-    // effort: open the menu (aria-expanded), then a menuitem dispatches.
-    fireEvent.click(brain)
-    expect(brain.getAttribute('aria-expanded')).toBe('true')
-    fireEvent.click(screen.getByTitle(/^Reasoning effort: Low /))
-    expect(onToggleThinking).toHaveBeenCalledWith('low')
+    fireEvent.click(within(menu).getByText('XHigh'))
+    expect(onToggleThinking).toHaveBeenCalledWith('xhigh')
   })
 
-  it('effort selector: all six positions, xhigh carries the 8k cap, pick dispatches', () => {
-    const onToggle = vi.fn()
-    renderComposer({ thinking: 'xhigh', onToggle: onToggle as never, onToggleThinking: onToggle as never } as any)
-    // open the menu first
-    const openBtn = screen.getByRole('button', { name: /^Reasoning effort: XHigh /i })
-    fireEvent.click(openBtn)
-    const CAPS: Record<string, string> = { auto: 'Auto', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh', off: 'Off' }
-    const cap = (s: string) => CAPS[s]
-    const menu = screen.getByRole('menu', { name: 'Reasoning effort' })
-    for (const id of ['auto', 'low', 'medium', 'high', 'xhigh', 'off'] as const) {
-      const title = new RegExp(`^Reasoning effort: ${cap(id)} `)
-      expect(within(menu).getByTitle(title)).toBeInTheDocument()
-    }
-    for (const next of ['auto', 'low', 'medium', 'high', 'xhigh', 'off'] as const) {
-      // scoped to the menu — the trigger button carries the same title for the current value
-      const item = within(screen.getByRole('menu', { name: 'Reasoning effort' })).getByTitle(new RegExp(`^Reasoning effort: ${cap(next)} `))
-      onToggle.mockClear()
-      fireEvent.click(item)
-      expect(onToggle).toHaveBeenLastCalledWith(next)
-      // pick() closed the menu — reopen for the next pass
-      fireEvent.click(openBtn)
-    }
+  it('Run settings: any non-default axis flips the chip to the accented Custom state', () => {
+    renderComposer({ webSearch: 'on' })
+    const chip = screen.getByRole('button', { name: /run settings \(customized\)/i })
+    expect(chip.textContent).toContain('Custom')
+    expect(chip.className).toContain('chip-on')
   })
 
-  it('marks explicit toggle states visually (on + high = the active chip state)', () => {
-    renderComposer({ webSearch: 'on', thinking: 'high' })
-    const web = screen.getByRole('button', { name: /web search: on/i })
-    const brain = screen.getByRole('button', { name: /reasoning effort: high/i })
-    // The accent moved into the stylesheet: `.chip-on` owns the colour, the
-    // component owns the state — assert the state class, not a hex.
-    expect(web.className).toContain('chip-on')
-    expect(web.getAttribute('aria-pressed')).toBe('true')
-    expect(brain.className).toContain('chip-on')
-    expect(brain.getAttribute('aria-pressed')).toBe('true')
+  it('Run settings: all-default axes read Auto with no accent', () => {
+    renderComposer({ runMode: 'auto', webSearch: 'auto', thinking: 'auto' })
+    const chip = screen.getByRole('button', { name: /^run settings$/i })
+    expect(chip.textContent).toContain('Auto')
+    expect(chip.className).not.toContain('chip-on')
+  })
+
+  it('Run settings: click-away closes the popover', async () => {
+    renderComposer()
+    const chip = screen.getByRole('button', { name: /run settings/i })
+    fireEvent.click(chip)
+    expect(screen.getByRole('menu', { name: 'Run settings' })).toBeInTheDocument()
+    fireEvent.mouseDown(document.body)
+    // AnimatePresence removes the node after the 120ms exit transition.
+    await waitFor(() => expect(screen.queryByRole('menu', { name: 'Run settings' })).toBeNull())
   })
 })
 

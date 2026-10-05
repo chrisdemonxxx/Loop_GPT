@@ -31,6 +31,7 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   { cmd: '/chat', label: 'Quick chat', hint: 'Fast reply, no tools', kind: 'mode', section: 'Session' },
   { cmd: '/agent', label: 'Agent', hint: 'Tool-using agent with full access', kind: 'mode', section: 'Session' },
   { cmd: '/research', label: 'Deep research', hint: 'Multi-step web research with citations', kind: 'mode', section: 'Session' },
+  { cmd: '/bot', label: 'Loop Bot', hint: 'Hand a goal to an autonomous agent — /bot <goal>', kind: 'action', section: 'Session' },
   { cmd: '/new', label: 'New chat', hint: 'Start a fresh session', kind: 'action', section: 'Session' },
   { cmd: '/undo', label: 'Undo', hint: 'Rewind to the previous prompt', kind: 'action', section: 'Session' },
   { cmd: '/retry', label: 'Retry', hint: 'Re-run the last turn', kind: 'action', section: 'Session' },

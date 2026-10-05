@@ -174,6 +174,22 @@ export default function MemoryTab() {
         <Toggle on={enabled} onChange={toggleEnabled} label="Use memory across conversations" />
       </div>
 
+      {/* Reflect (folded in from the retired standalone tab): what the
+          background synthesis does. */}
+      <div className="rounded-xl border border-white/[0.06] p-3.5">
+        <div className="text-[13px] text-slate-300">Reflect — what gets remembered</div>
+        <p className="mt-1 text-[12px] leading-relaxed text-slate-500">
+          Loop GPT reflects on your conversations in the background — pulling durable facts, preferences and
+          open threads into memory so the next session starts where the last one ended. Nothing is
+          synthesized while memory is off.
+        </p>
+        <ul className="mt-1.5 list-inside list-disc space-y-1 text-[12px] text-slate-500">
+          <li>Facts you state about yourself and your work</li>
+          <li>Preferences you repeat or ask to be remembered</li>
+          <li>Project threads you leave mid-task</li>
+        </ul>
+      </div>
+
       {/* Add */}
       <div className="flex gap-2">
         <input

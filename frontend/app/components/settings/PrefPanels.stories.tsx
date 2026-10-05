@@ -3,7 +3,6 @@ import type { Meta, StoryObj } from '@storybook/react'
 import GeneralTab from './GeneralTab'
 import TimeFocusTab from './TimeFocusTab'
 import CodeTab from './CodeTab'
-import ReflectTab from './ReflectTab'
 
 const meta: Meta = {
   title: 'Settings/Pref Panels',
@@ -22,4 +21,3 @@ export default meta
 export const General: StoryObj = { render: () => <GeneralTab /> }
 export const TimeAndFocus: StoryObj = { render: () => <TimeFocusTab /> }
 export const LoopCode: StoryObj = { render: () => <CodeTab /> }
-export const Reflect: StoryObj = { render: () => <ReflectTab onOpenMemory={() => {}} /> }

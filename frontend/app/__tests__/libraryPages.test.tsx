@@ -184,8 +184,9 @@ describe('/customize', () => {
     expect(screen.getByRole('main', { name: 'Agent settings' })).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     const tabs = screen.getAllByRole('tab').map((tab) => tab.textContent?.replace(/[^\w]+/g, ' ').trim())
+    // Reflect was merged into Memory (redesign P1).
     expect(tabs).toEqual([
-      'General', 'Account', 'Privacy', 'Billing', 'Tools', 'Memory', 'Reflect', 'Time and focus', 'Loop Code',
+      'General', 'Account', 'Privacy', 'Billing', 'Tools', 'Memory', 'Time and focus', 'Loop Code',
       'Skills', 'Connectors', 'Plugins', 'Personalization', 'Appearance',
     ])
   })

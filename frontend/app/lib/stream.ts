@@ -1,5 +1,36 @@
 import { API_URL, authHeaders } from './api'
 
+/** (S3) No-event idle watchdog: if the socket goes silent for this long the
+ *  read is abandoned WITHOUT a terminal flag — the durable-run auto-resume
+ *  below reconnects instead of hanging the turn (and the message queue)
+ *  forever on a stalled socket. */
+export const STREAM_IDLE_WATCHDOG_MS = 45_000
+
+/** (S4) Reload reattach: the live run's resume handle is mirrored to
+ *  sessionStorage so a full page reload can re-attach to the same durable
+ *  run instead of silently losing the live turn. */
+const storedRunKey = (conversationId: string) => `loop-active-run:${conversationId}`
+
+export interface StoredRun { runId: string; lastSeq: number }
+
+export function getStoredRun(conversationId: string): StoredRun | null {
+  try {
+    const raw = sessionStorage.getItem(storedRunKey(conversationId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (typeof parsed?.runId === 'string' && typeof parsed?.lastSeq === 'number') return parsed
+  } catch { /* private mode / corrupt */ }
+  return null
+}
+
+export function clearStoredRun(conversationId: string) {
+  try { sessionStorage.removeItem(storedRunKey(conversationId)) } catch { /* ignore */ }
+}
+
+function storeRun(conversationId: string, run: StoredRun) {
+  try { sessionStorage.setItem(storedRunKey(conversationId), JSON.stringify(run)) } catch { /* ignore */ }
+}
+
 export interface ArtifactRef {
   id: string
   kind: string
@@ -137,13 +168,16 @@ export async function runAgentStream(
     if (typeof event.seq === 'number' && event.seq > lastSeq) lastSeq = event.seq
     if (event.type === 'run' && typeof event.runId === 'string') runId = event.runId
     if (event.type === 'final' || event.type === 'done' || event.type === 'error') sawTerminal = true
+    // (S4) mirror the resume handle for reload-reattach; terminal clears it.
+    if (runId && !sawTerminal) storeRun(conversationId, { runId, lastSeq })
+    else if (sawTerminal) clearStoredRun(conversationId)
   }
   const wrapped: StreamHandlers = {
     ...handlers,
-    onRun: (id) => { runId = id; handlers.onRun?.(id) },
-    onFinal: (content, metadata) => { sawTerminal = true; handlers.onFinal?.(content, metadata) },
-    onError: (message) => { sawTerminal = true; handlers.onError?.(message) },
-    onDone: () => { sawTerminal = true; handlers.onDone?.() },
+    onRun: (id) => { runId = id; storeRun(conversationId, { runId: id, lastSeq }); handlers.onRun?.(id) },
+    onFinal: (content, metadata) => { sawTerminal = true; clearStoredRun(conversationId); handlers.onFinal?.(content, metadata) },
+    onError: (message) => { sawTerminal = true; clearStoredRun(conversationId); handlers.onError?.(message) },
+    onDone: () => { sawTerminal = true; clearStoredRun(conversationId); handlers.onDone?.() },
   }
 
   const res = await fetch(`${API_URL}/api/agent/${conversationId}/stream`, {
@@ -168,7 +202,10 @@ export async function runAgentStream(
     return
   }
 
-  await readSse(res, track, wrapped, signal)
+  const firstRead = await readSse(res, track, wrapped, signal)
+  // (S3) a stalled socket reads as 'idle': tell the user, then take the same
+  // durable-resume path a network drop would take.
+  if (firstRead === 'idle') wrapped.onStatus?.('Connection stalled — reconnecting…')
 
   // ── Auto-resume: the stream ended WITHOUT a terminal event and WITHOUT a
   // user abort → reconnect to the durable run (§8-30).
@@ -196,7 +233,8 @@ export async function runAgentStream(
       }
       continue
     }
-    await readSse(resumed, track, wrapped, signal)
+    const read = await readSse(resumed, track, wrapped, signal)
+    if (read === 'idle') wrapped.onStatus?.('Connection stalled — reconnecting…')
     if (sawTerminal) return
   }
 
@@ -205,42 +243,59 @@ export async function runAgentStream(
   }
 }
 
-/** Read one SSE response to its end, dispatching sequenced events. */
+/** Read one SSE response to its end, dispatching sequenced events. Returns
+ *  'done' on a clean end, 'aborted' on user cancel, 'idle' when the idle
+ *  watchdog fired (no event for STREAM_IDLE_WATCHDOG_MS — the caller treats
+ *  it like a drop and resumes the durable run). */
 async function readSse(
   res: Response,
   track: (event: any) => void,
   handlers: StreamHandlers,
   signal?: AbortSignal
-): Promise<void> {
-  if (!res.body) return
+): Promise<'done' | 'aborted' | 'idle'> {
+  if (!res.body) return 'done'
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  while (true) {
-    if (signal?.aborted) {
-      try { await reader.cancel() } catch { /* already closed */ }
-      return
-    }
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const parts = buffer.split('\n\n')
-    buffer = parts.pop() || ''
-    for (const part of parts) {
-      const line = part.split('\n').find((l) => l.startsWith('data:'))
-      if (!line) continue
-      const payload = line.slice(5).trim()
-      if (!payload || payload.startsWith(':')) continue
-      let event: any
-      try {
-        event = JSON.parse(payload)
-      } catch {
-        continue
-      }
-      track(event)
-      dispatch(event, handlers)
-    }
+  let idleTimer: ReturnType<typeof setTimeout> | undefined
+  let idleFired = false
+  const armIdle = () => {
+    if (idleTimer) clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => { idleFired = true; reader.cancel().catch(() => undefined) }, STREAM_IDLE_WATCHDOG_MS)
   }
+  armIdle()
+  try {
+    while (true) {
+      if (signal?.aborted) {
+        try { await reader.cancel() } catch { /* already closed */ }
+        return 'aborted'
+      }
+      const { value, done } = await reader.read()
+      if (done) break
+      armIdle() // every chunk resets the watchdog
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() || ''
+      for (const part of parts) {
+        const line = part.split('\n').find((l) => l.startsWith('data:'))
+        if (!line) continue
+        const payload = line.slice(5).trim()
+        if (!payload || payload.startsWith(':')) continue
+        let event: any
+        try {
+          event = JSON.parse(payload)
+        } catch {
+          continue
+        }
+        track(event)
+        dispatch(event, handlers)
+      }
+    }
+  } finally {
+    if (idleTimer) clearTimeout(idleTimer)
+  }
+  if (idleFired && !signal?.aborted) return 'idle'
+  return signal?.aborted ? 'aborted' : 'done'
 }
 
 function dispatch(event: any, h: StreamHandlers) {
@@ -291,5 +346,63 @@ function dispatch(event: any, h: StreamHandlers) {
     case 'done':
       h.onDone?.()
       break
+  }
+}
+
+/**
+ * (S4) Re-attach to a durable run after a full page reload. Opens the run's
+ * events endpoint from the stored sequence and dispatches replay + live
+ * events to the same handlers a fresh send would use. Resolves when the run
+ * reaches a terminal event (or throws 'run-expired' when it's gone).
+ */
+export async function resumeStoredRun(
+  conversationId: string,
+  stored: StoredRun,
+  handlers: StreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  let lastSeq = stored.lastSeq
+  let sawTerminal = false
+  const track = (event: any) => {
+    if (typeof event.seq === 'number' && event.seq > lastSeq) lastSeq = event.seq
+    if (event.type === 'final' || event.type === 'done' || event.type === 'error') sawTerminal = true
+    if (!sawTerminal) storeRun(conversationId, { runId: stored.runId, lastSeq })
+    else clearStoredRun(conversationId)
+  }
+  const wrapped: StreamHandlers = {
+    ...handlers,
+    onFinal: (c, m) => { sawTerminal = true; clearStoredRun(conversationId); handlers.onFinal?.(c, m) },
+    onError: (m) => { sawTerminal = true; clearStoredRun(conversationId); handlers.onError?.(m) },
+    onDone: () => { sawTerminal = true; clearStoredRun(conversationId); handlers.onDone?.() },
+  }
+
+  const backoff = [1000, 2000, 4000, 8000, 16_000, 30_000]
+  for (const delay of [0, ...backoff]) {
+    if (signal?.aborted) return
+    if (sawTerminal) return
+    if (delay) await new Promise((r) => setTimeout(r, delay))
+    if (signal?.aborted || sawTerminal) return
+    let res: Response
+    try {
+      res = await fetch(`${API_URL}/api/agent/${conversationId}/runs/${stored.runId}/events?after=${Math.max(lastSeq, 0)}`, {
+        headers: authHeaders(),
+        signal,
+      })
+    } catch {
+      continue
+    }
+    if (!res.ok || !res.body) {
+      if (res.status === 404 || res.status === 410) {
+        clearStoredRun(conversationId)
+        throw new Error('run-expired')
+      }
+      continue
+    }
+    const read = await readSse(res, track, wrapped, signal)
+    if (read === 'idle') wrapped.onStatus?.('Connection stalled — reconnecting…')
+    if (sawTerminal) return
+  }
+  if (!sawTerminal && !signal?.aborted) {
+    wrapped.onError?.('Connection lost mid-run. It may still complete in the background — check back in a moment.')
   }
 }

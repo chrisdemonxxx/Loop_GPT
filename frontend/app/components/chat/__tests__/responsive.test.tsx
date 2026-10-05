@@ -73,7 +73,6 @@ describe('44px tap targets', () => {
         onToggleThinking={vi.fn()}
         showSlash={false}
         showPlus={false}
-        showModeMenu={false}
         onInputChange={vi.fn()}
         onSelectSlashCommand={vi.fn()}
         onSend={vi.fn()}
@@ -81,12 +80,9 @@ describe('44px tap targets', () => {
         onImagesSelected={vi.fn()}
         onTogglePlus={vi.fn()}
         onClosePlus={vi.fn()}
-        onToggleModeMenu={vi.fn()}
-        onCloseModeMenu={vi.fn()}
         onRunModeChange={vi.fn()}
         onOpenConnectors={vi.fn()}
         onOpenSettingsTab={vi.fn()}
-        toolSelectionCount={null}
       />,
     )
     const send = screen.getByRole('button', { name: 'Send message' })

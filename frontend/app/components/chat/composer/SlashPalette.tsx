@@ -5,7 +5,9 @@ import {
   Paperclip, Plus, RotateCcw, X, Download as DownloadIcon, Camera, Blocks,
   FolderKanban, Puzzle, Cable, Image as ImageIcon, FilePlus,
 } from 'lucide-react'
+import { useRef } from 'react'
 import type { SlashCommandDef } from '../../../lib/commands'
+import { useMenuDismiss } from '../../../lib/useMenuDismiss'
 
 /** Map a command to a representative icon. */
 const ICONS: Record<string, any> = {
@@ -92,8 +94,10 @@ export function RunModePicker({
 }) {
   const activeMode = RUN_MODES.find((m) => m.id === runMode) || RUN_MODES[0]
   const ActiveIcon = activeMode.icon
+  const ref = useRef<HTMLDivElement>(null)
+  useMenuDismiss(ref, open, onClose)
   return (
-    <div className="relative">
+    <div className="relative" ref={ref}>
       <button
         type="button"
         onClick={() => { onToggle(); onCloseOther() }}

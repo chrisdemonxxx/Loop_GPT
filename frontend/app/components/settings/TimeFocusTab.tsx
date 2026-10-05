@@ -19,9 +19,10 @@ function fromHHMM(s: string, fallback: number): number {
 }
 
 /**
- * Time and focus (blueprint §8): break reminders + quiet hours. Client prefs
- * (contract §1) — they persist and render here; enforcement is explicitly
- * pending platform-side, and the copy below never claims otherwise.
+ * Time and focus (blueprint §8): break reminders + quiet hours — REAL
+ * enforcement (redesign decision): the break timer fires quiet-hours-gated
+ * notifications (toast fallback when the browser denies them), and quiet
+ * hours mute every app notification via lib/reminders.notify.
  */
 export default function TimeFocusTab() {
   const { prefs, update } = usePrefs()
@@ -36,7 +37,11 @@ export default function TimeFocusTab() {
             <Clock size={14} className="mt-0.5 shrink-0 text-slate-500" />
             <span>
               <span className="block text-slate-300">Remind me to take breaks</span>
-              <span className="block text-[11px] text-slate-500">Saved locally — enforcement ships with the reminders surface</span>
+              <span className="block text-[11px] text-slate-500">
+                {breakReminders.enabled
+                  ? `On — you'll get a notification every ${breakReminders.everyMinutes || 50} minutes`
+                  : 'A notification (or in-app note) when you\'ve been going a while'}
+              </span>
             </span>
           </span>
           <Toggle
@@ -70,7 +75,11 @@ export default function TimeFocusTab() {
             <MoonStar size={14} className="mt-0.5 shrink-0 text-slate-500" />
             <span>
               <span className="block text-slate-300">Mute notifications at set hours</span>
-              <span className="block text-[11px] text-slate-500">Saved locally — enforcement ships with the reminders surface</span>
+              <span className="block text-[11px] text-slate-500">
+                {quietHours.enabled
+                  ? `Active ${toHHMM(quietHours.from)}–${toHHMM(quietHours.to)} — all app notifications pause`
+                  : 'No app notifications inside the window you pick'}
+              </span>
             </span>
           </span>
           <Toggle on={quietHours.enabled} onChange={(on) => update({ quietHours: { ...quietHours, enabled: on } })} label="Mute notifications at set hours" />

@@ -22,13 +22,22 @@ describe('SettingsPanel shell', () => {
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.trim())
     // S2 registry (team/CONTRACT_S2_SETTINGS.md §1): Settings group then
     // Customize group; "Capabilities" maps to Tools, "Claude Code" to Loop Code.
+    // Reflect was merged into Memory (redesign P1: it was a paragraph + a link).
     expect(tabs).toEqual([
-      'General', 'Account', 'Privacy', 'Billing', 'Tools', 'Memory', 'Reflect', 'Time and focus', 'Loop Code',
+      'General', 'Account', 'Privacy', 'Billing', 'Tools', 'Memory', 'Time and focus', 'Loop Code',
       'Skills', 'Connectors', 'Plugins', 'Personalization', 'Appearance',
     ])
     expect(tabs).not.toContain('Builder')
     expect(tabs).not.toContain('Model')
     expect(tabs).not.toContain('Styles')
+    expect(tabs).not.toContain('Reflect')
+  })
+
+  it('renders the Settings / Customize group labels in the tab strip', () => {
+    render(<SettingsPanel onClose={() => {}} />)
+    const tablist = screen.getByRole('tablist')
+    expect(tablist.textContent).toContain('Settings')
+    expect(tablist.textContent).toContain('Customize')
   })
 
   it('defaults to the General tab', () => {

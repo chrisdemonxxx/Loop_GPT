@@ -44,6 +44,9 @@ interface MessageListProps {
   onRemoveQueued?: (id: string) => void
   running: boolean
   statusMsg: string
+  /** (S5) Persistent run error — a dismissible banner, not a flash. */
+  errorMsg?: string
+  onClearError?: () => void
   mode: AgentMode
   /** Live-turn tool approval handshake (inline activity card). */
   pendingApproval?: PendingApproval | null
@@ -67,7 +70,7 @@ interface MessageListProps {
 export default function MessageList({
   messages, conversationId, liveUser, liveSteps, liveAnswer, liveThinking, liveArtifacts, liveReplaceAfterId,
   versions, onSelectVersion, queued, onRemoveQueued,
-  running, statusMsg, mode, pendingApproval, onApprove, onDeny, toolCount, onOpenTools,
+  running, statusMsg, errorMsg, onClearError, mode, pendingApproval, onApprove, onDeny, toolCount, onOpenTools,
   onOpenArtifact, onOpenArtifactByName, onEditMessage, onRetryBefore, onStartPrompt,
 }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null)
@@ -106,8 +109,10 @@ export default function MessageList({
 
   // Auto-scroll on new content ONLY while the reader is at the bottom —
   // scrolling up to read history wins over incoming content (no fighting).
+  // (S6) 'instant' while streaming: restarting a SMOOTH scroll on every rAF
+  // flush was the known jank source; smooth stays on the user-initiated jump.
   useEffect(() => {
-    if (atBottom) endRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (atBottom) endRef.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior })
   }, [messages, liveSteps, statusMsg, liveAnswer])
 
   return (
@@ -115,6 +120,25 @@ export default function MessageList({
       ref={scrollRef}
       onScroll={onScroll}
     >
+      {/* (S5) Persistent run error — dismissible, survives the stream's
+          finally block (the old transient status line flashed and vanished). */}
+      {errorMsg && (
+        <div className="max-w-[48rem] mx-auto mb-4">
+          <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-rose-400/30 bg-rose-500/[0.08] px-3.5 py-2.5 text-[13px] text-rose-200">
+            <span className="flex-1">⚠️ {errorMsg}</span>
+            {onClearError && (
+              <button
+                type="button"
+                onClick={onClearError}
+                aria-label="Dismiss error"
+                className="shrink-0 rounded-md px-1.5 py-0.5 text-rose-300/80 hover:text-rose-100 hover:bg-white/[0.06] transition"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {showEmpty ? (
         <EmptyState onStartPrompt={onStartPrompt} />
       ) : (

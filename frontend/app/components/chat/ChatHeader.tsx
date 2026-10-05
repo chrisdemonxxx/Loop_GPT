@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { PanelLeft, FileDown, Sparkles, FlaskConical, Ghost, Sun, Moon, Monitor } from 'lucide-react'
 import ModelSelector from '../ModelSelector'
+import { useMenuDismiss } from '../../lib/useMenuDismiss'
 import type { ThemeChoice } from '../../lib/theme'
 
 /** The top bar: sidebar toggle, session title, model selector, incognito,
@@ -39,6 +40,8 @@ export default function ChatHeader({
   onCycleTheme?: () => void
 }) {
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  const exportRef = useRef<HTMLDivElement>(null)
+  useMenuDismiss(exportRef, exportMenuOpen, () => setExportMenuOpen(false))
   const themeLabel = theme === 'light' ? 'Light' : theme === 'dark' ? 'Dark' : 'System'
   const ThemeIcon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor
 
@@ -88,7 +91,7 @@ export default function ChatHeader({
           <span className="hidden sm:inline">{incognito ? 'Incognito' : ''}</span>
         </button>
         {hasMessages && (
-          <div className="relative">
+          <div className="relative" ref={exportRef}>
             <button
               onClick={() => setExportMenuOpen((v) => !v)}
               title="Export conversation"

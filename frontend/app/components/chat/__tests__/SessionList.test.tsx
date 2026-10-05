@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import axios from 'axios'
 import Sidebar from '../Sidebar'
@@ -143,9 +143,8 @@ describe('session list fetch', () => {
     expect(screen.queryByText("Couldn't load sessions.")).not.toBeInTheDocument()
   })
 
-  it('a failed delete asks first and does not drop the open session', async () => {
+  it('a failed delete asks first (in-app dialog) and does not drop the open session', async () => {
     const onDeleted = vi.fn()
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     http.get.mockImplementation((url: string) => {
       if (String(url).includes('/messages')) return Promise.resolve({ data: { activeLeafId: null, messages: [] } })
       return Promise.resolve({ data: [sessionRow] })
@@ -154,11 +153,12 @@ describe('session list fetch', () => {
     render(<Harness currentId="c1" onDeleted={onDeleted} />)
     expect(await screen.findByText('Fresh chat')).toBeInTheDocument()
     fireEvent.click(screen.getByTitle('Delete'))
-    expect(confirm).toHaveBeenCalledWith('Delete this session?')
+    // The in-app alertdialog replaces window.confirm; confirm through it.
+    const dialog = await screen.findByRole('alertdialog', { name: 'Delete session' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
     await waitFor(() => expect(http.delete).toHaveBeenCalled())
     expect(onDeleted).not.toHaveBeenCalled()
     expect(screen.getByText('Fresh chat')).toBeInTheDocument()
-    confirm.mockRestore()
   })
 
   it('shows a loading state instead of the empty copy while the first GET is pending', async () => {

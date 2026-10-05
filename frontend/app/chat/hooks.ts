@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 
 import { API_URL, authHeaders, getToken, type AgentMode } from '../lib/api'
-import { runAgentStream, type ArtifactRef } from '../lib/stream'
+import { runAgentStream, resumeStoredRun, getStoredRun, type ArtifactRef } from '../lib/stream'
 import { track } from '../components/Analytics'
 import { useDictation } from '../lib/voice'
 import { buildBranchView, type BranchVersionInfo } from '../lib/branch'
@@ -194,15 +194,18 @@ export function useConversationsData(
   // Branch envelope (§8-22): every row + the active leaf. The transcript
   // renders the DERIVED active path (buildBranchView) so retries and edits
   // become <2/3> version arrows instead of destructive rewrites.
-  const { data: branch = { activeLeafId: null, messages: [] } } = useQuery<{ activeLeafId: string | null; messages: Message[] }>({
+  // (S8) a failed fetch THROWS now — the old catch-to-empty rendered a blank
+  // transcript on any transient error, indistinguishable from a new chat.
+  const { data: branch = { activeLeafId: null, messages: [] }, isError: messagesError, refetch: refetchMessages } = useQuery<{ activeLeafId: string | null; messages: Message[] }>({
     queryKey: ['messages', currentConversationId],
     queryFn: async () => {
       if (!currentConversationId) return { activeLeafId: null, messages: [] }
-      const fallback = { activeLeafId: null, messages: [] } as { activeLeafId: string | null; messages: Message[] }
-      const d = (await axios.get(`${API_URL}/api/conversations/${currentConversationId}/messages?branch=1`, { headers: authHeaders(false) }).catch(() => ({ data: fallback }))).data
-      return d && typeof d === 'object' && Array.isArray(d.messages) ? d : fallback
+      const d = (await axios.get(`${API_URL}/api/conversations/${currentConversationId}/messages?branch=1`, { headers: authHeaders(false) })).data
+      if (!d || typeof d !== 'object' || !Array.isArray(d.messages)) throw new Error('messages')
+      return d
     },
     enabled: !!currentConversationId && typeof window !== 'undefined',
+    retry: 1,
   })
   const branchView = useMemo(() => buildBranchView(branch.messages, branch.activeLeafId), [branch])
 
@@ -243,6 +246,9 @@ export function useConversationsData(
   return {
     conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages,
     sessionsError, sessionsPending, retrySessions,
+    /** (S8) transcript fetch failed (was a silent blank transcript before). */
+    messagesError,
+    retryMessages: () => { void refetchMessages() },
     /** Version-arrow data per displayed row (§8-22). */
     branchVersions: branchView.versions as Record<string, BranchVersionInfo>,
     /** The conversation's active branch tip. */
@@ -756,17 +762,111 @@ export function useChatStream() {
   /** Clear all live-turn state (conversation switch / fork). */
   const resetLive = () => {
     setLiveUser(null); setLiveSteps([]); setLiveArtifacts([]); setStatusMsg(''); setLiveThinking('')
+    setPendingApproval(null) // (S2) approval cards must never leak across turns
   }
 
   /** Narrower reset (incognito toggle): clears the visible turn but keeps
    * status/thinking state, exactly as the original inline implementation. */
   const clearTurn = () => {
     setLiveSteps([]); setLiveArtifacts([]); setLiveUser(null)
+    setPendingApproval(null)
   }
+
+  /** (S5) Persistent run error: statusMsg is transient (cleared in finally);
+   *  the error banner lives until dismissed or the next send starts. */
+  const [errorMsg, setErrorMsg] = useState('')
+
+  /** The shared handler set for a run against one conversation — used by
+   *  send() and by the reload-reattach path (S4). */
+  const makeHandlers = (convId: string) => ({
+    onStatus: (m: string) => { if (!m.startsWith('conversation:')) setStatusMsg(m) },
+    onWarming: (m: string) => setStatusMsg(m),
+    // (S1) the retryable at-capacity wait card: the server says it's retrying —
+    // surface it as a live status instead of a terminal-looking error.
+    onRetry: (attempt: number, afterMs: number) =>
+      setStatusMsg(`The model is busy — retrying automatically${attempt ? ` (attempt ${attempt})` : ''}${afterMs ? ` in ${Math.ceil(afterMs / 1000)}s` : ''}…`),
+    // The durable run id — the stop button's cancel target (§8-30).
+    onRun: (id: string) => { runIdRef.current = id },
+    // Batched per frame (§8-33): per-token callbacks only buffer; the
+    // flush applies them in one state update (see flushLive/scheduleFlush).
+    onDelta: (step: number, text: string) => {
+      pendingDeltasRef.current.push({ step, text })
+      scheduleFlush()
+    },
+    onThinking: (_step: number, text: string) => {
+      pendingThinkingRef.current = (pendingThinkingRef.current + text).slice(0, 20_000)
+      scheduleFlush()
+    },
+    onToolCall: (step: number, name: string, args: any, source?: string) => {
+      setLiveSteps((prev) => {
+        const next = [...prev]
+        const i = next.findIndex((s) => s.index === step)
+        const t: LiveStep = { index: step, kind: 'tool', text: '', ts: Date.now(), tool: { name, args, source } }
+        if (i === -1) next.push(t); else next[i] = t
+        return next
+      })
+    },
+    // Live stdout/stderr (§8-28): append to the step's bounded display buffer.
+    onToolOutput: (step: number, chunk: string, stream?: 'stdout' | 'stderr') => {
+      setLiveSteps((prev) => prev.map((s) => {
+        if (s.index !== step || !s.tool) return s
+        const live = s.tool.liveOutput || { stdout: '', stderr: '' }
+        const key = stream === 'stderr' ? 'stderr' : 'stdout'
+        live[key] = (live[key] + chunk).slice(-8_000) // bounded: keep the tail
+        return { ...s, tool: { ...s.tool, liveOutput: live } }
+      }))
+    },
+    // Progress checklist (§8-29): the latest event for the step wins.
+    onProgress: (step: number, items: any[]) => {
+      setLiveSteps((prev) => prev.map((s) =>
+        s.index === step && s.tool ? { ...s, tool: { ...s.tool, progress: items } } : s))
+    },
+    onToolResult: (step: number, name: string, resultContent: string, data: any, isError?: boolean) => {
+      setLiveSteps((prev) =>
+        prev.map((s) => {
+          if (s.index !== step || !s.tool) return s
+          const startedAt = s.ts || Date.now()
+          // Per-step artifact attribution (§8-28): names from the result data.
+          const artifactNames = Array.isArray(data?.artifacts) ? data.artifacts.map((a: any) => a.name) : s.tool.artifacts
+          return { ...s, tool: { ...s.tool, result: resultContent, isError, durationMs: Date.now() - startedAt, artifacts: artifactNames } }
+        })
+      )
+    },
+    onArtifact: (a: ArtifactRef) => setLiveArtifacts((prev) => [...prev, a]),
+    onPendingApproval: (toolName: string, args: any, _prompt: string) => {
+      // Build the approval fetch URL with the current conversation id.
+      const approve = (approved: boolean) =>
+        axios.post(`${API_URL}/api/agent/${convId}/approve`, { toolName, approved }, { headers: authHeaders(false) }).catch(() => undefined)
+      setLiveSteps((prev) => {
+        const idx = Date.now()
+        const next = [...prev]
+        next.push({ index: idx, kind: 'tool', text: '', tool: { name: toolName, args, source: 'approval' } })
+        return next
+      })
+      // Store the resolve function for the approval UI to call.
+      setPendingApproval({ toolName, approve })
+    },
+    onError: (m: string) => {
+      setStatusMsg('')
+      setErrorMsg(m) // (S5) persists until dismissed — no more flash-and-vanish
+      // A lost connection (§8-30) means the run may still complete in the
+      // background — one delayed refresh picks up the persisted result.
+      if (/Connection lost/i.test(m) && convId) {
+        setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ['messages', convId] })
+          queryClient.invalidateQueries({ queryKey: ['conversations'] })
+        }, 45_000)
+      }
+    },
+    onFinal: () => {},
+    onDone: () => {},
+  })
 
   async function send(opts: ChatStreamSendOptions) {
     const { content, sendMode, commandTools, attachmentIds, previews, docNames, runMode, modelTier, selectedTools, incognito, projectId, webSearch, thinking, parentMessageId, regenerateOf, connectionIds, workspaceId, ensureConversation } = opts
     setRunning(true); setStatusMsg(''); setLiveSteps([]); setLiveArtifacts([]); setLiveThinking('')
+    setPendingApproval(null) // (S2) no approval card carries into a new run
+    setErrorMsg('')
     runIdRef.current = null
     // §8-22: a retry anchors under the re-answered user row; an edit under
     // the edited prompt's predecessor; a normal send appends (no truncation).
@@ -802,101 +902,56 @@ export function useChatStream() {
       // Branch anchoring (§8-22) — only present when retrying/editing.
         ...(parentMessageId !== undefined ? { parentMessageId } : {}),
         ...(regenerateOf ? { regenerateOf } : {}),
-      }, {
-        onStatus: (m) => { if (!m.startsWith('conversation:')) setStatusMsg(m) },
-        onWarming: (m) => setStatusMsg(m),
-        // The durable run id — the stop button's cancel target (§8-30).
-        onRun: (id) => { runIdRef.current = id },
-        // Batched per frame (§8-33): per-token callbacks only buffer; the
-        // flush applies them in one state update (see flushLive/scheduleFlush).
-        onDelta: (step, text) => {
-          pendingDeltasRef.current.push({ step, text })
-          scheduleFlush()
-        },
-        onThinking: (_step, text) => {
-          pendingThinkingRef.current = (pendingThinkingRef.current + text).slice(0, 20_000)
-          scheduleFlush()
-        },
-        onToolCall: (step, name, args, source) => {
-          setLiveSteps((prev) => {
-            const next = [...prev]
-            const i = next.findIndex((s) => s.index === step)
-            const t: LiveStep = { index: step, kind: 'tool', text: '', ts: Date.now(), tool: { name, args, source } }
-            if (i === -1) next.push(t); else next[i] = t
-            return next
-          })
-        },
-        // Live stdout/stderr (§8-28): append to the step's bounded display buffer.
-        onToolOutput: (step, chunk, stream) => {
-          setLiveSteps((prev) => prev.map((s) => {
-            if (s.index !== step || !s.tool) return s
-            const live = s.tool.liveOutput || { stdout: '', stderr: '' }
-            const key = stream === 'stderr' ? 'stderr' : 'stdout'
-            live[key] = (live[key] + chunk).slice(-8_000) // bounded: keep the tail
-            return { ...s, tool: { ...s.tool, liveOutput: live } }
-          }))
-        },
-        // Progress checklist (§8-29): the latest event for the step wins.
-        onProgress: (step, items) => {
-          setLiveSteps((prev) => prev.map((s) =>
-            s.index === step && s.tool ? { ...s, tool: { ...s.tool, progress: items } } : s))
-        },
-        onToolResult: (step, name, resultContent, data, isError) => {
-          setLiveSteps((prev) =>
-            prev.map((s) => {
-              if (s.index !== step || !s.tool) return s
-              const startedAt = s.ts || Date.now()
-              // Per-step artifact attribution (§8-28): names from the result data.
-              const artifactNames = Array.isArray(data?.artifacts) ? data.artifacts.map((a: any) => a.name) : s.tool.artifacts
-              return { ...s, tool: { ...s.tool, result: resultContent, isError, durationMs: Date.now() - startedAt, artifacts: artifactNames } }
-            })
-          )
-        },
-        onArtifact: (a) => setLiveArtifacts((prev) => [...prev, a]),
-        onPendingApproval: (toolName, args, _prompt) => {
-          // Build the approval fetch URL with the current conversation id.
-          const approve = (approved: boolean) =>
-            axios.post(`${API_URL}/api/agent/${convId}/approve`, { toolName, approved }, { headers: authHeaders(false) }).catch(() => undefined)
-          setLiveSteps((prev) => {
-            const idx = Date.now()
-            const next = [...prev]
-            next.push({ index: idx, kind: 'tool', text: '', tool: { name: toolName, args, source: 'approval' } })
-            return next
-          })
-          // Store the resolve function for the approval UI to call.
-          setPendingApproval({ toolName, approve })
-        },
-        onError: (m) => {
-          setStatusMsg(`⚠️ ${m}`)
-          // A lost connection (§8-30) means the run may still complete in the
-          // background — one delayed refresh picks up the persisted result.
-          if (/Connection lost/i.test(m) && convId) {
-            setTimeout(() => {
-              queryClient.invalidateQueries({ queryKey: ['messages', convId] })
-              queryClient.invalidateQueries({ queryKey: ['conversations'] })
-            }, 45_000)
-          }
-        },
-        onFinal: () => {},
-        onDone: () => {},
-      }, abort.signal)
+      }, makeHandlers(convId), abort.signal)
     } catch (err: any) {
-      setStatusMsg(`⚠️ ${err?.message || 'Run failed'}`)
+      setStatusMsg('')
+      setErrorMsg(err?.message || 'Run failed')
     } finally {
       // Drain any buffered streamed text synchronously (§8-33) — nothing
       // buffered is ever lost, even if rAF never fired (background tab).
       flushLive()
       setRunning(false)
       abortRef.current = null
+      setPendingApproval(null) // (S2) the run is over; its card must not linger
       if (convId) await queryClient.invalidateQueries({ queryKey: ['messages', convId] })
       await queryClient.invalidateQueries({ queryKey: ['conversations'] })
       setLiveUser(null); setStatusMsg(''); setLiveAnchorId(null)
     }
   }
 
+  /** (S4) Re-attach to a durable run interrupted by a full page reload. The
+   *  stored resume handle (sessionStorage) replays the missed events into the
+   *  same live UI a fresh send would use. */
+  const reattach = async (convId: string): Promise<boolean> => {
+    const stored = getStoredRun(convId)
+    if (!stored || running) return false
+    setRunning(true)
+    setErrorMsg('')
+    setStatusMsg('Reattaching to the run in progress…')
+    const abort = new AbortController()
+    abortRef.current = abort
+    activeConvRef.current = convId
+    runIdRef.current = stored.runId
+    try {
+      await resumeStoredRun(convId, stored, makeHandlers(convId), abort.signal)
+    } catch (err: any) {
+      if (err?.message === 'run-expired') setErrorMsg('That run is no longer available — it may have finished while you were away.')
+    } finally {
+      flushLive()
+      setRunning(false)
+      abortRef.current = null
+      setPendingApproval(null)
+      await queryClient.invalidateQueries({ queryKey: ['messages', convId] })
+      await queryClient.invalidateQueries({ queryKey: ['conversations'] })
+      setLiveUser(null); setStatusMsg(''); setLiveAnchorId(null)
+    }
+    return true
+  }
+
   return {
-    running, statusMsg, liveUser, liveSteps, liveArtifacts, liveThinking, liveAnswer,
+    running, statusMsg, errorMsg, clearError: () => setErrorMsg(''),
+    liveUser, liveSteps, liveArtifacts, liveThinking, liveAnswer,
     pendingApproval, setPendingApproval, liveAnchorId,
-    stopRun, resetLive, clearTurn, send,
+    stopRun, resetLive, clearTurn, send, reattach,
   }
 }

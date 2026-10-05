@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { runAgentStream } from '../stream'
+import { runAgentStream, getStoredRun, clearStoredRun, resumeStoredRun } from '../stream'
 import { API_URL } from '../api'
 
 /** Stream auto-resume (audit §8-30): a dropped SSE connection mid-run
@@ -95,5 +95,68 @@ describe('runAgentStream auto-resume', () => {
     await runAgentStream('c1', base, { onError }, controller.signal)
     expect((fetch as any).mock.calls.filter((c: any[]) => String(c[0]).includes('/runs/'))).toHaveLength(0)
     expect(onError).not.toHaveBeenCalled()
+  })
+})
+
+/** (S4) Reload reattach: the resume handle is mirrored to sessionStorage
+ *  mid-run and cleared on terminal; resumeStoredRun replays from it. */
+describe('stored run (reload reattach)', () => {
+  beforeEach(() => { sessionStorage.clear() })
+  afterEach(() => { sessionStorage.clear() })
+
+  it('stores the handle mid-run and clears it on terminal', async () => {
+    ;(fetch as any).mockImplementation(async () =>
+      sse([
+        { type: 'run', runId: 'run-p1', seq: 0 },
+        { type: 'final', content: 'ok', seq: 1 },
+        { type: 'done', seq: 2 },
+      ]))
+    await runAgentStream('conv-p', base, {})
+    expect(getStoredRun('conv-p')).toBeNull() // cleared on done
+  })
+
+  it('keeps the handle when the stream drops mid-run', async () => {
+    ;(fetch as any).mockImplementation(async (url: any) => {
+      if (String(url).endsWith('/stream')) {
+        return sse([{ type: 'run', runId: 'run-p2', seq: 0 }, { type: 'delta', step: 0, text: 'half ', seq: 1 }])
+      }
+      return sse([{ type: 'done', seq: 2 }]) // resume completes it
+    })
+    await runAgentStream('conv-q', base, {})
+    expect(getStoredRun('conv-q')).toBeNull() // resumed + terminal → cleared
+  })
+
+  it('resumeStoredRun replays from the stored seq and dispatches live events', async () => {
+    sessionStorage.setItem('loop-active-run:conv-r', JSON.stringify({ runId: 'run-p3', lastSeq: 4 }))
+    ;(fetch as any).mockImplementation(async (url: any) => {
+      expect(String(url)).toContain('/runs/run-p3/events')
+      expect(String(url)).toContain('after=4')
+      return sse([
+        { type: 'delta', step: 0, text: 'tail', seq: 5 },
+        { type: 'final', content: 'whole', seq: 6 },
+        { type: 'done', seq: 7 },
+      ])
+    })
+    const onDelta = vi.fn()
+    const onFinal = vi.fn()
+    await resumeStoredRun('conv-r', { runId: 'run-p3', lastSeq: 4 }, { onDelta, onFinal })
+    expect(onDelta).toHaveBeenCalledWith(0, 'tail')
+    expect(onFinal).toHaveBeenCalledWith('whole', undefined)
+    expect(getStoredRun('conv-r')).toBeNull()
+  })
+
+  it('resumeStoredRun throws run-expired on a 404 and clears the handle', async () => {
+    sessionStorage.setItem('loop-active-run:conv-x', JSON.stringify({ runId: 'run-gone', lastSeq: 1 }))
+    ;(fetch as any).mockImplementation(async () => new Response('{}', { status: 404 }))
+    await expect(resumeStoredRun('conv-x', { runId: 'run-gone', lastSeq: 1 }, {})).rejects.toThrow('run-expired')
+    expect(getStoredRun('conv-x')).toBeNull()
+  })
+
+  it('clearStoredRun removes only that conversation\'s handle', () => {
+    sessionStorage.setItem('loop-active-run:a', JSON.stringify({ runId: 'r1', lastSeq: 0 }))
+    sessionStorage.setItem('loop-active-run:b', JSON.stringify({ runId: 'r2', lastSeq: 0 }))
+    clearStoredRun('a')
+    expect(getStoredRun('a')).toBeNull()
+    expect(getStoredRun('b')).not.toBeNull()
   })
 })

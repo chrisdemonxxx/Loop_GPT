@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import {
   Plus, PanelLeft, Search, MessageSquare, Edit2, Trash2, Star, Share2, Check,
-  Settings, CreditCard, ShieldCheck, LogOut, ChevronDown, Sparkles, FolderOpen, Terminal, Download,
+  Settings, CreditCard, ShieldCheck, LogOut, ChevronDown, Sparkles, FolderOpen, Terminal, Download, Bot,
 } from 'lucide-react'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -80,6 +80,7 @@ export default function Sidebar({
   const [editingTitle, setEditingTitle] = useState('')
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [projectsOpen, setProjectsOpen] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [shareNote, setShareNote] = useState<{ id: string; kind: 'copied' | 'share' | 'copy' } | null>(null)
   const { locale, setLocale, t } = useI18n()
 
@@ -144,21 +145,36 @@ export default function Sidebar({
           <Sparkles size={14} className="text-white" />
         </div>
         <span className="font-semibold text-slate-100 text-[15px]">Loop GPT</span>
+        {/* Drawer-close lives here only on mobile — on desktop the header
+            owns the single sidebar toggle (was duplicated in both places). */}
         <button
           onClick={onClose}
           title="Hide sidebar"
           aria-label="Hide sidebar"
-          className="ml-auto p-1.5 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-300 transition"
+          className="ml-auto p-1.5 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-300 transition md:hidden"
         >
           <PanelLeft size={16} />
         </button>
       </div>
 
-      <nav aria-label="Workspace" className="px-3 pb-2 grid grid-cols-2 gap-1 shrink-0">
-        <Link href="/projects" className="px-2.5 py-1.5 rounded-lg text-[12.5px] text-slate-300 hover:bg-white/[0.05] hover:text-slate-100 transition">Projects</Link>
-        <Link href="/artifacts" className="px-2.5 py-1.5 rounded-lg text-[12.5px] text-slate-300 hover:bg-white/[0.05] hover:text-slate-100 transition">Files</Link>
-        <Link href="/recents" className="px-2.5 py-1.5 rounded-lg text-[12.5px] text-slate-300 hover:bg-white/[0.05] hover:text-slate-100 transition">Recents</Link>
-        <Link href="/customize" className="px-2.5 py-1.5 rounded-lg text-[12.5px] text-slate-300 hover:bg-white/[0.05] hover:text-slate-100 transition">Customize</Link>
+      {/* Workspace nav — icon + label rows (was a 2×2 grid of bare text
+          links that read as an afterthought). */}
+      <nav aria-label="Workspace" className="px-3 pb-2 space-y-0.5 shrink-0">
+        {[
+          { href: '/projects', label: 'Projects', icon: FolderOpen },
+          { href: '/agents', label: 'Loop Bot', icon: Bot },
+          { href: '/artifacts', label: 'Files', icon: Download },
+          { href: '/recents', label: 'Recents', icon: MessageSquare },
+          { href: '/customize', label: 'Customize', icon: Settings },
+        ].map(({ href, label, icon: Icon }) => (
+          <Link
+            key={href}
+            href={href}
+            className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-[12.5px] text-slate-300 hover:bg-white/[0.05] hover:text-slate-100 transition"
+          >
+            <Icon size={14} className="text-slate-500 shrink-0" /> {label}
+          </Link>
+        ))}
       </nav>
 
       {/* New chat + search */}
@@ -240,10 +256,10 @@ export default function Sidebar({
                 onCommitEdit={commitEdit}
                 onCancelEdit={() => setEditingId(null)}
                 onSelect={() => { onSelectConversation(c.id); onClose() }}
-                onPin={() => onPinConversation(c.id, !c.pinned)}
-                onShare={() => handleShare(c.id)}
-                onDelete={() => { if (confirm('Delete this session?')) onDeleteConversation(c.id) }}
-              />
+                 onPin={() => onPinConversation(c.id, !c.pinned)}
+                 onShare={() => handleShare(c.id)}
+                 onDelete={() => setConfirmDeleteId(c.id)}
+               />
             ))}
           </div>
         ))}
@@ -382,6 +398,47 @@ export default function Sidebar({
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Delete confirmation dialog — replaces the native confirm() (P1:
+          browser chrome looked unbranded and broke the dark surface). */}
+      <AnimatePresence>
+        {confirmDeleteId && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[2px] p-4"
+            onClick={() => setConfirmDeleteId(null)}
+          >
+            <motion.div
+              role="alertdialog"
+              aria-modal="true"
+              aria-label="Delete session"
+              initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }}
+              transition={{ duration: 0.15, ease: 'easeOut' }}
+              className="glass-strong rounded-xl border border-white/[0.08] shadow-panel p-4 w-full max-w-xs"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="text-[14px] font-medium text-slate-100">Delete this session?</div>
+              <p className="mt-1 text-[12.5px] text-slate-500">This can&apos;t be undone.</p>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteId(null)}
+                  className="px-3 py-1.5 rounded-lg text-[12.5px] text-slate-300 hover:bg-white/[0.06] transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { onDeleteConversation(confirmDeleteId); setConfirmDeleteId(null) }}
+                  className="px-3 py-1.5 rounded-lg text-[12.5px] font-medium text-white bg-rose-500/90 hover:bg-rose-500 transition"
+                >
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

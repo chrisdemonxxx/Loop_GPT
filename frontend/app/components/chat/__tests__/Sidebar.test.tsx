@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import Sidebar, { type ConversationSearchHit } from '../Sidebar'
 import type { Conversation } from '../types'
 
@@ -190,14 +190,23 @@ describe('Sidebar ? recents copy and failures', () => {
     expect(onRenameConversation).toHaveBeenCalledWith('c1', 'Better title')
   })
 
-  it('asks before delete and leaves the session when cancelled', () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+  it('asks before delete (dialog, not native confirm) and leaves the session when cancelled', () => {
     renderSidebar({ conversations: [conv('c1', 'Chat', 0)], currentConversationId: 'c1' })
     fireEvent.click(screen.getByTitle('Delete'))
-    expect(confirm).toHaveBeenCalledWith('Delete this session?')
+    // The in-app alertdialog replaces window.confirm.
+    const dialog = screen.getByRole('alertdialog', { name: 'Delete session' })
+    expect(dialog).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     expect(base.onDeleteConversation).not.toHaveBeenCalled()
     expect(screen.getByText('Chat')).toBeInTheDocument()
-    confirm.mockRestore()
+  })
+
+  it('confirms delete through the dialog', () => {
+    renderSidebar({ conversations: [conv('c1', 'Chat', 0)], currentConversationId: 'c1' })
+    fireEvent.click(screen.getByTitle('Delete'))
+    const dialog = screen.getByRole('alertdialog', { name: 'Delete session' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    expect(base.onDeleteConversation).toHaveBeenCalledWith('c1')
   })
 })
 

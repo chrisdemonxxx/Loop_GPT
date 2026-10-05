@@ -1,7 +1,9 @@
 'use client'
 
-import { Plus, Image as ImageIcon, Camera, Plug, ListChecks, X, FileText, Mic, Square, AlertCircle, RotateCcw } from 'lucide-react'
+import { Plus, Image as ImageIcon, Camera, Plug, ListChecks, X, FileText, Mic, Square, AlertCircle, RotateCcw, Bot } from 'lucide-react'
+import { useRef } from 'react'
 import { useI18n } from '../../../lib/i18n'
+import { useMenuDismiss } from '../../../lib/useMenuDismiss'
 import type { PendingAttachment } from '../../../chat/hooks'
 
 /** The + attach menu: files, screenshot, connectors, create-image, tools.
@@ -9,7 +11,7 @@ import type { PendingAttachment } from '../../../chat/hooks'
  * -mode menu when the trigger is clicked (menus are mutually exclusive). */
 export function PlusMenu({
   open, onToggle, onClose, onCloseOther, onPickFiles, onScreenshot, canScreenshot,
-  onOpenConnectors, onCreateImage, onManageTools, toolSelectionCount,
+  onOpenConnectors, onCreateImage, onManageTools, onRunBot,
 }: {
   open: boolean
   onToggle: () => void
@@ -21,11 +23,13 @@ export function PlusMenu({
   onOpenConnectors: () => void
   onCreateImage: () => void
   onManageTools: () => void
-  toolSelectionCount: number | null
+  onRunBot: () => void
 }) {
   const { t } = useI18n()
+  const ref = useRef<HTMLDivElement>(null)
+  useMenuDismiss(ref, open, onClose)
   return (
-    <div className="relative">
+    <div className="relative" ref={ref}>
       <button
         type="button"
         onClick={() => { onToggle(); onCloseOther() }}
@@ -43,6 +47,7 @@ export function PlusMenu({
           {canScreenshot && <PlusItem icon={Camera} label={t('takeScreenshot')} onClick={() => { onClose(); onScreenshot() }} />}
           <PlusItem icon={Plug} label={t('connectors')} onClick={() => { onClose(); onOpenConnectors() }} />
           <PlusItem icon={ImageIcon} label={t('createImage')} onClick={() => { onClose(); onCreateImage() }} />
+          <PlusItem icon={Bot} label="Run on Loop Bot" onClick={() => { onClose(); onRunBot() }} />
           <div className="border-t border-white/[0.06]">
             <button
               type="button"
@@ -52,7 +57,6 @@ export function PlusMenu({
             >
               <ListChecks size={15} className="text-slate-400 shrink-0" />
               <span className="flex-1">{t('manageTools')}</span>
-              <span className="text-[11px] text-slate-500">{toolSelectionCount === null ? 'All' : `${toolSelectionCount}`}</span>
             </button>
           </div>
         </div>

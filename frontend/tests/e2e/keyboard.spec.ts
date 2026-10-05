@@ -72,13 +72,13 @@ test('composer: Shift+Enter inserts a newline; Enter does not', async ({ page })
   expect(after.split(/\r?\n/).length).toBeLessThanOrEqual(before.split(/\r?\n/).length)
 })
 
-test('Esc closes the Effort popover without closing anything behind it', async ({ page }) => {
+test('Esc closes the Run settings popover without closing anything behind it', async ({ page }) => {
   await page.goto('/chat/')
   await page.waitForSelector('textarea')
-  // Open the Effort menu from the composer row (aria-haspopup menu).
-  const effort = page.getByRole('button', { name: /Reasoning effort:/i }).first()
-  await effort.click()
-  const menu = page.locator('[role="menu"][aria-label="Reasoning effort"]')
+  // Option A: Mode/Web/Reason merged — the one Run-settings popover.
+  const settings = page.getByRole('button', { name: /Run settings/i }).first()
+  await settings.click()
+  const menu = page.locator('[role="menu"][aria-label="Run settings"]')
   await expect(menu).toBeVisible()
   // Esc dismisses the popover; the composer (and page) stay
   await page.keyboard.press('Escape')

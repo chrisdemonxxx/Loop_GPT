@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   X, Wrench, Puzzle, Blocks, Cable, Brain, Palette, SunMoon,
-  Settings2, UserRound, ShieldCheck, CreditCard, Clock, Terminal, Sparkles,
+  Settings2, UserRound, ShieldCheck, CreditCard, Clock, Terminal,
 } from 'lucide-react'
 import MemoryTab from './settings/MemoryTab'
 import PersonalizationTab from './settings/PersonalizationTab'
@@ -17,7 +17,6 @@ import GeneralTab from './settings/GeneralTab'
 import AccountTab from './settings/AccountTab'
 import PrivacyTab from './settings/PrivacyTab'
 import BillingTab from './settings/BillingTab'
-import ReflectTab from './settings/ReflectTab'
 import TimeFocusTab from './settings/TimeFocusTab'
 import CodeTab from './settings/CodeTab'
 import { pushSettingsHash, readCurrentSettingsHash, parseSettingsHash, type PrivacySub } from '../lib/settingsHash'
@@ -40,6 +39,25 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
   const hashRoute = readCurrentSettingsHash()
   const [tab, setTab] = useState(initialTab || hashRoute?.panel || 'general')
   const [privacySub, setPrivacySub] = useState<PrivacySub | undefined>(hashRoute?.sub)
+  // Tab-strip scroll edges (fade indicators so off-screen tabs are discoverable).
+  const [tabScroll, setTabScroll] = useState({ left: false, right: false })
+  const tabStripRef = useRef<HTMLDivElement>(null)
+  // Measure overflow on mount + resize (NOT in a ref callback — a setState
+  // there re-renders, the new ref identity re-fires, and the loop depth-caps).
+  useEffect(() => {
+    const el = tabStripRef.current
+    if (!el) return
+    const measure = () => setTabScroll({ left: el.scrollLeft > 8, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 8 })
+    measure()
+    // jsdom (tests) has no ResizeObserver — window resize covers the rest.
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure)
+      return () => window.removeEventListener('resize', measure)
+    }
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // Hash → panel: back/forward and typed URLs select panels; an emptied hash
   // closes the dialog (only in dialog mode). popstate AND hashchange are both
@@ -103,7 +121,6 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
         { id: 'billing', label: 'Billing', Icon: CreditCard },
         { id: 'tools', label: 'Tools', Icon: Wrench },
         { id: 'memory', label: 'Memory', Icon: Brain },
-        { id: 'reflect', label: 'Reflect', Icon: Sparkles },
         { id: 'time', label: 'Time and focus', Icon: Clock },
         { id: 'code', label: 'Loop Code', Icon: Terminal },
       ],
@@ -119,7 +136,7 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
       ],
     },
   ]
-  const allTabs = groups.flatMap((g) => g.tabs)
+  // The strip renders group-aware (labels inline); hash routing targets ids.
 
   return (
     <div className={asPage ? "min-h-screen bg-[#08080a] text-slate-200" : "fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[calc(env(safe-area-inset-bottom)+6.5rem)]"} onClick={asPage ? undefined : close}>
@@ -133,20 +150,47 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
           <h2 className="text-lg font-semibold text-gradient">Agent settings</h2>
           <button onClick={close} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400" aria-label="Close settings"><X size={18} /></button>
         </div>
-        <div className="min-w-0 flex flex-nowrap border-b border-white/5 text-sm overflow-x-auto no-scrollbar" role="tablist" aria-label="Settings sections">
-          {allTabs.map(({ id, label, Icon }) => (
-            <button
-              key={id}
-              role="tab"
-              aria-selected={tab === id}
-              onClick={() => selectTab(id)}
-              className={`shrink-0 flex items-center gap-1.5 px-3.5 py-2.5 whitespace-nowrap border-b-2 transition ${
-                tab === id ? 'border-[#c96442] text-slate-100' : 'border-transparent text-slate-500 hover:text-slate-200'
-              }`}
-            >
-              <Icon size={15} /> {label}
-            </button>
-          ))}
+        {/* Tab strip: group labels inline (P1: groups were computed but never
+            rendered) + scroll-fade edges so off-screen tabs are discoverable
+            (P1: half the tabs were hidden with no indicator). */}
+        <div className="relative shrink-0 border-b border-white/5">
+          <div
+            className="min-w-0 flex flex-nowrap items-end text-sm overflow-x-auto no-scrollbar"
+            role="tablist"
+            aria-label="Settings sections"
+            ref={tabStripRef}
+            onScroll={(e) => {
+              const el = e.currentTarget
+              setTabScroll({ left: el.scrollLeft > 8, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 8 })
+            }}
+          >
+            {groups.map((g, gi) => (
+              <div key={g.label} className="flex flex-nowrap items-end shrink-0">
+                <span className={`shrink-0 px-3 pb-2 text-[10px] uppercase tracking-widest text-slate-600 font-medium select-none ${gi > 0 ? 'border-l border-white/[0.06] ml-1 pl-3' : ''}`} aria-hidden>
+                  {g.label}
+                </span>
+                {g.tabs.map(({ id, label, Icon }) => (
+                  <button
+                    key={id}
+                    role="tab"
+                    aria-selected={tab === id}
+                    onClick={() => selectTab(id)}
+                    className={`shrink-0 flex items-center gap-1.5 px-3.5 py-2.5 whitespace-nowrap border-b-2 transition ${
+                      tab === id ? 'border-[#c96442] text-slate-100' : 'border-transparent text-slate-500 hover:text-slate-200'
+                    }`}
+                  >
+                    <Icon size={15} /> {label}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+          {tabScroll.left && (
+            <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-[#0f0f12] to-transparent" />
+          )}
+          {tabScroll.right && (
+            <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-[#0f0f12] to-transparent" />
+          )}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
           {tab === 'general' && <GeneralTab />}
@@ -155,7 +199,6 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
           {tab === 'billing' && <BillingTab />}
           {tab === 'tools' && <ToolsTab />}
           {tab === 'memory' && <MemoryTab />}
-          {tab === 'reflect' && <ReflectTab onOpenMemory={() => selectTab('memory')} />}
           {tab === 'time' && <TimeFocusTab />}
           {tab === 'code' && <CodeTab />}
           {tab === 'skills' && <SkillsTab />}

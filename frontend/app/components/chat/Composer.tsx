@@ -1,15 +1,17 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Send, X, Mic, UploadCloud, Globe, Brain, Plug, AudioLines } from 'lucide-react'
+import { Mic, UploadCloud, Plug, AudioLines } from 'lucide-react'
 import type { AgentMode } from '../../lib/api'
 import { SLASH_SECTIONS, filterCommands } from '../../lib/commands'
 import { useI18n } from '../../lib/i18n'
 import { useDictation } from '../../lib/voice'
 import type { PendingAttachment } from '../../chat/hooks'
-import { SlashPalette, RunModePicker, TriStateToggle, type ToggleState } from './composer/SlashPalette'
+import { SlashPalette, type ToggleState } from './composer/SlashPalette'
 import { PlusMenu, AttachmentChips, DictationBar } from './composer/PlusMenu'
-import { EffortSelector, type EffortValue } from './composer/EffortSelector'
+import { RunSettings } from './composer/RunSettings'
+import type { EffortValue } from './composer/EffortSelector'
+import { SendButton } from './composer/SendButton'
 
 export type RunMode = 'auto' | 'plan' | 'step' | 'accept'
 
@@ -36,7 +38,6 @@ interface ComposerProps {
   incognito?: boolean
   showSlash: boolean
   showPlus: boolean
-  showModeMenu: boolean
   onInputChange: (value: string) => void
   onSelectSlashCommand: (cmd: string) => void
   onSend: (e?: React.FormEvent) => void
@@ -44,13 +45,9 @@ interface ComposerProps {
   onImagesSelected: (files: File[]) => void
   onTogglePlus: () => void
   onClosePlus: () => void
-  onToggleModeMenu: () => void
-  onCloseModeMenu: () => void
   onRunModeChange: (mode: RunMode) => void
   onOpenConnectors: () => void
   onOpenSettingsTab: (tab: string) => void
-  /** Per-chat tool selection count ("N tools" chip); null = all (server default). */
-  toolSelectionCount: number | null
   /** Workspace connections (§8-40): recent-use-first chips; clicking pins
    *  one for the next run (its tools join via connectionIds). */
   connections?: Array<{ id: string; name: string; type: string }>
@@ -61,6 +58,8 @@ interface ComposerProps {
   voiceModeSupported?: boolean
   voiceModeListening?: boolean
   onToggleVoiceMode?: () => void
+  /** Messages queued behind the active run — drives the SendButton badge. */
+  queuedCount?: number
 }
 
 /** Up to four attachments per turn. */
@@ -74,13 +73,14 @@ export default function Composer({
   input, attachments, onRemoveAttachment, onRetryAttachment, running, runMode,
   webSearch, onToggleWebSearch, thinking, onToggleThinking,
   contextPct, contextTokens, incognito,
-  showSlash, showPlus, showModeMenu,
+  showSlash, showPlus,
   onInputChange, onSelectSlashCommand, onSend, onStop,
   onImagesSelected,
-  onTogglePlus, onClosePlus, onToggleModeMenu, onCloseModeMenu,
-  onRunModeChange, onOpenConnectors, onOpenSettingsTab, toolSelectionCount,
+  onTogglePlus, onClosePlus,
+  onRunModeChange, onOpenConnectors, onOpenSettingsTab,
   connections, pinnedConnectionId, onTogglePinConnection,
   voiceMode, voiceModeSupported, voiceModeListening, onToggleVoiceMode,
+  queuedCount = 0,
 }: ComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
@@ -292,45 +292,25 @@ export default function Composer({
             open={showPlus}
             onToggle={onTogglePlus}
             onClose={onClosePlus}
-            onCloseOther={onCloseModeMenu}
+            onCloseOther={() => {}}
             onPickFiles={() => fileInputRef.current?.click()}
             onScreenshot={captureScreen}
             canScreenshot={canScreenshot}
             onOpenConnectors={onOpenConnectors}
             onCreateImage={() => onInputChange('/image ')}
             onManageTools={() => onOpenSettingsTab('tools')}
-            toolSelectionCount={toolSelectionCount}
+            onRunBot={() => onInputChange('/bot ')}
           />
 
-          {/* Run mode picker — icon + label + active ring on the collapsed button */}
-          <RunModePicker
+          {/* Run settings (Option A): ONE popover for Autonomy / Web search /
+              Reasoning — replaces the three look-alike "· Auto" chips. */}
+          <RunSettings
             runMode={runMode}
-            open={showModeMenu}
-            onToggle={onToggleModeMenu}
-            onClose={onCloseModeMenu}
-            onCloseOther={onClosePlus}
-            onChange={onRunModeChange}
-          />
-
-          {/* Web-search toggle (§8-25) — cycles Auto → On → Off */}
-          <TriStateToggle
-            icon={Globe}
-            kind="web"
-            state={webSearch}
-            onCycle={onToggleWebSearch}
-            titleFor={(s) => s === 'auto'
-              ? 'Web search: auto — the tool selection decides'
-              : s === 'on'
-                ? 'Web search: on — force web tools into this run'
-                : 'Web search: off — strip web tools from this run'}
-          />
-
-          {/* Reasoning-effort selector (§8-26, contract §A) — the 6-way
-              replacement for the tri-state: Auto → Low → Medium → High →
-              XHigh → Off. One picker, 44px row, menu like RunModePicker. */}
-          <EffortSelector
-            value={thinking}
-            onChange={onToggleThinking}
+            webSearch={webSearch}
+            thinking={thinking}
+            onRunModeChange={onRunModeChange}
+            onWebSearchChange={onToggleWebSearch}
+            onThinkingChange={onToggleThinking}
           />
 
           {/* Hands-free voice mode (§8-44) — speak → listen → send loop. */}
@@ -363,29 +343,10 @@ export default function Composer({
             </button>
           )}
 
-          {/* Send / Stop */}
+          {/* Send / Stop — one morphing control (SendButton): disabled /
+              ready / running(■) / queued(badge), token-colored, icon morph. */}
           <div className="ml-auto">
-            {running ? (
-              <button
-                type="button"
-                onClick={onStop}
-                title="Stop"
-                aria-label="Stop response"
-                className="tap-target w-9 h-9 flex items-center justify-center rounded-full surface text-slate-300 hover:text-rose-400 transition"
-              >
-                <X size={18} />
-              </button>
-            ) : (
-              <button
-                type="submit"
-                disabled={!canSend}
-                title="Send"
-                aria-label="Send message"
-                className="tap-target w-9 h-9 flex items-center justify-center rounded-full text-white bg-[#d76d4a] shadow-[0_2px_12px_-2px_rgba(201,100,66,0.6)] disabled:opacity-40 disabled:shadow-none disabled:cursor-not-allowed hover:bg-[#e07a55] active:bg-[#a34e34] transition"
-              >
-                <Send size={16} />
-              </button>
-            )}
+            <SendButton running={running} canSend={canSend} queuedCount={queuedCount} onStop={onStop} />
           </div>
         </div>
       </form>
