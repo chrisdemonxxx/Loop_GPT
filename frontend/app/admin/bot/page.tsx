@@ -194,16 +194,26 @@ export default function AdminBotPage() {
     } catch (e: any) { setError(e.message) } finally { setTakeoverBusy(false) }
   }
 
-  const feedLines = (run?.events || []).slice(-200).map((e, i) => {
+  // Thinking/delta events are the agent's live inner monologue — render the
+  // LATEST one as a single updating line instead of a wall of hidden events
+  // (a thinking-heavy run would otherwise look like an empty feed).
+  const allEvents = run?.events || []
+  const lastThought = [...allEvents].reverse().find((e) => (e.type === 'thinking' || e.type === 'delta') && String((e as any).text || (e as any).content || '').trim())
+  const visibleEvents = allEvents.filter((e) => e.type !== 'thinking' && e.type !== 'delta').slice(-120)
+  const feedLines = visibleEvents.map((e, i) => {
     if (e.type === 'status') return <div key={i} className="text-sky-400/80">◦ {e.message}</div>
     if (e.type === 'tool_call') return <div key={i} className="text-violet-300">→ {e.name}</div>
     if (e.type === 'tool_result') return <div key={i} className="text-slate-500 truncate">✓ {String(e.content || '').slice(0, 140)}</div>
     if (e.type === 'tool_output') return <div key={i} className="text-slate-600 truncate">{String((e as any).chunk || '').slice(0, 140)}</div>
-    if (e.type === 'delta' || e.type === 'thinking') return null
+    if (e.type === 'artifact') return <div key={i} className="text-amber-300/80 truncate">📎 {String((e as any).artifact?.name || 'artifact')}</div>
     if (e.type === 'final') return <div key={i} className="text-emerald-300">■ {String(e.content || '').slice(0, 200)}</div>
     if (e.type === 'error') return <div key={i} className="text-rose-400">✕ {e.message}</div>
     return null
   })
+  if (run?.status === 'running' && lastThought) {
+    const text = String((lastThought as any).text || (lastThought as any).content || '').replace(/\s+/g, ' ').trim().slice(0, 300)
+    feedLines.push(<div key="thought" className="text-slate-400/70 italic truncate">💭 {text}…</div>)
+  }
 
   return (
     <div className="min-h-screen bg-[#0b0e14] p-6 text-slate-200">
@@ -279,34 +289,8 @@ export default function AdminBotPage() {
             </div>
           </div>
 
-          {/* Run detail + computer */}
+          {/* Run detail + computer (live view first when a session exists) */}
           <div className="space-y-4">
-            <div className="glass rounded-xl p-4">
-              <div className="mb-2 text-sm font-medium text-slate-300">
-                {selected ? `Run ${run ? `· ${run.status}` : ''}` : 'Select a task'}
-              </div>
-              {Object.keys(frames).length > 0 && (
-                <div className="mb-2">
-                  <div className="mb-1 text-[11px] text-slate-500">Agent frames (what it sees, newest last)</div>
-                  <div className="flex gap-2 overflow-x-auto pb-1">
-                    {(run?.artifacts || [])
-                      .filter((a) => frames[a.id])
-                      .map((a) => (
-                        <a key={a.id} href={frames[a.id]} target="_blank" rel="noreferrer" className="shrink-0">
-                          <img src={frames[a.id]} alt={a.name} title={a.name}
-                            className="h-24 rounded-md ring-1 ring-slate-700/60 hover:ring-violet-500/70" />
-                        </a>
-                      ))}
-                  </div>
-                </div>
-              )}
-              <div ref={feedRef} className="h-56 space-y-1 overflow-y-auto rounded-lg bg-slate-950/60 p-2 font-mono text-[11px]">
-                {feedLines.length ? feedLines : <div className="text-slate-600">No events yet.</div>}
-              </div>
-              {run?.result && <div className="mt-2 max-h-28 overflow-y-auto rounded-lg bg-emerald-500/5 p-2 text-xs text-emerald-200/90 whitespace-pre-wrap">{run.result}</div>}
-              {run?.error && <div className="mt-2 rounded-lg bg-rose-500/10 p-2 text-xs text-rose-300">{run.error}</div>}
-            </div>
-
             {computerInfo?.viewUrl && (
               <div className="glass rounded-xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
@@ -344,6 +328,32 @@ export default function AdminBotPage() {
                 {computerInfo.minutes != null && <div className="text-[11px] text-slate-500">Session metered: {computerInfo.minutes} VM-minute(s)</div>}
               </div>
             )}
+
+            <div className="glass rounded-xl p-4">
+              <div className="mb-2 text-sm font-medium text-slate-300">
+                {selected ? `Run ${run ? `· ${run.status}` : ''}` : 'Select a task'}
+              </div>
+              {Object.keys(frames).length > 0 && (
+                <div className="mb-2">
+                  <div className="mb-1 text-[11px] text-slate-500">Agent frames (what it sees, newest last)</div>
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    {(run?.artifacts || [])
+                      .filter((a) => frames[a.id])
+                      .map((a) => (
+                        <a key={a.id} href={frames[a.id]} target="_blank" rel="noreferrer" className="shrink-0">
+                          <img src={frames[a.id]} alt={a.name} title={a.name}
+                            className="h-24 rounded-md ring-1 ring-slate-700/60 hover:ring-violet-500/70" />
+                        </a>
+                      ))}
+                  </div>
+                </div>
+              )}
+              <div ref={feedRef} className="h-56 space-y-1 overflow-y-auto rounded-lg bg-slate-950/60 p-2 font-mono text-[11px]">
+                {feedLines.length ? feedLines : <div className="text-slate-600">No events yet.</div>}
+              </div>
+              {run?.result && <div className="mt-2 max-h-28 overflow-y-auto rounded-lg bg-emerald-500/5 p-2 text-xs text-emerald-200/90 whitespace-pre-wrap">{run.result}</div>}
+              {run?.error && <div className="mt-2 rounded-lg bg-rose-500/10 p-2 text-xs text-rose-300">{run.error}</div>}
+            </div>
           </div>
         </div>
       </div>
