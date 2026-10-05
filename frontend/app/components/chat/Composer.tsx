@@ -282,7 +282,11 @@ export default function Composer({
             })}
           </div>
         )}
-        <div className="flex items-center gap-1.5 px-3 pb-2.5 pt-1">
+        {/* The control row. P5: below sm it flex-wraps (icon+label chips,
+            Send pinned via ml-auto) so scrollWidth never exceeds the box and
+            no control (incl. the ml-auto Send wrapper) sits past innerWidth —
+            the old row was one flat flex with zero breakpoint classes (455 in a 364 box). */}
+        <div className="flex items-center gap-1.5 px-3 pb-2.5 pt-1 max-sm:flex-wrap">
           {/* + attach menu — short and task-oriented */}
           <PlusMenu
             open={showPlus}

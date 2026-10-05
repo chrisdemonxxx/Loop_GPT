@@ -38,7 +38,7 @@ export function PlusMenu({
         <Plus size={18} />
       </button>
       {open && (
-        <div className="absolute bottom-full mb-2 left-0 w-56 glass rounded-xl border border-white/[0.08] overflow-hidden z-20 shadow-panel" role="menu">
+        <div className="composer-menu absolute bottom-full mb-2 left-0 w-56 glass rounded-xl border border-white/[0.08] overflow-hidden z-20 shadow-panel" role="menu">
           <PlusItem icon={ImageIcon} label={t('addFiles')} onClick={() => { onClose(); onPickFiles() }} />
           {canScreenshot && <PlusItem icon={Camera} label={t('takeScreenshot')} onClick={() => { onClose(); onScreenshot() }} />}
           <PlusItem icon={Plug} label={t('connectors')} onClick={() => { onClose(); onOpenConnectors() }} />

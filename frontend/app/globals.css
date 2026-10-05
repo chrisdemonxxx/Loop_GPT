@@ -205,11 +205,14 @@ html[data-theme='light'] .prose-legal td { color: #47474f; border-bottom-color: 
   }
   .surface-hover:hover { background: #141418; border-color: rgba(255, 255, 255, 0.11); }
 
-  /* The single control chip in the composer row. */
+  /* The single control chip in the composer row. P5: white-space: nowrap so
+     a label can never wrap inside the fixed 32px (the user's `Mode ·`/`Auto`
+     two-line chip), and flex: none so a label can never grow past its basis. */
   .chip {
-    display: inline-flex; align-items: center; gap: 0.375rem;
+    display: inline-flex; align-items: center; gap: 0.375rem; flex: none;
     height: 2rem; padding: 0 0.625rem; border-radius: 0.625rem;
     font-size: 0.75rem; line-height: 1;
+    white-space: nowrap;
     color: rgb(176 189 204);
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.07);
@@ -280,6 +283,27 @@ html[data-theme='light'] .prose-legal td { color: #47474f; border-bottom-color: 
   @keyframes shimmer-text-fade {
     0%, 100% { opacity: 0.75; }
     50% { opacity: 1; }
+  }
+}
+
+/* Phone composer menus (P5). Desktop keeps each menu's left-anchored
+   absolute panel. Below sm, the same node is a short sheet inset from
+   both viewport edges and pinned to the bottom, so its right edge stays
+   on screen and its top stays below the empty-state suggestion cards.
+   Unlayered so it wins over the Tailwind absolute/width utilities. */
+@media (max-width: 639px) {
+  .composer-menu {
+    position: fixed;
+    z-index: 40;
+    left: 0.75rem;
+    right: 0.75rem;
+    top: auto;
+    bottom: 0.75rem;
+    width: auto;
+    max-width: none;
+    max-height: 11rem;
+    margin-bottom: 0;
+    overflow-y: auto;
   }
 }
 

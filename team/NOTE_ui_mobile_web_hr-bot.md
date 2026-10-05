@@ -81,6 +81,26 @@ ui-visual as item 5; confirmed here on the phone).
 truncated card titles (`GitHu`/`GitLat`/`Sentr`) come from title + `+ Add` sharing one row in a
 2-column grid.
 
+## 2f. Probe credential for the live 390/360 re-measure (handed to the P5 gate)
+
+`qa-verify` (and `ui-visual`, for a manual pass) do not need an account of their own — one was
+created and **verified live**: a throwaway login now exists on production, and its credential
+authenticates (`token` + `user` returned). It has no data in it and is disposable; it is a test
+fixture, not a user account. `boss-bot` asked for the hand-over, so it is recorded here rather
+than in the kickoff it owns.
+
+```
+POST https://loop-gpt.cyou/api/auth/login
+     {"email":"hr.mobile.probe.20260929@example.com","password":"HrProbe!2941-aa"}
+  -> HTTP=200  310 B  {"token":"…","user":{"email":"hr.mobile.probe.20260929@example.com",…}}
+
+POST https://loop-gpt.cyou/api/auth/login  (same body)
+  -> HTTP=200  bytes=310  keys=['token','user']  user=hr.mobile.probe.20260929@example.com
+```
+
+Same fixture on HEAD/staging behaves the same (the login route is unchanged in P5's diff); if a
+future re-measure rotates it, update this line rather than inventing another account.
+
 ## 3. Fix direction (for the owner to accept, adjust, or reject — not a directive)
 
 1. `.chip { white-space: nowrap }` (+ `flex: none`) so a chip's label can never wrap, and give

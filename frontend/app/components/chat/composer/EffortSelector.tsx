@@ -87,7 +87,7 @@ export function EffortSelector({
         <ChevronDown size={12} className="text-slate-500" />
       </button>
       {open && (
-        <div className="absolute bottom-full mb-2 left-0 w-[15.5rem] glass rounded-xl border border-white/[0.08] overflow-hidden z-20 shadow-panel" role="menu" aria-label="Reasoning effort">
+        <div className="composer-menu absolute bottom-full mb-2 left-0 w-[15.5rem] glass rounded-xl border border-white/[0.08] overflow-hidden z-20 shadow-panel" role="menu" aria-label="Reasoning effort">
           <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-slate-500 font-medium">Reasoning</div>
           {THOUGHT_EFFORTS.map((m, i) => {
             const active = value === m.id

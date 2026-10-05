@@ -31,7 +31,7 @@ export function SlashPalette({
 }) {
   if (commands.length === 0) return null
   return (
-    <div className="absolute bottom-full mb-2 left-0 right-0 glass rounded-xl border border-white/[0.08] overflow-hidden z-10 shadow-panel max-h-80 overflow-y-auto">
+    <div className="composer-menu absolute bottom-full mb-2 left-0 right-0 glass rounded-xl border border-white/[0.08] overflow-hidden z-10 shadow-panel max-h-80 overflow-y-auto" role="menu" aria-label="Slash commands">
       {sections.map((section) => {
         const items = commands.filter((c) => c.section === section)
         if (!items.length) return null
@@ -107,7 +107,7 @@ export function RunModePicker({
         <ChevronDown size={12} className="text-slate-500" />
       </button>
       {open && (
-        <div className="absolute bottom-full mb-2 left-0 w-60 glass rounded-xl border border-white/[0.08] overflow-hidden z-20 shadow-panel" role="menu">
+        <div className="composer-menu absolute bottom-full mb-2 left-0 w-60 glass rounded-xl border border-white/[0.08] overflow-hidden z-20 shadow-panel" role="menu">
           {RUN_MODES.map((m) => (
             <ModeItem key={m.id} icon={m.icon} label={m.label} hint={m.hint} active={runMode === m.id}
               onClick={() => { onChange(m.id); onClose() }} />

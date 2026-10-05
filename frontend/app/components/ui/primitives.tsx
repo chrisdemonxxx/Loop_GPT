@@ -36,7 +36,7 @@ export function Card({
       role={clickable ? 'button' : undefined}
       tabIndex={clickable ? 0 : undefined}
       onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') onClick() } : undefined}
-      className={`p-3.5 flex items-start justify-between gap-3 ${cardCls} ${active ? 'border-[#c96442]/40 bg-[#c96442]/[0.06]' : ''} ${clickable ? 'cursor-pointer' : ''} ${className}`}
+      className={`p-3.5 flex items-start justify-between gap-3 ${cardCls} ${active ? 'border-[#c96442]/40 bg-[#c96442]/[0.06]' : ''} ${clickable ? 'cursor-pointer' : ''} ${className} max-sm:flex-col`}
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
