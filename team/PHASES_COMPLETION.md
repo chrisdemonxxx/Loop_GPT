@@ -339,3 +339,18 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   postMessage). GitHub connectors ride the github login callback the same
   way; if the GitHub App's callback list lacks it, that one URI is the only
   console action left (CONNECTOR_SETUP.md carries the exact rows).
+- **E-S6.2** (operator follow-up, 2026-10-05): after the redirect fix, Google
+  advanced to the NEXT gate — `Error 403: access_denied, "loop-gpt.cyou has
+  not completed the Google verification process… only developer-approved
+  testers"`. This means the fix WORKED (the request passed the redirect
+  check and reached the consent screen's access list). The gate is the
+  OAuth consent screen being in **Testing** publishing status with
+  `mundkhawaja1@gmail.com` absent from its test users. Console-only (no
+  API for test users) — the 60-second operator step and the 7-day
+  refresh-token caveat for unverified test apps are now in
+  `docs/CONNECTOR_SETUP.md` ("Error 403" section). The app side already
+  handles the rejection cleanly end-to-end: Google returns
+  `error=access_denied` ? popup postMessage ? Connectors UI shows the
+  "request was denied" sentence (covered by `oauthPopup.test.ts`). No code
+  change was needed for this gate — verified the failure path is the tested
+  one.

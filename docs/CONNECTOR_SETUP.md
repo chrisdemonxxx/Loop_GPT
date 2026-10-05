@@ -27,6 +27,38 @@ opens in a **centered popup** that posts the result back and closes itself.
 > the Google Cloud client's authorized list — add the table row above (one
 > registration now covers BOTH login and every Google connector).**
 
+### Error 403: "has not completed the Google verification process"
+
+Seen when the consent screen's **publishing status is Testing** and the
+signed-in Google account is not an approved tester. The request passed the
+redirect check — this is the consent screen's access list, not a code issue.
+
+**Fix (60 seconds, console-only — Google exposes no API for it):**
+1. Google Cloud Console → **APIs & Services → OAuth consent screen**
+   (or **Google Auth Platform → Audience** in the new console layout).
+2. **Publishing status: Testing → Test users → + Add users**.
+3. Add every Google account that needs connectors (e.g.
+   `mundkhawaja1@gmail.com`) → **Save**. Takes effect immediately — retry
+   Connect with Google; the Gmail consent screen (readonly + send scopes)
+   renders.
+4. Up to **100 test users** are allowed in Testing mode.
+
+**Testing-mode caveat (know it before it bites):** Google expires **refresh
+tokens after 7 days** for unverified test apps — connected Google connectors
+must be re-consented weekly until the app is published. Options:
+- Personal/small-team use: accept the weekly re-consent, or
+- **Publish to production**: `Publish app` on the same screen. Unverified
+  apps in production stay usable but show an "unverified app" warning banner
+  for up to 100 users; full verification (required to remove the warning
+  for sensitive scopes like `gmail.readonly`/`gmail.send`) is a Google
+  review with the privacy policy at `https://loop-gpt.cyou/privacy` and
+  domain verification — do it when the product goes public.
+
+Until the test user is added, the app handles the rejection cleanly: Google
+redirects back with `error=access_denied`, the popup reports it, and the
+Connectors UI shows *"The provider reported the request was denied. Try
+again and approve the permissions."*
+
 ## Sign-in OAuth (login — separate from connectors)
 
 | Provider | Redirect URI |
