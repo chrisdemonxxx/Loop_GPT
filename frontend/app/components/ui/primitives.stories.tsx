@@ -60,11 +60,14 @@ export const EmptyStates: StoryObj = {
   ),
 }
 
+/** Stateful wrapper: hooks can't run inside a story's `render` arrow. */
+function SearchStateful() {
+  const [v, setV] = React.useState('')
+  return <div className="max-w-md"><SearchInput value={v} onChange={setV} placeholder="Search connectors…" resultCount={v ? 2 : null} /></div>
+}
+
 export const Search: StoryObj = {
-  render: () => {
-    const [v, setV] = React.useState('')
-    return <div className="max-w-md"><SearchInput value={v} onChange={setV} placeholder="Search connectors…" resultCount={v ? 2 : null} /></div>
-  },
+  render: () => <SearchStateful />,
 }
 
 export const Skeletons: StoryObj = {

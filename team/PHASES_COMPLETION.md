@@ -277,3 +277,14 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   (`341fe60b…`); `docs/GAP_REGISTER.md` GAP-027 row updated to CLOSED (3
   live picker rows, probe-verified); `team/ROSTER_CLOSE_20261005.md` written
   (seat ledger + honest residuals + the outage record).
+- **E-S5.3** (incident #2, found by the deploy pipeline): the web deploys for
+  `59eabb0`/`5ec8bd1` **FAILED** — `primitives.stories.tsx`'s Search story
+  called `React.useState` inside a story `render` arrow (rules-of-hooks ERROR
+  under `next build`), and the story batch had NOT been gated by a local
+  `next build` (the earlier verify ran against a pre-story `out/` — stale
+  bits again). Production stayed on the last good build (`42ec7cb`) the
+  whole time — no user impact, but S4 code was not live. Fix: stateful
+  wrapper component; gates re-run on FRESH bits: `next build` exit 0
+  **with stories in the tree**, verify **90 rows 0.0000% FAIL 0**, tsc=0.
+  Lesson recorded a third time: every lane ends with a fresh-build gate,
+  and the verify is only honest against the bits it just built.
