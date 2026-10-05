@@ -324,3 +324,18 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   `docs/CONNECTOR_SETUP.md` rewritten for the unified design.
   **Live check pending deploy:** the gmail authorizeUrl must carry the
   registered URI and Google must render the consent screen (not Error 400).
+- **E-S6.1-verified** (live, raw probe `team/RUN_oauth_fix_probe.log`, both
+  surfaces at `21ffab0`): fixture login ? `POST /api/oauth-connector/init/gmail`
+  (workspace `personal-cmundyv…`) ? authorizeUrl now carries
+  `redirect_uri=https://api.loop-gpt.cyou/api/auth/oauth/google/callback`
+  (the sign-in flow's registered URI; hex connector state `680f7611…` +
+  S256 PKCE challenge intact) ? GET of that authorizeUrl answers
+  **HTTP 302 into Google's sign-in/consent flow, mismatch=false** — the
+  operator-facing `Error 400: redirect_uri_mismatch` is GONE. One Google
+  console registration now covers login AND all four Google connectors.
+  Remaining human step: complete the Google consent once in the popup
+  (needs the operator's Google session) — everything after the consent
+  click is code-verified (delegation, token exchange, dual-write, popup
+  postMessage). GitHub connectors ride the github login callback the same
+  way; if the GitHub App's callback list lacks it, that one URI is the only
+  console action left (CONNECTOR_SETUP.md carries the exact rows).
