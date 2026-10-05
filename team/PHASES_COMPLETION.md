@@ -415,3 +415,23 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   Google's required 24h wait, then retry. Reminder recorded: PUBLISH APP
   (no review) is the separate lever that removes the tester list now;
   verification only removes the warning screen + the 100-user cap.
+- **E-S6.7** (Site Verification DONE via API, 2026-10-05, "connect using oauth
+  gcp and handle yourself"): the operator re-authed gcloud (`admin@red-kit.org`,
+  fresh credential + ADC with `siteverification` + `cloud-platform` scopes —
+  two browser consents, both approved). IAM confirmed admin@red-kit.org is
+  **Owner of both candidate GCP projects** (`midyear-diorama-509220-d7`,
+  `winged-metric-509220-m5`) — the Project-Owner half of Google's rejection-1
+  requirement. Then the fully automated chain (raw, `team/RUN_site_verification.log`):
+  `gcloud services enable siteverification.googleapis.com` (quota project) ?
+  ADC refresh-token mint ? `POST /token?verificationMethod=FILE` ? HTTP 200
+  `{"token":"googlec7358cfea1e3c4ed.html"}` ? file hosted at
+  `frontend/public/` ? deployed (probe: 200, exact content) ?
+  `POST /webResource?verificationMethod=FILE` (X-Goog-User-Project header) ?
+  **HTTP 200, ownership of `https://loop-gpt.cyou/` recorded on
+  admin@red-kit.org**. OWNED list now shows red-kit.org (INET_DOMAIN, prior)
+  + loop-gpt.cyou (SITE, new). **Google rejection 1 is closed.** Remaining:
+  rejection 2 (consent-screen rename `loop-search` ? `Loop GPT`) and the
+  PUBLISH APP flip — both console-only (the IAP OAuth Admin API that mirrored
+  the brand was shut down 2026-03-19 per gcloud's deprecation warning); the
+  exact two clicks are in the kit. Google's own 24h systems-update wait then
+  applies before the verification RETRY.
