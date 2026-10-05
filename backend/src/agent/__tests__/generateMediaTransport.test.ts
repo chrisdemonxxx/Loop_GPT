@@ -36,6 +36,12 @@ beforeEach(() => {
   vi.stubEnv('IMAGE_API_URL', '')
   vi.stubEnv('VIDEO_API_URL', endpoint)
   vi.stubEnv('HF_VIDEO_ENDPOINT_URL', '')
+  // Pin the task-API flavor OFF at the top level: the "video provider
+  // migration" block requires the sync/job envelope paths, and vitest loads
+  // backend/.env into process.env — an ambient HF_VIDEO_API=lightx2v (set
+  // 2026-09-29) sent every migration test down the task path ("Missing video
+  // task id"). The task-API describe overrides this stub in its own beforeEach.
+  vi.stubEnv('HF_VIDEO_API', '')
 })
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllEnvs() })
 
