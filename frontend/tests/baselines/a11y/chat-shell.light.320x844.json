@@ -1,0 +1,110 @@
+{
+  "role": "WebArea",
+  "name": "Loop GPT - AI Chat Assistant",
+  "children": [
+    {
+      "role": "button",
+      "name": "Open sidebar"
+    },
+    {
+      "role": "text",
+      "name": "New session"
+    },
+    {
+      "role": "button",
+      "name": "Choose model"
+    },
+    {
+      "role": "button",
+      "name": "Theme: Light. Click to switch theme"
+    },
+    {
+      "role": "button",
+      "name": "Incognito — private chat, no memory, hidden from history"
+    },
+    {
+      "role": "heading",
+      "name": "How can I help you today?"
+    },
+    {
+      "role": "text",
+      "name": "Type "
+    },
+    {
+      "role": "text",
+      "name": "/"
+    },
+    {
+      "role": "text",
+      "name": " for deep research. "
+    },
+    {
+      "role": "text",
+      "name": "⌘K"
+    },
+    {
+      "role": "text",
+      "name": " for commands. New here? "
+    },
+    {
+      "role": "link",
+      "name": "Take the 2-minute tour →"
+    },
+    {
+      "role": "button",
+      "name": "Explain quantum computing like I’m 10"
+    },
+    {
+      "role": "button",
+      "name": "Write a Python script to plot a sine wave"
+    },
+    {
+      "role": "button",
+      "name": "Summarise the latest AI research trends"
+    },
+    {
+      "role": "button",
+      "name": "Draft a business plan for a SaaS startup"
+    },
+    {
+      "role": "textbox",
+      "name": "Message Loop GPT… ( / for commands )"
+    },
+    {
+      "role": "button",
+      "name": "Add attachments and actions"
+    },
+    {
+      "role": "button",
+      "name": "Mode · Auto"
+    },
+    {
+      "role": "button",
+      "name": "Web search: auto"
+    },
+    {
+      "role": "button",
+      "name": "Reasoning effort: Auto — Model default"
+    },
+    {
+      "role": "button",
+      "name": "Turn on hands-free voice mode"
+    },
+    {
+      "role": "button",
+      "name": "Dictate"
+    },
+    {
+      "role": "button",
+      "name": "Send message"
+    },
+    {
+      "role": "text",
+      "name": "Loop GPT can make mistakes. Verify important info."
+    },
+    {
+      "role": "button",
+      "name": "Keyboard shortcuts"
+    }
+  ]
+}

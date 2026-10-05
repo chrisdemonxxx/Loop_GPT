@@ -1,0 +1,266 @@
+{
+  "role": "WebArea",
+  "name": "Loop GPT - AI Chat Assistant",
+  "children": [
+    {
+      "role": "text",
+      "name": "Loop GPT"
+    },
+    {
+      "role": "link",
+      "name": "Features"
+    },
+    {
+      "role": "link",
+      "name": "Pricing"
+    },
+    {
+      "role": "link",
+      "name": "Log in"
+    },
+    {
+      "role": "link",
+      "name": "Sign up"
+    },
+    {
+      "role": "text",
+      "name": "Agentic AI · streaming · bring your own model"
+    },
+    {
+      "role": "heading",
+      "name": "The agentic chat portal that actually does the work."
+    },
+    {
+      "role": "text",
+      "name": "Deep research, vision, image & document generation, MCP connectors, skills, and a live Agent Computer — all streamed in real time."
+    },
+    {
+      "role": "link",
+      "name": "Try it free"
+    },
+    {
+      "role": "link",
+      "name": "See pricing"
+    },
+    {
+      "role": "heading",
+      "name": "Everything a flagship assistant has"
+    },
+    {
+      "role": "text",
+      "name": "And the transparency of watching it work."
+    },
+    {
+      "role": "text",
+      "name": "Agentic tool use"
+    },
+    {
+      "role": "text",
+      "name": "A real tool-calling agent that searches, computes, reads, and acts — streamed live."
+    },
+    {
+      "role": "text",
+      "name": "Deep research"
+    },
+    {
+      "role": "text",
+      "name": "Plans queries, reads sources, and writes a cited report you can trust."
+    },
+    {
+      "role": "text",
+      "name": "Vision"
+    },
+    {
+      "role": "text",
+      "name": "Upload an image and ask about it — native multimodal understanding."
+    },
+    {
+      "role": "text",
+      "name": "Image generation"
+    },
+    {
+      "role": "text",
+      "name": "Generate images from a prompt with FLUX, right in the chat."
+    },
+    {
+      "role": "text",
+      "name": "Documents"
+    },
+    {
+      "role": "text",
+      "name": "Produce PDF, Word, Excel, and PowerPoint files as downloadable outputs."
+    },
+    {
+      "role": "text",
+      "name": "Agent Computer"
+    },
+    {
+      "role": "text",
+      "name": "Watch every tool call stream in a live terminal."
+    },
+    {
+      "role": "text",
+      "name": "MCP & connectors"
+    },
+    {
+      "role": "text",
+      "name": "Plug in Model Context Protocol servers and external services."
+    },
+    {
+      "role": "text",
+      "name": "Skills & builders"
+    },
+    {
+      "role": "text",
+      "name": "Create skills and no-code tools that extend the agent."
+    },
+    {
+      "role": "heading",
+      "name": "Free during launch"
+    },
+    {
+      "role": "text",
+      "name": "Everything is free (metered) while we're in early access. Paid plans are coming soon."
+    },
+    {
+      "role": "text",
+      "name": "Free"
+    },
+    {
+      "role": "text",
+      "name": "Popular"
+    },
+    {
+      "role": "text",
+      "name": "$0"
+    },
+    {
+      "role": "text",
+      "name": "forever"
+    },
+    {
+      "role": "text",
+      "name": "~30 messages/day"
+    },
+    {
+      "role": "text",
+      "name": "Chat + web search + calculator"
+    },
+    {
+      "role": "text",
+      "name": "5 images/day"
+    },
+    {
+      "role": "text",
+      "name": "1 deep-research/day"
+    },
+    {
+      "role": "text",
+      "name": "PDF export"
+    },
+    {
+      "role": "text",
+      "name": "Community support"
+    },
+    {
+      "role": "link",
+      "name": "Start free"
+    },
+    {
+      "role": "text",
+      "name": "Pro"
+    },
+    {
+      "role": "text",
+      "name": "Soon"
+    },
+    {
+      "role": "text",
+      "name": "High daily limits"
+    },
+    {
+      "role": "text",
+      "name": "All tools + deep research"
+    },
+    {
+      "role": "text",
+      "name": "Vision + unlimited docs"
+    },
+    {
+      "role": "text",
+      "name": "MCP, connectors, skills, builders"
+    },
+    {
+      "role": "text",
+      "name": "Priority (warm) model"
+    },
+    {
+      "role": "text",
+      "name": "No image watermark"
+    },
+    {
+      "role": "link",
+      "name": "Join the waitlist"
+    },
+    {
+      "role": "text",
+      "name": "AI usage is metered with credits so the free tier stays sustainable. Have a team voucher? Redeem it in Account for unlimited access."
+    },
+    {
+      "role": "heading",
+      "name": "Put an agent to work in seconds."
+    },
+    {
+      "role": "text",
+      "name": "No setup. Ask a question, run deep research, or generate a document."
+    },
+    {
+      "role": "link",
+      "name": "Get started free"
+    },
+    {
+      "role": "text",
+      "name": "Loop GPT"
+    },
+    {
+      "role": "link",
+      "name": "Get started"
+    },
+    {
+      "role": "link",
+      "name": "Pricing"
+    },
+    {
+      "role": "link",
+      "name": "Log in"
+    },
+    {
+      "role": "text",
+      "name": "© "
+    },
+    {
+      "role": "text",
+      "name": "2026"
+    },
+    {
+      "role": "text",
+      "name": " Loop GPT"
+    },
+    {
+      "role": "link",
+      "name": "Privacy"
+    },
+    {
+      "role": "link",
+      "name": "Terms"
+    },
+    {
+      "role": "link",
+      "name": "Cookies"
+    },
+    {
+      "role": "link",
+      "name": "Acceptable Use"
+    }
+  ]
+}
