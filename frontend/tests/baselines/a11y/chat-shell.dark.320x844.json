@@ -3,10 +3,6 @@
   "name": "Loop GPT - AI Chat Assistant",
   "children": [
     {
-      "role": "region",
-      "name": "Notifications"
-    },
-    {
       "role": "button",
       "name": "Show sidebar"
     },
@@ -80,15 +76,7 @@
     },
     {
       "role": "button",
-      "name": "Mode · Auto"
-    },
-    {
-      "role": "button",
-      "name": "Web search: auto"
-    },
-    {
-      "role": "button",
-      "name": "Reasoning effort: Auto — Model default"
+      "name": "Run settings"
     },
     {
       "role": "button",
@@ -105,6 +93,10 @@
     {
       "role": "text",
       "name": "Loop GPT can make mistakes. Verify important info."
+    },
+    {
+      "role": "region",
+      "name": "Notifications"
     }
   ]
 }

@@ -3,10 +3,6 @@
   "name": "Apps & extensions - Loop GPT",
   "children": [
     {
-      "role": "region",
-      "name": "Notifications"
-    },
-    {
       "role": "link",
       "name": "Back"
     },
@@ -57,6 +53,10 @@
     {
       "role": "link",
       "name": "Open Loop Code"
+    },
+    {
+      "role": "region",
+      "name": "Notifications"
     }
   ]
 }

@@ -3,20 +3,16 @@
   "name": "Loop GPT - AI Chat Assistant",
   "children": [
     {
-      "role": "region",
-      "name": "Notifications"
-    },
-    {
       "role": "text",
       "name": "Loop GPT"
     },
     {
-      "role": "button",
-      "name": "Hide sidebar"
+      "role": "link",
+      "name": "Projects"
     },
     {
       "role": "link",
-      "name": "Projects"
+      "name": "Loop Bot"
     },
     {
       "role": "link",
@@ -132,15 +128,7 @@
     },
     {
       "role": "button",
-      "name": "Mode · Auto"
-    },
-    {
-      "role": "button",
-      "name": "Web search: auto"
-    },
-    {
-      "role": "button",
-      "name": "Reasoning effort: Auto — Model default"
+      "name": "Run settings"
     },
     {
       "role": "button",
@@ -193,10 +181,6 @@
         {
           "role": "tab",
           "name": "Memory"
-        },
-        {
-          "role": "tab",
-          "name": "Reflect"
         },
         {
           "role": "tab",
@@ -337,6 +321,10 @@
     {
       "role": "button",
       "name": "Keyboard shortcuts"
+    },
+    {
+      "role": "region",
+      "name": "Notifications"
     }
   ]
 }

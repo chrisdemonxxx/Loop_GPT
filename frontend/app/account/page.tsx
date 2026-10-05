@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Sparkles, Ticket, Zap, ImageIcon, ArrowLeft, Loader2, CheckCircle2, Infinity as InfinityIcon, ShieldCheck, ShieldOff } from 'lucide-react'
+import { Sparkles, Ticket, Zap, ImageIcon, ArrowLeft, Loader2, CheckCircle2, Infinity as InfinityIcon, ShieldCheck, ShieldOff, Bot } from 'lucide-react'
 import QRCode from 'qrcode'
 import { apiFetch, clearAuth } from '../lib/api'
+import type { BotQuota } from '../lib/bot'
 
 interface Account {
   email: string
@@ -31,6 +32,7 @@ function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: s
 
 export default function AccountPage() {
   const [acct, setAcct] = useState<Account | null>(null)
+  const [botQuota, setBotQuota] = useState<BotQuota | null>(null)
   const [loading, setLoading] = useState(true)
   const [code, setCode] = useState('')
   const [redeeming, setRedeeming] = useState(false)
@@ -99,6 +101,11 @@ export default function AccountPage() {
     } finally {
       setLoading(false)
     }
+    // Loop Bot computer minutes (separate budget — independent of credits).
+    try {
+      const { getBotQuota } = await import('../lib/bot')
+      setBotQuota(await getBotQuota())
+    } catch { /* older backend or logged out — the card hides */ }
   }
   useEffect(() => {
     load()
@@ -134,14 +141,16 @@ export default function AccountPage() {
 
   return (
     <div className="min-h-screen px-5 py-8 max-w-3xl mx-auto">
+      {/* Unified header: brand always top-left (it jumped to top-right here,
+          the only page that did), back link on the right. */}
       <div className="flex items-center justify-between mb-8">
+        <Link href="/" className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#c96442] to-[#d8a08a] flex items-center justify-center shadow-glow"><Sparkles size={14} className="text-white" /></div>
+          <span className="font-semibold text-gradient">Loop GPT</span>
+        </Link>
         <Link href="/chat" className="flex items-center gap-2 text-slate-400 hover:text-slate-200 text-sm">
           <ArrowLeft size={16} /> Back to chat
         </Link>
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#c96442] to-[#d8a08a] flex items-center justify-center shadow-glow"><Sparkles size={14} className="text-white" /></div>
-          <span className="font-semibold text-gradient">Loop GPT</span>
-        </div>
       </div>
 
       <h1 className="text-2xl font-semibold text-slate-100 mb-1">Account & Billing</h1>
@@ -161,6 +170,28 @@ export default function AccountPage() {
             <StatCard icon={<Sparkles size={13} />} label="Plan" value={(acct?.plan || 'free').toUpperCase()} />
             <StatCard icon={<Zap size={13} />} label="Messages sent" value={fmt(acct?.usage.messages ?? 0)} sub={`${fmt(acct?.usage.images ?? 0)} images`} />
           </div>
+
+          {/* Loop Bot computer minutes — the separate daily VM budget. */}
+          {botQuota && (
+            <Link href="/agents" className="glass rounded-xl p-4 mb-8 flex items-center gap-3 hover:border-white/[0.14] transition group">
+              <div className="w-8 h-8 rounded-lg bg-[#c96442]/15 flex items-center justify-center shrink-0">
+                <Bot size={15} className="text-[#e79d7f]" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs text-slate-400">Loop Bot computer</div>
+                <div className="text-[15px] font-semibold text-slate-100">
+                  {botQuota.unlimited ? 'Unlimited' : `${botQuota.remaining ?? 0} min left`}
+                  <span className="ml-1.5 text-xs font-normal text-slate-500">{botQuota.unlimited ? '' : `of ${botQuota.cap}/day`}</span>
+                </div>
+              </div>
+              {!botQuota.unlimited && botQuota.cap !== null && botQuota.cap > 0 && (
+                <div className="h-1.5 w-20 rounded-full bg-white/[0.06] overflow-hidden shrink-0" aria-hidden>
+                  <div className="h-full rounded-full bg-[#c96442]" style={{ width: `${Math.max(2, Math.round(((botQuota.remaining ?? 0) / botQuota.cap) * 100))}%` }} />
+                </div>
+              )}
+              <span className="text-xs text-slate-500 group-hover:text-slate-300 transition shrink-0">Open →</span>
+            </Link>
+          )}
 
           {/* Voucher redeem */}
           <div className="glass-strong rounded-2xl p-5 mb-6">

@@ -3,10 +3,6 @@
   "name": "Talk to us - Loop GPT",
   "children": [
     {
-      "role": "region",
-      "name": "Notifications"
-    },
-    {
       "role": "link",
       "name": "Return to plans"
     },
@@ -49,6 +45,10 @@
     {
       "role": "text",
       "name": "."
+    },
+    {
+      "role": "region",
+      "name": "Notifications"
     }
   ]
 }

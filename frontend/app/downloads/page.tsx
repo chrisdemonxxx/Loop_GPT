@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Download, MonitorSmartphone, Smartphone, Terminal, Puzzle } from 'lucide-react'
 
@@ -15,6 +15,7 @@ interface InstallPromptEvent extends Event {
  * surface lives at /developer. No invented store links.
  */
 export default function DownloadsPage() {
+  const [installNote, setInstallNote] = useState('')
   useEffect(() => {
     document.title = 'Apps & extensions - Loop GPT'
   }, [])
@@ -26,8 +27,8 @@ export default function DownloadsPage() {
       return
     }
     // No deferred prompt (browser already installed, or not eligible):
-    // explain the manual path instead of pretending.
-    alert('Your browser can install Loop GPT from its menu: "Install app" / "Add to Home screen". You are likely already installed, or the browser needs a first interaction.')
+    // explain the manual path inline instead of a native alert().
+    setInstallNote('Your browser installs Loop GPT from its menu: "Install app" / "Add to Home screen". If you don\'t see it, you\'re likely already installed, or the browser needs one more interaction first.')
   }
 
   return (
@@ -40,6 +41,7 @@ export default function DownloadsPage() {
         One account, every surface. The chat you start in the browser continues on your installed app.
       </p>
 
+      {/* Shipped surfaces — prominent, with actions. */}
       <div className="mt-8 space-y-4">
         <section aria-label="Desktop" className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5">
           <div className="flex items-start justify-between gap-4">
@@ -61,31 +63,7 @@ export default function DownloadsPage() {
               <Download size={14} /> Install
             </button>
           </div>
-        </section>
-
-        <section aria-label="Mobile" className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5">
-          <div className="flex items-start gap-3">
-            <Smartphone size={20} className="mt-0.5 shrink-0 text-[#e79d7f]" />
-            <div className="min-w-0">
-              <h2 className="text-[15px] font-medium text-slate-100">iOS & Android</h2>
-              <p className="mt-1 text-[12px] leading-relaxed text-slate-500">
-                The mobile app is in development. Today, install the web app from your phone&apos;s browser
-                menu (&ldquo;Add to Home Screen&rdquo;) — the phone layout is first-class.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section aria-label="Browser extension" className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5">
-          <div className="flex items-start gap-3">
-            <Puzzle size={20} className="mt-0.5 shrink-0 text-[#e79d7f]" />
-            <div className="min-w-0">
-              <h2 className="text-[15px] font-medium text-slate-100">Browser extension</h2>
-              <p className="mt-1 text-[12px] leading-relaxed text-slate-500">
-                Not shipped yet — when it lands it will appear here first.
-              </p>
-            </div>
-          </div>
+          {installNote && <p role="status" className="mt-3 text-[12px] text-slate-400 border-t border-white/[0.05] pt-3">{installNote}</p>}
         </section>
 
         <section aria-label="Loop Code CLI" className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5">
@@ -105,6 +83,33 @@ export default function DownloadsPage() {
             >
               <Terminal size={14} /> Open Loop Code
             </Link>
+          </div>
+        </section>
+      </div>
+
+      {/* On the roadmap — one subdued strip, not two fake cards. */}
+      <h2 className="mt-10 text-[11px] uppercase tracking-widest text-slate-600 font-medium">On the roadmap</h2>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <section aria-label="Mobile" className="rounded-2xl border border-dashed border-white/[0.07] p-4 opacity-70">
+          <div className="flex items-start gap-3">
+            <Smartphone size={18} className="mt-0.5 shrink-0 text-slate-500" />
+            <div className="min-w-0">
+              <h3 className="text-[13px] font-medium text-slate-300">iOS & Android</h3>
+              <p className="mt-1 text-[12px] leading-relaxed text-slate-600">
+                In development. Today, install the web app from your phone&apos;s browser menu (&ldquo;Add to Home Screen&rdquo;).
+              </p>
+            </div>
+          </div>
+        </section>
+        <section aria-label="Browser extension" className="rounded-2xl border border-dashed border-white/[0.07] p-4 opacity-70">
+          <div className="flex items-start gap-3">
+            <Puzzle size={18} className="mt-0.5 shrink-0 text-slate-500" />
+            <div className="min-w-0">
+              <h3 className="text-[13px] font-medium text-slate-300">Browser extension</h3>
+              <p className="mt-1 text-[12px] leading-relaxed text-slate-600">
+                Not shipped yet — it will land here first.
+              </p>
+            </div>
           </div>
         </section>
       </div>

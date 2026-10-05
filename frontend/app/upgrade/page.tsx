@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Check, CreditCard, Ticket } from 'lucide-react'
+import { ArrowLeft, Check, Ticket } from 'lucide-react'
 import { API_URL, authHeaders } from '../lib/api'
 
 interface Me { plan?: string; unlimited?: boolean; credits?: number }
@@ -102,11 +102,14 @@ export default function UpgradePage() {
                     ))}
                   </ul>
                   {plan.id !== 'free' ? (
+                    /* Waitlist, not a dead checkout link (P1): billing says
+                       "not enabled yet" — sending users there as the CTA was
+                       a dead end. Accounts ARE the waitlist until checkout ships. */
                     <Link
-                      href="/customize#settings/billing"
+                      href="/signup"
                       className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#c96442]/40 bg-[#c96442]/[0.08] px-4 py-2 text-[13px] font-medium text-[#e79d7f] transition hover:bg-[#c96442]/[0.14]"
                     >
-                      <CreditCard size={14} /> Get {plan.name}
+                      Join the waitlist
                     </Link>
                   ) : (
                     <Link
@@ -123,9 +126,9 @@ export default function UpgradePage() {
 
           {frozen && (
             <div role="note" className="mt-5 rounded-xl border border-white/[0.07] p-3.5 text-[12px] leading-relaxed text-slate-500">
-              Paid checkout is <strong className="text-slate-300">not enabled yet</strong> — the Get buttons open
-              Billing, where voucher codes already work. When checkout goes live, monthly and yearly options
-              appear on each card.
+              Paid checkout is <strong className="text-slate-300">not enabled yet</strong> — creating an account
+              puts you on the waitlist and Pro/Gold unlock for you first when it ships. Voucher codes already
+              work in Settings → Billing (link below).
             </div>
           )}
 

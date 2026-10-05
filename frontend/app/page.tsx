@@ -41,8 +41,10 @@ export default function Landing() {
           <span className="font-semibold text-slate-100 text-[15px]">Loop GPT</span>
         </div>
         <div className="flex items-center gap-3 text-sm">
-          <a href="#features" className="text-slate-500 hover:text-slate-200 hidden sm:block transition">Features</a>
-          <a href="#pricing" className="text-slate-500 hover:text-slate-200 hidden sm:block transition">Pricing</a>
+          {/* Nav links stay visible on mobile too — they were hidden with no
+              hamburger, leaving mobile visitors with no way to navigate. */}
+          <a href="#features" className="text-slate-500 hover:text-slate-200 transition text-[13px]">Features</a>
+          <a href="#pricing" className="text-slate-500 hover:text-slate-200 transition text-[13px]">Pricing</a>
           <Link href="/login" className="text-slate-400 hover:text-slate-100 transition">Log in</Link>
           <Link href="/signup" className="px-3 py-1.5 rounded-lg text-white bg-[#c96442] hover:bg-[#b5593a] transition text-[13px] font-medium">
             Sign up
@@ -86,8 +88,11 @@ export default function Landing() {
                 key={f.title}
                 initial={{ opacity: 0, y: 10 }}
                 whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.04 }}
+                /* Reveal EARLY (100px before entering, at 15% visibility) — the
+                   old tight observer left the grid invisible until well into
+                   the viewport (it read as a black void on first paint). */
+                viewport={{ once: true, amount: 0.15, margin: '100px' }}
+                transition={{ delay: Math.min(i * 0.04, 0.24), duration: 0.35, ease: 'easeOut' }}
                 className="glass rounded-2xl p-5 hover:border-white/12 hover:bg-white/[0.06] transition cursor-default"
               >
                 <div className="w-9 h-9 rounded-xl bg-[#c96442]/12 border border-[#c96442]/20 flex items-center justify-center mb-3">

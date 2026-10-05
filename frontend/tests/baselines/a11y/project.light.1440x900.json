@@ -3,12 +3,12 @@
   "name": "Loop GPT - AI Chat Assistant",
   "children": [
     {
-      "role": "region",
-      "name": "Notifications"
-    },
-    {
       "role": "link",
       "name": "Projects"
+    },
+    {
+      "role": "region",
+      "name": "Notifications"
     }
   ]
 }

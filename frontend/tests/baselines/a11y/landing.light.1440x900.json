@@ -3,10 +3,6 @@
   "name": "Loop GPT - AI Chat Assistant",
   "children": [
     {
-      "role": "region",
-      "name": "Notifications"
-    },
-    {
       "role": "text",
       "name": "Loop GPT"
     },
@@ -265,6 +261,10 @@
     {
       "role": "link",
       "name": "Acceptable Use"
+    },
+    {
+      "role": "region",
+      "name": "Notifications"
     }
   ]
 }
