@@ -25,7 +25,7 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
 | step | deliverable | owners | gate (raw evidence required) | status |
 |---|---|---|---|---|
 | **S0** bank at-risk work | P5 fix commit + `UI_MOBILE_WEB_ui-visual.md`; gate spec + phone projects committed; baselines/tokens/`.storybook` committed + `.gitignore`; storybook scripts+deps restored; `GIT_REVISION` on web service | ui-visual, qa-verify, pixel-measure, storybook-dev, ops-release | tsc=0; vitest 26/232; mobile gate 12 passed/2 skipped local; `build-storybook` exit 0; `GET /version.json` â†’ real SHA == HEAD | **SHIPPED â€” see E-S0.6/E-S0.7** |
-| **S1** close RED gates | media suite 8â†’28; `team/PERF_P1.md`; `team/RELEASE_P1.md`; GAP-003 serious+ contrast fixes + gate tightened; A6 catalog depth (GAP-029 row 3) | ops-release, perf-eng, qa-verify, core-dev | raw vitest 28/28; both docs hash-verified; axe zero serious+; catalog â‰¥3 picker rows live | **4 of 5 CLOSED** â€” media 28/28 (E-S1.1), GAP-003 0C/0S + gate serious+ (E-S1.2), `PERF_P1.md` + `RELEASE_P1.md` written from raw probes (E-S1.3). Remaining: A6 catalog depth |
+| **S1** close RED gates | media suite 8â†’28; `team/PERF_P1.md`; `team/RELEASE_P1.md`; GAP-003 serious+ contrast fixes + gate tightened; A6 catalog depth (GAP-029 row 3) | ops-release, perf-eng, qa-verify, core-dev | raw vitest 28/28; both docs hash-verified; axe zero serious+; catalog â‰¥3 picker rows live | **CLOSED â€” E-S1.1..E-S1.4** (media 28/28, GAP-003 0C/0S + serious+ gate, PERF_P1/RELEASE_P1 from raw probes, A6 `112fcbd` row 3) |
 | **S2** settings panels (blueprint P6) | hash-routed `#settings/*` panel layer + General, Account, Privacy(+5 sub-panels), Billing, Capabilities, Reflect, Time-and-focus, Claude Code â†’ 12/12 | arch-lead (contract), ui-visual, qa-verify | a11y snapshot per panel matches plan Â§8; hash back/forward; settings search | OPEN |
 | **S3** page parity (blueprint P7/P8) | `/customize/connectors/all` + connector detail; project detail; skill/plugin detail tabs; `/downloads`, `/upgrade`(+pro/max), `/buying-specialist`, `/logout`, `/new` hero + PromptChips; `/code` shell + gates; mobile mirrors | arch-lead, ui-visual, mobile-dev, research-scout (copy seeds) | every Â§4 route reachable; table-driven route test incl. Â§4.3 404s; entitlement matrix doc | OPEN |
 | **S4** primitives + visual lock | ~20 remaining Â§10 stories; Skeleton/DataTable/Carousel/PromptChips/Tabs/FileViewer; `visual-parity.spec.ts` in CI; new screens captured light+dark Ã— 5 viewports | storybook-dev, core-dev, pixel-measure, qa-verify (keyboard Â§11) | storybook index complete; parity â‰¤0.5% all rows; keyboard walkthrough pass | OPEN |
@@ -128,16 +128,29 @@ already shipped (`frontend/tokens.json`, `team/VISUAL_PARITY.md`).
   `team/VISUAL_PARITY.md` RE-FREEZE section appended; `pending P5` retired
   from both the ledger and `measure.cjs`.
 - **E-S1.3** (S1 artifacts, 2026-10-05): `team/PERF_P1.md` written from raw
-  probes — edge handshake (time_starttransfer - time_appconnect) **~0.33 s**
-  on every route (5× per route, 20 raw runs pasted), mermaid-lazy verified
+  probes ï¿½ edge handshake (time_starttransfer - time_appconnect) **~0.33 s**
+  on every route (5ï¿½ per route, 20 raw runs pasted), mermaid-lazy verified
   shipped (2,535,990 B trio ABSENT from the 24-chunk `/chat` first-load, only
   a 33,827 B viewer-chunk regex remains), xlsx-lazy shipped (413,791 B chunk
   built but unreferenced by `/chat/index.html`); hljs-subset + framer-motion +
-  TTFT + LCP/CLS named OPEN, not claimed. `team/RELEASE_P1.md` written —
+  TTFT + LCP/CLS named OPEN, not claimed. `team/RELEASE_P1.md` written ï¿½
   healthz 200, **Sentry deliberate error HTTP 200 live** (event
-  `d2044fd5…` via the v7 envelope endpoint; the bare `/store/` payload is a
-  400 — probe recipe corrected; first scan's "no DSN" was a URL-concat bug,
-  §6.2 trap re-confirmed), Stripe frozen re-verified, stale RUNBOOK restore
+  `d2044fd5ï¿½` via the v7 envelope endpoint; the bare `/store/` payload is a
+  400 ï¿½ probe recipe corrected; first scan's "no DSN" was a URL-concat bug,
+  ï¿½6.2 trap re-confirmed), Stripe frozen re-verified, stale RUNBOOK restore
   footer fixed in the same commit, deploy read-back CLOSED via the revision
   markers (baseline's chunk-set procedure superseded). Oldest open P1
   artifacts are no longer absent.
+- **E-S1.4** (S1/A6, 2026-10-05, `112fcbd`): `availableChatModels()` now
+  emits `loop-vision` between the flagship and the fast tier **iff
+  `HF_VISION_ENDPOINT_URL` is configured** (canonical id, never the shadowed
+  alias — contract §1). Without a dedicated VLM the row stays hidden (image
+  turns already route to large; a lookalike row would be a fake). Catalog
+  tests rewritten to pin BOTH shapes and the end-to-end select
+  (`loop-vision` ? vision tier ? VLM target); the two old tests pinned the
+  pre-A6 truth and had to change — that is the contract's own row-3 spec, not
+  a test dodge. Suite re-run: **65 files / 1192 passed, tsc=0**. The picker
+  nesting (per-row Effort submenu, vision badge, More-models footer) had
+  already shipped in `ModelSelector.tsx` — row 3 renders live on the next
+  backend deploy (live `GET /api/models/catalog` goes 2 ? 3 rows; re-check
+  after deploy — do not trust, re-probe).
