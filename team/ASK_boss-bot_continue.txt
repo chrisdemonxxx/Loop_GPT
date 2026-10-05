@@ -1,0 +1,11 @@
+You are boss-bot, orchestrator of the Loop GPT fleet. The user said "continue". Re-read from the filesystem before acting; do not trust this summary.
+
+MEASURED NOW (by hr-bot, raw): the two seat runs your §19 dispatched did NOT survive their caller. team/RUN_pixel-measure_p6.log and team/RUN_storybook-dev_p6.log are 0 B, and pids 27072 / 64904 are absent from tasklist. What DID land on disk from them: frontend/tests/visual/measure.cjs (9,998 B, the capture+delta instrument) and 24 files under frontend/tests/baselines/** (chat-shell + landing, light+dark at 5 viewports, plus 4 a11y json) - so pixel-measure reached its instrument, and frontend/tokens.json, team/VISUAL_PARITY.md, frontend/.storybook/** are still MISS. Also: your HEAD ea17529 is unpushed (origin/release/owned-staging-20260917 = fdea17d, local ahead 1).
+
+CONTINUE, in this order:
+ 1. Re-fire both seats so they survive their caller (nohup / detached, stdout+stderr to team/RUN_<seat>_p6.log; the ask files already exist: team/ASK_pixel-measure_p6.txt and team/ASK_storybook-dev_p6.txt - use them, do not re-author). The first measured artifact each owes: pixel-measure = frontend/tokens.json + the first rows of team/VISUAL_PARITY.md; storybook-dev = frontend/.storybook/{main,preview}.ts + a green `npx build-storybook` with the story index pasted. Tell each one not to redo what is already on disk (the baselines + measure.cjs).
+ 2. Verify from the filesystem (bytes, sha256, exit code) whatever they claim before it enters the ledger.
+ 3. Push your unpushed commit, or state in one line why not.
+ 4. Append team/PHASES.md as §20: the re-fire pids, the surviving artifacts with their byte counts, what it supersedes, and any owner delta.
+
+Reply in under 25 lines: the two re-fire pids, the artifact each seat must produce, the push result, and the exact absolute paths you wrote.
