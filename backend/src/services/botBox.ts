@@ -22,7 +22,10 @@ type Sandbox = any
  *  been idle past BOX_IDLE_TTL_MS.
  */
 
-export const BOX_IDLE_TTL_MS = 24 * 60 * 60 * 1000 // pause after a day idle
+/** Provider cap: this E2B tier rejects sandbox timeouts > 1h. The box stays
+ *  "always on" in practice via touch-keepalive (every use extends the timer)
+ *  and fast resume — when it does expire, the next touch re-boots + re-seeds. */
+export const BOX_IDLE_TTL_MS = 60 * 60 * 1000
 const BOOT_BUDGET_MS = 30 * 1000
 const DEFAULT_SCREEN = { width: 1366, height: 768 }
 
