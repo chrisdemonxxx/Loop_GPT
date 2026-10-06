@@ -246,12 +246,27 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
 
   let stepIndex = 0
   let finalContent = ''
+  // Loop guards (fix "I reached the maximum number of reasoning steps"):
+  //  1. The last iteration runs WITHOUT tools, so the model always closes with
+  //     its own final answer instead of the canned fallback.
+  //  2. Repeating the identical tool call 3x in a row force-ends the loop the
+  //     same way — a stuck retry no longer burns the whole step budget.
+  //  3. Old tool results are elided once the working list grows large, so a
+  //     long tool-heavy run can't blow the provider's context window.
+  let forceFinalNext = false
+  let lastSignature = ''
+  let sameSigCount = 0
 
   ctx.emit({ type: 'warming', message: 'Contacting model (may take a moment on cold start)…' })
 
   for (let iter = 0; iter < maxSteps; iter++) {
     await assertRunAccess(ctx)
-    const useNative = hasTools && nativeToolSupport.get(cfgKey) !== false
+    elideOldToolContent(working)
+    const noTools = forceFinalNext || iter === maxSteps - 1
+    if (iter === maxSteps - 1 && !forceFinalNext) {
+      working.push({ role: 'user', content: '[System note: your tool budget for this run is now exhausted. Write your final answer to the user with everything you have gathered — do not call any more tools.]' })
+    }
+    const useNative = !noTools && hasTools && nativeToolSupport.get(cfgKey) !== false
 
     // Sanitize streamed deltas (hold-back buffer catches cross-chunk identifiers).
     const sanitizer = makeStreamSanitizer((text) => ctx.emit({ type: 'delta', step: stepIndex, text }))
@@ -274,6 +289,13 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
       sanitizer.flush()
     } catch (err: any) {
       sanitizer.flush()
+      // Context-window overflow from the provider: elide harder and retry —
+      // a long tool run must degrade to a shorter transcript, not crash.
+      if (/context|too long|too many tokens|maximum.*(length|tokens)|reduce.*(length|tokens)/i.test(String(err?.message || ''))) {
+        elideOldToolContent(working, 60_000)
+        iter--
+        continue
+      }
       // If native tool params likely caused the failure, disable and retry.
       if (useNative && nativeToolSupport.get(cfgKey) === undefined) {
         nativeToolSupport.set(cfgKey, false)
@@ -286,6 +308,14 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
     // A successful native-tools request confirms support.
     if (useNative && nativeToolSupport.get(cfgKey) === undefined) {
       nativeToolSupport.set(cfgKey, true)
+    }
+
+    // Forced wrap-up turn (budget spent / loop breaker): the model answers
+    // with what it has — tools were not offered, anything tool-shaped in the
+    // text is ignored.
+    if (noTools) {
+      finalContent = sanitizeText(turn.content)
+      break
     }
 
     // Determine which tool(s) were requested — native array first, else inline.
@@ -309,6 +339,22 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
       // No tool requested → this is the final answer.
       finalContent = sanitizeText(turn.content)
       break
+    }
+
+    // Repeat-call guard: identical call set 3 turns running = the model is
+    // stuck retrying. Skip execution, tell it, and force a no-tools wrap-up.
+    const signature = calls.map((c) => `${c.name}:${JSON.stringify(c.args ?? {})}`).sort().join('|')
+    if (signature === lastSignature) {
+      sameSigCount++
+      if (sameSigCount >= 2) {
+        working.push({ role: 'assistant', content: turn.content || '' })
+        working.push({ role: 'user', content: '[System note: you have already run this exact tool call with identical arguments — the results are above. Do not repeat it. Write your final answer now with what you have.]' })
+        forceFinalNext = true
+        continue
+      }
+    } else {
+      sameSigCount = 0
+      lastSignature = signature
     }
 
     // Record the assistant turn (with native tool_calls when applicable).
@@ -439,12 +485,37 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
   }
 
   if (!finalContent) {
-    finalContent = sanitizeText('I reached the maximum number of reasoning steps. Here is what I have so far:\n\n' +
+    // Defensive only — the forced final turn above should make this
+    // unreachable. Never surface an internal-budget message to the user.
+    finalContent = sanitizeText('Here is what I found so far:\n\n' +
       steps.map((s) => `- ${s.tool}: ${s.result || ''}`).join('\n'))
   }
 
   ctx.emit({ type: 'final', content: finalContent, metadata: sanitizeMetadata({ toolsUsed: Array.from(toolsUsed), steps }) })
   return { content: finalContent, steps, toolsUsed: Array.from(toolsUsed) }
+}
+
+/** Rough char budget for the working transcript (~4 chars/token). */
+const MAX_WORKING_CHARS = 120_000
+
+/**
+ * Elide older tool results in place once the transcript grows past the
+ * budget. Keeps the system head + the last 12 messages intact; middle tool
+ * payloads are replaced with a short stub (the model already consumed them).
+ */
+function elideOldToolContent(msgs: ChatMessage[], target = MAX_WORKING_CHARS): void {
+  const size = (m: ChatMessage) => (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length)
+  let total = msgs.reduce((n, m) => n + size(m), 0)
+  if (total <= target) return
+  const keepTail = 12
+  for (let i = 1; i < msgs.length - keepTail && total > target; i++) {
+    const m = msgs[i]
+    const isToolish = m.role === 'tool' || (m.role === 'user' && typeof m.content === 'string' && m.content.startsWith('TOOL_RESULT'))
+    if (!isToolish || typeof m.content !== 'string' || m.content.length <= 600) continue
+    const stub = m.content.slice(0, 300) + `\n…[elided ${m.content.length - 300} chars — already used]`
+    total -= m.content.length - stub.length
+    msgs[i] = { ...m, content: stub } as ChatMessage
+  }
 }
 
 function contentToString(content: ChatMessage['content']): string {
