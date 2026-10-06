@@ -196,7 +196,17 @@ router.get('/computer', asyncHandler(async (req, res) => {
   const userId = (req as any).userId as string
   const user = hasDb && prisma ? await prisma.user.findUnique({ where: { id: userId }, select: { email: true } }) : null
   const taskType = (typeof req.query.taskType === 'string' ? req.query.taskType : 'default') as any
-  const box = await ensureUserBox(userId, (user?.email || 'operator').split('@')[0], taskType)
+  let box
+  try {
+    box = await ensureUserBox(userId, (user?.email || 'operator').split('@')[0], taskType)
+  } catch (error: any) {
+    const msg = String(error?.message || 'box boot failed')
+    // Honest failure modes: provider not configured vs provider error.
+    if (/not configured|E2B_API_KEY/i.test(msg)) {
+      return res.status(503).json({ error: 'The computer provider is not configured on this deployment (E2B_API_KEY missing).', code: 'unavailable' })
+    }
+    return res.status(502).json({ error: `Could not boot the bot computer: ${msg}`, code: 'provider' })
+  }
   const status = await getUserBoxStatus(userId)
   res.json({
     alive: status.alive,
