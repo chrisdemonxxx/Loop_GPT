@@ -33,6 +33,7 @@ import { CONFIDENTIALITY_PROMPT, sanitizeText, sanitizeMetadata, makeStreamSanit
 import { storeApproval, waitForApproval, clearApproval } from './approvalStore'
 import { getMemories } from './tools/remember'
 import { configStore, type ToolPermission } from './configStore'
+import { compactTranscript, shouldRecompact, transcriptSize } from './compactTranscript'
 
 /** Resolve the effective permission: an explicit override wins; otherwise a
  * tool's own needsApproval flag applies. */
@@ -238,6 +239,24 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
 
   working.push(...opts.messages)
 
+  // Auto-compaction (unlimited context): a long loaded history is folded into
+  // the cumulative summary BEFORE the first turn — the model always sees
+  // system + summary + recent tail, never a blown window. Durable facts are
+  // written to Memory for future conversations.
+  let lastCompactAtSize = 0
+  if (opts.ctx?.userId && opts.useMemory !== false) {
+    const pass = await compactTranscript({
+      msgs: working,
+      client,
+      model,
+      userId: opts.ctx.userId,
+      workspaceId: opts.ctx.workspaceId,
+      signal: ctx.signal,
+      emit: (message) => ctx.emit({ type: 'status', message }),
+    })
+    if (pass.compacted) lastCompactAtSize = transcriptSize(working)
+  }
+
   const openaiTools = hasTools ? tools.map((tool) => ({ type: 'function' as const,
     function: { name: tool.name, description: tool.description, parameters: tool.parameters },
   })) : undefined
@@ -262,6 +281,20 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
   for (let iter = 0; iter < maxSteps; iter++) {
     await assertRunAccess(ctx)
     elideOldToolContent(working)
+    // Mid-run re-compaction: a tool-heavy run that keeps growing past the
+    // threshold folds its middle into the running summary (+ Memory facts).
+    if (opts.ctx?.userId && opts.useMemory !== false && shouldRecompact(working, lastCompactAtSize)) {
+      const pass = await compactTranscript({
+        msgs: working,
+        client,
+        model,
+        userId: opts.ctx.userId,
+        workspaceId: opts.ctx.workspaceId,
+        signal: ctx.signal,
+        emit: (message) => ctx.emit({ type: 'status', message }),
+      })
+      if (pass.compacted) lastCompactAtSize = transcriptSize(working)
+    }
     const noTools = forceFinalNext || iter === maxSteps - 1
     if (iter === maxSteps - 1 && !forceFinalNext) {
       working.push({ role: 'user', content: '[System note: your tool budget for this run is now exhausted. Write your final answer to the user with everything you have gathered — do not call any more tools.]' })
