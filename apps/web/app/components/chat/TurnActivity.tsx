@@ -7,6 +7,7 @@ import {
   MousePointerClick, AlertCircle, RotateCcw, ListChecks, Circle, ExternalLink,
 } from 'lucide-react'
 import { API_URL, authHeaders } from '../../lib/api'
+import { narrateTool } from '../../lib/assistantText'
 import type { LiveStep, StoredStep, PendingApproval } from './types'
 
 /** Format a wall-clock duration compactly: 480ms / 1.2s / 2m 05s. */
@@ -68,7 +69,7 @@ export default function TurnActivity({
   onApprove, onDeny, onRetry, toolCount, onOpenTools, onOpenArtifactByName,
 }: TurnActivityProps) {
   const isLive = liveSteps.length > 0 || running || !!pendingApproval
-  const liveTools = liveSteps.filter((s) => s.kind === 'tool' && s.tool)
+  const liveTools = dedupeLiveTools(liveSteps.filter((s) => s.kind === 'tool' && s.tool))
   const stepCount = isLive ? liveTools.length : storedSteps.length
 
   const [open, setOpen] = useState(running)
@@ -118,9 +119,8 @@ export default function TurnActivity({
       >
         <StateIcon size={13} className={`${meta.text} shrink-0 ${running ? 'animate-spin' : ''}`} />
         <span className={`text-[12px] ${turnState === 'done' ? 'text-slate-400' : meta.text} font-medium`}>
-          {turnState === 'running' && status ? status : `Ran ${stepCount} step${stepCount === 1 ? '' : 's'}`}
+          {headerLabel(turnState, stepCount, status, liveTools)}
         </span>
-        {turnState === 'waiting' && <span className="text-[11px] text-slate-400">· approve to continue</span>}
         {turnState === 'error' && <span className="text-[11px] text-slate-400">· a step failed</span>}
         <span className="flex-1" />
         <ChevronDown size={13} className={`text-slate-500 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
@@ -214,11 +214,11 @@ export default function TurnActivity({
                 ))
               )}
 
-              {/* Live status tail while streaming. */}
-              {running && (
+              {/* Thinking tail only while no tool is still open and we are not waiting. */}
+              {running && !pendingApproval && liveTools.every((s) => !!s.tool?.result) && (
                 <div className="flex items-center gap-2 text-slate-400 px-0.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                  <span className="cursor text-[11px]">{status || 'thinking'}</span>
+                  <span className="text-[11px]">{status || 'thinking'}</span>
                 </div>
               )}
 
@@ -230,6 +230,37 @@ export default function TurnActivity({
       </AnimatePresence>
     </motion.div>
   )
+}
+
+/** One card per step index. Identical unresolved calls (same name + args) collapse. */
+function dedupeLiveTools(steps: LiveStep[]): LiveStep[] {
+  const byIndex = new Map<number, LiveStep>()
+  for (const step of steps) byIndex.set(step.index, step)
+  const seen = new Set<string>()
+  const out: LiveStep[] = []
+  for (const step of byIndex.values()) {
+    const open = !step.tool?.result
+    const key = open ? `${step.tool?.name}:${stableArgs(step.tool?.args)}` : `done:${step.index}`
+    if (open && seen.has(key)) continue
+    if (open) seen.add(key)
+    out.push(step)
+  }
+  return out
+}
+
+function stableArgs(args: unknown): string {
+  try { return JSON.stringify(args ?? {}) } catch { return '' }
+}
+
+function headerLabel(state: TurnState, stepCount: number, status: string, tools: LiveStep[]): string {
+  if (state === 'waiting') return 'Waiting for your approval'
+  if (state === 'running') {
+    const open = [...tools].reverse().find((s) => !s.tool?.result)
+    if (open?.tool?.name) return narrateTool(open.tool.name, false)
+    if (status && !/^(running|thinking)$/i.test(status)) return status
+    return 'Working on it…'
+  }
+  return `Ran ${stepCount} step${stepCount === 1 ? '' : 's'}`
 }
 
 /** One collapsible tool-call card: status icon, name, arg summary, duration,

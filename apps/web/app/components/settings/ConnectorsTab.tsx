@@ -7,7 +7,8 @@ import {
 } from 'lucide-react'
 import { API_URL, authHeaders } from '../../lib/api'
 import { openOAuthPopup, oauthPopupNotice } from '../../lib/oauthPopup'
-import { Badge, btnGhost, btnPrimary, Card, EmptyState, inputCls, SearchInput, SectionHeader, StatusDot } from '../ui/primitives'
+import { Badge, btnGhost, btnPrimary, EmptyState, inputCls, SearchInput, SectionHeader, StatusDot } from '../ui/primitives'
+import { BrandMark } from '../connectors/BrandMark'
 
 interface ConnectorField { key: string; label: string; secret?: boolean; required?: boolean; placeholder?: string }
 interface ConnectorType { type: string; name: string; description: string; category: string; icon: string | null; oauth: boolean; fields: ConnectorField[] }
@@ -31,22 +32,8 @@ function timeAgo(iso: string | null): string {
   return `${Math.floor(s / 86400)}d ago`
 }
 
-/** Letter avatar instead of emoji icons — consistent iconography. Known
- *  services get distinct monograms (first-two-letters collided: GitHub and
- *  GitLab both rendered "GI", both Google services rendered "G"). */
-const MONOGRAMS: Record<string, string> = {
-  GitHub: 'GH', GitLab: 'GL', 'Google Drive': 'GD', 'Google Calendar': 'GC',
-  Gmail: 'GM', 'HTTP API': 'HT', Sentry: 'SE', Notion: 'NO', Todoist: 'TD',
-  Slack: 'SL', Discord: 'DC', Jira: 'JI', Figma: 'FG', Zoom: 'ZM',
-  Dropbox: 'DB', Linear: 'LN', Asana: 'AS', Salesforce: 'SF',
-  'Microsoft Outlook': 'MO', OneDrive: 'OD',
-}
 function Avatar({ name }: { name: string }) {
-  return (
-    <span className="w-7 h-7 rounded-lg bg-ink-800 border border-white/5 flex items-center justify-center text-[11px] font-semibold text-slate-300 shrink-0" aria-hidden>
-      {MONOGRAMS[name] || name.slice(0, 2).toUpperCase()}
-    </span>
-  )
+  return <BrandMark name={name} size={32} />
 }
 
 /**
@@ -193,33 +180,39 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
           <button type="button" onClick={() => load()} className="underline hover:text-rose-300">Retry</button>
         </div>
       )}
-      {data.configured.map((c) => (
-        <div key={c.id} className="p-3.5 rounded-xl border border-white/[0.06] bg-white/[0.02] flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <StatusDot state={c.lastTestOk === null ? 'idle' : c.lastTestOk ? 'ok' : 'error'} />
-              <span className="text-sm font-medium text-slate-100">{c.name}</span>
-              {c.account && <Badge>{c.account}</Badge>}
+      {data.configured.map((c) => {
+        const type = data.types.find((t) => t.type === c.type)
+        const ok = c.lastTestOk !== false && c.enabled
+        return (
+          <div key={c.id} className="px-3 py-2.5 rounded-xl border border-white/[0.06] bg-white/[0.02] flex items-center gap-3">
+            <Avatar name={c.name} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-slate-100 truncate">{c.name}</span>
+                {c.account && <span className="text-[11px] text-slate-500 truncate">{c.account}</span>}
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                {c.lastTestedAt ? `tested ${timeAgo(c.lastTestedAt)}` : 'not tested yet'}
+                {testMsg[c.id] && <span className={c.lastTestOk ? ' text-emerald-400' : ' text-rose-300'}> · {testMsg[c.id]}</span>}
+              </div>
             </div>
-            <div className="text-[11px] text-slate-500 mt-0.5">
-              {c.lastTestedAt ? `tested ${timeAgo(c.lastTestedAt)}` : 'not tested yet'}
-              {testMsg[c.id] && <span className={c.lastTestOk ? ' text-emerald-400' : ' text-rose-400'}> · {testMsg[c.id]}</span>}
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
+            <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full ${ok ? 'bg-emerald-400/10 text-emerald-300' : 'bg-amber-400/10 text-amber-200'}`}>
+              {ok ? 'Connected' : 'Needs attention'}
+            </span>
+            {type?.oauth && <span className="shrink-0 text-[10px] uppercase tracking-wide text-sky-300/80">OAuth</span>}
             <button
               onClick={() => test(c.id)}
               disabled={testing === c.id}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] bg-white/[0.04] text-slate-300 hover:bg-white/[0.08] transition disabled:opacity-50"
-              title="Test connection"
-            ><RefreshCw size={12} className={testing === c.id ? 'animate-spin' : ''} /> Test</button>
+              className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] disabled:opacity-50"
+              aria-label={`Test ${c.name}`}
+            ><RefreshCw size={13} className={testing === c.id ? 'animate-spin' : ''} /></button>
             <button
               onClick={() => remove(c.id)}
-              className="px-2.5 py-1.5 rounded-lg text-[12px] text-slate-400 hover:text-rose-400 hover:bg-white/5 transition"
+              className="shrink-0 px-2.5 py-1.5 rounded-lg text-[12px] text-slate-300 hover:text-rose-300 hover:bg-white/5 transition"
             >Disconnect</button>
           </div>
-        </div>
-      ))}
+        )
+      })}
 
       {/* Search */}
       <SearchInput value={query} onChange={setQuery} placeholder="Search connectors…" resultCount={q ? filtered.length : null} />
@@ -231,38 +224,40 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
           <SectionHeader title={cat} count={types.length} />
           {/* P5: one card per row below sm — the 2-col grid was what clipped
               the title to `GitHu`/`GitLat`/`Sentr` (title + `+ Add` on one line). */}
-          <div className="grid grid-cols-2 gap-2 max-sm:grid-cols-1">
+          <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
             {types.map((t) => {
               const connected = configuredTypes.has(t.type)
               return (
-                <Card
-                  key={t.type}
-                  title={<span className="flex items-center gap-2"><Avatar name={t.name} />{t.name}</span>}
-                  description={t.description}
-                  badge={connected ? <Badge tone="green">connected</Badge> : undefined}
-                  onClick={t.oauth ? undefined : () => { setAddType(t.type); setFields({}); setError('') }}
-                  actions={t.oauth ? undefined : (
-                    <button className="flex items-center gap-1 text-xs text-[#e79d7f] hover:underline self-start"><Plus size={12} /> Add</button>
-                  )}
-                >
-                  {/* OAuth CTA lives BELOW the content (children slot), not in
-                      the right-side actions slot — the 16rem disclaimer stack
-                      squeezed the title column to zero width on 2-col cards. */}
-                  {t.oauth && OAUTH_LABEL[t.type] && (
-                    <div className="mt-2 space-y-1">
+                <article key={t.type} className="h-[148px] flex flex-col rounded-xl border border-white/[0.07] bg-white/[0.025] p-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Avatar name={t.name} />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px] font-medium text-slate-100">{t.name}</div>
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">{t.oauth ? 'OAuth' : 'API key'}</div>
+                    </div>
+                    {connected && <Badge tone="green">connected</Badge>}
+                  </div>
+                  <p className="mt-2 text-[12px] text-slate-400 line-clamp-1">{t.description}</p>
+                  <div className="mt-auto pt-2">
+                    {t.oauth && OAUTH_LABEL[t.type] ? (
                       <button
                         onClick={() => startOAuth(t.type)}
                         disabled={oauthBusy === t.type}
-                        className="flex items-center gap-1 text-xs text-[#e79d7f] hover:underline self-start disabled:opacity-50"
+                        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[#c96442] text-white text-[12px] font-medium disabled:opacity-50"
                       >
-                        {oauthBusy === t.type ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Connect with {OAUTH_LABEL[t.type]}
+                        {oauthBusy === t.type ? <Loader2 size={12} className="animate-spin" /> : null} Connect with {OAUTH_LABEL[t.type]}
                       </button>
-                      <p className="text-[10px] leading-snug text-slate-600">
-                        If Google shows an &ldquo;unverified app&rdquo; screen, choose <span className="text-slate-500">Advanced → Continue</span>. It disappears once our verification completes.
-                      </p>
-                    </div>
-                  )}
-                </Card>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { setAddType(t.type); setFields({}); setError('') }}
+                        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-white/[0.08] text-slate-100 text-[12px] font-medium hover:bg-white/[0.12]"
+                      >
+                        <Plus size={12} /> Add
+                      </button>
+                    )}
+                  </div>
+                </article>
               )
             })}
           </div>

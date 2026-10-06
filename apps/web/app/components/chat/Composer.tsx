@@ -12,6 +12,7 @@ import { PlusMenu, AttachmentChips, DictationBar } from './composer/PlusMenu'
 import { RunSettings } from './composer/RunSettings'
 import type { EffortValue } from './composer/EffortSelector'
 import { SendButton } from './composer/SendButton'
+import { modKey } from '../../lib/platformKey'
 
 export type RunMode = 'auto' | 'plan' | 'step' | 'accept'
 
@@ -60,6 +61,20 @@ interface ComposerProps {
   onToggleVoiceMode?: () => void
   /** Messages queued behind the active run — drives the SendButton badge. */
   queuedCount?: number
+  /** Visible placeholder. Defaults to "Message…". */
+  placeholder?: string
+  /** Walk the sent-prompt history. Return the text to load, or null to ignore. */
+  onPromptHistory?: (dir: -1 | 1) => string | null
+  /** Ctrl/Cmd + arrows: previous/next conversation. */
+  onCycleConversation?: (dir: -1 | 1) => void
+  /** Escape while an edit is loaded and no menu is open. */
+  onCancelEdit?: () => void
+  /** Ctrl/Cmd+Z while an edit is loaded. Return true when the edit was restored. */
+  onEditUndo?: () => boolean
+  /** Ctrl/Cmd+Y (or Ctrl/Cmd+Shift+Z) puts the edit back. */
+  onEditRedo?: () => boolean
+  /** Escape closes the slash menu before the edit. */
+  onCloseSlash?: () => void
 }
 
 /** Up to four attachments per turn. */
@@ -80,9 +95,10 @@ export default function Composer({
   onRunModeChange, onOpenConnectors, onOpenSettingsTab,
   connections, pinnedConnectionId, onTogglePinConnection,
   voiceMode, voiceModeSupported, voiceModeListening, onToggleVoiceMode,
-  queuedCount = 0,
+  queuedCount = 0, placeholder, onPromptHistory, onCycleConversation, onCancelEdit, onCloseSlash, onEditUndo, onEditRedo,
 }: ComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textRef = useRef<HTMLTextAreaElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const [slashIndex, setSlashIndex] = useState(0)
   const [dragActive, setDragActive] = useState(false)
@@ -104,6 +120,14 @@ export default function Composer({
   })
   const [interim, setInterim] = useState('')
   useEffect(() => { if (!recording) setInterim('') }, [recording])
+
+  const fit = () => {
+    const el = textRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 220)}px`
+  }
+  useEffect(() => { fit() }, [input])
 
   const stopAndSend = () => { stopDictation(); requestAnimationFrame(() => onSend()) }
 
@@ -189,26 +213,6 @@ export default function Composer({
           <span className="text-[11px] text-slate-400">up to 4 · images & documents</span>
         </div>
       )}
-      {/* ── Slash command palette (light, compact) ─────────────────────────── */}
-      {showSlash && (
-        <SlashPalette
-          commands={slashFilter}
-          activeIndex={slashIndex}
-          onHover={setSlashIndex}
-          onSelect={handleCommandClick}
-          sections={SLASH_SECTIONS}
-          commandsLabel={t('commands')}
-        />
-      )}
-
-      {/* Attachment previews: image thumbnails + document chips with upload
-          progress and visible error/ retry states (up to four per turn). */}
-      <AttachmentChips
-        attachments={attachments}
-        onRemove={onRemoveAttachment}
-        onRetry={onRetryAttachment}
-      />
-
       {/* Recording state */}
       {recording && (
         <DictationBar elapsed={elapsed} interim={interim} onCancel={stopDictation} onStopAndSend={stopAndSend} />
@@ -221,39 +225,74 @@ export default function Composer({
       {/* Input form */}
       <form
         onSubmit={onSend}
-        className={`rounded-[1.25rem] surface transition ${recording ? 'border-[#c96442]/40' : 'focus-within:border-white/[0.14] focus-within:bg-[#141418]'}`}
+        className={`rounded-[1.25rem] surface transition overflow-hidden ${recording ? 'border-[#c96442]/40' : 'focus-within:border-white/[0.14] focus-within:bg-[#141418]'}`}
       >
+        {showSlash && (
+          <SlashPalette
+            commands={slashFilter}
+            activeIndex={slashIndex}
+            onHover={setSlashIndex}
+            onSelect={handleCommandClick}
+            sections={SLASH_SECTIONS}
+            commandsLabel={t('commands')}
+          />
+        )}
+        {attachments.length > 0 && (
+          <div className="px-3 pt-2.5">
+            <AttachmentChips
+              attachments={attachments}
+              onRemove={onRemoveAttachment}
+              onRetry={onRetryAttachment}
+            />
+          </div>
+        )}
         <textarea
+          ref={textRef}
           value={input}
           onChange={(e) => onInputChange(e.target.value)}
           onPaste={onPaste}
           onKeyDown={(e) => {
+            const el = e.currentTarget
+            if (modKey(e) && !e.altKey && (e.key === 'z' || e.key === 'Z' || e.key === 'y' || e.key === 'Y')) {
+              const redo = e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey)
+              const handled = redo ? onEditRedo?.() : (!e.shiftKey && onEditUndo?.())
+              if (handled) { e.preventDefault(); return }
+            }
+            if (e.key === 'Escape') {
+              if (showSlash) { e.preventDefault(); e.stopPropagation(); onCloseSlash?.(); return }
+              if (showPlus) { e.preventDefault(); e.stopPropagation(); onClosePlus(); return }
+              if (onCancelEdit) { e.preventDefault(); onCancelEdit() }
+              return
+            }
+            if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && modKey(e)) {
+              e.preventDefault()
+              onCycleConversation?.(e.key === 'ArrowUp' ? -1 : 1)
+              return
+            }
             if (e.key === 'ArrowDown' && showSlash && slashFilter.length > 0) {
               e.preventDefault()
               setSlashIndex((i) => (i + 1) % slashFilter.length)
             } else if (e.key === 'ArrowUp' && showSlash && slashFilter.length > 0) {
               e.preventDefault()
               setSlashIndex((i) => (i - 1 + slashFilter.length) % slashFilter.length)
+            } else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !showSlash && el.selectionStart === 0 && el.selectionEnd === 0) {
+              const next = onPromptHistory?.(e.key === 'ArrowUp' ? -1 : 1)
+              if (next != null) { e.preventDefault(); onInputChange(next) }
             } else if (e.key === 'Tab' && showSlash && slashFilter.length > 0) {
               e.preventDefault()
               handleCommandClick(slashFilter[slashIndex]?.cmd)
             } else if (e.key === 'Enter' && !e.shiftKey) {
-              if (showSlash && slashFilter.length > 0 && input.trim() === (slashFilter[slashIndex]?.cmd || slashFilter[0]?.cmd)) {
-                e.preventDefault()
+              e.preventDefault()
+              if (showSlash && slashFilter.length > 0 && !modKey(e)) {
                 handleCommandClick((slashFilter[slashIndex] || slashFilter[0]).cmd)
-              } else { e.preventDefault(); onSend() }
+              } else onSend()
             }
           }}
-          aria-label={t('placeholder')}
-          placeholder={t('placeholder')}
+          aria-label={placeholder || 'Message Loop GPT'}
+          placeholder={placeholder || 'Message…'}
           rows={1}
-          className="w-full bg-transparent px-4 pt-3 pb-1 resize-none focus:outline-none placeholder-slate-400 text-[15px] text-slate-100 leading-relaxed"
+          className="w-full bg-transparent px-4 pt-3 pb-1 resize-none focus:outline-none placeholder-slate-500 text-[15px] text-slate-100 leading-relaxed transition-[height] duration-150"
           style={{ maxHeight: 220 }}
-          onInput={(e) => {
-            const el = e.target as HTMLTextAreaElement
-            el.style.height = 'auto'
-            el.style.height = Math.min(el.scrollHeight, 220) + 'px'
-          }}
         />
         {/* Workspace-connection chips (§8-40): recent-use-first; the pinned
             one joins the next agent run. Hidden when none exist. */}
@@ -351,30 +390,26 @@ export default function Composer({
         </div>
       </form>
 
-      <div className="flex items-center gap-3 mt-2">
-        {/* Context meter — only once there is a context to meter (an empty
-            conversation drew a stray 4px hairline across the composer). */}
-        {typeof contextPct === 'number' && (contextTokens || 0) > 0 && (
+      {typeof contextPct === 'number' && contextPct >= 8 && (
+        <div
+          className="mt-2 h-1 rounded-full bg-white/[0.06] overflow-hidden"
+          title={`Context: ~${(contextTokens || 0).toLocaleString()} tokens used (~${contextPct}% of the 32k window)`}
+          role="progressbar"
+          aria-valuenow={contextPct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Context window usage"
+        >
           <div
-            className="flex-1 h-1 rounded-full bg-white/[0.05] overflow-hidden"
-            title={`Context: ~${(contextTokens || 0).toLocaleString()} tokens used (~${contextPct}% of the 32k window)`}
-            role="progressbar"
-            aria-valuenow={contextPct}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label="Context window usage"
-          >
-            <div
-              className={`h-full rounded-full transition-all ${contextPct > 85 ? 'bg-amber-400/80' : 'bg-slate-600/70'}`}
-              style={{ width: `${Math.max(contextPct, 1.5)}%` }}
-            />
-          </div>
-        )}
-        <p className="text-[11px] text-slate-500 flex-1 text-center">
-          {incognito ? <span className="text-[#e79d7f]/80">Incognito — private chat, no memory. </span> : null}
-          {t('disclaimer')}
-        </p>
-      </div>
+            className={`h-full rounded-full transition-all ${contextPct > 85 ? 'bg-amber-400/80' : 'bg-slate-500/80'}`}
+            style={{ width: `${contextPct}%` }}
+          />
+        </div>
+      )}
+      <p className="text-[11px] text-slate-500 text-center mt-2">
+        {incognito ? <span className="text-[#e79d7f]/80">Incognito — private chat, no memory. </span> : null}
+        {t('disclaimer')}
+      </p>
     </div>
   )
 }

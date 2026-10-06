@@ -108,6 +108,8 @@ export interface EnqueueBotInput {
   maxSteps?: number
   computer?: { enabled: boolean; ttlMinutes?: number }
   skillId?: string
+  /** Named bot this task runs as. Omitted → the owner's primary Loop Bot. */
+  botId?: string
   priority?: number
 }
 
@@ -117,6 +119,7 @@ export interface BotSkillRef {
   description: string
   triggers?: string[]
   tools?: string[]
+  botId?: string
 }
 
 /** Human labels for task statuses (used by the /agents page chips). */

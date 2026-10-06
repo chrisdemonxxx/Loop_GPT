@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { Sparkles } from 'lucide-react'
 import { motion } from 'framer-motion'
+import { modLabel } from '../../lib/platformKey'
 
 const STARTER_PROMPTS = [
   'Explain quantum computing like I’m 10',
@@ -14,7 +15,7 @@ const STARTER_PROMPTS = [
 /** First-visit screen: greeting, slash/command hints, starter prompt cards. */
 export function EmptyState({ onStartPrompt }: { onStartPrompt?: (p: string) => void }) {
   return (
-    <div className="flex flex-col items-center justify-center h-full max-w-[48rem] mx-auto text-center px-4">
+    <div className="flex flex-col items-center justify-start h-full max-w-[48rem] mx-auto text-center px-4 pt-8 sm:pt-14 pb-6">
       <motion.div
         initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -29,12 +30,12 @@ export function EmptyState({ onStartPrompt }: { onStartPrompt?: (p: string) => v
         </h1>
         <p className="text-slate-300 text-[14px] max-w-sm mx-auto">
           Type <span className="font-mono text-slate-300 bg-white/[0.06] px-1.5 py-0.5 rounded text-[13px]">/</span> for
-          deep research. <span className="font-mono text-slate-300 bg-white/[0.06] px-1.5 py-0.5 rounded text-[13px]">⌘K</span> for
+          deep research. <span className="font-mono text-slate-300 bg-white/[0.06] px-1.5 py-0.5 rounded text-[13px]">{modLabel()} K</span> for
           commands. New here? <Link href="/onboarding" className="text-[#f0b39a] hover:underline">Take the 2-minute tour →</Link>
         </p>
 
         {/* Starter prompt cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mt-6 max-w-md mx-auto">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mt-8 max-w-lg mx-auto">
           {STARTER_PROMPTS.map((p) => (
             <button
               key={p}

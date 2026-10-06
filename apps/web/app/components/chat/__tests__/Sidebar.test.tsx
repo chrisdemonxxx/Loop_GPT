@@ -211,9 +211,9 @@ describe('Sidebar ? recents copy and failures', () => {
 })
 
 describe('Sidebar workspace links', () => {
-  it('points Projects, Files, Recents, and Customize at their routes', () => {
+  it('points Files, Recents, and Customize at their routes and keeps one Projects section', () => {
     renderSidebar()
-    expect(screen.getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/projects')
+    expect(screen.queryByRole('link', { name: 'Projects' })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Files' })).toHaveAttribute('href', '/artifacts')
     expect(screen.getByRole('link', { name: 'Recents' })).toHaveAttribute('href', '/recents')
     expect(screen.getByRole('link', { name: 'Customize' })).toHaveAttribute('href', '/customize')

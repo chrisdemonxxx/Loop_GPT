@@ -36,7 +36,7 @@ export type TeachSession = TeachSessionState
 
 const FRAME_RE = /Recording the demonstration…\s*(\d+) frame/
 
-export function useTeachSession(onSkillReady?: () => void): TeachSessionState {
+export function useTeachSession(onSkillReady?: () => void, botId?: string | null): TeachSessionState {
   const [phase, setPhase] = useState<TeachPhase>('idle')
   const [goal, setGoal] = useState<string | null>(null)
   const [taskId, setTaskId] = useState<string | null>(null)
@@ -101,6 +101,7 @@ export function useTeachSession(onSkillReady?: () => void): TeachSessionState {
         // The demonstration computer: a full session window (backend's teach
         // timeout is the hard ceiling; default 30 min).
         computer: { enabled: true, ttlMinutes: 30 },
+        ...(botId ? { botId } : {}),
       })
       const id = res.task.id
       setTaskId(id)
@@ -128,7 +129,7 @@ export function useTeachSession(onSkillReady?: () => void): TeachSessionState {
       setError(err?.message || 'Could not start the teach session.')
       setPhase('failed')
     }
-  }, [phase, handleEvent])
+  }, [phase, handleEvent, botId])
 
   const takeOver = useCallback(async () => {
     if (!runId) return

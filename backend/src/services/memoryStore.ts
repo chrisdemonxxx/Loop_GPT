@@ -13,6 +13,7 @@ interface Message {
   toolUsed?: string
   metadata?: any
   conversationId: string
+  authorBotId?: string
 }
 
 interface Conversation {

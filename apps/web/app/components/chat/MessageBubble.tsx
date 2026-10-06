@@ -8,6 +8,7 @@ import { type ArtifactRef } from '../../lib/stream'
 import { type BranchVersionInfo } from '../../lib/branch'
 import type { Message, StoredStep } from './types'
 import Markdown from './Markdown'
+import { balanceMarkdown } from '../../lib/assistantText'
 import { useAttachmentUrl } from './artifactUrl'
 import { ArtifactCard } from './ArtifactCard'
 import TurnActivity from './TurnActivity'
@@ -47,7 +48,7 @@ function VersionArrows({ info, onSelect }: { info: BranchVersionInfo; onSelect?:
  * thumbs feedback wired to POST /api/telemetry/feedback — audit §8-21).
  * Artifact cards open the right-hand artifacts panel. */
 export function MessageBubble({
-  message, conversationId, onEdit, onRetry, onOpenArtifact, onOpenArtifactByName, version, onSelectVersion,
+  message, conversationId, onEdit, onRetry, onOpenArtifact, onOpenArtifactByName, version, onSelectVersion, editing, author,
 }: {
   message: Message
   conversationId?: string | null
@@ -60,6 +61,10 @@ export function MessageBubble({
   version?: BranchVersionInfo
   /** §8-22: flip to a sibling version row. */
   onSelectVersion?: (messageId: string) => void
+  /** The composer holds this prompt. Hide the duplicate bubble text. */
+  editing?: boolean
+  /** Named bot that wrote this assistant row. */
+  author?: { name: string; color: string } | null
 }) {
   const [copied, setCopied] = useState(false)
   const [showPrompt, setShowPrompt] = useState(false)
@@ -107,7 +112,9 @@ export function MessageBubble({
               className="max-w-[280px] max-h-64 rounded-xl border border-white/10 mb-2.5"
             />
           )}
-          {message.content && (
+          {editing ? (
+            <div className="text-[13px] text-slate-400">Editing this message below.</div>
+          ) : message.content && (
             <div className="whitespace-pre-wrap text-slate-100 text-[15px] leading-relaxed">
               {expanded || (message.content.length <= USER_TRUNCATE)
                 ? message.content
@@ -152,6 +159,12 @@ export function MessageBubble({
       transition={{ duration: 0.18 }}
       className="group space-y-3"
     >
+      {author && (
+        <div className="flex items-center gap-2 text-[12px] text-slate-300">
+          <span className="w-5 h-5 rounded-full shrink-0" style={{ background: author.color }} aria-hidden />
+          <span className="font-medium">{author.name}</span>
+        </div>
+      )}
       {/* Stored extended thinking (§2.5): survives reloads via message metadata. */}
       {message.metadata?.reasoning && (
         <details className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
@@ -189,7 +202,7 @@ export function MessageBubble({
               </div>
               <div>
                 <div className="text-[10px] uppercase tracking-wide text-slate-400">Enhanced (sent to the model)</div>
-                <div className="text-slate-200 whitespace-pre-wrap">{promptMeta.enhanced}</div>
+                <div className="text-slate-200 whitespace-pre-wrap">{balanceMarkdown(promptMeta.enhanced || '')}</div>
               </div>
             </div>
           )}

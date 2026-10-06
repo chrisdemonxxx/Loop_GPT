@@ -42,6 +42,7 @@ import { shareRouter } from './routes/share'
 import accountRoutes from './routes/account'
 import adminRoutes from './routes/admin'
 import botRoutes from './routes/bot'
+import namedBotRoutes from './routes/bots'
 import { oauthRouter, mailRouter, oauthRelayRouter } from './routes/oauth'
 import billingRoutes, { stripeWebhook } from './routes/billing'
 import { ttsRouter } from './routes/tts'
@@ -113,6 +114,7 @@ app.use('/api/admin', rateLimiter(60 * 1000, 600), adminRoutes)
 // User-facing Loop Bot: own bucket (120/min) so a watching user's live feed
 // never eats the generic 100/15min bucket their chat depends on.
 app.use('/api/bot', rateLimiter(60 * 1000, 120), botRoutes)
+app.use('/api/bots', rateLimiter(60 * 1000, 120), namedBotRoutes)
 
 // Rate limiting (100 requests per 15 minutes per user/IP)
 app.use('/api', rateLimiter(15 * 60 * 1000, 100))

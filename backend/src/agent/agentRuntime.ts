@@ -34,13 +34,34 @@ import { storeApproval, waitForApproval, clearApproval } from './approvalStore'
 import { getMemories } from './tools/remember'
 import { configStore, type ToolPermission } from './configStore'
 import { compactTranscript, shouldRecompact, transcriptSize } from './compactTranscript'
+import { narrateSteps } from '../services/botRoster'
 
-/** Resolve the effective permission: an explicit override wins; otherwise a
- * tool's own needsApproval flag applies. */
-export function permissionFor(name: string, needsApproval?: boolean): ToolPermission {
+/** Resolve the effective permission.
+ *  An explicit configStore override (including built-in defaults such as
+ *  create_document → allow and execute_code → approval) wins. External
+ *  sources (connectors, MCP, custom HTTP) stay gated. A tool's own
+ *  needsApproval flag applies only when nothing else decided. */
+export function permissionFor(name: string, needsApproval?: boolean, source?: string): ToolPermission {
   const override = configStore.getToolPermissions()[name]
   if (override) return override
+  if (source && source !== 'builtin') return 'approval'
   return needsApproval ? 'approval' : 'allow'
+}
+
+/** Remove inline tool-call payloads so they never render as chat text.
+ *  Same shapes as parseInlineToolCalls: <tool_call> tags, ```json fences
+ *  that are tool calls, and bare {"tool":...} objects. */
+export function stripInlineToolPayload(content: string): string {
+  if (!content) return ''
+  let text = content.replace(/<tool_call>\s*[\s\S]*?\s*<\/tool_call>/gi, '')
+  text = text.replace(/<tool_code>\s*[\s\S]*?\s*<\/tool_code>/gi, '')
+  text = text.replace(/```(?:json|tool_call)?\s*([\s\S]*?)```/gi, (block, inner) => {
+    return coerceCall(String(inner), true) ? '' : block
+  })
+  for (const obj of extractBalancedObjects(text)) {
+    if (coerceCall(obj, true)) text = text.replace(obj, '')
+  }
+  return text.replace(/\n{3,}/g, '\n\n').trim()
 }
 
 /**
@@ -413,7 +434,7 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
       // pre-approved, emit a pending_approval event and wait for the user
       // to respond via POST /api/agent/:conversationId/approve.
       const toolDef = toolRegistry.get(call.name)
-      const permission = permissionFor(call.name, toolDef?.needsApproval)
+      const permission = permissionFor(call.name, toolDef?.needsApproval, toolDef?.source)
 
       // Blocked: never execute; tell the model and record it.
       if (permission === 'blocked') {
@@ -517,11 +538,13 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
     }
   }
 
-  if (!finalContent) {
-    // Defensive only — the forced final turn above should make this
-    // unreachable. Never surface an internal-budget message to the user.
-    finalContent = sanitizeText('Here is what I found so far:\n\n' +
-      steps.map((s) => `- ${s.tool}: ${s.result || ''}`).join('\n'))
+  const stripped = stripInlineToolPayload(finalContent)
+  if (!stripped || /^here is what i found so far:/i.test(stripped)) {
+    // The model answered with tool JSON only, or the step budget expired.
+    // Speak in words. Never surface the internal fallback as a heading.
+    finalContent = sanitizeText(narrateSteps(steps) || 'I hit a snag before I could finish. Ask me to continue and I will.')
+  } else {
+    finalContent = sanitizeText(stripped)
   }
 
   ctx.emit({ type: 'final', content: finalContent, metadata: sanitizeMetadata({ toolsUsed: Array.from(toolsUsed), steps }) })

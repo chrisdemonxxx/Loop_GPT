@@ -33,7 +33,7 @@ export function SlashPalette({
 }) {
   if (commands.length === 0) return null
   return (
-    <div className="composer-menu absolute bottom-full mb-2 left-0 right-0 glass rounded-xl border border-white/[0.08] overflow-hidden z-10 shadow-panel max-h-80 overflow-y-auto" role="menu" aria-label="Slash commands">
+    <div className="border-b border-white/[0.06] max-h-64 overflow-y-auto" role="menu" aria-label="Slash commands">
       {sections.map((section) => {
         const items = commands.filter((c) => c.section === section)
         if (!items.length) return null

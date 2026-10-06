@@ -10,6 +10,7 @@ import { API_URL, authHeaders } from '../../../lib/api'
 import { openOAuthPopup, oauthPopupNotice } from '../../../lib/oauthPopup'
 import { useWorkspaceProjects } from '../../../chat/hooks'
 import { Badge, EmptyState, SectionHeader, Skeleton } from '../../../components/ui/primitives'
+import { BrandMark } from '../../../components/connectors/BrandMark'
 
 interface ConnectorField { key: string; label: string; secret?: boolean; required?: boolean; placeholder?: string }
 interface ToolSummary { suffix: string; description: string }
@@ -30,11 +31,7 @@ function typeFromLocation(search: string): string {
 }
 
 function Avatar({ name }: { name: string }) {
-  return (
-    <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/5 bg-ink-800 text-[12px] font-semibold text-slate-300 shrink-0" aria-hidden>
-      {name.slice(0, 2).toUpperCase()}
-    </span>
-  )
+  return <BrandMark name={name} size={36} />
 }
 
 /** Derive the connect affordance per blueprint §9.4's lifecycle states. */
@@ -397,28 +394,26 @@ export default function ConnectorDirectoryPage() {
         {filtered.map((t) => {
           const cs = connectState(t, configured)
           return (
-            <div key={t.type} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3.5 transition hover:border-white/[0.14]">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-start gap-2.5">
-                  <Avatar name={t.name} />
-                  <div className="min-w-0">
-                    <div className="truncate text-[13px] font-medium text-slate-100">{t.name}</div>
-                    <div className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-slate-500">{t.description}</div>
-                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                      <Badge>{t.category}</Badge>
-                      {cs.state === 'connected' && <Badge tone="green">connected</Badge>}
-                      {t.oauth && <Badge tone="accent">OAuth</Badge>}
-                      {t.tools && t.tools.length > 0 && (
-                        <span className="inline-flex items-center gap-1 text-[10px] text-slate-500"><Wrench size={10} /> {t.tools.length}</span>
-                      )}
-                    </div>
-                  </div>
+            <div key={t.type} className="h-[168px] flex flex-col rounded-xl border border-white/[0.07] bg-white/[0.025] p-3.5">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <Avatar name={t.name} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13px] font-medium text-slate-100">{t.name}</div>
+                  <div className="mt-0.5 line-clamp-1 text-[12px] text-slate-400">{t.description}</div>
                 </div>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <Badge>{t.category}</Badge>
+                {cs.state === 'connected' && <Badge tone="green">connected</Badge>}
+                {t.oauth ? <Badge tone="accent">OAuth</Badge> : <Badge>API key</Badge>}
+                {t.tools && t.tools.length > 0 && (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-slate-500"><Wrench size={10} /> {t.tools.length}</span>
+                )}
               </div>
               <button
                 type="button"
                 onClick={() => openDetail(t.type)}
-                className="mt-3 inline-flex items-center gap-1.5 text-[12px] text-[#e79d7f] transition hover:underline"
+                className="mt-auto inline-flex items-center justify-center gap-1.5 h-8 rounded-lg bg-[#c96442] text-white text-[12px] font-medium"
               >
                 <Plus size={12} /> {cs.label}
               </button>

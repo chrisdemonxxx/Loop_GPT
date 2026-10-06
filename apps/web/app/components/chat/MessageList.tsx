@@ -61,6 +61,12 @@ interface MessageListProps {
   onEditMessage: (messageId: string, content: string) => void
   onRetryBefore: (beforeIndex: number) => void
   onStartPrompt?: (prompt: string) => void
+  /** User row whose text currently lives in the composer. */
+  editingMessageId?: string | null
+  /** authorBotId → display name and color. */
+  authors?: Record<string, { name: string; color: string }>
+  /** Bot speaking in the live turn (group fan-out). */
+  liveAuthor?: { name: string; color: string } | null
 }
 
 /** The conversation transcript: stored bubbles, the live user turn, and the
@@ -72,10 +78,12 @@ export default function MessageList({
   versions, onSelectVersion, queued, onRemoveQueued,
   running, statusMsg, errorMsg, onClearError, mode, pendingApproval, onApprove, onDeny, toolCount, onOpenTools,
   onOpenArtifact, onOpenArtifactByName, onEditMessage, onRetryBefore, onStartPrompt,
+  editingMessageId, authors, liveAuthor,
 }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [atBottom, setAtBottom] = useState(true)
+  const atBottomRef = useRef(true)
   // §8-22: a branched (retry/edit) live run replaces everything after its
   // anchor — the old version swaps out while the new one streams in place.
   const anchorIndex = liveReplaceAfterId ? messages.findIndex((m) => m.id === liveReplaceAfterId) : -1
@@ -100,10 +108,15 @@ export default function MessageList({
     if (!el) return true
     return el.scrollHeight - el.scrollTop - el.clientHeight < 160
   }
-  const onScroll = () => setAtBottom(measureBottom())
+  const onScroll = () => {
+    const next = measureBottom()
+    atBottomRef.current = next
+    setAtBottom(next)
+  }
 
   const jumpToBottom = () => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
+    atBottomRef.current = true
     setAtBottom(true)
   }
 
@@ -112,11 +125,16 @@ export default function MessageList({
   // (S6) 'instant' while streaming: restarting a SMOOTH scroll on every rAF
   // flush was the known jank source; smooth stays on the user-initiated jump.
   useEffect(() => {
-    if (atBottom) endRef.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior })
+    const el = scrollRef.current
+    if (!el || !atBottomRef.current) return
+    // Assign scrollTop while pinned. Restarting a smooth scroll on every
+    // token fights the reader; the jump pill is the smooth path.
+    el.scrollTop = el.scrollHeight
   }, [messages, liveSteps, statusMsg, liveAnswer])
 
   return (
-    <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 sm:py-8 min-h-0 relative"
+    <div className="flex-1 min-h-0 relative">
+    <div className="h-full overflow-y-auto px-3 sm:px-4 py-4 sm:py-8"
       ref={scrollRef}
       onScroll={onScroll}
     >
@@ -167,6 +185,8 @@ export default function MessageList({
                       onOpenArtifactByName={onOpenArtifactByName}
                       version={versions?.[m.id]}
                       onSelectVersion={onSelectVersion}
+                      editing={m.id === editingMessageId}
+                      author={m.authorBotId ? authors?.[m.authorBotId] : null}
                       onEdit={m.role === 'user' ? () => onEditMessage(m.id, m.content) : undefined}
                       onRetry={m.role === 'assistant' ? () => onRetryBefore(vi.index) : undefined}
                     />
@@ -184,6 +204,8 @@ export default function MessageList({
                 onOpenArtifactByName={onOpenArtifactByName}
                 version={versions?.[m.id]}
                 onSelectVersion={onSelectVersion}
+                editing={m.id === editingMessageId}
+                author={m.authorBotId ? authors?.[m.authorBotId] : null}
                 onEdit={m.role === 'user' ? () => onEditMessage(m.id, m.content) : undefined}
                 onRetry={m.role === 'assistant' ? () => onRetryBefore(idx) : undefined}
               />
@@ -260,8 +282,14 @@ export default function MessageList({
                     <span>{statusMsg}</span>
                   </div>
                 )}
+                {liveAuthor && (
+                  <div className="flex items-center gap-2 text-[12px] text-slate-300">
+                    <span className="w-5 h-5 rounded-full shrink-0" style={{ background: liveAuthor.color }} aria-hidden />
+                    <span className="font-medium">{liveAuthor.name}</span>
+                  </div>
+                )}
                 {liveAnswer && (
-                  <div className={running ? 'cursor' : ''} aria-live="polite">
+                  <div aria-live="polite">
                     <Markdown content={liveAnswer} />
                   </div>
                 )}
@@ -327,29 +355,27 @@ export default function MessageList({
             </div>
           ))}
 
-          {/* Floating jump-to-bottom (audit §8-18): visible while reading
-              history; hidden at the bottom. */}
-          <AnimatePresence>
-            {!atBottom && (
-              <motion.button
-                type="button"
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 6 }}
-                transition={{ duration: 0.15 }}
-                onClick={jumpToBottom}
-                title="Jump to latest"
-                aria-label="Jump to latest"
-                className="fixed bottom-32 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full glass border border-white/10 text-[12px] text-slate-300 hover:text-slate-100 shadow-panel"
-              >
-                <ArrowDown size={12} /> Latest
-              </motion.button>
-            )}
-          </AnimatePresence>
-
           <div ref={endRef} />
         </div>
       )}
+    </div>
+    <AnimatePresence>
+      {!atBottom && !showEmpty && (
+        <motion.button
+          type="button"
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 6 }}
+          transition={{ duration: 0.15 }}
+          onClick={jumpToBottom}
+          title="Jump to latest"
+          aria-label="Jump to latest"
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full glass border border-white/10 text-[12px] text-slate-300 hover:text-slate-100 shadow-panel"
+        >
+          <ArrowDown size={12} /> Latest
+        </motion.button>
+      )}
+    </AnimatePresence>
     </div>
   )
 }

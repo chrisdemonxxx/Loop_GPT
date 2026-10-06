@@ -108,6 +108,10 @@ export interface StreamBody {
   provider?: string
   model?: string
   apiKey?: string
+  /** Named bot this turn speaks as. Group fan-out sends one run per bot. */
+  botId?: string
+  /** Group fan-out: only the first bot persists the user row. */
+  skipUserPersist?: boolean
 }
 
 /**
@@ -131,7 +135,7 @@ export async function runAgentStream(
   // /api/agent/:id/stream and rejects BYOK fields (provider/model/apiKey) and
   // server file paths (imagePath). Send only the hosted contract, including the
   // attachmentId so image attachments actually reach the vision path.
-  const safeBody: { content: string; mode: string; attachmentId?: string; attachmentIds?: string[]; toolNames?: string[]; autoApprove?: boolean; stepMode?: boolean; incognito?: boolean; projectId?: string; model?: string; webSearch?: boolean; thinking?: boolean | 'low' | 'medium' | 'high' | 'xhigh'; parentMessageId?: string | null; regenerateOf?: string; connectionIds?: string[]; workspaceId?: string } = {
+  const safeBody: { content: string; mode: string; attachmentId?: string; attachmentIds?: string[]; toolNames?: string[]; autoApprove?: boolean; stepMode?: boolean; incognito?: boolean; projectId?: string; model?: string; webSearch?: boolean; thinking?: boolean | 'low' | 'medium' | 'high' | 'xhigh'; parentMessageId?: string | null; regenerateOf?: string; connectionIds?: string[]; workspaceId?: string; botId?: string; skipUserPersist?: boolean } = {
     content: body.content,
     mode: body.mode || 'chat',
   }
@@ -159,6 +163,8 @@ export async function runAgentStream(
   // workspaceId scopes a NEW conversation so the connection validates.
   if (body.connectionIds?.length) safeBody.connectionIds = body.connectionIds
   if (body.workspaceId) safeBody.workspaceId = body.workspaceId
+  if (body.botId) safeBody.botId = body.botId
+  if (body.skipUserPersist) safeBody.skipUserPersist = true
 
   // ── Resume bookkeeping ─────────────────────────────────────────────────
   let runId = ''
@@ -270,7 +276,19 @@ async function readSse(
         try { await reader.cancel() } catch { /* already closed */ }
         return 'aborted'
       }
-      const { value, done } = await reader.read()
+      let value: Uint8Array | undefined
+      let done = false
+      try {
+        const chunk = await reader.read()
+        value = chunk.value
+        done = chunk.done
+      } catch (err: any) {
+        // Stop, reload, and navigation abort the body. That is not a failure.
+        const name = String(err?.name || '')
+        const message = String(err?.message || '')
+        if (signal?.aborted || name === 'AbortError' || /abort|bodystreambuffer/i.test(message)) return 'aborted'
+        throw err
+      }
       if (done) break
       armIdle() // every chunk resets the watchdog
       buffer += decoder.decode(value, { stream: true })

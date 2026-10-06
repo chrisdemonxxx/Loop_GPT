@@ -72,7 +72,8 @@ export const setBotTakeover = (runId: string, takeover: boolean) =>
 
 export const getBotQuota = () => req<BotQuota>('GET', '/api/bot/quota')
 
-export const listBotSkills = () => req<{ skills: BotSkillRef[] }>('GET', '/api/bot/skills')
+export const listBotSkills = (botId?: string) =>
+  req<{ skills: BotSkillRef[] }>('GET', `/api/bot/skills${botId ? `?botId=${encodeURIComponent(botId)}` : ''}`)
 export const deleteBotSkill = (id: string) => req<{ ok: true }>('DELETE', `/api/bot/skills/${id}`)
 
 /**

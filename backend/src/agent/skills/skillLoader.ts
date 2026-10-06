@@ -25,6 +25,8 @@ export interface Skill {
   triggers?: string[]
   tools?: string[]
   builtin?: boolean
+  /** Set when the skill was taught inside a named bot's computer. */
+  botId?: string
 }
 
 // User skills live in the writable data dir (alongside the config store), so
@@ -55,6 +57,7 @@ function parseSkillMd(dir: string, id: string): Skill | null {
       instructions: body.trim(),
       triggers: meta.triggers ? meta.triggers.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean) : undefined,
       tools: meta.tools ? meta.tools.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+      ...(meta.bot ? { botId: meta.bot } : {}),
     }
   } catch {
     return null
@@ -153,6 +156,7 @@ export function createUserSkill(input: {
   instructions: string
   triggers?: string[]
   tools?: string[]
+  botId?: string
 }, ownerId?: string): Skill {
   const id = input.id || slugify(input.name)
   // Per-user ownership: taught/created skills live under the creating account's
@@ -165,13 +169,14 @@ export function createUserSkill(input: {
     `description: ${input.description}`,
     input.triggers?.length ? `triggers: ${input.triggers.join(', ')}` : '',
     input.tools?.length ? `tools: ${input.tools.join(', ')}` : '',
+    input.botId ? `bot: ${input.botId}` : '',
     '---',
     '',
     input.instructions.trim(),
     '',
   ].filter((l) => l !== '').join('\n')
   fs.writeFileSync(path.join(dir, 'SKILL.md'), fm)
-  return { id, name: input.name, description: input.description, instructions: input.instructions, triggers: input.triggers, tools: input.tools }
+  return { id, name: input.name, description: input.description, instructions: input.instructions, triggers: input.triggers, tools: input.tools, ...(input.botId ? { botId: input.botId } : {}) }
 }
 
 /** Delete a user skill directory. Built-in skills cannot be deleted. */

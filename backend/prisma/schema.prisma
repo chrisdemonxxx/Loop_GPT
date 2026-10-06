@@ -80,9 +80,35 @@ model User {
   personalWorkspace Workspace? @relation("PersonalWorkspace")
   workspaceMemberships WorkspaceMember[]
   agentTasks    AgentTask[]
+  bots          Bot[]
 
   @@index([role])
   @@index([plan])
+}
+
+/// A named agent the user chats with. The primary row is "Loop Bot".
+/// Starter bots (Helm, Review, Builder, Spec, Release) are seeded per owner.
+model Bot {
+  id            String         @id @default(cuid())
+  ownerId       String
+  owner         User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name          String
+  /// Role line under the name, e.g. "Coding lead".
+  label         String         @default("")
+  avatarColor   String         @default("#c96442")
+  /// System prompt / persona instructions.
+  persona       String         @default("") @db.Text
+  defaultTools  Json?
+  cloudComputer Boolean        @default(false)
+  /// The owner's primary Loop Bot. Existing tasks default to this row.
+  isPrimary     Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  conversations Conversation[]
+  tasks         AgentTask[]
+
+  @@index([ownerId])
+  @@index([ownerId, isPrimary])
 }
 
 /// A developer API key. The raw secret (`sk-loop-…`) is shown once at creation and
@@ -377,11 +403,20 @@ model Conversation {
   /// shows and runs read as context. Null = no messages yet (or the legacy
   /// memory store, which stays flat).
   activeLeafId String?
+  /// Owning bot for a 1:1 bot thread. Null on ordinary chats and groups.
+  botId     String?
+  bot       Bot?      @relation(fields: [botId], references: [id], onDelete: SetNull)
+  /// Group-chat member ids. Null unless kind = 'group'.
+  botIds    Json?
+  /// 'chat' | 'bot' | 'group'. Existing rows stay 'chat'.
+  kind      String    @default("chat")
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
   @@index([userId])
   @@index([workspaceId])
+  @@index([botId])
+  @@index([userId, kind])
 }
 
 enum DailyReservationState {
@@ -556,6 +591,9 @@ model Message {
   /// product value here.
   parentId       String?
 
+  /// Bot that authored this assistant turn (group threads and bot chats).
+  authorBotId    String?
+
   @@index([conversationId])
   @@index([parentId])
 }
@@ -661,6 +699,9 @@ model AgentTask {
   conversationId  String?
   /// Attached skill whose instructions become the run's operating procedure.
   skillId         String?
+  /// Bot this task runs as. Null resolves to the owner's primary Loop Bot.
+  botId           String?
+  bot             Bot?      @relation(fields: [botId], references: [id], onDelete: SetNull)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @default(now()) @updatedAt
   runs            BotRun[]
@@ -669,6 +710,7 @@ model AgentTask {
   @@index([leaseExpiresAt])
   @@index([priority, nextAttemptAt])
   @@index([userId, status])
+  @@index([botId])
 }
 
 /// One execution of an AgentTask. Decoupled from any HTTP response: events

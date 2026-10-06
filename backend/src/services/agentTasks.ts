@@ -88,6 +88,8 @@ export const enqueueInput = z.object({
   }).optional(),
   /** Attach an existing skill as the run's operating procedure. */
   skillId: z.string().regex(/^[a-zA-Z0-9-]{1,64}$/).optional(),
+  /** Named bot this task runs as. Omitted → the owner's primary Loop Bot. */
+  botId: z.string().min(1).max(80).optional(),
   priority: z.number().int().min(-100).max(100).default(0),
 })
 
@@ -134,6 +136,21 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string, o
       computer = { ...computer, ttlMinutes: ttl }
     }
   }
+  let botId = parsed.botId ?? null
+  if (ownerId) {
+    try {
+      const { primaryBotId } = await import('./bots')
+      if (botId) {
+        const owned = await database().bot.findFirst({ where: { id: botId, ownerId }, select: { id: true } })
+        if (!owned) throw new AgentTaskError('invalid_request')
+      } else {
+        botId = await primaryBotId(ownerId)
+      }
+    } catch (error) {
+      if (error instanceof AgentTaskError) throw error
+      botId = parsed.botId ?? null
+    }
+  }
   const created = await database().agentTask.create({
     data: {
       kind: parsed.kind,
@@ -145,6 +162,7 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string, o
       maxSteps: parsed.maxSteps ?? null,
       computer: computer ?? undefined,
       skillId: parsed.skillId ?? null,
+      botId,
       priority: parsed.priority,
       createdBy,
       userId: ownerId,
@@ -197,7 +215,7 @@ export async function listAgentTasks(opts: { status?: string; limit?: number; sc
       id: true, kind: true, goal: true, status: true, schedule: true, model: true,
       priority: true, attempts: true, failures: true, nextAttemptAt: true,
       cancelRequested: true, lastErrorCode: true, createdBy: true, createdAt: true, updatedAt: true,
-      computer: true, userId: true,
+      computer: true, userId: true, botId: true,
     },
   })
 }

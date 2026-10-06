@@ -19,6 +19,10 @@ import Composer from '../components/chat/Composer'
 import MessageList from '../components/chat/MessageList'
 import ArtifactsPanel from '../components/chat/ArtifactsPanel'
 import ChatHeader from '../components/chat/ChatHeader'
+import { CanvasPanel } from '../components/chat/CanvasPanel'
+import { BotProfilePanel, CreateBotDialog, CreateGroupDialog, StartChatPicker } from '../components/chat/BotChrome'
+import { canvasFromStored, canvasFromTurn } from '../lib/canvasDoc'
+import { botsForMessage, createBotGroup, createNamedBot, listNamedBots, openBotThread, updateNamedBot, type BotGroup, type NamedBot } from '../lib/namedBots'
 import AuthSidePanel from '../components/chat/AuthSidePanel'
 import type { Conversation, Message } from '../components/chat/types'
 import { parseCommand, SLASH_COMMANDS } from '../lib/commands'
@@ -41,11 +45,14 @@ export default function ChatPage() {
   const panels = usePanels()
   const sidebarWidth = useSidebarWidth()
   const [sidebarResizing, setSidebarResizing] = useState(false)
+  const cycleConversationRef = useRef<(dir: -1 | 1) => void>(() => {})
 
   // S4: the ShortcutSheet advertises ⌘L (new conversation) and ⌘B (toggle
   // sidebar) — these were listed but never bound. Same registry, now real.
   useHotkey({ key: 'l', meta: true }, () => { setCurrentConversationId(null); panels.setSidebarOpen(false) })
   useHotkey({ key: 'b', meta: true }, () => panels.setSidebarOpen((open: boolean) => !open))
+  useHotkey({ key: 'ArrowUp', meta: true }, () => cycleConversationRef.current(-1))
+  useHotkey({ key: 'ArrowDown', meta: true }, () => cycleConversationRef.current(1))
   // Lifts the composer above the on-screen keyboard (iOS, audit P6).
   useKeyboardSafeBottom()
 
@@ -168,6 +175,20 @@ export default function ChatPage() {
    * undefined = a normal send. Set by the Edit action, cleared by send,
    * conversation switch, or the banner's cancel. */
   const [pendingBranch, setPendingBranch] = useState<string | null | undefined>(undefined)
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
+  const editSnapshot = useRef<{ value: string; start: number; end: number } | null>(null)
+  const redoEdit = useRef<{ value: string; start: number; end: number; parent: string | null; messageId: string } | null>(null)
+  const promptHistory = useRef<string[]>([])
+  const histCursor = useRef(0)
+  const [roster, setRoster] = useState<{ bots: NamedBot[]; groups: BotGroup[] }>({ bots: [], groups: [] })
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [createBotOpen, setCreateBotOpen] = useState(false)
+  const [createGroupOpen, setCreateGroupOpen] = useState(false)
+  const [botBusy, setBotBusy] = useState(false)
+  const [canvasDismissed, setCanvasDismissed] = useState(false)
+  const [streamingBotId, setStreamingBotId] = useState<string | null>(null)
+  const [openedBotId, setOpenedBotId] = useState<string | null>(null)
+  const [threadMeta, setThreadMeta] = useState<{ id: string; kind: string; botId?: string | null; botIds?: string[] } | null>(null)
 
   useEffect(() => {
     fetch(`${API_URL}/api/agent/tools`, { headers: authHeaders() })
@@ -209,6 +230,11 @@ export default function ChatPage() {
     }
     setCurrentConversationId(id)
     setPendingBranch(undefined)
+    setEditingMessageId(null)
+    editSnapshot.current = null
+    setCanvasDismissed(false)
+    setOpenedBotId(null)
+    setThreadMeta(null)
     // Â§8-39: queued messages belong to the conversation they were typed in.
     messageQueue.clear()
     chat.resetLive()
@@ -263,9 +289,65 @@ export default function ChatPage() {
    * prompt + answer stay reachable through the arrows. */
   function editMessageAt(messageId: string, content: string) {
     const row = (messages as Message[]).find((m) => m.id === messageId)
+    const ta = document.querySelector('textarea') as HTMLTextAreaElement | null
+    editSnapshot.current = { value: input, start: ta?.selectionStart ?? input.length, end: ta?.selectionEnd ?? input.length }
+    redoEdit.current = null
+    setEditingMessageId(messageId)
     setPendingBranch(row ? (row.parentId ?? null) : null)
     setInput(content)
-    requestAnimationFrame(() => document.querySelector('textarea')?.focus())
+    requestAnimationFrame(() => {
+      const next = document.querySelector('textarea') as HTMLTextAreaElement | null
+      next?.focus()
+      const end = content.length
+      next?.setSelectionRange(end, end)
+    })
+  }
+
+  function restoreComposer(value: string, start: number, end: number) {
+    setInput(value)
+    requestAnimationFrame(() => {
+      const ta = document.querySelector('textarea') as HTMLTextAreaElement | null
+      if (!ta) return
+      ta.focus()
+      ta.setSelectionRange(start, end)
+    })
+  }
+
+  function cancelEdit() {
+    if (pendingBranch === undefined) return
+    const snap = editSnapshot.current
+    if (editingMessageId) {
+      const ta = document.querySelector('textarea') as HTMLTextAreaElement | null
+      redoEdit.current = {
+        value: input,
+        start: ta?.selectionStart ?? input.length,
+        end: ta?.selectionEnd ?? input.length,
+        parent: pendingBranch ?? null,
+        messageId: editingMessageId,
+      }
+    }
+    setPendingBranch(undefined)
+    setEditingMessageId(null)
+    editSnapshot.current = null
+    if (snap) restoreComposer(snap.value, snap.start, snap.end)
+  }
+
+  function undoEdit() {
+    if (pendingBranch === undefined) return false
+    cancelEdit()
+    return true
+  }
+
+  function redoEditAction() {
+    const redo = redoEdit.current
+    if (!redo || pendingBranch !== undefined) return false
+    const ta = document.querySelector('textarea') as HTMLTextAreaElement | null
+    editSnapshot.current = { value: input, start: ta?.selectionStart ?? 0, end: ta?.selectionEnd ?? 0 }
+    setPendingBranch(redo.parent)
+    setEditingMessageId(redo.messageId)
+    redoEdit.current = null
+    restoreComposer(redo.value, redo.start, redo.end)
+    return true
   }
 
   // â”€â”€ Composer / send â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -309,6 +391,7 @@ export default function ChatPage() {
    *  toggles say now. */
   async function dispatchSend(snapshot: QueuedMessage) {
     setMode(snapshot.sendMode)
+    setStreamingBotId(snapshot.botId || null)
     setShowSlash(false); setShowPlus(false)
     // Surface deep-research runs in the side panel so the user can watch
     // progress and read the cited report instead of it living only in chat.
@@ -339,6 +422,8 @@ export default function ChatPage() {
       ...(snapshot.branchParent !== undefined ? { parentMessageId: snapshot.branchParent } : {}),
       ...(pinnedForRun ? { connectionIds: pinnedForRun } : {}),
       ...(pinnedForRun && newConversation && workspaceId ? { workspaceId } : {}),
+      ...(snapshot.botId ? { botId: snapshot.botId } : {}),
+      ...(snapshot.skipUserPersist ? { skipUserPersist: true } : {}),
       ensureConversation,
     })
 
@@ -382,6 +467,13 @@ export default function ChatPage() {
 
     const { mode: sendMode, text: content, tools: commandTools } = parseCommand(input.trim())
     if (!content && !hasAttachments) return
+    const remembered = content.trim()
+    if (remembered) {
+      const hist = promptHistory.current
+      if (hist[hist.length - 1] !== remembered) hist.push(remembered)
+      if (hist.length > 50) hist.shift()
+      histCursor.current = hist.length
+    }
     // Only fully-uploaded attachments ride the send; failed ones stay as
     // visible error chips the user can retry or remove.
     const readyIds = uploads.readyIds
@@ -396,19 +488,56 @@ export default function ChatPage() {
     // snapshotted), not dropped — it auto-sends when the run completes.
     // Â§8-40: the pinned connection (agent runs only) rides the snapshot.
     const connectionIds = workspaceConnections.pinnedId && sendMode === 'agent' ? [workspaceConnections.pinnedId] : undefined
+    const listedConv = (conversations as Conversation[]).find((c) => c.id === currentConversationId)
+    const activeConv = listedConv?.kind && listedConv.kind !== 'chat'
+      ? listedConv
+      : threadMeta?.id === currentConversationId
+        ? { ...listedConv, id: currentConversationId, kind: threadMeta.kind, botId: threadMeta.botId, botIds: threadMeta.botIds } as Conversation
+        : listedConv
+    const memberIds = Array.isArray(activeConv?.botIds) ? activeConv!.botIds! : []
+    const groupTargets = activeConv?.kind === 'group'
+      ? botsForMessage(content, roster.bots.filter((b) => memberIds.includes(b.id)))
+      : []
+    const singleBotId = activeConv?.kind === 'bot' ? activeConv.botId || undefined : undefined
+    const baseSnap = {
+      content, sendMode, commandTools,
+      attachmentIds: readyIds, previews, docNames,
+      runMode, modelTier, selectedTools, incognito,
+      projectId: activeProjectId || undefined,
+      webSearch, thinking,
+      ...(connectionIds ? { connectionIds } : {}),
+      ...(branchParent !== undefined ? { branchParent } : {}),
+    }
+    if (groupTargets.length) {
+      const snaps = groupTargets.map((bot, i) => ({
+        ...baseSnap,
+        id: `group-${bot.id}-${Date.now()}-${i}`,
+        botId: bot.id,
+        skipUserPersist: i > 0,
+      }))
+      setInput('')
+      uploads.reset()
+      setPendingBranch(undefined)
+      setEditingMessageId(null)
+      if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
+      if (chat.running) {
+        snaps.forEach((snap) => messageQueue.enqueue(snap))
+        toast.push('info', 'Added to queue — it sends when the current run finishes')
+        return
+      }
+      for (const snap of snaps) await dispatchSend(snap)
+      return
+    }
     if (chat.running) {
       messageQueue.enqueue({
         id: `queued-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        content, sendMode, commandTools,
-        attachmentIds: readyIds, previews, docNames,
-        runMode, modelTier, selectedTools, incognito,
-        projectId: activeProjectId || undefined,
-        webSearch, thinking,
-        ...(connectionIds ? { connectionIds } : {}),
-        ...(branchParent !== undefined ? { branchParent } : {}),
+        ...baseSnap,
+        ...(singleBotId ? { botId: singleBotId } : {}),
       })
       setInput('')
       uploads.reset()
+      setPendingBranch(undefined)
+      setEditingMessageId(null)
       if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
       toast.push('info', 'Added to queue — it sends when the current run finishes')
       return
@@ -416,16 +545,22 @@ export default function ChatPage() {
 
     setInput('')
     uploads.reset()
+    setEditingMessageId(null)
     if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
     await dispatchSend({
-      id: 'direct', content, sendMode, commandTools,
-      attachmentIds: readyIds, previews, docNames,
-      runMode, modelTier, selectedTools, incognito,
-      projectId: activeProjectId || undefined,
-      webSearch, thinking,
-      ...(connectionIds ? { connectionIds } : {}),
-      ...(branchParent !== undefined ? { branchParent } : {}),
+      id: 'direct',
+      ...baseSnap,
+      ...(singleBotId ? { botId: singleBotId } : {}),
     })
+  }
+
+  function walkPromptHistory(dir: -1 | 1): string | null {
+    const hist = promptHistory.current
+    if (!hist.length) return null
+    if (dir < 0) histCursor.current = Math.max(0, histCursor.current - 1)
+    else histCursor.current = Math.min(hist.length, histCursor.current + 1)
+    if (histCursor.current >= hist.length) return ''
+    return hist[histCursor.current] ?? null
   }
 
   /** Mint + copy a public read-only share link (audit Â§8-15). */
@@ -504,7 +639,8 @@ export default function ChatPage() {
         break
       }
       case '/stop': chat.stopRun(); break
-      case '/help': window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' })); break
+      case '/help': setShortcutsOpen(true); break
+      case '/bot': setInput(''); setPickerOpen(true); break
       default: setInput(def.cmd + ' ')
     }
   }
@@ -562,11 +698,76 @@ export default function ChatPage() {
   // against the standard 32k window (the large tier has more headroom).
   const contextTokens = Math.ceil(((messages as Message[]).reduce((n, m) => n + (m.content?.length || 0), 0) + chat.liveAnswer.length) / 4)
   const contextPct = Math.min(100, Math.round((contextTokens / 32_768) * 100))
+  const chatConversations = (conversations as Conversation[]).filter((c) => !c.kind || c.kind === 'chat')
+  const listedActive = (conversations as Conversation[]).find((c) => c.id === currentConversationId)
+  const activeConv = listedActive?.kind && listedActive.kind !== 'chat'
+    ? listedActive
+    : threadMeta?.id === currentConversationId
+      ? { ...listedActive, id: currentConversationId!, kind: threadMeta.kind, botId: threadMeta.botId, botIds: threadMeta.botIds } as Conversation
+      : listedActive
+  const profileBotId = activeConv?.kind === 'bot' ? (activeConv.botId || openedBotId) : openedBotId
+  const profileBot = profileBotId ? roster.bots.find((b) => b.id === profileBotId) || null : null
+  const authors = Object.fromEntries(roster.bots.map((b) => [b.id, { name: b.name, color: b.avatarColor }]))
+  const liveAuthor = streamingBotId ? authors[streamingBotId] || null : null
+  const liveCanvas = canvasFromTurn(chat.liveSteps, chat.liveAnswer)
+  const storedCanvas = (() => {
+    const msgs = messages as Message[]
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i]
+      if (m.role !== 'assistant') continue
+      const steps = Array.isArray(m.metadata?.steps) ? m.metadata.steps : []
+      const doc = canvasFromStored(steps, m.content || '')
+      if (doc) return doc
+    }
+    return null
+  })()
+  const canvasDoc = canvasDismissed ? null : (liveCanvas || storedCanvas)
+  const composerPlaceholder = profileBot
+    ? `Message ${profileBot.name}`
+    : activeConv?.kind === 'group'
+      ? 'Message the group'
+      : 'Message…'
+  cycleConversationRef.current = (dir) => {
+    if (!chatConversations.length) return
+    const idx = chatConversations.findIndex((c) => c.id === currentConversationId)
+    const next = chatConversations[(idx + dir + chatConversations.length) % chatConversations.length]
+    if (next) selectConversation(next.id)
+  }
+
+  async function refreshRoster() {
+    try { setRoster(await listNamedBots()) } catch { /* roster stays as last good list */ }
+  }
+  useEffect(() => {
+    if (!user) return
+    void refreshRoster()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, chat.running])
+
+  async function openBot(bot: NamedBot) {
+    setPickerOpen(false)
+    try {
+      const thread = bot.conversationId ? { id: bot.conversationId } : await openBotThread(bot.id)
+      selectConversation(thread.id)
+      setOpenedBotId(bot.id)
+      setThreadMeta({ id: thread.id, kind: 'bot', botId: bot.id })
+      panels.setSidebarOpen(false)
+      invalidateConversations()
+      void refreshRoster()
+    } catch (err: any) {
+      toast.push('error', err?.message || 'Could not open that bot')
+    }
+  }
+  async function openGroup(group: BotGroup) {
+    setPickerOpen(false)
+    selectConversation(group.id)
+    setThreadMeta({ id: group.id, kind: 'group', botIds: group.botIds })
+    panels.setSidebarOpen(false)
+  }
 
   // Sidebar contents — shared by the docked column (md+) and the mobile drawer.
   const sidebarContents = (
     <Sidebar
-      conversations={conversations}
+      conversations={chatConversations}
       currentConversationId={currentConversationId}
       user={user}
       projects={projects}
@@ -590,6 +791,15 @@ export default function ChatPage() {
       onOpenProjects={() => setProjectsOpen(true)}
       onSelectProject={(id) => { setActiveProjectId(id); if (id) localStorage.setItem('activeProjectId', id); else localStorage.removeItem('activeProjectId') }}
       activeProjectName={activeProjectId ? (projects.find((p) => p.id === activeProjectId)?.name || undefined) : undefined}
+      bots={roster.bots}
+      groups={roster.groups}
+      activeBotId={profileBot?.id || null}
+      activeGroupId={activeConv?.kind === 'group' ? activeConv.id : null}
+      onOpenBot={(bot) => { void openBot(bot) }}
+      onOpenGroup={(group) => { void openGroup(group) }}
+      onCreateBot={() => { setPickerOpen(false); setCreateBotOpen(true) }}
+      onCreateGroup={() => { setPickerOpen(false); setCreateGroupOpen(true) }}
+      onStartChat={() => setPickerOpen(true)}
     />
   )
 
@@ -720,6 +930,7 @@ export default function ChatPage() {
           onOpenSidebar={() => panels.setSidebarOpen((open) => !open)}
           theme={theme.choice}
           onCycleTheme={cycleTheme}
+          onOpenShortcuts={() => setShortcutsOpen(true)}
         />
 
         {/* (S8) transcript fetch failed — an explicit error state, not the
@@ -766,6 +977,9 @@ export default function ChatPage() {
           onOpenArtifactByName={openArtifactByName}
           onEditMessage={editMessageAt}
           onRetryBefore={retryBefore}
+          editingMessageId={editingMessageId}
+          authors={authors}
+          liveAuthor={liveAuthor}
         />
 
         {/* Composer — bottom padding lifts above the iOS keyboard via the
@@ -777,7 +991,7 @@ export default function ChatPage() {
             {pendingBranch !== undefined && (
               <div data-testid="branch-edit-banner" className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-[#c96442]/30 bg-[#c96442]/[0.07] px-3 py-2 text-[12.5px] text-[#e79d7f]">
                 <span>Editing a message — your next send starts a new version of this turn.</span>
-                <button type="button" onClick={() => setPendingBranch(undefined)} className="shrink-0 rounded-md px-1.5 py-0.5 hover:bg-white/[0.06] transition" aria-label="Cancel edit">✕</button>
+                <button type="button" onClick={cancelEdit} className="shrink-0 rounded-md px-1.5 py-0.5 hover:bg-white/[0.06] transition" aria-label="Cancel edit">Cancel</button>
               </div>
             )}
             {/* Slash palette dismiss boundary: the textarea is the palette's
@@ -817,6 +1031,13 @@ export default function ChatPage() {
               voiceModeListening={voiceMode.listening}
               onToggleVoiceMode={voiceMode.toggle}
               queuedCount={messageQueue.queue.length}
+              placeholder={composerPlaceholder}
+              onPromptHistory={walkPromptHistory}
+              onCycleConversation={(dir) => cycleConversationRef.current(dir)}
+              onCancelEdit={pendingBranch !== undefined ? cancelEdit : undefined}
+              onEditUndo={undoEdit}
+              onEditRedo={redoEditAction}
+              onCloseSlash={() => setShowSlash(false)}
             />
             </div>
           </div>
@@ -825,8 +1046,17 @@ export default function ChatPage() {
 
       {/* â”€â”€ Right: Artifacts panel (viewable output only — agent activity is
           inline per turn, audit P1/P2). â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {canvasDoc && (
+        <CanvasPanel doc={canvasDoc} onClose={() => setCanvasDismissed(true)} />
+      )}
+      {!canvasDoc && profileBot && (
+        <BotProfilePanel
+          bot={profileBot}
+          onLabel={(label) => { void updateNamedBot(profileBot.id, { label }).then(() => refreshRoster()).catch(() => {}) }}
+        />
+      )}
       <AnimatePresence initial={false}>
-        {panels.artifactsOpen && (
+        {panels.artifactsOpen && !canvasDoc && (
           <ArtifactsPanel
             artifacts={allArtifacts}
             focusId={focusedArtifactId}
@@ -861,17 +1091,53 @@ export default function ChatPage() {
         onLogout={() => { logout(); panels.setSidebarOpen(false) }}
       />
       <ShortcutSheet open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
-      {/* ⌘K ? — keyboard glyph, so it is hidden where there is no
-          keyboard (P5: was visible over the composer border on phones). */}
-      <button
-        type="button"
-        aria-label="Keyboard shortcuts"
-        onClick={() => setShortcutsOpen(true)}
-        className="fixed bottom-4 right-4 z-30 p-2 rounded-lg text-slate-500 hover:text-slate-400 hover:bg-white/[0.04] transition text-[12px] font-mono max-sm:hidden"
-        title="Keyboard shortcuts (?)"
-      >
-        ⌘K ?
-      </button>
+      {pickerOpen && (
+        <StartChatPicker
+          bots={roster.bots}
+          onClose={() => setPickerOpen(false)}
+          onCreateBot={() => { setPickerOpen(false); setCreateBotOpen(true) }}
+          onCreateGroup={() => { setPickerOpen(false); setCreateGroupOpen(true) }}
+          onPickBot={(bot) => { void openBot(bot) }}
+        />
+      )}
+      {createBotOpen && (
+        <CreateBotDialog
+          busy={botBusy}
+          onClose={() => setCreateBotOpen(false)}
+          onCreate={async (input) => {
+            setBotBusy(true)
+            try {
+              const created = await createNamedBot(input)
+              setCreateBotOpen(false)
+              selectConversation(created.conversationId)
+              setOpenedBotId(created.bot.id)
+              setThreadMeta({ id: created.conversationId, kind: 'bot', botId: created.bot.id })
+              await refreshRoster()
+            } catch (err: any) {
+              toast.push('error', err?.message || 'Could not create that bot')
+            } finally { setBotBusy(false) }
+          }}
+        />
+      )}
+      {createGroupOpen && (
+        <CreateGroupDialog
+          bots={roster.bots}
+          busy={botBusy}
+          onClose={() => setCreateGroupOpen(false)}
+          onCreate={async (botIds, name) => {
+            setBotBusy(true)
+            try {
+              const created = await createBotGroup(botIds, name || undefined)
+              setCreateGroupOpen(false)
+              selectConversation(created.id)
+              setThreadMeta({ id: created.id, kind: 'group', botIds: created.botIds })
+              await refreshRoster()
+            } catch (err: any) {
+              toast.push('error', err?.message || 'Could not create that group')
+            } finally { setBotBusy(false) }
+          }}
+        />
+      )}
     </div>
   )
 }

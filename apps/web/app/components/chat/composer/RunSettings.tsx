@@ -1,12 +1,10 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
-import { Zap, Globe, Brain, ChevronDown, Check } from 'lucide-react'
-import { useMenuDismiss } from '../../../lib/useMenuDismiss'
-import { popoverUp } from '../../../lib/motion'
+import { Zap, Brain, ChevronDown, Check } from 'lucide-react'
 import { THOUGHT_EFFORTS, type EffortValue } from './EffortSelector'
 import { RUN_MODES, type ToggleState } from './SlashPalette'
+import { FramePopover } from './FramePopover'
 
 /**
  * Run settings — ONE popover for the three run axes (Option A, redesign
@@ -34,7 +32,6 @@ export function RunSettings({
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-  useMenuDismiss(ref, open, () => setOpen(false))
 
   const customized = runMode !== 'auto' || webSearch !== 'auto' || thinking !== 'auto'
   const activeMode = RUN_MODES.find((m) => m.id === runMode) || RUN_MODES[0]
@@ -55,17 +52,13 @@ export function RunSettings({
         <ChevronDown size={12} className="text-slate-500" />
       </button>
 
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            variants={popoverUp}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-            role="menu"
-            aria-label="Run settings"
-            className="composer-menu absolute bottom-full mb-2 left-0 w-72 glass-strong rounded-xl border border-white/[0.08] overflow-hidden z-20 shadow-panel"
-          >
+      <FramePopover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchorRef={ref}
+        label="Run settings"
+        className="composer-menu w-72 overflow-y-auto bg-[#16161a] rounded-xl border border-white/[0.08] z-50 shadow-panel"
+      >
             {/* Autonomy */}
             <div className="px-3 pt-2.5 pb-1 text-[10px] uppercase tracking-widest text-slate-500 font-medium">Autonomy</div>
             {RUN_MODES.map((m) => {
@@ -141,9 +134,7 @@ export function RunSettings({
             <div className="px-3 py-2 border-t border-white/[0.05] text-[11px] text-slate-500">
               Applies to your next message.
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      </FramePopover>
     </div>
   )
 }

@@ -12,6 +12,8 @@ export interface Message {
   /** Branch tree (§8-22): the row this message follows in its branch.
    *  Versions of a turn (retries / edits) share the same parentId. */
   parentId?: string | null
+  /** Set when an assistant row was written by a named bot. */
+  authorBotId?: string | null
 }
 
 export interface Conversation {
@@ -21,6 +23,10 @@ export interface Conversation {
   updatedAt: string
   /** Pinned to the top of the sidebar (audit §8-13). */
   pinned?: boolean
+  /** chat (default), bot (one named agent), or group (several bots). */
+  kind?: string
+  botId?: string | null
+  botIds?: string[]
 }
 
 /** One streamed agent step (tool call or text delta group) in the live turn. */
@@ -88,4 +94,8 @@ export interface QueuedMessage {
   connectionIds?: string[]
   /** §8-22: pending-branch parent, if the queued message was an edit. */
   branchParent?: string | null
+  /** Named bot this queued turn should run as. */
+  botId?: string
+  /** Group fan-out: skip saving another copy of the user message. */
+  skipUserPersist?: boolean
 }

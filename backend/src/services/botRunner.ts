@@ -281,7 +281,10 @@ export async function executeBotTask(
       conversationId: identity.conversationId,
       emit,
       signal: abort.signal,
-      scratch: computer ? { computer } : {},
+      scratch: {
+        ...(computer ? { computer } : {}),
+        ...(task.botId ? { botId: task.botId } : {}),
+      },
     }
     const grantedTools = computer ? [...tools, ...COMPUTER_TOOLS] : tools
     // Teach runs distill skills; grant the writer. Skill-attached runs follow

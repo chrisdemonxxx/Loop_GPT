@@ -117,6 +117,10 @@ export const streamInput = z.object({
   connectionIds: selectedConnectionIds.default([]),
   autoApprove: z.boolean().optional(),
   stepMode: z.boolean().optional(),
+  /** Named bot whose persona and attribution this turn uses. */
+  botId: z.string().min(1).max(80).optional(),
+  /** Group fan-out: later bots in the same user turn must not save another user row. */
+  skipUserPersist: z.boolean().optional(),
   incognito: z.boolean().optional(),
   projectId: z.string().min(1).max(160).optional(),
   /** Web-search override (audit §8-25): true forces web_search+web_fetch in;
@@ -321,7 +325,7 @@ export async function streamAgentRun(req: Request, res: Response) {
       // saved — the new answer becomes a sibling of the old one); an edit
       // parents the new prompt to the edited turn's predecessor (explicit
       // null = root sibling). A normal send appends (undefined parent).
-      if (!input.data.regenerateOf) {
+      if (!input.data.regenerateOf && input.data.skipUserPersist !== true) {
         await saveMessage(conversation.id, {
           role: 'user',
           content: raw || '',
@@ -341,6 +345,25 @@ export async function streamAgentRun(req: Request, res: Response) {
       if (lifecycle.disconnected()) return
       if (err instanceof WorkspaceError) return res.status(err.status).json({ error: err.message })
       return res.status(500).json({ error: 'Failed to start conversation' })
+    }
+
+    let authorBotId: string | undefined
+    let botPersona = ''
+    if (input.data.botId && prisma) {
+      const bot = await prisma.bot.findFirst({ where: { id: input.data.botId, ownerId: userId } })
+      if (!bot) {
+        await cleanupDailyReservation(reservation?.id)
+        reservation = undefined
+        return res.status(404).json({ error: 'Bot not found' })
+      }
+      authorBotId = bot.id
+      const toolsHint = Array.isArray(bot.defaultTools) ? (bot.defaultTools as unknown[]).filter((t) => typeof t === 'string').join(', ') : ''
+      botPersona = [
+        `You are ${bot.name}${bot.label ? `, the ${bot.label}` : ''}.`,
+        bot.persona || '',
+        'Narrate progress in short plain sentences. Never print raw JSON, tool-call tags, or status words like "running" or "processing".',
+        toolsHint ? `Prefer these tools when they fit: ${toolsHint}.` : '',
+      ].filter(Boolean).join('\n')
     }
 
     try {
@@ -415,7 +438,7 @@ export async function streamAgentRun(req: Request, res: Response) {
       const skillInstructions = [...builtinMatched, ...userSkills].map((skill) => skill.instructions)
       const skillIndex = [...builtinMatched, ...userSkills].map((skill) => `- ${skill.name}: ${skill.description}`)
       const systemPrompt = [
-        BASE_SYSTEM_PROMPT,
+        botPersona || BASE_SYSTEM_PROMPT,
         skillIndex.length ? `Available skills (already applied where relevant):\n${skillIndex.join('\n')}` : '',
         ...skillInstructions,
         // §8-34 enforcement: the detected threat gets a targeted hardening
@@ -496,6 +519,7 @@ export async function streamAgentRun(req: Request, res: Response) {
         messageType: artifacts.some((a) => a.kind === 'image') ? 'image' : 'text',
         imageUrl: artifacts.find((a) => a.kind === 'image')?.url || null,
         toolUsed: mode,
+        ...(authorBotId ? { authorBotId } : {}),
         // Redact model/provider from client-facing metadata (guardrails).
         metadata: sanitizeMetadata({
           ...finalMetadata, artifacts, provider, model, prompt: promptMeta,

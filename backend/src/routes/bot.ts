@@ -46,7 +46,9 @@ router.post('/tasks', asyncHandler(async (req, res) => {
 /** GET /api/bot/skills — the caller's own skill library (taught + picked). */
 router.get('/skills', asyncHandler(async (req, res) => {
   const { loadSkillsForUser } = await import('../agent/skills/skillLoader')
-  res.json({ skills: loadSkillsForUser((req as any).userId) })
+  const botId = typeof req.query.botId === 'string' ? req.query.botId : ''
+  const skills = loadSkillsForUser((req as any).userId).filter((skill) => !botId || skill.botId === botId)
+  res.json({ skills })
 }))
 
 /** DELETE /api/bot/skills/:id — remove one of the caller's own skills. */

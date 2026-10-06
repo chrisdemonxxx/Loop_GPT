@@ -40,6 +40,7 @@ export const createSkillTool: ToolDefinition = {
       description: String(args.description || '').trim(),
       instructions,
       triggers: asStringArray(args.triggers),
+      botId: typeof ctx?.scratch?.botId === 'string' ? ctx.scratch.botId : undefined,
     }, ctx?.userId)
     // Enable it immediately so it takes effect.
     const set = new Set(configStore.getEnabledSkills())

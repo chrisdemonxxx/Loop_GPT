@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { registerBuiltinTools } from '../index'
-import { parseInlineToolCall, parseInlineToolCalls, permissionFor, requiresInteractivePause } from '../agentRuntime'
+import { parseInlineToolCall, parseInlineToolCalls, permissionFor, requiresInteractivePause, stripInlineToolPayload } from '../agentRuntime'
 import { toolRegistry } from '../toolRegistry'
 import type { ToolDefinition, ToolContext } from '../types'
 
@@ -23,6 +23,25 @@ describe('run-mode approval gate (requiresInteractivePause)', () => {
     // Unique names: other suites may have set overrides for real tools.
     expect(permissionFor('fresh_allow_tool_xyz')).toBe('allow')
     expect(permissionFor('fresh_approval_tool_xyz', true)).toBe('approval')
+    expect(permissionFor('create_document', true)).toBe('allow')
+    expect(permissionFor('execute_code', false)).toBe('approval')
+  })
+})
+
+describe('stripInlineToolPayload', () => {
+  it('removes tool-call tags, json fences, and bare objects', () => {
+    const raw = [
+      'Writing the page.',
+      '<tool_call>{"tool":"calculator","arguments":{"expression":"1+1"}}</tool_call>',
+      '```json',
+      '{"tool":"web_search","arguments":{"query":"landing"}}',
+      '```',
+      '{"tool":"get_current_time","arguments":{}}',
+    ].join('\n')
+    const text = stripInlineToolPayload(raw)
+    expect(text).toContain('Writing the page.')
+    expect(text).not.toContain('"tool"')
+    expect(text).not.toContain('calculator')
   })
 })
 

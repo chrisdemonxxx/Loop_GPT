@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 
 import { API_URL, authHeaders, getToken, type AgentMode } from '../lib/api'
+import { presentStreamError } from '../lib/assistantText'
 import { runAgentStream, resumeStoredRun, getStoredRun, type ArtifactRef } from '../lib/stream'
 import { track } from '../components/Analytics'
 import { useDictation } from '../lib/voice'
@@ -332,13 +333,45 @@ export function useAttachments(currentConversationId: string | null) {
    *  in a ref so concurrent uploads in one batch share the target. */
   const uploadConvRef = useRef<string | null>(null)
   const [uploadConversationId, setUploadConversationId] = useState<string | null>(null)
+  /** One in-flight conversation create, shared by every file in a batch.
+   *  Parallel uploads used to each POST against 'new' and land in different chats. */
+  const convGate = useRef<Promise<string> | null>(null)
+
+  const ensureUploadConversation = useCallback(async () => {
+    if (uploadConvRef.current) return uploadConvRef.current
+    if (currentConversationId) {
+      uploadConvRef.current = currentConversationId
+      setUploadConversationId(currentConversationId)
+      return currentConversationId
+    }
+    if (!convGate.current) {
+      convGate.current = axios.post(
+        `${API_URL}/api/conversations`,
+        { title: 'New Chat' },
+        { headers: authHeaders() },
+      ).then((res) => {
+        const id = String(res.data?.id || '')
+        if (!id) throw new Error('Could not start the upload')
+        uploadConvRef.current = id
+        setUploadConversationId(id)
+        return id
+      }).finally(() => { convGate.current = null })
+    }
+    return convGate.current
+  }, [currentConversationId])
 
   const patch = useCallback((id: string, fields: Partial<PendingAttachment>) =>
     setAttachments((prev) => prev.map((a) => (a.id === id ? { ...a, ...fields } : a))), [])
 
   const upload = useCallback(async (record: PendingAttachment, retryOf?: string) => {
     const id = retryOf || record.id
-    const target = uploadConvRef.current || currentConversationId || 'new'
+    let target = 'new'
+    try {
+      target = await ensureUploadConversation()
+    } catch {
+      patch(id, { status: 'error', error: 'Could not start the upload' })
+      return
+    }
     const endpoint = record.kind === 'image' ? 'upload-image' : 'upload-document'
     const field = record.kind === 'image' ? 'image' : 'document'
     const fd = new FormData()
@@ -357,7 +390,7 @@ export function useAttachments(currentConversationId: string | null) {
     } catch (e: any) {
       patch(id, { status: 'error', error: e?.response?.data?.error || 'Upload failed' })
     }
-  }, [currentConversationId, patch])
+  }, [ensureUploadConversation, patch])
 
   /** Attach files (drag-drop, paste, picker, screenshot). Caps at four
    *  total per turn; images get a local data-URL preview. */
@@ -670,6 +703,10 @@ export interface ChatStreamSendOptions {
    *  stored user row regenerateOf. Mutually exclusive on the server. */
   parentMessageId?: string | null
   regenerateOf?: string
+  /** Named bot this turn speaks as. */
+  botId?: string
+  /** Group fan-out: do not persist another copy of the user message. */
+  skipUserPersist?: boolean
   /** Resolves (creating if needed) the conversation for this turn. */
   ensureConversation: (firstMessage: string) => Promise<string>
 }
@@ -834,21 +871,16 @@ export function useChatStream() {
     },
     onArtifact: (a: ArtifactRef) => setLiveArtifacts((prev) => [...prev, a]),
     onPendingApproval: (toolName: string, args: any, _prompt: string) => {
-      // Build the approval fetch URL with the current conversation id.
+      // The tool_call event already opened this step. Pushing another card
+      // here stacked a second identical "running" row.
       const approve = (approved: boolean) =>
         axios.post(`${API_URL}/api/agent/${convId}/approve`, { toolName, approved }, { headers: authHeaders(false) }).catch(() => undefined)
-      setLiveSteps((prev) => {
-        const idx = Date.now()
-        const next = [...prev]
-        next.push({ index: idx, kind: 'tool', text: '', tool: { name: toolName, args, source: 'approval' } })
-        return next
-      })
-      // Store the resolve function for the approval UI to call.
       setPendingApproval({ toolName, approve })
     },
     onError: (m: string) => {
-      setStatusMsg('')
-      setErrorMsg(m) // (S5) persists until dismissed — no more flash-and-vanish
+      const shown = presentStreamError(m)
+      setStatusMsg(shown ? '' : (/abort|stopped/i.test(m) ? 'Stopped' : ''))
+      if (shown) setErrorMsg(shown)
       // A lost connection (§8-30) means the run may still complete in the
       // background — one delayed refresh picks up the persisted result.
       if (/Connection lost/i.test(m) && convId) {
@@ -863,7 +895,7 @@ export function useChatStream() {
   })
 
   async function send(opts: ChatStreamSendOptions) {
-    const { content, sendMode, commandTools, attachmentIds, previews, docNames, runMode, modelTier, selectedTools, incognito, projectId, webSearch, thinking, parentMessageId, regenerateOf, connectionIds, workspaceId, ensureConversation } = opts
+    const { content, sendMode, commandTools, attachmentIds, previews, docNames, runMode, modelTier, selectedTools, incognito, projectId, webSearch, thinking, parentMessageId, regenerateOf, connectionIds, workspaceId, botId, skipUserPersist, ensureConversation } = opts
     setRunning(true); setStatusMsg(''); setLiveSteps([]); setLiveArtifacts([]); setLiveThinking('')
     setPendingApproval(null) // (S2) no approval card carries into a new run
     setErrorMsg('')
@@ -889,7 +921,7 @@ export function useChatStream() {
         content: sendContent, attachmentIds, mode: sendMode,
         model: modelTier || undefined,
         toolNames: commandTools || (selectedTools ? Array.from(selectedTools) : undefined),
-        autoApprove: runMode === 'accept',
+        autoApprove: runMode === 'accept' || runMode === 'auto',
         stepMode: runMode === 'step',
         incognito,
         projectId,
@@ -902,10 +934,14 @@ export function useChatStream() {
       // Branch anchoring (§8-22) — only present when retrying/editing.
         ...(parentMessageId !== undefined ? { parentMessageId } : {}),
         ...(regenerateOf ? { regenerateOf } : {}),
+        ...(botId ? { botId } : {}),
+        ...(skipUserPersist ? { skipUserPersist: true } : {}),
       }, makeHandlers(convId), abort.signal)
     } catch (err: any) {
-      setStatusMsg('')
-      setErrorMsg(err?.message || 'Run failed')
+      const raw = String(err?.message || err?.name || '')
+      const shown = presentStreamError(raw)
+      if (!shown) setStatusMsg(err?.name === 'AbortError' || /abort/i.test(raw) ? 'Stopped' : '')
+      else setErrorMsg(shown)
     } finally {
       // Drain any buffered streamed text synchronously (§8-33) — nothing
       // buffered is ever lost, even if rAF never fired (background tab).

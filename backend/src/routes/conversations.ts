@@ -99,6 +99,9 @@ router.get('/', authenticateToken, async (req, res) => {
         // Additive (S3, project detail page): lets the client scope the
         // conversation list to a project without a second query.
         projectId: true,
+        botId: true,
+        kind: true,
+        botIds: true,
       },
     })
 

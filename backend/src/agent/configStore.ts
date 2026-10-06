@@ -120,14 +120,31 @@ export const configStore = {
   saveCustomTools(tools: CustomToolConfig[]) {
     write('custom-tools', tools)
   },
-  /** Per-tool permission overrides: allow | approval | blocked. */
+  /** Per-tool permission overrides: allow | approval | blocked.
+   *  Built-in document/search tools allow by default. Destructive execution
+   *  and anything the user explicitly sets still win. */
   getToolPermissions(): Record<string, ToolPermission> {
-    return read<Record<string, ToolPermission>>('tool-permissions', {})
+    const defaults: Record<string, ToolPermission> = {
+      create_document: 'allow',
+      web_search: 'allow',
+      web_fetch: 'allow',
+      calculator: 'allow',
+      get_current_time: 'allow',
+      generate_image: 'allow',
+      generate_video: 'allow',
+      execute_code: 'approval',
+    }
+    return { ...defaults, ...read<Record<string, ToolPermission>>('tool-permissions', {}) }
   },
   setToolPermission(name: string, level: ToolPermission) {
     const map = read<Record<string, ToolPermission>>('tool-permissions', {})
-    if (level === 'allow' && !map[name]) return
-    map[name] = level
+    const defaults: Record<string, ToolPermission> = {
+      create_document: 'allow', web_search: 'allow', web_fetch: 'allow', calculator: 'allow',
+      get_current_time: 'allow', generate_image: 'allow', generate_video: 'allow', execute_code: 'approval',
+    }
+    const implicit = defaults[name] || 'allow'
+    if (level === implicit) delete map[name]
+    else map[name] = level
     write('tool-permissions', map)
   },
   /** Append a tool-call audit record; the log is bounded (most recent kept). */

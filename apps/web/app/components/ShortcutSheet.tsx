@@ -1,19 +1,25 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Keyboard } from 'lucide-react'
 import { useHotkey } from '../lib/useHotkey'
+import { modLabel } from '../lib/platformKey'
 
-const SHORTCUTS = [
-  { keys: '⌘K', label: 'Command palette' },
-  { keys: '⌘L', label: 'New conversation' },
-  { keys: '⌘B', label: 'Toggle sidebar' },
-  { keys: '⌘⏎', label: 'Send message' },
-  { keys: '⌘↑ / ⌘↓', label: 'Conversation history' },
-  { keys: 'Esc', label: 'Close popover / Cancel' },
-  { keys: '/', label: 'Commands (in chat box)' },
-]
+function shortcutRows() {
+  const mod = modLabel()
+  return [
+    { keys: `${mod} K`, label: 'Command palette' },
+    { keys: `${mod} L`, label: 'New conversation' },
+    { keys: `${mod} B`, label: 'Toggle sidebar' },
+    { keys: `${mod} Enter`, label: 'Send message' },
+    { keys: `${mod} ↑ / ${mod} ↓`, label: 'Conversation history' },
+    { keys: '↑ / ↓', label: 'Prompt history' },
+    { keys: `${mod} Z / ${mod} Y`, label: 'Undo / redo' },
+    { keys: 'Esc', label: 'Close popover / Cancel' },
+    { keys: '/', label: 'Commands (in chat box)' },
+  ]
+}
 
 interface Props {
   /** When provided, the sheet is controlled by the parent and the `?` hotkey
@@ -27,13 +33,24 @@ export function ShortcutSheet({ open: controlledOpen, onOpenChange }: Props = {}
   const [internalOpen, setInternalOpen] = useState(false)
   const isControlled = controlledOpen !== undefined && onOpenChange !== undefined
   const open = isControlled ? controlledOpen : internalOpen
-  const setOpen = (next: boolean) => {
+  const setOpen = useCallback((next: boolean) => {
     if (isControlled) onOpenChange!(next)
     else setInternalOpen(next)
-  }
+  }, [isControlled, onOpenChange])
 
   useHotkey({ key: '?' }, () => setOpen(true))
-  useHotkey({ key: 'Escape' }, () => { if (open) setOpen(false) })
+  // Capture so Escape still closes the sheet while the composer textarea is focused.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      setOpen(false)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [open, setOpen])
 
   return (
     <AnimatePresence>
@@ -53,7 +70,7 @@ export function ShortcutSheet({ open: controlledOpen, onOpenChange }: Props = {}
               <span className="text-[14px] font-medium text-slate-200">Keyboard shortcuts</span>
             </div>
             <div className="space-y-2">
-              {SHORTCUTS.map((s) => (
+              {shortcutRows().map((s) => (
                 <div key={s.keys} className="flex items-center justify-between text-[13px]">
                   <span className="text-slate-400">{s.label}</span>
                   <kbd className="font-mono text-[12px] text-slate-500 bg-white/[0.04] px-2 py-0.5 rounded">{s.keys}</kbd>

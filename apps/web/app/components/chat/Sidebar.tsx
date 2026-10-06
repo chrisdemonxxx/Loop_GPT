@@ -9,6 +9,8 @@ import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useI18n, locales, localeNames, type Locale } from '../../lib/i18n'
 import type { Conversation } from './types'
+import { BotSidebarSection } from './BotChrome'
+import type { BotGroup, NamedBot } from '../../lib/namedBots'
 
 interface SidebarProject { id: string; name: string; _count?: { knowledgeChunks: number; conversations: number } }
 export interface ConversationSearchHit {
@@ -52,6 +54,17 @@ interface SidebarProps {
   onOpenProjects: () => void
   onSelectProject: (id: string | null) => void
   activeProjectName?: string
+  /** Named bots and group threads. Optional so existing callers stay valid. */
+  bots?: NamedBot[]
+  groups?: BotGroup[]
+  activeBotId?: string | null
+  activeGroupId?: string | null
+  onOpenBot?: (bot: NamedBot) => void
+  onOpenGroup?: (group: BotGroup) => void
+  onCreateBot?: () => void
+  onCreateGroup?: () => void
+  /** "+" opens the start-a-chat picker when provided. */
+  onStartChat?: () => void
 }
 
 /** Bucket a conversation by recency (audit §8-13: grouped history render). */
@@ -75,6 +88,7 @@ export default function Sidebar({
   searchQuery, onSearchChange, messageHits = [],
   sessionsError = false, sessionsPending = false, onRetrySessions, searchError = false, onRetrySearch,
   onOpenProjects, onSelectProject, activeProjectName,
+  bots = [], groups = [], activeBotId, activeGroupId, onOpenBot, onOpenGroup, onCreateBot, onCreateGroup, onStartChat,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
@@ -98,7 +112,7 @@ export default function Sidebar({
   }, [messageHits, titleMatches])
 
   /** Grouping by pinned, then date bucket (server already orders each list). */
-  const groups = useMemo(() => {
+  const dateGroups = useMemo(() => {
     const pinned = listed.filter((c) => c.pinned)
     const rest = listed.filter((c) => !c.pinned)
     const byBucket = new Map<string, Conversation[]>()
@@ -161,7 +175,6 @@ export default function Sidebar({
           links that read as an afterthought). */}
       <nav aria-label="Workspace" className="px-3 pb-2 space-y-0.5 shrink-0">
         {[
-          { href: '/projects', label: 'Projects', icon: FolderOpen },
           { href: '/agents', label: 'Loop Bot', icon: Bot },
           { href: '/artifacts', label: 'Files', icon: Download },
           { href: '/recents', label: 'Recents', icon: MessageSquare },
@@ -180,10 +193,10 @@ export default function Sidebar({
       {/* New chat + search */}
       <div className="px-3 space-y-2 shrink-0">
         <button
-          onClick={() => { onSelectConversation(null); onClose() }}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium text-white bg-[#c96442] hover:bg-[#b5593a] active:bg-[#a34e34] transition"
+          onClick={() => { if (onStartChat) onStartChat(); else { onSelectConversation(null); onClose() } }}
+          className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-slate-100 hover:bg-white/[0.05] transition"
         >
-          <Plus size={17} strokeWidth={2.5} /> {t('newSession')}
+          <Plus size={15} /> {t('newSession')}
         </button>
         <div className="relative">
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
@@ -238,9 +251,22 @@ export default function Sidebar({
         </div>
       </div>
 
+      {onOpenBot && onOpenGroup && onCreateBot && onCreateGroup && (
+        <BotSidebarSection
+          bots={bots}
+          groups={groups}
+          activeBotId={activeBotId}
+          activeGroupId={activeGroupId}
+          onOpenBot={onOpenBot}
+          onOpenGroup={onOpenGroup}
+          onCreateBot={onCreateBot}
+          onCreateGroup={onCreateGroup}
+        />
+      )}
+
       {/* Conversation list — grouped: Pinned, then date buckets (audit §8-13). */}
       <div className="flex-1 overflow-y-auto py-1.5 px-2 mt-1 space-y-2 min-h-0">
-        {groups.map((group) => (
+        {dateGroups.map((group) => (
           <div key={group.label} className="space-y-0.5">
             <div className="px-2.5 pt-1 pb-0.5 text-[10px] uppercase tracking-widest text-slate-500 font-medium">{group.label}</div>
             {group.items.map((c) => (

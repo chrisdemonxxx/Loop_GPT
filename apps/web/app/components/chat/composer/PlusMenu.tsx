@@ -3,8 +3,8 @@
 import { Plus, Image as ImageIcon, Camera, Plug, ListChecks, X, FileText, Mic, Square, AlertCircle, RotateCcw, Bot } from 'lucide-react'
 import { useRef } from 'react'
 import { useI18n } from '../../../lib/i18n'
-import { useMenuDismiss } from '../../../lib/useMenuDismiss'
 import type { PendingAttachment } from '../../../chat/hooks'
+import { FramePopover } from './FramePopover'
 
 /** The + attach menu: files, screenshot, connectors, create-image, tools.
  * `onClose` closes this menu (after a pick); `onCloseOther` closes the run
@@ -27,7 +27,6 @@ export function PlusMenu({
 }) {
   const { t } = useI18n()
   const ref = useRef<HTMLDivElement>(null)
-  useMenuDismiss(ref, open, onClose)
   return (
     <div className="relative" ref={ref}>
       <button
@@ -41,8 +40,7 @@ export function PlusMenu({
       >
         <Plus size={18} />
       </button>
-      {open && (
-        <div className="composer-menu absolute bottom-full mb-2 left-0 w-56 glass rounded-xl border border-white/[0.08] overflow-hidden z-20 shadow-panel" role="menu">
+      <FramePopover open={open} onClose={onClose} anchorRef={ref} label="Add" className="composer-menu w-56 overflow-y-auto bg-[#16161a] rounded-xl border border-white/[0.08] z-50 shadow-panel">
           <PlusItem icon={ImageIcon} label={t('addFiles')} onClick={() => { onClose(); onPickFiles() }} />
           {canScreenshot && <PlusItem icon={Camera} label={t('takeScreenshot')} onClick={() => { onClose(); onScreenshot() }} />}
           <PlusItem icon={Plug} label={t('connectors')} onClick={() => { onClose(); onOpenConnectors() }} />
@@ -59,8 +57,7 @@ export function PlusMenu({
               <span className="flex-1">{t('manageTools')}</span>
             </button>
           </div>
-        </div>
-      )}
+      </FramePopover>
     </div>
   )
 }

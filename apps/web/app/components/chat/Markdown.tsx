@@ -7,6 +7,7 @@ import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
 import { Check, Copy } from 'lucide-react'
+import { presentAssistantText } from '../../lib/assistantText'
 import { MermaidView } from './ArtifactViewers'
 // PERF_P1 fix 3 (2026-10-05): rehypeHighlight's default register is lowlight's
 // `common` set (37 languages). The app's fences are our code, model code and
@@ -50,8 +51,10 @@ function CodeBlock({ className, children }: { className?: string; children: any 
   )
 }
 
-/** Rich markdown for assistant messages. */
+/** Rich markdown for assistant messages. Tool JSON never reaches the parser. */
 function MarkdownImpl({ content }: { content: string }) {
+  const shown = presentAssistantText(content)
+  if (!shown) return null
   return (
     <div className="prose-chat text-[15px] leading-[1.7] text-slate-100">
       <ReactMarkdown
@@ -77,7 +80,7 @@ function MarkdownImpl({ content }: { content: string }) {
           hr: () => <hr className="my-4 border-white/10" />,
         }}
       >
-        {content}
+        {shown}
       </ReactMarkdown>
     </div>
   )

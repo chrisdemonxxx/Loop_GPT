@@ -21,6 +21,7 @@ export interface StoredMessage {
   metadata?: any
   /** Branch tree (§8-22): the row this message follows in its branch. */
   parentId?: string | null
+  authorBotId?: string | null
 }
 
 export interface SaveMessageInput {
@@ -35,6 +36,7 @@ export interface SaveMessageInput {
    * active leaf (the default send path); an explicit value (including null
    * for a new root sibling) creates a branch version instead. */
   parentId?: string | null
+  authorBotId?: string | null
 }
 
 /** Branch transcript envelope (§8-22): every row plus the active leaf so the
@@ -221,6 +223,7 @@ export async function saveMessage(conversationId: string, input: SaveMessageInpu
       imagePath: input.imagePath || undefined,
       toolUsed: input.toolUsed || undefined,
       metadata: input.metadata,
+      ...(input.authorBotId ? { authorBotId: input.authorBotId } : {}),
     })
     return { ...m, createdAt: m.createdAt.toISOString() } as StoredMessage
   }
@@ -245,6 +248,7 @@ export async function saveMessage(conversationId: string, input: SaveMessageInpu
       toolUsed: input.toolUsed || null,
       metadata: input.metadata ?? undefined,
       parentId,
+      ...(input.authorBotId ? { authorBotId: input.authorBotId } : {}),
     },
   })
   // Each save extends the active path: the new row becomes the leaf (the
