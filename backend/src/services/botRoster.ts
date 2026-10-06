@@ -113,7 +113,7 @@ export function narrateTool(name: string, done: boolean, failed = false): string
   return `${label.charAt(0).toUpperCase()}${label.slice(1)} is done.`
 }
 
-export function narrateSteps(steps: Array<{ tool: string; result?: string }>): string {
+export function narrateSteps(steps: Array<{ tool?: string; result?: string }>): string {
   if (!steps.length) return ''
-  return steps.map((s) => narrateTool(s.tool, true, /error|fail|not approved|blocked/i.test(s.result || ''))).join(' ')
+  return steps.map((s) => narrateTool(s.tool || 'that', true, /error|fail|not approved|blocked/i.test(s.result || ''))).join(' ')
 }
