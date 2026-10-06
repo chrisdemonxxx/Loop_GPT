@@ -31,7 +31,7 @@ export interface TeachSessionState {
   reset: () => void
 }
 
-/** The session object components consume (TeachTaskButton, AgentComputerTab). */
+/** The session object components consume (AgentComputerTab's teach pill). */
 export type TeachSession = TeachSessionState
 
 const FRAME_RE = /Recording the demonstration…\s*(\d+) frame/
