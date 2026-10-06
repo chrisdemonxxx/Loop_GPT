@@ -27,10 +27,10 @@ const ENVIRONMENT = '2faec73c-12aa-47c9-9a6c-94a9276eb6d5'
 
 /** Grab an ephemeral free local port for the tunnel (a fixed port collides
  *  with orphaned tunnels from killed runs — that exact failure happened). */
-function freePort(): Promise<number> {
+function freePort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer()
-    server.listen(0, '127.0.0.1', () => { const port = (server.address() as net.AddressInfo).port; server.close(() => resolve(port)) })
+    server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)) })
     server.on('error', reject)
   })
 }
@@ -107,7 +107,6 @@ async function main() {
 
   say('5/5', `git push origin ${branch} — Railway auto-deploys with the schema already in place`)
   run('git push origin release/owned-staging-20260917')
-}
 }
 
 main().catch((error) => { console.error(`[deploy] ${error.message}`); process.exit(1) })
