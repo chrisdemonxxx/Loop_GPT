@@ -46,3 +46,10 @@ Thumbs.db
 
 # Prisma migrations are release source and must be version-controlled.
 
+
+# Local repo snapshot (pre-restructure archive)
+loop-gpt-p5-8346c2d/
+
+# Desktop shell build output (electron-builder).
+# NOTE: apps/desktop/build/ is buildResources (icon) — deliberately tracked.
+apps/desktop/release/

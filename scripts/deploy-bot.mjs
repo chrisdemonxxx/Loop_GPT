@@ -71,10 +71,10 @@ async function main() {
   if (!args.has('--skip-tests')) run('npm test', path.join(ROOT, 'backend'))
 
   say('2/5', 'frontend build')
-  run('npm run build', path.join(ROOT, 'frontend'))
+  run('npm run build', path.join(ROOT, 'apps/web'))
 
-  say('3/5', 'frontend build')
-  run('npm run build', path.join(ROOT, 'frontend'))
+  say('3/5', 'frontend build (repeat — keep the historical release sequence)')
+  run('npm run build', path.join(ROOT, 'apps/web'))
 
   // Migrations BEFORE the push: the supervisor's startup preflight fails the
   // deployment closed when a migration is pending, so the schema must land

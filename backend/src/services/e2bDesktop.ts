@@ -72,6 +72,13 @@ export async function createDesktop(opts: { timeoutMs: number }): Promise<Deskto
     throw new E2BDesktopError(`E2B sandbox creation failed${status ? ` (${status})` : ''}`, status && status >= 500 ? 'unavailable' : 'api')
   }
 
+  return wrapDesktop(desktop, false)
+}
+
+/** Wrap an already-running desktop sandbox (the persistent box) as a
+ *  DesktopClient. When `owned` is false, kill() is a detach — the box stays
+ *  alive for the next task and the operator's Computer tab. */
+function wrapDesktop(desktop: any, owned: boolean): DesktopClient {
   const client: DesktopClient = {
     sandboxId: String(desktop.sandboxId),
     async startStream() {
@@ -105,7 +112,25 @@ export async function createDesktop(opts: { timeoutMs: number }): Promise<Deskto
       const result = await desktop.commands.run(command)
       return { stdout: result.stdout || '', stderr: result.stderr || '', exitCode: result.exitCode ?? null }
     },
-    async kill() { await desktop.kill() },
+    async kill() {
+      if (!owned) return // detach — the persistent box outlives the session
+      await desktop.kill()
+    },
   }
   return client
+}
+
+/** Attach to a RUNNING desktop sandbox by id (the user's persistent box).
+ *  Returns a client whose kill() detaches instead of terminating. */
+export async function attachDesktop(sandboxId: string): Promise<DesktopClient> {
+  e2bApiKey()
+  let Sandbox: any
+  try {
+    const mod = await import('@e2b/desktop')
+    Sandbox = mod.Sandbox
+  } catch {
+    throw new E2BDesktopError('@e2b/desktop is not installed', 'unavailable')
+  }
+  const desktop = await Sandbox.connect(sandboxId)
+  return wrapDesktop(desktop, false)
 }

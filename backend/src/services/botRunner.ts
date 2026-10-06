@@ -21,7 +21,8 @@ import { DailyCreditError, captureDailyReservation, cleanupDailyReservation, dai
 import { sanitizeMetadata } from '../agent/guardrails'
 import { startRun, setRunComputer, isRunTakeoverRequested } from './botRuns'
 import { ComputerSession } from './computerSession'
-import { E2BDesktopError } from './e2bDesktop'
+import { E2BDesktopError, attachDesktop } from './e2bDesktop'
+import { getLiveUserBox, createBoxTaskFolder } from './botBox'
 import { COMPUTER_TOOLS, COMPUTER_TOOL_NAMES } from '../agent/tools/computerTools'
 import { builtinToolNames } from '../agent'
 import { saveArtifact } from '../agent/artifacts'
@@ -240,6 +241,17 @@ export async function executeBotTask(
     // publish the admin live view, arm the TTL, and grant the computer_* tools.
     const computerCfg = computerConfig(task.computer)
     if (computerCfg.enabled) {
+      // Grok parity: the task's computer session runs INSIDE the caller's
+      // persistent box when one is alive — same always-on computer, per-task
+      // folder under /workspace — and only cold-boots a dedicated VM when the
+      // box is down (or E2B limits force isolation).
+      let existingDesktop: import('./e2bDesktop').DesktopClient | undefined
+      try {
+        const box = getLiveUserBox(identity.userId)
+        if (box) existingDesktop = await attachDesktop(box.sandboxId)
+      } catch {
+        existingDesktop = undefined // fall back to a fresh dedicated VM
+      }
       computer = await ComputerSession.start({
         runId: run.runId,
         userId: identity.userId,
@@ -248,7 +260,10 @@ export async function executeBotTask(
         takeoverTimeoutMs: Number(process.env.BOT_TAKEOVER_TIMEOUT_MS || 30 * 60_000),
         emit,
         isTakeoverRequested: isRunTakeoverRequested,
+        ...(existingDesktop ? { existingDesktop } : {}),
       })
+      // Per-task folder inside the box workspace (Grok's /workspace/task-*).
+      void createBoxTaskFolder(identity.userId, task.id, task.goal).catch(() => {})
       await setRunComputer(run.runId, {
         sandboxId: computer.info.sandboxId,
         streamAuthKey: computer.info.streamAuthKey,

@@ -1,5 +1,6 @@
-# Context: REPOSITORY ROOT (builds the Next.js product UI in frontend/ and
-# serves its static export through the hardened shared nginx template).
+# Context: REPOSITORY ROOT (builds the Next.js product UI in apps/web/ — an
+# npm-workspaces monorepo with shared packages in packages/ — and serves its
+# static export through the hardened shared nginx template).
 FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS build
 WORKDIR /app
 RUN node -e "const [a,b]=process.versions.node.split('.').map(Number);if(a<22||(a===22&&b<12))process.exit(1)"
@@ -10,7 +11,7 @@ RUN node -e "const [a,b]=process.versions.node.split('.').map(Number);if(a<22||(
 ARG NEXT_PUBLIC_SENTRY_DSN=""
 ARG NEXT_PUBLIC_POSTHOG_KEY=""
 ARG NEXT_PUBLIC_POSTHOG_HOST=""
-# Served revision of THIS image (contract §F). For repo-triggered builds,
+# Served revision of THIS image (contract AF). For repo-triggered builds,
 # Railway injects RAILWAY_GIT_COMMIT_SHA (provided variable) — declare it as
 # an ARG so it reaches the build (the ${{RAILWAY_GIT_COMMIT_SHA}} *reference*
 # in a service variable resolves EMPTY at build time — proven 2026-10-05, the
@@ -21,9 +22,17 @@ ARG RAILWAY_GIT_COMMIT_SHA=""
 ENV NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN} \
     NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY} \
     NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
-COPY frontend/package.json frontend/package-lock.json ./
+# npm workspaces: `npm ci` needs every workspace's package.json (manifests
+# only) before install, then the sources can land for the build.
+COPY package.json package-lock.json ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/api-client/package.json packages/api-client/
+COPY packages/ui/package.json packages/ui/
+COPY apps/web/package.json apps/web/
 RUN npm ci --no-audit --no-fund
-COPY frontend ./
+COPY packages ./packages
+COPY apps/web ./apps/web
+WORKDIR /app/apps/web
 # Static export; then the hardened shell-only PWA worker + icons.
 RUN npm run build && node build/pwa.mjs
 # Served-revision marker (contract §F) — the web half of the deploy gate, with
@@ -37,7 +46,7 @@ RUN npm run build && node build/pwa.mjs
 RUN node -e "const fs=require('fs');const r=(process.argv[1]||process.argv[2]||'').trim();fs.writeFileSync('out/version.json',JSON.stringify({surface:'web',revision:r||'unknown',builtAt:new Date().toISOString()}))" "$GIT_REVISION" "$RAILWAY_GIT_COMMIT_SHA"
 
 FROM nginx:1.28.0-alpine@sha256:30f1c0d78e0ad60901648be663a710bdadf19e4c10ac6782c235200619158284 AS runtime
-COPY --from=build /app/out /usr/share/nginx/html
+COPY --from=build /app/apps/web/out /usr/share/nginx/html
 COPY web/nginx.template.conf /etc/nginx/templates/default.conf.template
 COPY <<'SH' /docker-entrypoint.d/19-owned-upstream.sh
 #!/bin/sh

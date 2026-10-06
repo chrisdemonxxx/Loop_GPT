@@ -1,7 +1,10 @@
 # Root-context ignore for web/Dockerfile (BuildKit per-Dockerfile ignore).
 # Ignore everything, re-include the build inputs, then exclude sensitive names.
 **
-!frontend/**
+!package.json
+!package-lock.json
+!packages/**
+!apps/web/**
 !web
 !web/nginx.template.conf
 **/*env*

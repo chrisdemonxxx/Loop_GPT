@@ -32,6 +32,10 @@ export interface ComputerSessionOptions {
   isTakeoverRequested: (runId: string) => Promise<boolean>
   /** Injectable desktop factory (tests). */
   createDesktopFn?: (opts: { timeoutMs: number }) => Promise<DesktopClient>
+  /** Attach the session to the caller's PERSISTENT box instead of creating a
+   *  fresh VM: the run shares the always-on computer (Grok parity), and close()
+   *  leaves the box alive. */
+  existingDesktop?: DesktopClient
   sleep?: (ms: number) => Promise<void>
   now?: () => number
 }
@@ -49,6 +53,7 @@ export class ComputerSession {
     screen: { width: number; height: number },
     private screenshots = 0,
     private endedAt?: number,
+    private readonly ownsDesktop = true,
   ) {
     this.screen = screen
   }
@@ -68,9 +73,10 @@ export class ComputerSession {
   static async start(opts: ComputerSessionOptions): Promise<ComputerSession> {
     const create = opts.createDesktopFn || createDesktop
     const now = opts.now || (() => Date.now())
-    const client = await create({ timeoutMs: opts.ttlMinutes * 60_000 })
+    const ownsDesktop = !opts.existingDesktop
+    const client = opts.existingDesktop || (await create({ timeoutMs: opts.ttlMinutes * 60_000 }))
     try {
-      opts.emit({ type: 'status', message: 'Dedicated computer booted; starting the live stream…' })
+      opts.emit({ type: 'status', message: ownsDesktop ? 'Dedicated computer booted; starting the live stream…' : 'Attached to your persistent bot computer; starting the live stream…' })
       const info = await client.startStream()
       opts.emit({ type: 'status', message: 'Live stream up; preparing the desktop (screen wake + Chrome)…' })
       // Wake discipline: an idle desktop blanks into a black screen that reads
@@ -85,9 +91,9 @@ export class ComputerSession {
       const probe = await client.runCommand('xdpyinfo | grep -i dimensions').catch(() => ({ stdout: '', stderr: '', exitCode: 1 }))
       const screen = ComputerSession.parseScreenDimensions(probe.stdout)
       opts.emit({ type: 'status', message: `Desktop ready (${screen.width}x${screen.height}) — the agent is taking over.` })
-      return new ComputerSession(client, info, opts, now(), screen)
+      return new ComputerSession(client, info, opts, now(), screen, 0, undefined, ownsDesktop)
     } catch (error) {
-      await client.kill().catch(() => { /* best effort */ })
+      if (ownsDesktop) await client.kill().catch(() => { /* best effort */ })
       throw error
     }
   }
@@ -150,6 +156,9 @@ export class ComputerSession {
   async close(): Promise<void> {
     if (this.endedAt) return
     this.endedAt = (this.opts.now || (() => Date.now()))()
+    // A session on the persistent box DETACHES instead of killing — the box
+    // stays on for the next task and for the operator's Computer tab.
+    if (!this.ownsDesktop) return
     await this.client.kill().catch(() => { /* TTL on E2B's side is the backstop */ })
   }
 }

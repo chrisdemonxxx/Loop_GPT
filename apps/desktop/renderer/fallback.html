@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Loop GPT</title>
+  <style>
+    :root { color-scheme: dark }
+    body {
+      margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: #08080a; color: #e2e2e7;
+      font: 14px/1.65 -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    .card { max-width: 480px; padding: 40px; text-align: center }
+    h1 { font-size: 18px; font-weight: 600; margin: 0 0 12px }
+    code {
+      display: inline-block; margin: 10px 0; padding: 6px 10px; border-radius: 8px;
+      background: #14141f; border: 1px solid rgba(255, 255, 255, 0.1);
+      font: 12.5px/1 ui-monospace, Consolas, monospace; color: #e79d7f
+    }
+    p { color: #8b8b95; margin: 8px 0 }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Loop GPT — renderer not built</h1>
+    <p>The desktop shell is running, but the web export it serves is missing.</p>
+    <p>Build it, then restart the app:</p>
+    <code>npm run build -w apps/web</code>
+    <p>Then <code>npm run dev -w apps/desktop</code> again.</p>
+  </div>
+</body>
+</html>

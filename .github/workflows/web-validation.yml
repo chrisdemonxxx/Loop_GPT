@@ -2,9 +2,9 @@ name: Owned web validation
 
 on:
   pull_request:
-    paths: ['web/**', 'frontend/**', '.github/workflows/web-validation.yml']
+    paths: ['web/**', 'apps/**', 'packages/**', '.github/workflows/web-validation.yml']
   push:
-    paths: ['web/**', 'frontend/**', '.github/workflows/web-validation.yml']
+    paths: ['web/**', 'apps/**', 'packages/**', '.github/workflows/web-validation.yml']
 
 permissions:
   contents: read
@@ -13,27 +13,45 @@ jobs:
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: package-lock.json
+      # npm workspaces: install + test + build run from the repo root.
       - run: npm ci --no-audit --no-fund
-      - run: npm test
-      - run: npm run build
+      - run: npm run test -w apps/web
+      - run: npm run build -w apps/web
       - run: node build/pwa.mjs
+        working-directory: apps/web
       - run: npx --no-install playwright install --with-deps chromium
+        working-directory: apps/web
       - run: npx --no-install playwright test
+        working-directory: apps/web
 
-  # NOTE: the former `web-harness` job (Vite/React-19 alternative client in
-  # web/src) was removed when that client was archived to attic/web-vite-client.
+  # Desktop shell smoke gate (Phase 3): boots the Electron app headless
+  # (xvfb), asserts the loop:// protocol serves the static export AND the
+  # /api proxy reaches the live backend from inside the renderer
+  # (SMOKE_API_OK / exit-code contract in scripts/smoke.mjs).
+  desktop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build -w apps/web
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
+      - run: xvfb-run -a npm run smoke -w apps/desktop
+
   # web/ still contains the live deployment path: Dockerfile + nginx.template.conf
-  # + railway.json build the Next.js frontend/ static export and proxy /api + /v1.
+  # + railway.json build the Next.js apps/web static export and proxy /api + /v1.
   owned-web-docker:
     runs-on: ubuntu-latest
     timeout-minutes: 15

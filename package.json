@@ -1,0 +1,18 @@
+{
+  "name": "loop-gpt",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "npm run test -w apps/web",
+    "build:web": "npm run build -w apps/web",
+    "lint:web": "npm run lint -w apps/web",
+    "desktop": "npm run dev -w apps/desktop",
+    "desktop:web": "npm run dev:web -w apps/desktop",
+    "desktop:smoke": "npm run smoke -w apps/desktop",
+    "desktop:dist": "npm run build -w apps/web && npm run dist -w apps/desktop"
+  }
+}

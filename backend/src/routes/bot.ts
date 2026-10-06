@@ -187,4 +187,27 @@ router.post('/runs/:runId/takeover', asyncHandler(async (req, res) => {
   res.json({ takeoverRequested: takeover, interactiveUrl: takeover ? info?.interactiveUrl || null : null })
 }))
 
+/** GET /api/bot/computer - YOUR persistent box (Grok parity): the always-on
+ *  computer that exists independent of any task. Boots or resumes it on
+ *  demand and returns the live stream; per-task runs attach to this same VM.
+ *  Body: ?taskType=default|coding|research|ops|teach (seeds the tool pack). */
+router.get('/computer', asyncHandler(async (req, res) => {
+  const { ensureUserBox, getUserBoxStatus } = await import('../services/botBox')
+  const userId = (req as any).userId as string
+  const user = hasDb && prisma ? await prisma.user.findUnique({ where: { id: userId }, select: { email: true } }) : null
+  const taskType = (typeof req.query.taskType === 'string' ? req.query.taskType : 'default') as any
+  const box = await ensureUserBox(userId, (user?.email || 'operator').split('@')[0], taskType)
+  const status = await getUserBoxStatus(userId)
+  res.json({
+    alive: status.alive,
+    sandboxId: box.sandboxId,
+    viewUrl: box.streamUrl || null,
+    interactiveUrl: box.interactiveUrl || null,
+    resumed: box.resumed,
+    ageMinutes: box.ageMinutes,
+    taskType: box.taskType,
+    workspaceDir: box.workspaceDir,
+  })
+}))
+
 export default router

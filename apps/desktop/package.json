@@ -1,0 +1,20 @@
+{
+  "name": "loop-gpt",
+  "productName": "Loop GPT",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Loop GPT desktop shell (sand-pattern Electron architecture)",
+  "author": "Loop GPT",
+  "main": "electron-main/main.cjs",
+  "scripts": {
+    "dev": "electron .",
+    "dev:web": "cross-env LOOP_DEV_URL=http://localhost:3000 electron .",
+    "smoke": "node scripts/smoke.mjs",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "electron": "42.1.0",
+    "electron-builder": "26.15.3"
+  }
+}

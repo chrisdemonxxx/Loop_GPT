@@ -1,0 +1,28 @@
+# Electron-builder config (NSIS target — same installer family as the
+# Grok Bot reference distribution). Build: npm run desktop:dist
+appId: com.loopgpt.desktop
+productName: Loop GPT
+directories:
+  output: release
+  buildResources: build
+files:
+  - electron-main/**/*
+  - electron-preload/**/*
+  - renderer/**/*
+  - package.json
+  - "!**/*.md"
+extraResources:
+  # The static export rides along as an extraResource (served by loop://).
+  - from: ../web/out
+    to: renderer-export
+win:
+  target:
+    - nsis
+  # Production signing: set CSC_LINK (pfx or base64) + CSC_KEY_PASSWORD in the
+  # environment and electron-builder signs automatically. Without them the
+  # build falls back to the local signtool pass (unsigned artifacts).
+nsis:
+  oneClick: true
+  perMachine: false
+  deleteAppDataOnUninstall: false
+  artifactName: Loop_GPT_${version}_Setup.${ext}
