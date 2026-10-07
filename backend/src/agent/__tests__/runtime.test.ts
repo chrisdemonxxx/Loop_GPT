@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { registerBuiltinTools } from '../index'
-import { parseInlineToolCall, parseInlineToolCalls, permissionFor, requiresInteractivePause, stripInlineToolPayload } from '../agentRuntime'
+import { parseInlineToolCall, parseInlineToolCalls, permissionFor, previewLine, requiresInteractivePause, stripInlineToolPayload } from '../agentRuntime'
 import { toolRegistry } from '../toolRegistry'
 import type { ToolDefinition, ToolContext } from '../types'
 
@@ -42,6 +42,13 @@ describe('stripInlineToolPayload', () => {
     expect(text).toContain('Writing the page.')
     expect(text).not.toContain('"tool"')
     expect(text).not.toContain('calculator')
+  })
+
+  it('preview lines drop tool JSON and the internal heading', () => {
+    const line = previewLine('Hello\n{"tool":"web_search","arguments":{"query":"q"}}\nHere is what I found so far:\nThe page is ready.')
+    expect(line).toContain('Hello')
+    expect(line).toContain('The page is ready.')
+    expect(line).not.toMatch(/"tool"|here is what i found/i)
   })
 })
 

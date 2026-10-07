@@ -22,6 +22,7 @@ import { BUILTIN_SKILLS } from '../agent/skills/builtin'
 import { selectedConnectionIds, workspaceConnectionTools } from '../services/workspaceTools'
 import { connectionToolName } from '../agent/connectors/reviewedAdapters'
 import { runAgent } from '../agent/agentRuntime'
+import { shouldPersistUserMessage } from '../services/botRoster'
 import { runDeepResearch } from '../agent/research/deepResearch'
 import { initSSE, sendEvent, endSSE, startKeepalive } from '../agent/streaming'
 import { createRun, appendEvent, finishRun } from '../services/runReplay'
@@ -325,7 +326,7 @@ export async function streamAgentRun(req: Request, res: Response) {
       // saved — the new answer becomes a sibling of the old one); an edit
       // parents the new prompt to the edited turn's predecessor (explicit
       // null = root sibling). A normal send appends (undefined parent).
-      if (!input.data.regenerateOf && input.data.skipUserPersist !== true) {
+      if (shouldPersistUserMessage({ regenerateOf: input.data.regenerateOf, skipUserPersist: input.data.skipUserPersist })) {
         await saveMessage(conversation.id, {
           role: 'user',
           content: raw || '',

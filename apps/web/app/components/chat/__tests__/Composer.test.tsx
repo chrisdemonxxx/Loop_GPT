@@ -48,6 +48,17 @@ function renderComposer(overrides: Partial<typeof base> = {}) {
 }
 
 describe('Composer', () => {
+  it('keeps one send control and a readable field while slash and run settings are open', () => {
+    renderComposer({ input: '/help draft', showSlash: true })
+    expect(screen.getAllByRole('button', { name: 'Send message' })).toHaveLength(1)
+    expect(screen.getAllByRole('textbox')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: /run settings/i }))
+    const field = screen.getByRole('textbox')
+    expect(field).toHaveValue('/help draft')
+    expect(field).toBeVisible()
+    expect(screen.getByRole('menu', { name: 'Run settings' })).toBeInTheDocument()
+  })
+
   it('disables Send with no input and enables it with text', () => {
     renderComposer({ input: 'hello' })
     expect(screen.getByLabelText('Send message')).toBeEnabled()

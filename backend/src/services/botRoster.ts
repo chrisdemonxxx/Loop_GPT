@@ -113,6 +113,25 @@ export function narrateTool(name: string, done: boolean, failed = false): string
   return `${label.charAt(0).toUpperCase()}${label.slice(1)} is done.`
 }
 
+/** What to do when listing an owner's bots. Zero bots seed the full roster.
+ *  Bots without a primary get Loop Bot back. Anything else stays as-is. */
+export function rosterAction(count: number, hasPrimary: boolean): 'seed' | 'repair-primary' | 'keep' {
+  if (count <= 0) return 'seed'
+  if (!hasPrimary) return 'repair-primary'
+  return 'keep'
+}
+
+/** The primary bot is the account's Loop Bot. Deleting it is refused. */
+export function primaryDeleteRefusal(isPrimary: boolean): string | null {
+  return isPrimary ? 'Loop Bot stays. It is the primary agent.' : null
+}
+
+/** A group fan-out saves the user row on the first member only. Retries
+ *  re-answer the stored row and never insert another. */
+export function shouldPersistUserMessage(opts: { regenerateOf?: string | null; skipUserPersist?: boolean }): boolean {
+  return !opts.regenerateOf && opts.skipUserPersist !== true
+}
+
 export function narrateSteps(steps: Array<{ tool?: string; result?: string }>): string {
   if (!steps.length) return ''
   return steps.map((s) => narrateTool(s.tool || 'that', true, /error|fail|not approved|blocked/i.test(s.result || ''))).join(' ')

@@ -7,6 +7,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { type AgentMode } from '../../lib/api'
 import { type ArtifactRef } from '../../lib/stream'
 import { type BranchVersionInfo } from '../../lib/branch'
+import { presentAssistantText, presentStatus, presentStreamError } from '../../lib/assistantText'
 import Markdown from './Markdown'
 import type { LiveStep, Message, PendingApproval, QueuedMessage } from './types'
 import { MessageBubble } from './MessageBubble'
@@ -132,6 +133,11 @@ export default function MessageList({
     el.scrollTop = el.scrollHeight
   }, [messages, liveSteps, statusMsg, liveAnswer])
 
+  const shownStatus = presentStatus(statusMsg)
+  const thoughts = presentAssistantText(liveThinking || '')
+  const banner = errorMsg ? presentStreamError(errorMsg) : null
+  const showWorkingLine = running && (mode === 'research' || mode === 'agent') && !liveAnswer && !liveSteps.some((s) => s.kind === 'tool')
+
   return (
     <div className="flex-1 min-h-0 relative">
     <div className="h-full overflow-y-auto px-3 sm:px-4 py-4 sm:py-8"
@@ -140,10 +146,10 @@ export default function MessageList({
     >
       {/* (S5) Persistent run error — dismissible, survives the stream's
           finally block (the old transient status line flashed and vanished). */}
-      {errorMsg && (
+      {banner && (
         <div className="max-w-[48rem] mx-auto mb-4">
           <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-rose-400/30 bg-rose-500/[0.08] px-3.5 py-2.5 text-[13px] text-rose-200">
-            <span className="flex-1">⚠️ {errorMsg}</span>
+            <span className="flex-1">⚠️ {banner}</span>
             {onClearError && (
               <button
                 type="button"
@@ -258,7 +264,7 @@ export default function MessageList({
               {/* Live assistant response */}
               <div className="min-w-0 space-y-2">
                 {/* Extended thinking (§2.5): collapsible reasoning stream. */}
-                {liveThinking && (
+                {thoughts && (
                   <details className="group rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden" open={running && !liveAnswer}>
                     <summary className="flex items-center gap-1.5 px-3 py-2 text-[12px] text-slate-400 cursor-pointer hover:text-slate-200 select-none">
                       <Brain size={12} className="text-slate-400" />
@@ -266,20 +272,20 @@ export default function MessageList({
                       {running && !liveAnswer && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse ml-0.5" />}
                     </summary>
                     <div className={`px-3.5 pb-3 text-[12.5px] leading-relaxed text-slate-400 whitespace-pre-wrap max-h-64 overflow-y-auto ${running && !liveAnswer ? 'shimmer-text' : ''}`}>
-                      {liveThinking}
+                      {thoughts}
                     </div>
                   </details>
                 )}
-                {running && (mode === 'research' || mode === 'agent') && !liveAnswer && !liveSteps.some((s) => s.kind === 'tool') && (
+                {showWorkingLine && (
                   <div className="flex items-center gap-2 text-[13px] text-slate-400">
                     <Loader2 size={12} className="animate-spin" />
-                    <span>{statusMsg || 'working'}</span>
+                    <span>{shownStatus || 'working'}</span>
                   </div>
                 )}
-                {statusMsg && !liveAnswer && liveSteps.length === 0 && (
+                {shownStatus && !liveAnswer && liveSteps.length === 0 && !showWorkingLine && (
                   <div className="flex items-center gap-2 text-[13px] text-slate-400" aria-live="polite">
                     <span className="shimmer inline-block h-2.5 w-28 rounded-full" aria-hidden="true" />
-                    <span>{statusMsg}</span>
+                    <span>{shownStatus}</span>
                   </div>
                 )}
                 {liveAuthor && (
@@ -297,7 +303,7 @@ export default function MessageList({
                     streams below the response (audit P1). */}
                 <TurnActivity
                   running={running}
-                  status={statusMsg}
+                  status={shownStatus}
                   liveSteps={liveSteps}
                   pendingApproval={pendingApproval}
                   onApprove={onApprove}

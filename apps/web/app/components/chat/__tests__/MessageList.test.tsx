@@ -20,6 +20,61 @@ beforeEach(() => {
 })
 afterEach(() => vi.unstubAllGlobals())
 
+const liveBase = {
+  messages: [] as Message[],
+  liveUser: { content: 'hi' },
+  liveSteps: [],
+  liveAnswer: '',
+  liveArtifacts: [],
+  running: true,
+  statusMsg: '',
+  mode: 'research' as const,
+  onEditMessage: () => {},
+  onRetryBefore: () => {},
+}
+
+describe('chat text stays clean', () => {
+  it('shows a live status once and hides tool JSON, the fallback heading, and abort dumps', () => {
+    const first = render(<MessageList {...liveBase} statusMsg="Searching the web" />)
+    expect(screen.getAllByText('Searching the web')).toHaveLength(1)
+    first.unmount()
+
+    render(
+      <MessageList
+        {...liveBase}
+        statusMsg="BodyStreamBuffer was aborted"
+        liveThinking={'plan\n{"tool":"create_document","arguments":{"content":"x"}}\nHere is what I found so far:\nnext'}
+        errorMsg="BodyStreamBuffer was aborted"
+      />,
+    )
+    expect(screen.queryByText(/"tool"/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/here is what i found/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/BodyStreamBuffer/)).not.toBeInTheDocument()
+    expect(screen.getAllByText('Stopped')).toHaveLength(1)
+    expect(screen.getByText(/next/)).toBeInTheDocument()
+  })
+
+  it('strips tool JSON from stored thoughts and copies the shown answer', () => {
+    const writeText = vi.fn(async () => undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    render(
+      <MessageBubble
+        message={msg({
+          content: 'Ready\n{"tool":"web_search","args":{"query":"q"}}',
+          metadata: { reasoning: 'Notes\nHere is what I found so far:\n{"name":"execute_code","arguments":{"code":"1"}}' },
+        })}
+      />,
+    )
+    expect(screen.queryByText(/"tool"|"name"/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/here is what i found/i)).not.toBeInTheDocument()
+    expect(screen.getByText('Ready')).toBeInTheDocument()
+    expect(screen.getByText(/Notes/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Copy message' }))
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Ready'))
+    expect(String(writeText.mock.calls[0][0])).not.toMatch(/"tool"/)
+  })
+})
+
 describe('scroll-fight protection (§8-18)', () => {
   it('shows the Jump-to-latest button only when scrolled up', async () => {
     const messages = [msg({ id: 'a' }), msg({ id: 'b', role: 'user', content: 'hi' })]

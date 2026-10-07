@@ -8,7 +8,7 @@ import { type ArtifactRef } from '../../lib/stream'
 import { type BranchVersionInfo } from '../../lib/branch'
 import type { Message, StoredStep } from './types'
 import Markdown from './Markdown'
-import { balanceMarkdown } from '../../lib/assistantText'
+import { balanceMarkdown, presentAssistantText } from '../../lib/assistantText'
 import { useAttachmentUrl } from './artifactUrl'
 import { ArtifactCard } from './ArtifactCard'
 import TurnActivity from './TurnActivity'
@@ -85,8 +85,10 @@ export function MessageBubble({
   const attachedImage = useAttachmentUrl(message.attachmentId)
   const speech = useSpeech()
 
+  const readable = message.role === 'assistant' ? presentAssistantText(message.content || '') : (message.content || '')
+  const storedThoughts = message.metadata?.reasoning ? presentAssistantText(String(message.metadata.reasoning)) : ''
   const copy = () => {
-    navigator.clipboard?.writeText(message.content || '').then(() => {
+    navigator.clipboard?.writeText(readable).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 1400)
     })
@@ -166,13 +168,13 @@ export function MessageBubble({
         </div>
       )}
       {/* Stored extended thinking (§2.5): survives reloads via message metadata. */}
-      {message.metadata?.reasoning && (
+      {storedThoughts && (
         <details className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
           <summary className="flex items-center gap-1.5 px-3 py-2 text-[12px] text-slate-400 cursor-pointer hover:text-slate-200 select-none">
             <Brain size={12} className="text-slate-400" /> Thoughts
           </summary>
           <div className="px-3.5 pb-3 text-[12.5px] leading-relaxed text-slate-400 whitespace-pre-wrap max-h-64 overflow-y-auto">
-            {String(message.metadata.reasoning)}
+            {storedThoughts}
           </div>
         </details>
       )}
@@ -234,10 +236,10 @@ export function MessageBubble({
       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity -ml-1">
         {version && <VersionArrows info={version} onSelect={onSelectVersion} />}
         <ActionBtn onClick={copy} title="Copy" ariaLabel="Copy message" icon={copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />} />
-        {speech.supported && message.content && (
+        {speech.supported && readable && (
           <>
             <ActionBtn
-              onClick={() => speech.speak(message.id, message.content)}
+              onClick={() => speech.speak(message.id, readable)}
               title={speech.speakingId === message.id ? (speech.paused ? 'Resume reading' : 'Pause reading') : 'Read aloud'}
               ariaLabel="Read aloud"
               icon={<Volume2 size={14} className={speech.speakingId === message.id ? 'text-[#c96442]' : undefined} />}

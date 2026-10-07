@@ -68,6 +68,11 @@ export function createBotGroup(botIds: string[], name?: string) {
   return req<{ id: string; title: string; kind: string; botIds: string[] }>('POST', '/api/bots/groups', { botIds, name })
 }
 
+/** One send, one user row. Later members answer without saving the prompt again. */
+export function groupFanOut<T extends { id: string }>(targets: T[]): Array<T & { skipUserPersist: boolean }> {
+  return targets.map((bot, i) => ({ ...bot, skipUserPersist: i > 0 }))
+}
+
 /** @mention routing. No mention → every member. A matching @name → only those. */
 export function botsForMessage<T extends { id: string; name: string }>(text: string, members: T[]): T[] {
   if (!members.length) return []

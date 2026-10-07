@@ -89,6 +89,16 @@ export function narrateTool(name: string, done: boolean, failed = false): string
   return `${label.charAt(0).toUpperCase()}${label.slice(1)} is done.`
 }
 
+/** Status line shown beside a live turn. Tool JSON and the internal heading
+ *  never appear. An abort is the word "Stopped", not the exception text. */
+export function presentStatus(message: string): string {
+  const msg = String(message || '').trim()
+  if (!msg) return ''
+  const shown = presentStreamError(msg)
+  if (shown === null) return /abort|bodystreambuffer|aborterror|stopped/i.test(msg) ? 'Stopped' : ''
+  return presentAssistantText(shown)
+}
+
 /** Abort and transport failures the user should not see as raw exceptions. */
 export function presentStreamError(message: string): string | null {
   const msg = String(message || '').trim()

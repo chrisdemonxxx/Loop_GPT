@@ -64,6 +64,17 @@ export function stripInlineToolPayload(content: string): string {
   return text.replace(/\n{3,}/g, '\n\n').trim()
 }
 
+/** One-line sidebar preview. Tool JSON and the internal heading are not preview text. */
+export function previewLine(text: string): string {
+  const clean = stripInlineToolPayload(text)
+    .replace(/^#{1,6}\s*Here is what I found so far:\s*/gim, '')
+    .replace(/^\s*Here is what I found so far:\s*/gim, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!clean) return ''
+  return clean.length > 80 ? `${clean.slice(0, 77)}…` : clean
+}
+
 /**
  * The interactive approval gate ("Ask before each action" mode).
  *  - blocked always wins (handled before this) and never pauses.

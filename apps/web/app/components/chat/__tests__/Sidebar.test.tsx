@@ -55,6 +55,13 @@ const GROUPED = [
   conv('yday', 'Yesterday chat', 1),
 ]
 
+describe('Sidebar — one new session', () => {
+  it('renders a single New session control', () => {
+    renderSidebar()
+    expect(screen.getAllByRole('button', { name: 'New session' })).toHaveLength(1)
+  })
+})
+
 describe('Sidebar — grouped history', () => {
   it('groups conversations by date bucket with pinned floating first', () => {
     const { container } = renderSidebar({ conversations: GROUPED })

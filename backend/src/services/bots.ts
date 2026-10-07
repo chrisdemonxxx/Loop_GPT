@@ -2,7 +2,8 @@
  * Owner-scoped bot CRUD, starter seeding, and per-bot / group threads.
  */
 import { prisma, hasDb } from './prisma'
-import { STARTER_BOTS, greeting, botsForMessage, type MentionBot } from './botRoster'
+import { previewLine } from '../agent/agentRuntime'
+import { STARTER_BOTS, greeting, botsForMessage, primaryDeleteRefusal, rosterAction, type MentionBot } from './botRoster'
 
 export class BotError extends Error {
   constructor(public readonly code: 'unavailable' | 'not_found' | 'invalid' | 'forbidden', detail?: string) {
@@ -61,23 +62,25 @@ function toRecord(row: {
 export async function ensureRoster(ownerId: string): Promise<void> {
   const database = db()
   const count = await database.bot.count({ where: { ownerId } })
-  if (count > 0) {
-    const primary = await database.bot.findFirst({ where: { ownerId, isPrimary: true }, select: { id: true } })
-    if (!primary) {
-      const loop = STARTER_BOTS[0]
-      await database.bot.create({
-        data: {
-          ownerId,
-          name: loop.name,
-          label: loop.label,
-          avatarColor: loop.avatarColor,
-          persona: loop.persona,
-          defaultTools: loop.defaultTools,
-          cloudComputer: loop.cloudComputer,
-          isPrimary: true,
-        },
-      })
-    }
+  const primary = count > 0
+    ? await database.bot.findFirst({ where: { ownerId, isPrimary: true }, select: { id: true } })
+    : null
+  const action = rosterAction(count, !!primary)
+  if (action === 'keep') return
+  if (action === 'repair-primary') {
+    const loop = STARTER_BOTS[0]
+    await database.bot.create({
+      data: {
+        ownerId,
+        name: loop.name,
+        label: loop.label,
+        avatarColor: loop.avatarColor,
+        persona: loop.persona,
+        defaultTools: loop.defaultTools,
+        cloudComputer: loop.cloudComputer,
+        isPrimary: true,
+      },
+    })
     return
   }
   await database.bot.createMany({
@@ -166,8 +169,7 @@ export async function listBots(ownerId: string): Promise<{ bots: BotListItem[]; 
 }
 
 function clip(text: string): string {
-  const clean = text.replace(/\s+/g, ' ').trim()
-  return clean.length > 80 ? `${clean.slice(0, 77)}…` : clean
+  return previewLine(text)
 }
 
 export interface CreateBotInput {
@@ -222,7 +224,8 @@ export async function deleteBot(ownerId: string, id: string) {
   const database = db()
   const existing = await database.bot.findFirst({ where: { id, ownerId } })
   if (!existing) throw new BotError('not_found')
-  if (existing.isPrimary) throw new BotError('forbidden', 'Loop Bot stays. It is the primary agent.')
+  const refusal = primaryDeleteRefusal(existing.isPrimary)
+  if (refusal) throw new BotError('forbidden', refusal)
   await database.bot.delete({ where: { id } })
   return { ok: true }
 }

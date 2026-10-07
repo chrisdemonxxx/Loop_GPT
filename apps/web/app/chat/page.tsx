@@ -22,7 +22,7 @@ import ChatHeader from '../components/chat/ChatHeader'
 import { CanvasPanel } from '../components/chat/CanvasPanel'
 import { BotProfilePanel, CreateBotDialog, CreateGroupDialog, StartChatPicker } from '../components/chat/BotChrome'
 import { canvasFromStored, canvasFromTurn } from '../lib/canvasDoc'
-import { botsForMessage, createBotGroup, createNamedBot, listNamedBots, openBotThread, updateNamedBot, type BotGroup, type NamedBot } from '../lib/namedBots'
+import { botsForMessage, createBotGroup, createNamedBot, groupFanOut, listNamedBots, openBotThread, updateNamedBot, type BotGroup, type NamedBot } from '../lib/namedBots'
 import AuthSidePanel from '../components/chat/AuthSidePanel'
 import type { Conversation, Message } from '../components/chat/types'
 import { parseCommand, SLASH_COMMANDS } from '../lib/commands'
@@ -509,11 +509,11 @@ export default function ChatPage() {
       ...(branchParent !== undefined ? { branchParent } : {}),
     }
     if (groupTargets.length) {
-      const snaps = groupTargets.map((bot, i) => ({
+      const snaps = groupFanOut(groupTargets).map((bot, i) => ({
         ...baseSnap,
         id: `group-${bot.id}-${Date.now()}-${i}`,
         botId: bot.id,
-        skipUserPersist: i > 0,
+        skipUserPersist: bot.skipUserPersist,
       }))
       setInput('')
       uploads.reset()
