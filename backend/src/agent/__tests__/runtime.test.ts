@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { registerBuiltinTools } from '../index'
-import { parseInlineToolCall, parseInlineToolCalls, permissionFor, previewLine, requiresInteractivePause, stripInlineToolPayload } from '../agentRuntime'
+import { parseInlineToolCall, parseInlineToolCalls, permissionFor, previewLine, requiresInteractivePause, settleFinalAnswer, stripInlineToolPayload } from '../agentRuntime'
 import { toolRegistry } from '../toolRegistry'
 import type { ToolDefinition, ToolContext } from '../types'
 
@@ -49,6 +49,26 @@ describe('stripInlineToolPayload', () => {
     expect(line).toContain('Hello')
     expect(line).toContain('The page is ready.')
     expect(line).not.toMatch(/"tool"|here is what i found/i)
+  })
+})
+
+describe('settleFinalAnswer', () => {
+  it('keeps the prose under the internal heading instead of replacing the whole answer', () => {
+    const text = settleFinalAnswer(
+      'Here is what I found so far:\nThe page is ready.',
+      'Web search is done.',
+    )
+    expect(text).toBe('The page is ready.')
+    expect(text).not.toMatch(/here is what i found/i)
+  })
+
+  it('strips a hashed heading and tool JSON, and narrates only when nothing remains', () => {
+    expect(settleFinalAnswer('## Here is what I found so far:\nThe page is ready.', 'Web search is done.')).toBe('The page is ready.')
+    expect(settleFinalAnswer(
+      '{"tool":"web_search","arguments":{"query":"q"}}\nHere is what I found so far:',
+      'Web search is done.',
+    )).toBe('Web search is done.')
+    expect(settleFinalAnswer('', 'I hit a snag before I could finish. Ask me to continue and I will.')).toMatch(/hit a snag/)
   })
 })
 

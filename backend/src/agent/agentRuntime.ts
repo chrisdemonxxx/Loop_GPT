@@ -64,15 +64,26 @@ export function stripInlineToolPayload(content: string): string {
   return text.replace(/\n{3,}/g, '\n\n').trim()
 }
 
-/** One-line sidebar preview. Tool JSON and the internal heading are not preview text. */
-export function previewLine(text: string): string {
-  const clean = stripInlineToolPayload(text)
+/** Drop the step-budget heading without touching the prose under it. */
+function stripInternalHeading(text: string): string {
+  return text
     .replace(/^#{1,6}\s*Here is what I found so far:\s*/gim, '')
     .replace(/^\s*Here is what I found so far:\s*/gim, '')
-    .replace(/\s+/g, ' ')
-    .trim()
+}
+
+/** One-line sidebar preview. Tool JSON and the internal heading are not preview text. */
+export function previewLine(text: string): string {
+  const clean = stripInternalHeading(stripInlineToolPayload(text)).replace(/\s+/g, ' ').trim()
   if (!clean) return ''
   return clean.length > 80 ? `${clean.slice(0, 77)}…` : clean
+}
+
+/** Text saved as the assistant's answer. Tool JSON and the internal heading
+ *  never ship. A heading with a real answer under it keeps that answer;
+ *  only an empty remainder uses the narration fallback. */
+export function settleFinalAnswer(content: string, fallback: string): string {
+  const text = stripInternalHeading(stripInlineToolPayload(content || '')).trim()
+  return text || fallback
 }
 
 /**
@@ -549,14 +560,10 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
     }
   }
 
-  const stripped = stripInlineToolPayload(finalContent)
-  if (!stripped || /^here is what i found so far:/i.test(stripped)) {
-    // The model answered with tool JSON only, or the step budget expired.
-    // Speak in words. Never surface the internal fallback as a heading.
-    finalContent = sanitizeText(narrateSteps(steps) || 'I hit a snag before I could finish. Ask me to continue and I will.')
-  } else {
-    finalContent = sanitizeText(stripped)
-  }
+  // Tool JSON and a leading "Here is what I found so far:" are not the answer.
+  // Keep any prose under that heading. Narrate only when nothing usable remains.
+  const fallback = narrateSteps(steps) || 'I hit a snag before I could finish. Ask me to continue and I will.'
+  finalContent = sanitizeText(settleFinalAnswer(finalContent, fallback))
 
   ctx.emit({ type: 'final', content: finalContent, metadata: sanitizeMetadata({ toolsUsed: Array.from(toolsUsed), steps }) })
   return { content: finalContent, steps, toolsUsed: Array.from(toolsUsed) }
