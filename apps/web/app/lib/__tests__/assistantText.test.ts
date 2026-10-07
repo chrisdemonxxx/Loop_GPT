@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { botsForMessage, groupFanOut } from '../namedBots'
+import { applyMention, botsForMessage, followUpTargets, groupFanOut, mentionDraft } from '../namedBots'
 import { balanceMarkdown, presentAssistantText, presentStatus, presentStreamError, stripInlineToolPayload } from '../assistantText'
 
 describe('presentAssistantText', () => {
@@ -52,9 +52,21 @@ describe('groupFanOut', () => {
 })
 
 describe('botsForMessage', () => {
-  const members = [{ id: 'h', name: 'Helm' }, { id: 'r', name: 'Review' }]
-  it('returns every member, or only the mentioned bot', () => {
-    expect(botsForMessage('build it', members)).toHaveLength(2)
+  const members = [{ id: 'h', name: 'Helm' }, { id: 'r', name: 'Review' }, { id: 'b', name: 'Builder' }]
+  it('returns every member, or only the mentioned bots, in mention order', () => {
+    expect(botsForMessage('build it', members)).toHaveLength(3)
     expect(botsForMessage('hey @Helm only you', members).map((b) => b.id)).toEqual(['h'])
+    expect(botsForMessage('@Helm ship it @Review', members).map((b) => b.id)).toEqual(['h', 'r'])
+    expect(botsForMessage('@Re check this', members)).toHaveLength(0)
+    expect(botsForMessage('@all the plan', members)).toHaveLength(3)
+    expect(botsForMessage('@nobody thoughts?', members)).toHaveLength(0)
+  })
+
+  it('schedules one follow-up for a bot who has not spoken and ignores @all', () => {
+    expect(followUpTargets('Ask @Review to check.', members, ['h']).map((b) => b.id)).toEqual(['r'])
+    expect(followUpTargets('@all please weigh in', members, ['h'])).toHaveLength(0)
+    expect(followUpTargets('@Helm again', members, ['h'])).toHaveLength(0)
+    expect(mentionDraft('hey @He')?.query).toBe('He')
+    expect(applyMention('hey @He', 'Helm')).toBe('hey @Helm ')
   })
 })

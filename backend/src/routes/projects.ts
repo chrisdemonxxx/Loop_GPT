@@ -8,6 +8,7 @@ import { asyncHandler } from '../middleware/errorLogger'
 import { generateEmbedding } from '../services/embeddingStore'
 import { indexEmbedding, vectorSearch } from '../services/vectorSearch'
 import { extractDocumentText, MAX_DOC_BYTES } from '../services/documentText'
+import { BotError, openProjectRoom, setProjectBots } from '../services/bots'
 
 export const projectRouter = express.Router()
 projectRouter.use(authenticateToken)
@@ -22,6 +23,18 @@ const projectUpdateInput = z.object({
   instructions: z.string().trim().max(5000).optional(),
 }).strict()
 
+const projectBotsInput = z.object({
+  botIds: z.array(z.string().trim().min(1).max(80)).max(24),
+}).strict()
+
+function fail(res: express.Response, error: unknown) {
+  if (error instanceof BotError) {
+    const status = error.code === 'not_found' ? 404 : error.code === 'forbidden' ? 403 : error.code === 'unavailable' ? 503 : 400
+    return res.status(status).json({ error: error.message, code: error.code })
+  }
+  throw error
+}
+
 /** List projects in a workspace. */
 projectRouter.get('/:workspaceId/projects', asyncHandler(async (req, res) => {
   const userId = (req as any).userId
@@ -31,9 +44,10 @@ projectRouter.get('/:workspaceId/projects', asyncHandler(async (req, res) => {
     where: { workspaceId },
     orderBy: { createdAt: 'desc' },
     select: { id: true, name: true, role: true, instructions: true, createdAt: true, updatedAt: true,
-      _count: { select: { knowledgeChunks: true, conversations: true } } },
+      _count: { select: { knowledgeChunks: true, conversations: true } },
+      bots: { select: { botId: true }, orderBy: { createdAt: 'asc' } } },
   })
-  res.json(projects)
+  res.json(projects.map(({ bots, ...project }) => ({ ...project, botIds: bots.map((row) => row.botId) })))
 }))
 
 /** Create a project in a workspace. */
@@ -58,6 +72,47 @@ projectRouter.patch('/:workspaceId/projects/:projectId', asyncHandler(async (req
   const input = projectUpdateInput.parse(req.body)
   const project = await prisma!.project.update({ where: { id: projectId }, data: input })
   res.json(project)
+}))
+
+/** Bots assigned to a project. */
+projectRouter.get('/:workspaceId/projects/:projectId/bots', asyncHandler(async (req, res) => {
+  const userId = (req as any).userId as string
+  const { workspaceId, projectId } = req.params
+  await requireMembership(userId, workspaceId, 'viewer')
+  const project = await prisma!.project.findFirst({ where: { id: projectId, workspaceId }, select: { id: true } })
+  if (!project) return res.status(404).json({ error: 'Project not found.' })
+  const rows = await prisma!.projectBot.findMany({
+    where: { projectId, bot: { ownerId: userId } },
+    select: { botId: true, bot: { select: { id: true, name: true } } },
+    orderBy: { createdAt: 'asc' },
+  })
+  res.json({ botIds: rows.map((row) => row.botId), bots: rows.map((row) => row.bot) })
+}))
+
+/** Replace the project's bots. Unknown ids are dropped. The room membership follows. */
+projectRouter.put('/:workspaceId/projects/:projectId/bots', asyncHandler(async (req, res) => {
+  const userId = (req as any).userId as string
+  const { workspaceId, projectId } = req.params
+  await requireMembership(userId, workspaceId, 'editor')
+  const project = await prisma!.project.findFirst({ where: { id: projectId, workspaceId }, select: { id: true } })
+  if (!project) return res.status(404).json({ error: 'Project not found.' })
+  const input = projectBotsInput.parse(req.body)
+  try {
+    const botIds = await setProjectBots(userId, projectId, input.botIds)
+    res.json({ botIds })
+  } catch (error) { return fail(res, error) }
+}))
+
+/** Open or reuse the project's group room. Needs at least two assigned bots. */
+projectRouter.post('/:workspaceId/projects/:projectId/room', asyncHandler(async (req, res) => {
+  const userId = (req as any).userId as string
+  const { workspaceId, projectId } = req.params
+  await requireMembership(userId, workspaceId, 'editor')
+  const project = await prisma!.project.findFirst({ where: { id: projectId, workspaceId }, select: { id: true } })
+  if (!project) return res.status(404).json({ error: 'Project not found.' })
+  try {
+    res.json(await openProjectRoom(userId, projectId))
+  } catch (error) { return fail(res, error) }
 }))
 
 /** Delete a project and its knowledge base. */

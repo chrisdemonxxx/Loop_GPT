@@ -290,3 +290,50 @@ export async function groupMembers(ownerId: string, conversationId: string): Pro
 export function routeGroupMessage<T extends MentionBot>(text: string, members: T[]): T[] {
   return botsForMessage(text, members)
 }
+
+/** Replace the bots assigned to a project, and keep its room in step. */
+export async function setProjectBots(ownerId: string, projectId: string, botIds: string[]) {
+  const database = db()
+  const unique = [...new Set(botIds.map((id) => String(id || '').trim()).filter(Boolean))]
+  const bots = unique.length
+    ? await database.bot.findMany({ where: { ownerId, id: { in: unique } }, select: { id: true } })
+    : []
+  const found = new Set(bots.map((bot) => bot.id))
+  const ids = unique.filter((id) => found.has(id))
+  await database.$transaction([
+    database.projectBot.deleteMany({ where: { projectId } }),
+    database.projectBot.createMany({ data: ids.map((botId) => ({ projectId, botId })) }),
+  ])
+  await database.conversation.updateMany({
+    where: { userId: ownerId, projectId, kind: 'group' },
+    data: { botIds: ids },
+  })
+  return ids
+}
+
+/** Open the one group chat for a project. Reuses the newest room and syncs members. */
+export async function openProjectRoom(ownerId: string, projectId: string) {
+  const database = db()
+  const project = await database.project.findFirst({
+    where: { id: projectId },
+    include: { bots: { include: { bot: true } } },
+  })
+  if (!project) throw new BotError('not_found', 'Project not found.')
+  const members = project.bots.map((row) => row.bot).filter((bot) => bot.ownerId === ownerId)
+  if (members.length < 2) throw new BotError('invalid', 'Assign at least two bots to this project.')
+  const ids = members.map((bot) => bot.id)
+  const existing = await database.conversation.findFirst({
+    where: { userId: ownerId, projectId, kind: 'group' },
+    orderBy: { updatedAt: 'desc' },
+  })
+  const title = `${project.name} room`
+  if (existing) {
+    const kept = existing.title || title
+    await database.conversation.update({ where: { id: existing.id }, data: { botIds: ids, title: kept } })
+    return { id: existing.id, title: kept, kind: 'group' as const, botIds: ids }
+  }
+  const created = await database.conversation.create({
+    data: { userId: ownerId, title, kind: 'group', botIds: ids, projectId, workspaceId: project.workspaceId },
+  })
+  return { id: created.id, title, kind: 'group' as const, botIds: ids }
+}

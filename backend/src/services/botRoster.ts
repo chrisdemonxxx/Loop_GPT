@@ -78,23 +78,80 @@ export function greeting(userName: string | null | undefined, botName: string): 
 
 export interface MentionBot { id: string; name: string }
 
+const ALL_TAGS = new Set(['all', 'everyone'])
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** Tags in the text. `tagged` is false when the user did not write an @.
+ *  `all` is @all or @everyone. `hits` are full-name matches, longest name
+ *  first at each @, in the order the tags appear. Keep this aligned with
+ *  the copy in apps/web/app/lib/namedBots.ts. */
+export function parseMentions<T extends MentionBot>(text: string, members: T[]): { tagged: boolean; all: boolean; hits: T[] } {
+  const raw = String(text || '')
+  if (!members.length || !/(^|\s)@\S/.test(raw)) return { tagged: false, all: false, hits: [] }
+  const ordered = [...members].sort((a, b) => b.name.trim().length - a.name.trim().length)
+  const seen = new Set<string>()
+  const hits: T[] = []
+  let all = false
+  const at = /(^|\s)@/g
+  let match: RegExpExecArray | null
+  while ((match = at.exec(raw))) {
+    const rest = raw.slice(match.index + match[1].length + 1)
+    const token = (rest.split(/\s/, 1)[0] || '').replace(/[,.!?;:]+$/g, '').toLowerCase()
+    if (ALL_TAGS.has(token)) { all = true; continue }
+    const found = ordered.find((bot) => {
+      const name = bot.name.trim()
+      if (!name) return false
+      return new RegExp(`^${escapeRegExp(name)}(?=$|\\s|[,.!?;:])`, 'i').test(rest)
+    })
+    if (found && !seen.has(found.id)) {
+      seen.add(found.id)
+      hits.push(found)
+    }
+  }
+  return { tagged: true, all, hits }
+}
+
 /**
- * Group routing. No @mention → every member. An @mention that matches a
- * member name (case-insensitive, prefix ok for multi-word names) → only
- * those bots. An @ that matches nobody falls back to the whole group so
- * the message is not dropped.
+ * Group routing. No @ addresses every member. @all and @everyone do too.
+ * @Name addresses only full-name matches, in mention order. More than one
+ * @ in the same message all count. A tag that matches nobody adds no one,
+ * and a message whose tags match nobody addresses nobody.
  */
 export function botsForMessage<T extends MentionBot>(text: string, members: T[]): T[] {
   if (!members.length) return []
-  const mentions = [...String(text || '').matchAll(/(^|\s)@([A-Za-z0-9][A-Za-z0-9 .'_-]{0,40})/g)]
-    .map((m) => m[2].trim().toLowerCase())
-    .filter(Boolean)
-  if (!mentions.length) return members
-  const hit = members.filter((bot) => {
-    const name = bot.name.toLowerCase()
-    return mentions.some((n) => name === n || name.startsWith(n) || n.startsWith(name))
-  })
-  return hit.length ? hit : members
+  const parsed = parseMentions(text, members)
+  if (!parsed.tagged || parsed.all) return members
+  return parsed.hits
+}
+
+/** What this bot should know about the room. One follow-up is allowed; the
+ *  text tells the model not to call the whole room again. */
+export function groupPreamble(selfName: string, otherNames: string[], projectInstructions?: string): string {
+  const others = otherNames.map((name) => name.trim()).filter(Boolean)
+  const room = others.length
+    ? `You are ${selfName} in a group chat with ${others.join(', ')} and the user.`
+    : `You are ${selfName} in a group chat with the user.`
+  const lines = [
+    room,
+    'Speak only as yourself. A line that starts with a name was said by that member.',
+    'Answer the user. If someone @mentioned you, answer them.',
+    'If you need one other member who has not answered, mention them once as @Name.',
+    'Do not repeat another member\'s answer, and do not address every member again.',
+  ]
+  const instructions = (projectInstructions || '').trim()
+  if (instructions) lines.push(`Project instructions:\n${instructions}`)
+  return lines.join('\n')
+}
+
+/** Prefix a stored group reply so the next member can tell who said it. */
+export function labelSpeaker(content: string, speaker: string | null | undefined): string {
+  const text = String(content || '')
+  const name = (speaker || '').trim()
+  if (!name) return text
+  return `${name}: ${text}`
 }
 
 /** One-line progress sentence for a tool step. Never a raw status enum. */

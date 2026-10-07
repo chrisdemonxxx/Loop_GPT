@@ -22,7 +22,7 @@ import { BUILTIN_SKILLS } from '../agent/skills/builtin'
 import { selectedConnectionIds, workspaceConnectionTools } from '../services/workspaceTools'
 import { connectionToolName } from '../agent/connectors/reviewedAdapters'
 import { runAgent } from '../agent/agentRuntime'
-import { shouldPersistUserMessage } from '../services/botRoster'
+import { groupPreamble, labelSpeaker, shouldPersistUserMessage } from '../services/botRoster'
 import { runDeepResearch } from '../agent/research/deepResearch'
 import { initSSE, sendEvent, endSSE, startKeepalive } from '../agent/streaming'
 import { createRun, appendEvent, finishRun } from '../services/runReplay'
@@ -350,6 +350,7 @@ export async function streamAgentRun(req: Request, res: Response) {
 
     let authorBotId: string | undefined
     let botPersona = ''
+    const speakerById = new Map<string, string>()
     if (input.data.botId && prisma) {
       const bot = await prisma.bot.findFirst({ where: { id: input.data.botId, ownerId: userId } })
       if (!bot) {
@@ -365,6 +366,20 @@ export async function streamAgentRun(req: Request, res: Response) {
         'Narrate progress in short plain sentences. Never print raw JSON, tool-call tags, or status words like "running" or "processing".',
         toolsHint ? `Prefer these tools when they fit: ${toolsHint}.` : '',
       ].filter(Boolean).join('\n')
+      if (conversation.kind === 'group') {
+        const memberIds = Array.isArray(conversation.botIds) ? conversation.botIds.filter((id): id is string => typeof id === 'string') : []
+        const members = memberIds.length
+          ? await prisma.bot.findMany({ where: { ownerId: userId, id: { in: memberIds } }, select: { id: true, name: true } })
+          : []
+        for (const member of members) speakerById.set(member.id, member.name)
+        let projectInstructions = ''
+        if (conversation.projectId) {
+          const project = await prisma.project.findFirst({ where: { id: conversation.projectId }, select: { instructions: true } })
+          projectInstructions = project?.instructions || ''
+        }
+        const others = members.filter((member) => member.id !== bot.id).map((member) => member.name)
+        botPersona = [botPersona, groupPreamble(bot.name, others, projectInstructions)].filter(Boolean).join('\n\n')
+      }
     }
 
     try {
@@ -415,10 +430,18 @@ export async function streamAgentRun(req: Request, res: Response) {
         ? await getHistoryFromLeaf(input.data.regenerateOf, agentConfig.historyWindow)
         : await getHistory(conversation.id, agentConfig.historyWindow)
       lifecycle.check()
-      const priorTurns: ChatMessage[] = history
-        .filter((m) => m.role === 'user' || m.role === 'assistant')
-        .slice(0, -1) // exclude the user message just saved
-        .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+      const kept = history.filter((m) => m.role === 'user' || m.role === 'assistant')
+      // A normal send just stored the user row, so drop that trailing copy.
+      // A later group member did not store another user row; keep the peers'
+      // replies that are now the end of the transcript.
+      const dropTrailingUser = !input.data.skipUserPersist && kept[kept.length - 1]?.role === 'user'
+      const priorTurns: ChatMessage[] = (input.data.regenerateOf || dropTrailingUser ? kept.slice(0, -1) : kept)
+        .map((m) => ({
+          role: m.role as 'user' | 'assistant',
+          content: conversation.kind === 'group' && m.role === 'assistant'
+            ? labelSpeaker(m.content, speakerById.get(m.authorBotId || '') || null)
+            : m.content,
+        }))
 
       let currentContent: string | ContentPart[] = content || ''
       if (images.length) {

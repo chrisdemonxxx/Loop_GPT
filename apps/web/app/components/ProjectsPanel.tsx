@@ -13,6 +13,7 @@ export interface Project {
   instructions: string
   createdAt: string
   updatedAt: string
+  botIds?: string[]
   _count?: { knowledgeChunks: number; conversations: number }
 }
 
@@ -23,6 +24,10 @@ interface Props {
   onClose: () => void
   /** /projects hosts this same panel as a page. Default remains the in-chat dialog. */
   asPage?: boolean
+  /** Owner's bots. Assignment UI renders only when this is passed. */
+  bots?: Array<{ id: string; name: string }>
+  /** Open the project's group room. */
+  onOpenRoom?: (room: { id: string; botIds: string[] }) => void
 }
 
 function timeAgo(iso: string): string {
@@ -46,7 +51,7 @@ async function readTextFile(file: File): Promise<string> {
  * last-active, a dedicated creation flow, and a prominent knowledge upload
  * (text files are parsed in the browser). Search and sort stay on the client.
  */
-export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, onClose, asPage = false }: Props) {
+export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, onClose, asPage = false, bots, onOpenRoom }: Props) {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [loaded, setLoaded] = useState(false)
@@ -66,6 +71,7 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
   const [ingestFor, setIngestFor] = useState<string | null>(null)
   const [ingestText, setIngestText] = useState('')
   const [ingestMsg, setIngestMsg] = useState('')
+  const [roomError, setRoomError] = useState<{ projectId: string; text: string } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   // Escape closes the modal — must work even when focus is in a textarea
@@ -101,6 +107,39 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
     } finally { setLoading(false) }
   }
   useEffect(() => { load() }, [workspaceId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function toggleProjectBot(project: Project, botId: string) {
+    if (!workspaceId) return
+    const current = project.botIds || []
+    const next = current.includes(botId) ? current.filter((id) => id !== botId) : [...current, botId]
+    setRoomError(null)
+    try {
+      const res = await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${project.id}/bots`, {
+        method: 'PUT', headers: authHeaders(), body: JSON.stringify({ botIds: next }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error || 'Could not update the bots')
+      const botIds = Array.isArray(data?.botIds) ? data.botIds as string[] : next
+      setProjects((prev) => prev.map((item) => item.id === project.id ? { ...item, botIds } : item))
+    } catch (err: any) {
+      setRoomError({ projectId: project.id, text: err?.message || 'Could not update the bots' })
+    }
+  }
+
+  async function openRoom(project: Project) {
+    if (!workspaceId) return
+    setRoomError(null)
+    try {
+      const res = await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${project.id}/room`, {
+        method: 'POST', headers: authHeaders(),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error || 'Could not open the project room')
+      onOpenRoom?.({ id: data.id, botIds: Array.isArray(data.botIds) ? data.botIds : (project.botIds || []) })
+    } catch (err: any) {
+      setRoomError({ projectId: project.id, text: err?.message || 'Could not open the project room' })
+    }
+  }
 
   async function create() {
     if (!workspaceId || !form.name.trim()) return
@@ -336,6 +375,39 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
                       <span>· {timeAgo(p.updatedAt)}</span>
                     </div>
                     {p.instructions && <div className="text-[11px] text-slate-500 mt-1.5 line-clamp-2">{p.instructions}</div>}
+                    {bots && (
+                      <div className="mt-3">
+                        <div className="text-[11px] text-slate-500 mb-1.5">Bots in this room</div>
+                        {bots.length === 0 ? (
+                          <p className="text-[11px] text-slate-500">Create at least two bots, then assign them here.</p>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            {bots.map((bot) => {
+                              const on = (p.botIds || []).includes(bot.id)
+                              return (
+                                <button
+                                  key={bot.id}
+                                  type="button"
+                                  aria-pressed={on}
+                                  onClick={() => { void toggleProjectBot(p, bot.id) }}
+                                  className={`px-2 py-1 rounded-lg border text-[11px] transition ${on ? 'border-[#c96442]/50 bg-[#c96442]/15 text-[#e79d7f]' : 'border-white/10 text-slate-400 hover:text-slate-200'}`}
+                                >
+                                  {bot.name}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => { void openRoom(p) }}
+                          className="mt-2 px-2.5 py-1.5 rounded-lg text-[12px] font-medium text-white bg-[#c96442] hover:bg-[#b5593a] transition"
+                        >
+                          Open project room
+                        </button>
+                        {roomError?.projectId === p.id && <p className="mt-1.5 text-[11px] text-rose-400">{roomError.text}</p>}
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-col items-end gap-1.5 shrink-0">
                     <button

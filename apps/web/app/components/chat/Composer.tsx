@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Mic, UploadCloud, Plug, AudioLines } from 'lucide-react'
 import type { AgentMode } from '../../lib/api'
 import { SLASH_SECTIONS, filterCommands } from '../../lib/commands'
+import { applyMention, mentionDraft } from '../../lib/namedBots'
 import { useI18n } from '../../lib/i18n'
 import { useDictation } from '../../lib/voice'
 import type { PendingAttachment } from '../../chat/hooks'
@@ -75,6 +76,8 @@ interface ComposerProps {
   onEditRedo?: () => boolean
   /** Escape closes the slash menu before the edit. */
   onCloseSlash?: () => void
+  /** Members of the open group or project room. Enables the @ menu. */
+  mentionMembers?: Array<{ id: string; name: string }>
 }
 
 /** Up to four attachments per turn. */
@@ -96,11 +99,14 @@ export default function Composer({
   connections, pinnedConnectionId, onTogglePinConnection,
   voiceMode, voiceModeSupported, voiceModeListening, onToggleVoiceMode,
   queuedCount = 0, placeholder, onPromptHistory, onCycleConversation, onCancelEdit, onCloseSlash, onEditUndo, onEditRedo,
+  mentionMembers,
 }: ComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textRef = useRef<HTMLTextAreaElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const [slashIndex, setSlashIndex] = useState(0)
+  const [mentionDismissed, setMentionDismissed] = useState(false)
+  const [mentionIndex, setMentionIndex] = useState(0)
   const [dragActive, setDragActive] = useState(false)
   const dragDepth = useRef(0)
   const { t } = useI18n()
@@ -157,6 +163,37 @@ export default function Composer({
   }
 
   const slashFilter = filterCommands(input.trim())
+  const seenInput = useRef(input)
+  if (seenInput.current !== input) {
+    seenInput.current = input
+    if (mentionDismissed) setMentionDismissed(false)
+  }
+  const draft = !showSlash && mentionMembers?.length ? mentionDraft(input) : null
+  const mentionQuery = (draft?.query || '').toLowerCase()
+  const seenQuery = useRef(mentionQuery)
+  if (seenQuery.current !== mentionQuery) {
+    seenQuery.current = mentionQuery
+    if (mentionIndex !== 0) setMentionIndex(0)
+  }
+  const mentionChoices = (() => {
+    if (!draft || mentionDismissed) return [] as Array<{ key: string; name: string; label: string }>
+    const seen = new Set<string>()
+    const rows: Array<{ key: string; name: string; label: string }> = []
+    for (const bot of mentionMembers || []) {
+      if (seen.has(bot.id)) continue
+      if (mentionQuery && !bot.name.toLowerCase().startsWith(mentionQuery)) continue
+      seen.add(bot.id)
+      rows.push({ key: bot.id, name: bot.name, label: bot.name })
+    }
+    if (!mentionQuery || 'all'.startsWith(mentionQuery)) rows.push({ key: 'all', name: 'all', label: 'All' })
+    return rows
+  })()
+  const mentionOpen = mentionChoices.length > 0
+  const activeMention = Math.min(mentionIndex, Math.max(0, mentionChoices.length - 1))
+  const pickMention = (name: string) => {
+    onInputChange(applyMention(input, name))
+    requestAnimationFrame(() => textRef.current?.focus())
+  }
 
   // Screenshot is composer-local; everything else delegates to the page.
   const handleCommandClick = (cmd: string) => {
@@ -237,6 +274,25 @@ export default function Composer({
             commandsLabel={t('commands')}
           />
         )}
+        {mentionOpen && (
+          <div className="border-b border-white/[0.06] max-h-64 overflow-y-auto" role="menu" aria-label="Mention a bot">
+            {mentionChoices.map((choice, i) => (
+              <button
+                key={choice.key}
+                type="button"
+                role="menuitem"
+                aria-label={choice.key === 'all' ? 'Mention all bots' : `Mention ${choice.label}`}
+                onMouseEnter={() => setMentionIndex(i)}
+                onClick={() => pickMention(choice.name)}
+                className={`flex w-full items-center gap-1 px-3 py-2 text-left text-[13px] transition ${i === activeMention ? 'bg-white/[0.06] text-slate-100' : 'text-slate-300 hover:bg-white/[0.04]'}`}
+              >
+                <span className="text-slate-500">@</span>
+                {choice.key === 'all' ? 'all' : choice.label}
+                {choice.key === 'all' && <span className="ml-2 text-[11px] text-slate-500">everyone in the room</span>}
+              </button>
+            ))}
+          </div>
+        )}
         {attachments.length > 0 && (
           <div className="px-3 pt-2.5">
             <AttachmentChips
@@ -260,6 +316,7 @@ export default function Composer({
             }
             if (e.key === 'Escape') {
               if (showSlash) { e.preventDefault(); e.stopPropagation(); onCloseSlash?.(); return }
+              if (mentionOpen) { e.preventDefault(); e.stopPropagation(); setMentionDismissed(true); return }
               if (showPlus) { e.preventDefault(); e.stopPropagation(); onClosePlus(); return }
               if (onCancelEdit) { e.preventDefault(); onCancelEdit() }
               return
@@ -269,7 +326,13 @@ export default function Composer({
               onCycleConversation?.(e.key === 'ArrowUp' ? -1 : 1)
               return
             }
-            if (e.key === 'ArrowDown' && showSlash && slashFilter.length > 0) {
+            if (e.key === 'ArrowDown' && mentionOpen) {
+              e.preventDefault()
+              setMentionIndex((i) => (i + 1) % mentionChoices.length)
+            } else if (e.key === 'ArrowUp' && mentionOpen) {
+              e.preventDefault()
+              setMentionIndex((i) => (i - 1 + mentionChoices.length) % mentionChoices.length)
+            } else if (e.key === 'ArrowDown' && showSlash && slashFilter.length > 0) {
               e.preventDefault()
               setSlashIndex((i) => (i + 1) % slashFilter.length)
             } else if (e.key === 'ArrowUp' && showSlash && slashFilter.length > 0) {
@@ -278,6 +341,9 @@ export default function Composer({
             } else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !showSlash && el.selectionStart === 0 && el.selectionEnd === 0) {
               const next = onPromptHistory?.(e.key === 'ArrowUp' ? -1 : 1)
               if (next != null) { e.preventDefault(); onInputChange(next) }
+            } else if (e.key === 'Tab' && mentionOpen) {
+              e.preventDefault()
+              pickMention(mentionChoices[activeMention].name)
             } else if (e.key === 'Tab' && showSlash && slashFilter.length > 0) {
               e.preventDefault()
               handleCommandClick(slashFilter[slashIndex]?.cmd)
@@ -285,6 +351,8 @@ export default function Composer({
               e.preventDefault()
               if (showSlash && slashFilter.length > 0 && !modKey(e)) {
                 handleCommandClick((slashFilter[slashIndex] || slashFilter[0]).cmd)
+              } else if (mentionOpen && !modKey(e)) {
+                pickMention(mentionChoices[activeMention].name)
               } else onSend()
             }
           }}

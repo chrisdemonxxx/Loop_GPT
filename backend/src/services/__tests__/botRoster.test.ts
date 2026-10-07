@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { STARTER_BOTS, botsForMessage, greeting, narrateSteps, primaryDeleteRefusal, rosterAction, shouldPersistUserMessage } from '../botRoster'
+import { STARTER_BOTS, botsForMessage, greeting, groupPreamble, labelSpeaker, narrateSteps, primaryDeleteRefusal, rosterAction, shouldPersistUserMessage } from '../botRoster'
 
 describe('named bot roster', () => {
   it('ships Loop Bot plus the Grok-style starters', () => {
@@ -19,7 +19,10 @@ describe('named bot roster', () => {
     ]
     expect(botsForMessage('ship the landing page', members).map((b) => b.name)).toEqual(['Helm', 'Review'])
     expect(botsForMessage(' @Review check the copy', members).map((b) => b.name)).toEqual(['Review'])
-    expect(botsForMessage('@nobody thoughts?', members)).toHaveLength(2)
+    expect(botsForMessage('@Helm ship it @Review', members).map((b) => b.name)).toEqual(['Helm', 'Review'])
+    expect(botsForMessage('@Re check this', members)).toHaveLength(0)
+    expect(botsForMessage('@all the plan', members).map((b) => b.name)).toEqual(['Helm', 'Review'])
+    expect(botsForMessage('@nobody thoughts?', members)).toHaveLength(0)
   })
 
   it('seeds an empty roster, repairs a missing primary, and refuses to delete Loop Bot', () => {
@@ -36,6 +39,21 @@ describe('named bot roster', () => {
     expect(flags.filter(Boolean)).toHaveLength(1)
     expect(shouldPersistUserMessage({ regenerateOf: 'm1', skipUserPersist: false })).toBe(false)
     expect(shouldPersistUserMessage({})).toBe(true)
+  })
+
+  it('names the room and the project instructions without asking for another full round', () => {
+    const text = groupPreamble('Helm', ['Review', 'Builder'], 'Ship the landing page.')
+    expect(text).toContain('Helm')
+    expect(text).toContain('Review')
+    expect(text).toContain('Builder')
+    expect(text).toContain('Ship the landing page.')
+    expect(text).toContain('once')
+    expect(text).not.toMatch(/@all/)
+  })
+
+  it('labels a group reply with the speaker and leaves an unnamed line alone', () => {
+    expect(labelSpeaker('The page is ready.', 'Helm')).toBe('Helm: The page is ready.')
+    expect(labelSpeaker('The page is ready.', null)).toBe('The page is ready.')
   })
 
   it('narrates steps in sentences', () => {

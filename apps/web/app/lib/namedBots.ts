@@ -73,16 +73,70 @@ export function groupFanOut<T extends { id: string }>(targets: T[]): Array<T & {
   return targets.map((bot, i) => ({ ...bot, skipUserPersist: i > 0 }))
 }
 
-/** @mention routing. No mention → every member. A matching @name → only those. */
+const ALL_TAGS = new Set(['all', 'everyone'])
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** Keep aligned with parseMentions in backend/src/services/botRoster.ts. */
+function parseMentions<T extends { id: string; name: string }>(text: string, members: T[]): { tagged: boolean; all: boolean; hits: T[] } {
+  const raw = String(text || '')
+  if (!members.length || !/(^|\s)@\S/.test(raw)) return { tagged: false, all: false, hits: [] }
+  const ordered = [...members].sort((a, b) => b.name.trim().length - a.name.trim().length)
+  const seen = new Set<string>()
+  const hits: T[] = []
+  let all = false
+  const at = /(^|\s)@/g
+  let match: RegExpExecArray | null
+  while ((match = at.exec(raw))) {
+    const rest = raw.slice(match.index + match[1].length + 1)
+    const token = (rest.split(/\s/, 1)[0] || '').replace(/[,.!?;:]+$/g, '').toLowerCase()
+    if (ALL_TAGS.has(token)) { all = true; continue }
+    const found = ordered.find((bot) => {
+      const name = bot.name.trim()
+      if (!name) return false
+      return new RegExp(`^${escapeRegExp(name)}(?=$|\\s|[,.!?;:])`, 'i').test(rest)
+    })
+    if (found && !seen.has(found.id)) {
+      seen.add(found.id)
+      hits.push(found)
+    }
+  }
+  return { tagged: true, all, hits }
+}
+
+/** @mention routing. No @ → every member. @all → every member. A full name
+ *  matches only that bot. An unknown @ addresses nobody. */
 export function botsForMessage<T extends { id: string; name: string }>(text: string, members: T[]): T[] {
   if (!members.length) return []
-  const mentions = [...String(text || '').matchAll(/(^|\s)@([A-Za-z0-9][A-Za-z0-9 .'_-]{0,40})/g)]
-    .map((m) => m[2].trim().toLowerCase())
-    .filter(Boolean)
-  if (!mentions.length) return members
-  const hit = members.filter((bot) => {
-    const name = bot.name.toLowerCase()
-    return mentions.some((n) => name === n || name.startsWith(n) || n.startsWith(name))
-  })
-  return hit.length ? hit : members
+  const parsed = parseMentions(text, members)
+  if (!parsed.tagged || parsed.all) return members
+  return parsed.hits
+}
+
+/** One follow-up wave. Specific @Name only, and only a member who has not
+ *  spoken. @all inside a reply does not start another round. */
+export function followUpTargets<T extends { id: string; name: string }>(reply: string, members: T[], alreadySpoken: string[]): T[] {
+  const parsed = parseMentions(reply, members)
+  if (!parsed.tagged) return []
+  const spoken = new Set(alreadySpoken)
+  return parsed.hits.filter((bot) => !spoken.has(bot.id))
+}
+
+/** The open @ the user is still typing, at the end of the draft. */
+export function mentionDraft(text: string): { query: string; start: number } | null {
+  const raw = String(text || '')
+  const match = raw.match(/(^|\s)@([^\s@]*)$/)
+  if (!match) return null
+  const query = match[2]
+  return { query, start: raw.length - query.length - 1 }
+}
+
+/** Replace the open @ with a finished tag. */
+export function applyMention(text: string, name: string): string {
+  const draft = mentionDraft(text)
+  const tag = `@${name} `
+  if (!draft) return `${text}${text && !text.endsWith(' ') ? ' ' : ''}${tag}`
+  return text.slice(0, draft.start) + tag
 }

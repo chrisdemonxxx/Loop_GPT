@@ -22,7 +22,7 @@ import ChatHeader from '../components/chat/ChatHeader'
 import { CanvasPanel } from '../components/chat/CanvasPanel'
 import { BotProfilePanel, CreateBotDialog, CreateGroupDialog, StartChatPicker } from '../components/chat/BotChrome'
 import { canvasFromStored, canvasFromTurn } from '../lib/canvasDoc'
-import { botsForMessage, createBotGroup, createNamedBot, groupFanOut, listNamedBots, openBotThread, updateNamedBot, type BotGroup, type NamedBot } from '../lib/namedBots'
+import { botsForMessage, createBotGroup, createNamedBot, followUpTargets, groupFanOut, listNamedBots, openBotThread, updateNamedBot, type BotGroup, type NamedBot } from '../lib/namedBots'
 import AuthSidePanel from '../components/chat/AuthSidePanel'
 import type { Conversation, Message } from '../components/chat/types'
 import { parseCommand, SLASH_COMMANDS } from '../lib/commands'
@@ -495,9 +495,8 @@ export default function ChatPage() {
         ? { ...listedConv, id: currentConversationId, kind: threadMeta.kind, botId: threadMeta.botId, botIds: threadMeta.botIds } as Conversation
         : listedConv
     const memberIds = Array.isArray(activeConv?.botIds) ? activeConv!.botIds! : []
-    const groupTargets = activeConv?.kind === 'group'
-      ? botsForMessage(content, roster.bots.filter((b) => memberIds.includes(b.id)))
-      : []
+    const roomMembers = roster.bots.filter((b) => memberIds.includes(b.id))
+    const groupTargets = activeConv?.kind === 'group' ? botsForMessage(content, roomMembers) : []
     const singleBotId = activeConv?.kind === 'bot' ? activeConv.botId || undefined : undefined
     const baseSnap = {
       content, sendMode, commandTools,
@@ -508,7 +507,11 @@ export default function ChatPage() {
       ...(connectionIds ? { connectionIds } : {}),
       ...(branchParent !== undefined ? { branchParent } : {}),
     }
-    if (groupTargets.length) {
+    if (activeConv?.kind === 'group') {
+      if (!groupTargets.length) {
+        toast.push('error', 'No bot in this group has that name.')
+        return
+      }
       const snaps = groupFanOut(groupTargets).map((bot, i) => ({
         ...baseSnap,
         id: `group-${bot.id}-${Date.now()}-${i}`,
@@ -525,7 +528,21 @@ export default function ChatPage() {
         toast.push('info', 'Added to queue — it sends when the current run finishes')
         return
       }
-      for (const snap of snaps) await dispatchSend(snap)
+      const replies: string[] = []
+      for (const snap of snaps) {
+        await dispatchSend(snap)
+        const text = liveStepsRef.current.filter((s) => s.kind === 'text').map((s) => s.text).join('\n')
+        if (text.trim()) replies.push(text)
+      }
+      const follow = followUpTargets(replies.join('\n'), roomMembers, groupTargets.map((bot) => bot.id))
+      for (const bot of follow) {
+        await dispatchSend({
+          id: `follow-${bot.id}-${Date.now()}`,
+          ...baseSnap,
+          botId: bot.id,
+          skipUserPersist: true,
+        })
+      }
       return
     }
     if (chat.running) {
@@ -893,8 +910,15 @@ export default function ChatPage() {
           <ProjectsPanel
             workspaceId={workspaceId}
             activeProjectId={activeProjectId}
+            bots={roster.bots.map((bot) => ({ id: bot.id, name: bot.name }))}
             onSelect={(id) => { setActiveProjectId(id); if (id) localStorage.setItem('activeProjectId', id); else localStorage.removeItem('activeProjectId') }}
             onClose={() => { setProjectsOpen(false); refreshProjects() }}
+            onOpenRoom={(room) => {
+              setProjectsOpen(false)
+              selectConversation(room.id)
+              setThreadMeta({ id: room.id, kind: 'group', botIds: room.botIds })
+              invalidateConversations()
+            }}
           />
         )}
       </AnimatePresence>
@@ -1038,6 +1062,11 @@ export default function ChatPage() {
               onEditUndo={undoEdit}
               onEditRedo={redoEditAction}
               onCloseSlash={() => setShowSlash(false)}
+              mentionMembers={activeConv?.kind === 'group'
+                ? roster.bots
+                  .filter((bot) => (Array.isArray(activeConv.botIds) ? activeConv.botIds : []).includes(bot.id))
+                  .map((bot) => ({ id: bot.id, name: bot.name }))
+                : undefined}
             />
             </div>
           </div>

@@ -38,6 +38,7 @@ const base = {
   voiceModeSupported: undefined as boolean | undefined,
   voiceModeListening: undefined as boolean | undefined,
   onToggleVoiceMode: undefined as (() => void) | undefined,
+  mentionMembers: undefined as Array<{ id: string; name: string }> | undefined,
 }
 
 // The i18n provider is required by the composer.
@@ -234,5 +235,22 @@ describe('hands-free voice mode toggle (§8-44)', () => {
   it('is hidden on unsupported browsers (no Web Speech API)', () => {
     renderComposer({ voiceModeSupported: false, onToggleVoiceMode: () => {} })
     expect(screen.queryByTestId('voice-mode-toggle')).not.toBeInTheDocument()
+  })
+})
+
+describe('group mentions', () => {
+  it('lists each member once and All, and inserts the chosen tag', () => {
+    const onInputChange = vi.fn()
+    renderComposer({
+      input: 'hey @',
+      onInputChange,
+      mentionMembers: [{ id: 'h', name: 'Helm' }, { id: 'r', name: 'Review' }],
+    })
+    expect(screen.getAllByRole('menuitem', { name: 'Mention Helm' })).toHaveLength(1)
+    expect(screen.getAllByRole('menuitem', { name: 'Mention Review' })).toHaveLength(1)
+    expect(screen.getAllByRole('menuitem', { name: 'Mention all bots' })).toHaveLength(1)
+    expect(screen.getByRole('textbox')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Mention Helm' }))
+    expect(onInputChange).toHaveBeenCalledWith('hey @Helm ')
   })
 })
