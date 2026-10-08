@@ -3,12 +3,13 @@ import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Tex
 import { conversations, type Conversation } from '../lib/api'
 import { theme } from '../theme'
 
-export default function ChatList({ onOpen, onNew, onLogout, onOpenSettings, onOpenProjects }: {
+export default function ChatList({ onOpen, onNew, onLogout, onOpenSettings, onOpenProjects, onOpenBuild }: {
   onOpen: (id: string) => void
   onNew: () => void
   onLogout: () => void
   onOpenSettings: () => void
   onOpenProjects: () => void
+  onOpenBuild: () => void
 }) {
   const [list, setList] = useState<Conversation[]>([])
   const [loading, setLoading] = useState(true)
@@ -25,6 +26,7 @@ export default function ChatList({ onOpen, onNew, onLogout, onOpenSettings, onOp
       <View style={styles.header}>
         <Text style={styles.brand}>Loop GPT</Text>
         <View style={styles.headerActions}>
+          <Pressable onPress={onOpenBuild}><Text style={styles.navLink}>Build</Text></Pressable>
           <Pressable onPress={onOpenProjects}><Text style={styles.navLink}>Projects</Text></Pressable>
           <Pressable onPress={onOpenSettings}><Text style={styles.navLink}>Settings</Text></Pressable>
           <Pressable onPress={onLogout}><Text style={styles.logout}>Sign out</Text></Pressable>
@@ -59,7 +61,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.bg, paddingTop: 56, paddingHorizontal: 16 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   brand: { color: theme.text, fontSize: 20, fontWeight: '700' },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 14, flexShrink: 1, flexWrap: 'wrap', justifyContent: 'flex-end' },
   navLink: { color: '#e79d7f', fontSize: 13 },
   logout: { color: theme.textMuted, fontSize: 13 },
   newButton: { backgroundColor: theme.accent, borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginBottom: 12 },

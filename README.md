@@ -1,113 +1,78 @@
-# Loop GPT — Production Codebase (single source of truth)
+# Loop GPT
 
-Everything Loop GPT lives in this one folder. The architecture below describes the existing deployment; local rebuild work is tracked separately. Older duplicates were deleted 2026-09-07.
-
-## Active production rebuild
-
-- [Build progress and remaining milestones](docs/BUILD_PROGRESS.md)
-- [Complete remaining production-build checklist](docs/PRODUCTION_CHECKLIST.md)
-- [Foundation validation and database release runbook](docs/FOUNDATION_RUNBOOK.md)
-- [Verified foundation results](docs/validation/foundation-01.md)
-- [Private-file and account API changes](docs/PRIVATE_FILES.md)
-- [Workspace configuration and encrypted credentials](docs/WORKSPACES.md)
-- [Workspace-bound runtime and retired configuration routes](docs/RUNTIME_AUTHORIZATION.md)
-- [Public HTTP controls and connector readiness](docs/PUBLIC_HTTP.md)
-- [Verified isolation results](docs/validation/foundation-02.md)
-- [Verified opt-in Notion/GitLab connector results](docs/validation/foundation-03d.md)
-- [Hosted model request-boundary validation](docs/validation/foundation-03e.md)
-- [Legacy messages and global model-state retirement](docs/validation/foundation-03f.md)
-- [Model SDK destination policy and limits](docs/MODEL_HTTP.md)
-- [Pinned DNS and bounded model-stream validation](docs/validation/foundation-03h.md)
-- [Provider/media transport and isolated sidecar policy](docs/PROVIDER_MEDIA_HTTP.md)
-- [Verified provider/media migration results](docs/validation/foundation-03i.md)
-- [Daily and prepaid reservation contracts](docs/ACCOUNTING.md)
-- [Combined ledger/backend validation](docs/validation/foundation-03j.md)
-- [Daily settlement recovery worker](docs/DAILY_SETTLEMENT_RECOVERY.md)
-- [Verified recovery results](docs/validation/foundation-03k.md)
-- [Prepaid capture recovery worker](docs/API_SETTLEMENT_RECOVERY.md)
-- [Verified prepaid recovery results](docs/validation/foundation-03l.md)
-- [Reservation-linked prepaid video jobs](docs/ACCOUNTED_VIDEO_JOBS.md)
-- [Verified video lifecycle results](docs/validation/foundation-03m.md)
-- [Verified daily/JWT video accounting](docs/validation/foundation-03n.md)
-- [Owned web/PWA client setup](web/README.md)
-- [Owned client validation and limitations](web/VALIDATION.md)
-
-Local changes are not automatically deployed. The backend now requires a separate
-reviewed migration release step; read the runbook before deploying this revision.
+Loop GPT is a hosted chat product: a Next.js app, an Express API, and Postgres, all on Railway. The web app and the API share one public origin. The phone app is Expo and talks to the API host directly.
 
 ## Live architecture
 
-**The rebuilt owned platform is now live.** `loop-gpt.cyou` serves the product
-UI from `frontend/` (Next static export) via the `web` service, which proxies
-`/api` and `/v1` to the `backend` service. Verified 2026-09-21:
+`https://loop-gpt.cyou` is the product. The Railway `web` service builds `apps/web` (package `@loop/web`) and serves the static export. nginx on that service proxies `/api` and `/v1` to the `backend` service. `https://api.loop-gpt.cyou` is the same API for the Expo app and other clients that cannot use the same origin.
 
 | Surface | URL | Served by |
 |---|---|---|
-| Product UI (app + API, same-origin) | https://loop-gpt.cyou | Railway service `web` (builds `frontend/` → static export; nginx proxies `/api`, `/v1`) |
+| Product UI, same-origin API | https://loop-gpt.cyou | Railway `web` (`apps/web` static export; nginx proxies `/api`, `/v1`) |
 | Aliases | https://app.loop-gpt.cyou, https://chat.loop-gpt.cyou, https://www.loop-gpt.cyou | same `web` service |
-| Public API (OpenAI-compatible) | https://api.loop-gpt.cyou/v1 | same `web` service → `backend.railway.internal:3001` |
+| API host | https://api.loop-gpt.cyou | `web` → `backend` |
 
-Railway project (active): `loop-gpt-owned-staging-20260917`
-(id `8584f5ac-2000-4311-9dae-ae283b70216f`, production env `2faec73c-12aa-47c9-9a6c-94a9276eb6d5`).
-Services: `web` (product UI), `backend` (Express + agent runtime + three
-settlement/video workers + optional autonomous bot task worker), `postgres`
-(`loop_staging`), `cf-tunnel` (Cloudflare connector, spare path). The legacy
-`loop-gpt` project (`c4381399-…`, services `frontend`/`librechat`/`backend`)
-is the older topology and no longer owns the apex domains.
+The active Railway project is `loop-gpt-owned-staging-20260917`. Services: `web`, `backend` (Express, the agent runtime, and the settlement workers), and `postgres`. Deploy the API from the repo root with the backend service, and the UI with the web service. Database migrations are a separate step (`npx prisma migrate deploy`); do not rely on the API process to change the schema.
 
-Deploy: `railway up --ci -s backend -p 8584f5ac-… -e production` (repo root) and
-`railway up --ci -s web -p 8584f5ac-… -e production` (repo root). Migrations are
-a separate release step: `DATABASE_URL=<public> npx prisma migrate deploy`.
+`NEXT_PUBLIC_API_URL` stays empty for the hosted UI so the browser calls `/api` on the same origin. Set it only when the API is on a different origin. The Expo app defaults to `https://api.loop-gpt.cyou` (`EXPO_PUBLIC_API_URL` overrides that).
 
-Model endpoints (Hugging Face, namespace `red-kit`, OAuth token via `hf auth token`): chat `qwen3-8-27b-cyber` (vision + tools + reasoning), large-context `glm53-ablit-*` / `vu3pi203abtenqrc`, image `loop-gpt-image` (GLM image handler), video `loop-gpt-video-14b` (SkyReels, scale-to-zero — first request takes minutes).
+## Canvas previews
+
+Model HTML is shown only inside an iframe with `sandbox="allow-scripts"` and no `allow-same-origin`. That gives the document an opaque origin, so a script in the preview cannot read the app's token.
+
+Set `NEXT_PUBLIC_ARTIFACT_ORIGIN` to a separate origin when you want the preview to load there instead of `srcdoc`. The iframe's `src` is that origin. After it loads, the app posts `{ type: 'loop-artifact-html', html }` to it. The host page should write that HTML into the document. Leave the variable empty to keep the sandboxed `srcdoc` preview.
 
 ## Repo layout
 
-- `backend/` — Express + Prisma API. Metered `/v1` (chat/tools/vision passthrough, `/v1/media/publish`, `/v1/images/generations`, `/v1/videos/generations`). Deploys automatically on push to `main` (service rootDirectory `/backend`, Dockerfile build).
-- `skills/` — LibreChat skills catalog (`SKILL.md` files), synced hourly + on boot by LibreChat from this repo (`skillSync` → owner `Seentiourcio47`, repo `loop-gpt`, path `skills`).
-- `deploy/librechat/spike/` — the LibreChat production image (branded, 6 MCP servers: loop-media, loop-code, loop-files, loop-memory, github, sequential-thinking; sandboxed code runner; Tavily web search; modelSpecs with vision/tools/artifacts/skills).
-- `deploy/cloudflared/` — cf-tunnel service config.
-- `gateway/` — nginx web gateway: static landing mirror at `/`, everything else proxied to LibreChat. Deployed by snapshot upload.
-- `loop-code/` — Loop Code CLI product.
-- `mobile/` — LoopGPT mobile app (Capacitor; not yet deployed).
+- `apps/web` (`@loop/web`) — the product UI (Next.js static export).
+- `backend/` — Express + Prisma API and the agent runtime.
+- `packages/` — shared UI, API client, and contracts used by the web app.
+- `mobile/` — Expo app (iOS and Android). It is not a Capacitor wrapper.
+- `docs/` — runbooks and validation notes for the owned platform.
 
-## Deploy procedures
+Older LibreChat and gateway notes in `deploy/` describe a previous topology. They are not what `loop-gpt.cyou` serves now.
+
+The nested `Loop-it/` tree is a separate toolchain: pnpm workspaces and uv, while this root uses npm workspaces. Package-manager unification, the Loop-it admin port, and retirement of `@loopit/ui-kit`, `Loop-it/apps/web`, and `Loop-it/apps/console-mobile` are tracked in [deploy/loopit/README.md](deploy/loopit/README.md).
+
+## Local web app
 
 ```bash
-# Backend — commit to clean-main, push, Railway auto-builds:
-git push neworigin clean-main:main
-
-# LibreChat — from deploy/librechat/spike:
-railway link --project c4381399-65b9-4998-8716-b1d5b71c802f --environment production --service librechat
-railway up --ci
-
-# Gateway — from gateway/:
-railway link --project c4381399-65b9-4998-8716-b1d5b71c802f --environment production --service frontend
-railway up --ci
+npm install
+npm run dev -w @loop/web
 ```
 
-Railway CLI links are **keyed by directory path** — after moving this folder, re-run the `railway link` commands above once per directory.
+The dev server expects the API at `NEXT_PUBLIC_API_URL` (see `apps/web/.env.example`). Unit tests: `npm test`. End-to-end tests need a production export in `apps/web/out` and Playwright: `npm run test:browser -w @loop/web`.
 
-## Configuration lives in Railway service variables (not files)
+## Load test
 
-All secrets (HF tokens, `sk-loop-…` API key, Google/GitHub OAuth client creds, Tavily, JWT secrets, Mongo/Postgres URLs) are set as Railway variables on the respective services. `librechat.yaml` references them via `${ENV}` placeholders.
+`backend/scripts/loadtest.mjs` hits chat streaming (`POST /api/agent/:id/stream`) and billing (`GET /api/billing/config` and `POST /api/billing/checkout`) with Node's built-in `fetch`. It has no credentials in the file. Streams are aborted after a few seconds; checkout can open a Stripe session and does not capture a payment.
 
-## OAuth social login (bridge architecture)
+Against staging (not production):
 
-Google/GitHub apps whitelist only `https://api.loop-gpt.cyou/api/auth/oauth/<provider>/callback` (legacy registration). Flow: LibreChat button → api-host `/oauth/<provider>` relay (backend route) → apex `/oauth/<provider>` initiation → Google/GitHub consent → api-host callback → backend bridge 302 (code+state verbatim) → apex `/oauth/<provider>/callback` → LibreChat exchanges code with the identical redirect_uri string → session. Do not change `DOMAIN_SERVER` / `*_CALLBACK_URL` on the librechat service without re-reading `backend/src/routes/oauth.ts`.
+```bash
+$env:LOOP_LOADTEST_BASE_URL = "https://<staging-host>"
+$env:LOOP_LOADTEST_TOKEN = "<session token from a staging account>"
+$env:LOOP_LOADTEST_CONVERSATION_ID = "<conversation id owned by that account>"
+node backend/scripts/loadtest.mjs --concurrency 20 --requests 40 --allow-remote
+```
 
-## Hard-won gotchas
+Omit `LOOP_LOADTEST_TOKEN` to measure unauthenticated responses only. Loopback does not need `--allow-remote`. A non-zero exit means the client could not reach the server, or a request returned HTTP 500. 401s and a 503 from billing (payments not enabled) are counted in the JSON report and do not fail the run.
 
-- Railway `rootDirectory` is per service-instance; CLI snapshot uploads are prefix-trimmed — flat build contexts only.
-- Railway private DNS returns IPv6 first; nginx literals need brackets or `getent ahostsv4`.
-- Historical backend images ran destructive schema synchronization on boot. The rebuilt source removes it and provides committed migrations; existing databases require reconciliation/baselining before deploying this revision. API keys are sha256-hashed rows in Postgres.
-- LibreChat model vision detection is substring matching against a whitelist — model ids `qwen-vl-loop` / `qwen-vl-loop-large` are chosen to match; backend `chatModels.ts` maps them to tiers.
-- Failed Railway deployments never replace running instances; safe to iterate.
+## Metrics and alerts
 
-## Removed on purpose (do not resurrect)
+`GET /metrics` returns Prometheus text: request count, 5xx count, 4xx count, and a latency histogram, split into `kind="http"` and `kind="stream"`. It also reports `loop_db_up` and pending/stale billing settlement intents. Health probes are not counted.
 
-`database/`, railpack configs, and all standalone backend copies
-(`deploy-backend*`, `Loop_GPT_*` variants) are gone from the working tree.
-`frontend/` and `docs/` were later restored and are the live product UI and
-plan docs (`docs/AUDIT.md`, `GAP_REGISTER.md`, `PROGRESS.md`, `DECISIONS.md`).
-History preserves everything in git.
+In production the route is closed until `METRICS_TOKEN` is set on the API service. Send it as `Authorization: Bearer <token>` or `X-Metrics-Token`. Sentry (`SENTRY_DSN`) remains the exception reporter.
+
+Configure these alerts on the scraper you point at staging first, then production:
+
+| Signal | Page when | For |
+|---|---|---|
+| 5xx rate (`loop_http_errors_total` / `loop_http_requests_total`, `kind="http"`) | above 2% | 5 minutes |
+| Non-stream latency | p95 above 1.5s | 5 minutes |
+| Stream 5xx rate (`kind="stream"`) | above 5% | 5 minutes |
+| `loop_db_up` | equals 0 | 1 minute |
+| `loop_settlement_stale` (daily or api) | greater than 0 | 15 minutes |
+| `loop_settlement_pending` (daily or api) | greater than 500 | 15 minutes |
+
+Stale means a settlement intent has been pending or processing for more than 10 minutes, which means the daily or API settlement worker is not draining. Pending without stale is a backlog, not a dead worker.

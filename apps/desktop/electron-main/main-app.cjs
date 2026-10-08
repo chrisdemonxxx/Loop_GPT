@@ -9,7 +9,7 @@
  *  - lifecycle: single instance, window-state persistence, external links
  *  - one-time session migration from the old loop:// origin
  */
-const { app, BrowserWindow, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, Menu, shell } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
 const core = require('./main-core.cjs')
@@ -99,6 +99,44 @@ async function migrateSessionIfNeeded(win) {
 
 // ── Shell window ──────────────────────────────────────────────────────────────
 
+/** Opens the web app's /build route in this shell. The shell has no
+ *  client-side LOOPIT_ENABLED flag (the web export bakes that into the
+ *  sidebar), so the menu entry is always available. */
+function installShellMenu(win, origin) {
+  const buildUrl = new URL('/build/', origin.endsWith('/') ? origin : `${origin}/`).href
+  const template = [
+    {
+      label: 'Loop GPT',
+      submenu: [
+        {
+          label: 'Build',
+          accelerator: 'CmdOrCtrl+Shift+B',
+          click: () => {
+            if (!win.isDestroyed()) void win.loadURL(buildUrl)
+          },
+        },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    },
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+  win.setAutoHideMenuBar(false)
+  win.setMenuBarVisibility(true)
+}
+
 async function createWindow(gatewayUrl) {
   const ws = core.loadWindowState()
   const win = new BrowserWindow({
@@ -150,6 +188,7 @@ async function createWindow(gatewayUrl) {
   })
 
   const start = core.DEV_URL || gatewayUrl
+  installShellMenu(win, start)
   await win.loadURL(start).catch((err) => console.error('[desktop] load failed:', err))
   await migrateSessionIfNeeded(win)
 

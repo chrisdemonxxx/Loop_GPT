@@ -7,10 +7,11 @@ import ChatList from './src/screens/ChatList'
 import Chat from './src/screens/Chat'
 import Settings from './src/screens/Settings'
 import Projects from './src/screens/Projects'
+import Build from './src/screens/Build'
 import { theme } from './src/theme'
 
 /** Lightweight state router; a navigation library arrives with the mature app. */
-type Screen = 'list' | 'chat' | 'settings' | 'projects'
+type Screen = 'list' | 'chat' | 'settings' | 'projects' | 'build'
 
 export default function App() {
   const [authed, setAuthed] = useState(false)
@@ -33,6 +34,8 @@ export default function App() {
         <Settings onClose={goList} />
       ) : screen === 'projects' ? (
         <Projects onClose={goList} />
+      ) : screen === 'build' ? (
+        <Build onClose={goList} />
       ) : (
         <ChatList
           key={listKey}
@@ -41,6 +44,7 @@ export default function App() {
           onLogout={() => { clearAuth(); setConversationId(null); setListKey((k) => k + 1); setAuthed(false) }}
           onOpenSettings={() => setScreen('settings')}
           onOpenProjects={() => setScreen('projects')}
+          onOpenBuild={() => setScreen('build')}
         />
       )}
     </View>
