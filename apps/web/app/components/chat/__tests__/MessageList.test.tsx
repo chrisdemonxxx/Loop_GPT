@@ -55,7 +55,7 @@ describe('chat text stays clean', () => {
   })
 
   it('strips tool JSON from stored thoughts and copies the shown answer', () => {
-    const writeText = vi.fn(async () => undefined)
+    const writeText = vi.fn(async (_text: string) => undefined)
     Object.assign(navigator, { clipboard: { writeText } })
     render(
       <MessageBubble

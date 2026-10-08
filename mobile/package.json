@@ -7,7 +7,9 @@
                     "start":  "expo start",
                     "android":  "expo run:android",
                     "ios":  "expo run:ios",
+                    "lint":  "tsc --noEmit --pretty false",
                     "typecheck":  "tsc --noEmit",
+                    "build":  "tsc --noEmit --pretty false",
                     "postinstall":  "node patch-gradle.mjs"
                 },
     "dependencies":  {

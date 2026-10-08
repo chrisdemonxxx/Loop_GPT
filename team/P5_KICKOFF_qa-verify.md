@@ -52,7 +52,7 @@ card rects and the intersection test are all in it) rather than re-deriving the 
 
 ```
 POST https://loop-gpt.cyou/api/auth/login
-     {"email":"hr.mobile.probe.20260929@example.com","password":"HrProbe!2941-aa"}
+     {"email":"hr.mobile.probe.20260929@example.com","password":"<redacted: use E2E_PROBE_PASSWORD>"}
   -> HTTP=200  310 B  keys=['token','user']  token_len=177
 GET  /api/account/me   (Bearer that token) -> HTTP=200 354 B  plan=free, credits=30,
                         usage={tokensIn:0,tokensOut:0,images:0,messages:0}

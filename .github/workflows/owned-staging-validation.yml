@@ -1,5 +1,9 @@
 name: Owned staging validation
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     paths: ['backend/**', 'web/**', 'deploy/owned-staging/**', '.github/workflows/owned-staging-validation.yml']

@@ -53,3 +53,18 @@ loop-gpt-p5-8346c2d/
 # Desktop shell build output (electron-builder).
 # NOTE: apps/desktop/build/ is buildResources (icon) — deliberately tracked.
 apps/desktop/release/
+
+# Loop-IT nested checkout (directory stays Loop-it/ until a manual git subtree
+# import). Patterns without a slash match at any depth, so they also cover
+# the tree after it moves to loopit/.
+.venv/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.turbo/
+Loop-it/artifacts/
+Loop-it/**/dist/
+Loop-it/.loopit/
+# Large binary handbook inside the nested tree (~335KB). Not a repo-wide *.pdf.
+Loop-it/**/*.pdf

@@ -1149,7 +1149,7 @@ measures classes instead of pixels.
 `team/EVIDENCE_p5_fixture_probe.txt`, 1,091 B, sha256 `e191f43bb88fcde0…`):
 
 ```
-A. POST https://loop-gpt.cyou/api/auth/login   {hr.mobile.probe.20260929@example.com / HrProbe!2941-aa}
+A. POST https://loop-gpt.cyou/api/auth/login   {hr.mobile.probe.20260929@example.com / <redacted: use E2E_PROBE_PASSWORD>}
    HTTP=200  310 B  sha256(b98f519e550d0218b90f67d163e62c2e8562b02dd6fb95de6becc3ab9c576361)
    keys=['token','user']   user.email=hr.mobile.probe.20260929@example.com   token_len=177
 B. GET https://loop-gpt.cyou/api/account/me   (Bearer that token)   HTTP=200  354 B

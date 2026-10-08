@@ -91,7 +91,7 @@ than in the kickoff it owns.
 
 ```
 POST https://loop-gpt.cyou/api/auth/login
-     {"email":"hr.mobile.probe.20260929@example.com","password":"HrProbe!2941-aa"}
+     {"email":"hr.mobile.probe.20260929@example.com","password":"<redacted: use E2E_PROBE_PASSWORD>"}
   -> HTTP=200  310 B  {"token":"…","user":{"email":"hr.mobile.probe.20260929@example.com",…}}
 
 POST https://loop-gpt.cyou/api/auth/login  (same body)

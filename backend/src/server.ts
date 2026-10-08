@@ -50,6 +50,7 @@ import mediaRoutes from './routes/media'
 import developerRoutes from './routes/developer'
 import v1Routes from './routes/v1'
 import { rateLimiter } from './middleware/rateLimiter'
+import { readinessHandler } from './routes/ready'
 import { createCorsOriginPolicy } from './middleware/corsPolicy'
 import { asyncHandler, errorLogger } from './middleware/errorLogger'
 import { requestLog, recentRequests, metricsSummary, activeStreamCount } from './middleware/requestLog'
@@ -100,6 +101,9 @@ app.use('/api/memory', express.json({ limit: '1mb' }), rateLimiter(10 * 1000, 50
 // Served-revision instrument: unauthenticated and mounted BEFORE the generic /api
 // limiter, so a deploy probe can never be throttled into a false 429.
 app.use('/api', versionRouter)
+
+// Readiness for deploy health checks: database + private storage.
+app.get('/ready', asyncHandler(readinessHandler()))
 
 // 75MB so /v1/media/publish can carry base64 video payloads (≈50MB decoded cap on the route).
 app.use(express.json({ limit: '75mb' }))

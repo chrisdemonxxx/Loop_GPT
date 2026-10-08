@@ -1,0 +1,56 @@
+name: Packages and mobile
+
+on:
+  pull_request:
+    paths: ['packages/**', 'mobile/**', '.github/workflows/packages-validation.yml']
+  push:
+    paths: ['packages/**', 'mobile/**', '.github/workflows/packages-validation.yml']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  packages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm audit --audit-level=high
+      # Packages are consumed as TypeScript source. tsc --noEmit is the
+      # typecheck and the build gate; there is no separate emit step.
+      - name: Typecheck and build packages
+        run: npx --no-install tsc --noEmit -p packages/tsconfig.json
+
+  mobile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm audit --audit-level=high
+      # Expo has no headless native build in this workflow. tsc is the
+      # lint stand-in and the compile gate.
+      - name: Lint mobile
+        run: npm run lint
+      - name: Typecheck mobile
+        run: npm run typecheck
+      - name: Build mobile
+        run: npm run build

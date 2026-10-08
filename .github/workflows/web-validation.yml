@@ -1,5 +1,9 @@
 name: Owned web validation
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     paths: ['web/**', 'apps/**', 'packages/**', '.github/workflows/web-validation.yml']
@@ -22,6 +26,7 @@ jobs:
           cache-dependency-path: package-lock.json
       # npm workspaces: install + test + build run from the repo root.
       - run: npm ci --no-audit --no-fund
+      - run: npm audit --audit-level=high
       - run: npm run test -w apps/web
       - run: npm run build -w apps/web
       - run: node build/pwa.mjs
