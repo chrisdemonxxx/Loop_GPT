@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import axios from 'axios'
 
-import { API_URL, authHeaders, clearAuth, getStoredUser, getToken, getModelTier, setModelTier, type AgentMode } from '../lib/api'
+import { API_URL, authHeaders, getStoredUser, hasSession, logoutSession, getModelTier, setModelTier, type AgentMode } from '../lib/api'
 import { pushSettingsHash, readCurrentSettingsHash } from '../lib/settingsHash'
 import type { EffortValue } from '../components/chat/composer/EffortSelector'
 import { getDraft, setDraft, deleteDraft } from '../lib/drafts'
@@ -210,7 +210,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    if (getStoredUser() || getToken()) return
+    if (getStoredUser() || hasSession()) return
     fetch(`${API_URL}/api/auth/providers`)
       .then((r) => r.json())
       .then((d) => { if (!d.guest) setAuthPanelOpen(true) })
@@ -676,9 +676,7 @@ export default function ChatPage() {
     toast.push('info', `Theme: ${next === 'system' ? 'System' : next === 'light' ? 'Light' : 'Dark'}`)
   }
   const logout = () => {
-    // The real session keys ('authToken'/'user') — the old removal targeted a
-    // stale 'token' key, so logout never actually signed the session out.
-    clearAuth()
+    logoutSession()
     // Reload: the guest-check reopens the sign-in panel beside the chat.
     window.location.href = '/'
   }

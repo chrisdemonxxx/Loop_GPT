@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import { clearAuth } from '../lib/api'
+import { logoutSession } from '../lib/api'
 
 /**
  * /logout (blueprint §4.1): a route-action, not a page. Clears this
@@ -9,7 +9,7 @@ import { clearAuth } from '../lib/api'
  */
 export default function LogoutPage() {
   useEffect(() => {
-    clearAuth()
+    logoutSession()
     window.location.replace('/login')
   }, [])
   return (

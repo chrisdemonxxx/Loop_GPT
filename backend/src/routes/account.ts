@@ -7,12 +7,17 @@ import express from 'express'
 import { z } from 'zod'
 import { generateSecret, generateURI, verifySync } from 'otplib'
 import { asyncHandler } from '../middleware/errorLogger'
-import { authenticateToken } from './auth'
+import { byUser, rateLimiter } from '../middleware/rateLimiter'
+import { authenticateToken, revokeAndIssueSession } from './auth'
+import { clientUsedBearer } from '../services/auth'
 import { prisma, hasDb } from '../services/prisma'
 import { getAccount, redeemVoucher } from '../services/billing'
 import { voucherRedeemedEmail } from '../services/email'
 
 const router = express.Router()
+// Guessable secrets (voucher codes, 6-digit TOTP) get small per-account budgets.
+const redeemLimit = rateLimiter(15 * 60 * 1000, 10, { key: byUser })
+const totpLimit = rateLimiter(15 * 60 * 1000, 10, { key: byUser })
 const usageQuery = z.object({
   limit: z.string().regex(/^[1-9]\d{0,2}$/).transform(Number).refine(value => value <= 200).optional(),
 }).strict()
@@ -56,7 +61,7 @@ router.get('/usage', authenticateToken, asyncHandler(async (req, res) => {
 }))
 
 /** POST /api/account/redeem { code } — redeem a voucher. */
-router.post('/redeem', authenticateToken, asyncHandler(async (req, res) => {
+router.post('/redeem', authenticateToken, redeemLimit, asyncHandler(async (req, res) => {
   const userId = (req as any).userId
   const { code } = req.body || {}
   const result = await redeemVoucher(userId, code)
@@ -88,7 +93,7 @@ router.post('/totp/setup', authenticateToken, asyncHandler(async (req, res) => {
 }))
 
 /** POST /api/account/totp/verify { token } — confirm and enable. */
-router.post('/totp/verify', authenticateToken, asyncHandler(async (req, res) => {
+router.post('/totp/verify', authenticateToken, totpLimit, asyncHandler(async (req, res) => {
   const userId = (req as any).userId
   if (!hasDb || !prisma) return res.status(503).json({ error: 'MFA requires a database.' })
   const parsed = totpBody.safeParse(req.body)
@@ -99,12 +104,12 @@ router.post('/totp/verify', authenticateToken, asyncHandler(async (req, res) => 
   if (!verifySync({ token: parsed.data.token, secret: user.totpSecret, epochTolerance: 30 }).valid) {
     return res.status(400).json({ error: 'That code is not valid. Try the next one.' })
   }
-  await prisma.user.update({ where: { id: userId }, data: { totpEnabled: true } })
-  res.json({ ok: true, enabled: true })
+  const token = await revokeAndIssueSession(res, userId, { totpEnabled: true })
+  res.json(clientUsedBearer(req) ? { ok: true, enabled: true, token } : { ok: true, enabled: true })
 }))
 
 /** POST /api/account/totp/disable { token } — disable (requires a valid code). */
-router.post('/totp/disable', authenticateToken, asyncHandler(async (req, res) => {
+router.post('/totp/disable', authenticateToken, totpLimit, asyncHandler(async (req, res) => {
   const userId = (req as any).userId
   if (!hasDb || !prisma) return res.status(503).json({ error: 'MFA requires a database.' })
   const parsed = totpBody.safeParse(req.body)
@@ -114,8 +119,8 @@ router.post('/totp/disable', authenticateToken, asyncHandler(async (req, res) =>
   if (!verifySync({ token: parsed.data.token, secret: user.totpSecret, epochTolerance: 30 }).valid) {
     return res.status(400).json({ error: 'That code is not valid.' })
   }
-  await prisma.user.update({ where: { id: userId }, data: { totpEnabled: false, totpSecret: null } })
-  res.json({ ok: true, enabled: false })
+  const token = await revokeAndIssueSession(res, userId, { totpEnabled: false, totpSecret: null })
+  res.json(clientUsedBearer(req) ? { ok: true, enabled: false, token } : { ok: true, enabled: false })
 }))
 
 export default router

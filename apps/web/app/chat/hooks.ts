@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 
-import { API_URL, authHeaders, getToken, type AgentMode } from '../lib/api'
+import { API_URL, authHeaders, hasSession, type AgentMode } from '../lib/api'
 import { presentStreamError } from '../lib/assistantText'
 import { runAgentStream, resumeStoredRun, getStoredRun, type ArtifactRef } from '../lib/stream'
 import { track } from '../components/Analytics'
@@ -131,7 +131,7 @@ export function useWorkspaceProjects() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!getToken()) return
+    if (!hasSession()) return
     ;(async () => {
       try {
         await axios.post(`${API_URL}/api/workspaces/personal`, {}, { headers: authHeaders() })

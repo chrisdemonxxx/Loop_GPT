@@ -3,8 +3,10 @@
  * voucher management, and payments. All routes require an admin (see requireAdmin).
  */
 import express from 'express'
+import { randomInt } from 'crypto'
 import { asyncHandler } from '../middleware/errorLogger'
 import { authenticateToken, requireAdmin } from './auth'
+import { revocationStamp, shouldRevokeSessionsOnRoleChange } from '../services/auth'
 import { prisma, hasDb } from '../services/prisma'
 import { recentRequests, metricsSummary, activeStreamCount } from '../middleware/requestLog'
 
@@ -137,7 +139,14 @@ router.patch('/users/:id', asyncHandler(async (req, res) => {
   if (Number.isFinite(credits)) data.credits = Math.max(0, Math.floor(credits))
   if (Number.isFinite(imageCredits)) data.imageCredits = Math.max(0, Math.floor(imageCredits))
   if (!Object.keys(data).length) return res.status(400).json({ error: 'Nothing to update.' })
-  const user = await prisma.user.update({ where: { id: req.params.id }, data })
+  const existing = await prisma.user.findUnique({ where: { id: req.params.id }, select: { role: true } })
+  if (!existing) return res.status(404).json({ error: 'User not found.' })
+  if (shouldRevokeSessionsOnRoleChange(existing.role, data.role)) data.sessionInvalidatedAt = revocationStamp()
+  // Never echo credential fields (password hash, TOTP secret).
+  const user = await prisma.user.update({ where: { id: req.params.id }, data, select: {
+    id: true, email: true, name: true, role: true, plan: true, unlimited: true, credits: true, imageCredits: true,
+    emailVerified: true, totpEnabled: true, createdAt: true, lastActiveAt: true, tokensInTotal: true, tokensOutTotal: true,
+    imagesTotal: true, messagesTotal: true } })
   res.json({ ok: true, user: { ...user, tokensInTotal: Number(user.tokensInTotal), tokensOutTotal: Number(user.tokensOutTotal) } })
 }))
 
@@ -165,7 +174,7 @@ router.get('/vouchers', asyncHandler(async (_req, res) => {
 function genCode(prefix = 'LOOP'): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   let s = ''
-  for (let i = 0; i < 10; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)]
+  for (let i = 0; i < 10; i++) s += alphabet[randomInt(alphabet.length)]
   return `${prefix}-${s.slice(0, 5)}-${s.slice(5)}`
 }
 

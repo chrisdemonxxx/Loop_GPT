@@ -20,6 +20,7 @@ export async function readBotRunStream(
   signal: AbortSignal,
 ): Promise<void> {
   const res = await fetch(`${API_URL}${base}/runs/${runId}/events`, {
+    credentials: 'include',
     headers: authHeaders(false),
     signal,
   })

@@ -16,21 +16,21 @@ if (process.env.SENTRY_DSN) {
   })
 }
 
-// Unexpected process failures are fatal; the process manager can restart a
-// clean instance rather than leave a partially corrupted worker serving traffic.
-process.on('unhandledRejection', (reason: any) => {
-  console.error('Unhandled rejection:', reason?.message || reason)
-  if (process.env.SENTRY_DSN) Sentry.captureException(reason)
-  process.exit(1)
-})
-process.on('uncaughtException', (err: any) => {
-  console.error('Uncaught exception:', err?.message || err)
-  if (process.env.SENTRY_DSN) Sentry.captureException(err)
-  process.exit(1)
-})
+// Exit only when the process has not started serving. A later rejection is
+// logged (and sent to Sentry) so one failed request does not drop every user.
+let acceptingTraffic = false
+function reportProcessError(kind: string, err: any) {
+  console.error(kind, err?.message || err)
+  try { if (process.env.SENTRY_DSN) Sentry.captureException(err) } catch { /* ignore */ }
+  if (!acceptingTraffic) process.exit(1)
+}
+process.on('unhandledRejection', (reason: any) => reportProcessError('Unhandled rejection:', reason))
+process.on('uncaughtException', (err: any) => reportProcessError('Uncaught exception:', err))
 
 import express from 'express'
 import cors from 'cors'
+// Patch Router methods before any route module creates a router.
+import './middleware/installAsyncRouteGuard'
 import conversationRoutes from './routes/conversations'
 import messageRoutes from './routes/messages'
 import authRoutes from './routes/auth'
@@ -51,6 +51,7 @@ import developerRoutes from './routes/developer'
 import v1Routes from './routes/v1'
 import { byBodyField, byIp, rateLimiter } from './middleware/rateLimiter'
 import { readinessHandler } from './routes/ready'
+import { metricsHandler } from './routes/metrics'
 import { createCorsOriginPolicy } from './middleware/corsPolicy'
 import { asyncHandler, errorLogger } from './middleware/errorLogger'
 import { requestLog, recentRequests, metricsSummary, activeStreamCount } from './middleware/requestLog'
@@ -118,6 +119,7 @@ app.use('/api', versionRouter)
 
 // Readiness for deploy health checks: database + private storage.
 app.get('/ready', asyncHandler(readinessHandler()))
+app.get('/metrics', asyncHandler(metricsHandler))
 
 // App JSON bodies are small. /v1 parses its own (large, for base64 media
 // publish) bodies only after API-key authentication.
@@ -136,6 +138,7 @@ app.post('/api/auth/register', rateLimiter(60 * 60 * 1000, 10, { key: byIp }))
 app.post('/api/auth/forgot', rateLimiter(15 * 60 * 1000, 5, { key: byIp }), rateLimiter(60 * 60 * 1000, 3, { key: byBodyField('email') }))
 app.post('/api/auth/reset', rateLimiter(15 * 60 * 1000, 10, { key: byIp }))
 app.post('/api/auth/verify', rateLimiter(15 * 60 * 1000, 20, { key: byIp }))
+app.post('/api/auth/oauth/exchange', rateLimiter(15 * 60 * 1000, 20, { key: byIp }))
 app.post('/api/mail/inbound', rateLimiter(60 * 1000, 60, { key: byIp }))
 
 // Operator tooling gets its own generous, separately-bucketed limiter: the
@@ -249,9 +252,14 @@ if (process.env.SENTRY_DSN) {
 // Error handling middleware (must be last)
 app.use(errorLogger)
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
+  acceptingTraffic = true
   console.log(`🚀 Server running on port ${PORT}`)
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`)
   console.log(`🌐 CORS enabled for: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`)
+})
+server.on('error', (err) => {
+  console.error('Server failed to start:', err instanceof Error ? err.message : err)
+  process.exit(1)
 })
 

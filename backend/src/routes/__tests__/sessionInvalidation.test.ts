@@ -21,9 +21,12 @@ vi.mock('../../services/prisma', () => ({
   hasDb: true,
 }))
 
-async function callMiddleware(token: string | undefined): Promise<{ status: number; userId?: string; error?: any }> {
+async function callMiddleware(token: string | undefined, cookie?: string): Promise<{ status: number; userId?: string; error?: any }> {
   return new Promise((resolve) => {
-    const req: any = { headers: token ? { authorization: `Bearer ${token}` } : {} }
+    const headers: Record<string, string> = {}
+    if (token) headers.authorization = `Bearer ${token}`
+    if (cookie) headers.cookie = cookie
+    const req: any = { headers }
     const res: any = {
       status(s: number) { this.status = s; return this },
       json(b: any) { resolve({ status: this.status, error: b?.error }) },
@@ -39,7 +42,7 @@ describe('session invalidation on password reset', () => {
     findUnique.mockResolvedValue({ sessionInvalidatedAt: new Date(Date.now() + 1000) })
     const r = await callMiddleware(token)
     expect(r.status).toBe(401)
-    expect(r.error).toMatch(/password reset/i)
+    expect(r.error).toMatch(/sign in again/i)
   })
 
   it('accepts a token issued AFTER the reset stamp', async () => {
@@ -58,11 +61,27 @@ describe('session invalidation on password reset', () => {
     expect(r.status).toBe(200)
   })
 
-  it('fails open when the DB read errors (signature already verified)', async () => {
+  it('fails closed when the DB read errors', async () => {
     const token = jwt.sign({ userId: 'u1' }, JWT_SECRET, { expiresIn: '7d' })
     findUnique.mockRejectedValue(new Error('db down'))
     const r = await callMiddleware(token)
+    expect(r.status).toBe(503)
+    expect(r.error).toMatch(/unavailable/i)
+  })
+
+  it('rejects a session whose user row is gone', async () => {
+    const token = jwt.sign({ userId: 'u1' }, JWT_SECRET, { expiresIn: '7d' })
+    findUnique.mockResolvedValue(null)
+    const r = await callMiddleware(token)
+    expect(r.status).toBe(401)
+  })
+
+  it('accepts the httpOnly session cookie when no bearer is sent', async () => {
+    const token = jwt.sign({ userId: 'u1' }, JWT_SECRET, { expiresIn: '7d' })
+    findUnique.mockResolvedValue({ sessionInvalidatedAt: null })
+    const r = await callMiddleware(undefined, `loop_session=${encodeURIComponent(token)}`)
     expect(r.status).toBe(200)
+    expect(r.userId).toBe('u1')
   })
 
   it('rejects invalid signatures regardless of stamps', async () => {

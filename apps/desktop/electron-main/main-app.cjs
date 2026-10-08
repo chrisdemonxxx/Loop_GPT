@@ -187,9 +187,10 @@ async function createWindow(gatewayUrl) {
 /**
  * Google/GitHub sign-in on the desktop: the OAuth flow runs on the REAL
  * site origin (Google's registered redirect URI), in a popup that navigates
- * freely. Once the site's post-login page stores the session in the popup's
- * localStorage, the bridge copies {token, user} into the main window and
- * closes the popup. Zero backend or Google-console changes.
+ * freely. The site swaps ?oauth_code= for a session (prompting for TOTP when
+ * the account requires it). The website keeps the user in localStorage and
+ * the JWT in the httpOnly loop_session cookie. The bridge copies that session
+ * into the main window and closes the popup.
  */
 function openOAuthPopup(parentWin, startPath) {
   return new Promise((resolve) => {
@@ -220,19 +221,36 @@ function openOAuthPopup(parentWin, startPath) {
       if (!popup.isDestroyed()) popup.destroy()
     }
 
-    // Poll the popup's session: the site's login page stores authToken+user
-    // via setAuth on success. 5-minute cap.
+    // Poll the popup until the site finishes the oauth_code exchange (or
+    // shows a login error). The website does not keep the JWT in
+    // localStorage; the httpOnly session cookie is the source of the bearer
+    // the desktop shell needs. 5-minute cap.
     const startedAt = Date.now()
     const poll = setInterval(async () => {
       if (popup.isDestroyed()) { finish({ cancelled: true }); return }
       if (Date.now() - startedAt > 300_000) { finish({ cancelled: true }); return }
       try {
+        const url = popup.webContents.getURL()
         const auth = await popup.webContents.executeJavaScript(
-          `(() => { try { return { token: localStorage.getItem('authToken'), user: localStorage.getItem('user') } } catch { return { token: null, user: null } } })()`,
+          `(() => { try { const p = new URLSearchParams(location.search); return { token: localStorage.getItem('authToken'), user: localStorage.getItem('user'), error: p.get('error'), oauthCode: p.get('oauth_code') } } catch { return null } })()`,
         )
-        if (auth?.token) {
+        if (!auth) return
+        if (/\/login\/?/i.test(url) && auth.error && !auth.oauthCode) {
+          finish({ error: auth.error })
+          return
+        }
+        const cookies = await popup.webContents.session.cookies.get({ name: 'loop_session' })
+        let cookieToken = ''
+        for (const cookie of cookies) {
+          if (!cookie?.value) continue
+          let value = cookie.value
+          try { value = decodeURIComponent(value) } catch { /* already decoded */ }
+          if (value.split('.').length === 3) { cookieToken = value; break }
+        }
+        const token = cookieToken || auth.token
+        if (token && auth.user) {
           await parentWin.webContents.executeJavaScript(
-            `(() => { localStorage.setItem('authToken', ${JSON.stringify(auth.token)}); localStorage.setItem('user', ${JSON.stringify(auth.user ?? 'null')}); window.location.href = '/'; })()`,
+            `(() => { localStorage.setItem('authToken', ${JSON.stringify(token)}); localStorage.setItem('user', ${JSON.stringify(auth.user)}); localStorage.setItem('loopSignedIn', '1'); window.location.href = '/'; })()`,
           )
           finish({ ok: true })
         }

@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction, RequestHandler } from 'express'
 import { randomUUID } from 'crypto'
+import { recordRequestMetric } from './opsMetrics'
 
 export interface LoggedRequest {
   requestId: string
@@ -54,6 +55,7 @@ export function requestLog(): RequestHandler {
       entry.finished = true
       entry.status = res.statusCode
       entry.durationMs = Date.now() - startedAt
+      recordRequestMetric(entry.path, entry.status ?? 0, entry.durationMs)
       console.log(JSON.stringify({
         type: 'request',
         requestId: entry.requestId,

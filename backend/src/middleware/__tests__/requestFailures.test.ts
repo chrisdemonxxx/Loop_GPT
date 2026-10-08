@@ -1,5 +1,6 @@
 import type { Server } from 'node:http'
 import express from 'express'
+import { createHash } from 'node:crypto'
 import jwt from 'jsonwebtoken'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { asyncHandler, errorLogger } from '../errorLogger'
@@ -10,7 +11,7 @@ const fixtures = vi.hoisted(() => {
   const table = () => ({ findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(),
     create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), delete: vi.fn(), count: vi.fn(), aggregate: vi.fn(), groupBy: vi.fn() })
   return { db: { user: table(), usageEvent: table(), apiKey: table(), apiUsage: table(), apiReservation: table(),
-    mediaJob: table(), accountedVideoJob: table(), voucher: table(), payment: table(), token: table(), $transaction: vi.fn() },
+    mediaJob: table(), accountedVideoJob: table(), voucher: table(), payment: table(), token: table(), oAuthIdentity: table(), $transaction: vi.fn() },
     exchange: vi.fn(), email: vi.fn(), provider: vi.fn() }
 })
 vi.mock('../../services/prisma', () => ({ prisma: fixtures.db, hasDb: true }))
@@ -85,7 +86,7 @@ beforeEach(() => {
     user: { id: userId, apiPlan: null, apiBalanceMicros: 1000000n, unlimited: true } })
   fixtures.email.mockReset().mockResolvedValue(undefined)
   fixtures.provider.mockReset().mockImplementation(() => { throw new Error('Provider traffic forbidden') })
-  fixtures.exchange.mockReset().mockResolvedValue({ email, name: 'Fixture', providerId: 'fixture-oauth-id' })
+  fixtures.exchange.mockReset().mockResolvedValue({ email, name: 'Fixture', providerId: 'fixture-oauth-id', emailVerified: true })
   fixtures.db.user.create.mockImplementation(async ({ data }) => ({ id: userId, ...data }))
 })
 afterEach(async () => {
@@ -211,37 +212,106 @@ describe('mounted async route and middleware failure containment', () => {
   })
 })
 
-describe('OAuth public registration never provisions administrators', () => {
+describe('OAuth sign-in: login-CSRF binding, verified linking and one-time hand-off', () => {
+  const nonce = 'fixture-nonce-value'
+  const nh = createHash('sha256').update(nonce).digest('base64url')
+  const goodState = () => jwt.sign({ provider: 'google', nh }, secret, { expiresIn: '10m' })
+  function callback(state: string, cookie: string | null = `loop_oauth_nonce=${nonce}`) {
+    return fetch(`${base}/api/auth/oauth/google/callback?code=fixture&state=${encodeURIComponent(state)}`, {
+      redirect: 'manual', headers: cookie ? { Cookie: cookie } : {}, signal: AbortSignal.timeout(5000) })
+  }
+  function redirectParams(response: Response) {
+    expect(response.status).toBe(302)
+    return new URL(response.headers.get('location')!).searchParams
+  }
+  beforeEach(() => {
+    fixtures.db.oAuthIdentity.findUnique.mockResolvedValue(null)
+    fixtures.db.oAuthIdentity.create.mockResolvedValue({})
+    fixtures.db.token.create.mockResolvedValue({})
+  })
+
   it.each([[0, ''], [0, email], [5, email], [5, 'other@example.invalid']])('creates role:user with prior count %s and ADMIN_EMAIL=%s', async (count, adminEmail) => {
     vi.stubEnv('ADMIN_EMAIL', adminEmail)
     fixtures.db.user.findUnique.mockResolvedValueOnce(null)
     fixtures.db.user.count.mockResolvedValue(count)
-    const state = jwt.sign({ provider: 'google' }, secret, { expiresIn: '10m' })
-    const response = await request(`/api/auth/oauth/google/callback?code=fixture&state=${encodeURIComponent(state)}`)
-    expect(response.status).toBe(302)
+    const params = redirectParams(await callback(goodState()))
     expect(fixtures.exchange).toHaveBeenCalledOnce()
-    expect(fixtures.db.user.create).toHaveBeenCalledWith({ data: expect.objectContaining({ email, role: 'user' }) })
+    expect(fixtures.db.user.create).toHaveBeenCalledWith({ data: expect.objectContaining({ email, role: 'user',
+      oauthIdentities: { create: { provider: 'google', providerUserId: 'fixture-oauth-id', email } } }) })
     expect(fixtures.db.user.count).not.toHaveBeenCalled()
     expect(fixtures.db.user.update).not.toHaveBeenCalled()
-    const redirect = new URL(response.headers.get('location')!)
-    expect(redirect.searchParams.get('role')).toBe('user')
-    expect(jwt.verify(redirect.searchParams.get('token')!, secret)).toMatchObject({ userId })
+    expect(params.get('oauth_code')).toMatch(/^[a-f0-9]{48}$/)
+    expect(params.get('token')).toBeNull()
+    expect(params.get('welcome')).toBe('1')
   })
   it('also creates ordinary users through a form-post callback', async () => {
     fixtures.db.user.findUnique.mockResolvedValueOnce(null)
     vi.stubEnv('ADMIN_EMAIL', email)
     const response = await fetch(`${base}/api/auth/oauth/google/callback`, { method: 'POST', redirect: 'manual',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ code: 'fixture', state: jwt.sign({ provider: 'google' }, secret) }), signal: AbortSignal.timeout(5000) })
-    expect(response.status).toBe(302)
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: `loop_oauth_nonce=${nonce}` },
+      body: new URLSearchParams({ code: 'fixture', state: goodState() }), signal: AbortSignal.timeout(5000) })
+    expect(redirectParams(response).get('oauth_code')).toBeTruthy()
     expect(fixtures.db.user.create).toHaveBeenCalledWith({ data: expect.objectContaining({ role: 'user' }) })
   })
-  it('preserves the role of an existing explicitly provisioned administrator', async () => {
-    const state = jwt.sign({ provider: 'google' }, secret)
-    const response = await request(`/api/auth/oauth/google/callback?code=fixture&state=${encodeURIComponent(state)}`)
-    expect(response.status).toBe(302)
-    expect(new URL(response.headers.get('location')!).searchParams.get('role')).toBe('admin')
+  it('links a verified existing administrator by email and preserves the role through the exchange', async () => {
+    const admin = { id: userId, email, name: 'Fixture', role: 'admin', emailVerified: true, totpEnabled: false }
+    fixtures.db.user.findUnique.mockResolvedValue(admin)
+    const params = redirectParams(await callback(goodState()))
+    expect(fixtures.db.oAuthIdentity.create).toHaveBeenCalledWith({ data: { userId, provider: 'google', providerUserId: 'fixture-oauth-id', email } })
     expect(fixtures.db.user.create).not.toHaveBeenCalled()
     expect(fixtures.db.user.update).not.toHaveBeenCalled()
+    const code = params.get('oauth_code')!
+    const digest = createHash('sha256').update(code).digest('hex')
+    expect(fixtures.db.token.create).toHaveBeenCalledWith({ data: expect.objectContaining({ token: digest, type: 'oauth', userId }) })
+
+    fixtures.db.token.findUnique.mockResolvedValue({ id: 'handoff-1', token: digest, type: 'oauth', userId, usedAt: null, expiresAt: new Date(Date.now() + 60_000) })
+    fixtures.db.token.updateMany.mockResolvedValue({ count: 1 })
+    const exchanged = await request('/api/auth/oauth/exchange', { body: { code } })
+    expect(exchanged.status).toBe(200)
+    const body = await exchanged.json()
+    expect(body.user.role).toBe('admin')
+    expect(jwt.verify(body.token, secret)).toMatchObject({ userId })
+  })
+  it('signs in through an existing provider identity without touching email lookup', async () => {
+    fixtures.db.oAuthIdentity.findUnique.mockResolvedValue({ user: { id: userId, email, name: 'Fixture', role: 'user' } })
+    fixtures.exchange.mockResolvedValue({ email: 'changed@example.invalid', providerId: 'fixture-oauth-id', emailVerified: false })
+    expect(redirectParams(await callback(goodState())).get('oauth_code')).toBeTruthy()
+    expect(fixtures.db.user.findUnique).not.toHaveBeenCalled()
+  })
+  it.each([
+    ['no nonce cookie', null],
+    ['a different nonce cookie', 'loop_oauth_nonce=attacker-nonce'],
+  ])('refuses a callback with %s (login CSRF)', async (_label, cookie) => {
+    expect(redirectParams(await callback(goodState(), cookie)).get('error')).toBe('invalid_state')
+    expect(fixtures.exchange).not.toHaveBeenCalled()
+  })
+  it('refuses a state without a nonce binding', async () => {
+    const legacy = jwt.sign({ provider: 'google' }, secret)
+    expect(redirectParams(await callback(legacy)).get('error')).toBe('invalid_state')
+    expect(fixtures.exchange).not.toHaveBeenCalled()
+  })
+  it('refuses an unverified provider email', async () => {
+    fixtures.exchange.mockResolvedValue({ email, providerId: 'fixture-oauth-id', emailVerified: false })
+    expect(redirectParams(await callback(goodState())).get('error')).toBe('email_unverified')
+    expect(fixtures.db.user.create).not.toHaveBeenCalled()
+    expect(fixtures.db.oAuthIdentity.create).not.toHaveBeenCalled()
+  })
+  it('does not take over an existing account whose email was never verified', async () => {
+    fixtures.db.user.findUnique.mockResolvedValue({ id: userId, email, role: 'user', emailVerified: false })
+    expect(redirectParams(await callback(goodState())).get('error')).toBe('account_exists')
+    expect(fixtures.db.oAuthIdentity.create).not.toHaveBeenCalled()
+    expect(fixtures.db.token.create).not.toHaveBeenCalled()
+  })
+  it('requires TOTP at the exchange for accounts with MFA enabled', async () => {
+    fixtures.db.token.findUnique.mockResolvedValue({ id: 'handoff-2', type: 'oauth', userId, usedAt: null, expiresAt: new Date(Date.now() + 60_000) })
+    fixtures.db.user.findUnique.mockResolvedValue({ id: userId, email, role: 'user', totpEnabled: true, totpSecret: 'JBSWY3DPEHPK3PXP' })
+    const response = await request('/api/auth/oauth/exchange', { body: { code: 'a'.repeat(48) } })
+    expect(response.status).toBe(401)
+    expect(await response.json()).toMatchObject({ totpRequired: true })
+    expect(fixtures.db.token.updateMany).not.toHaveBeenCalled()
+  })
+  it.each(['', 'not-hex', 'a'.repeat(47)])('rejects malformed hand-off code %j before database access', async code => {
+    expect((await request('/api/auth/oauth/exchange', { body: { code } })).status).toBe(400)
+    expect(fixtures.db.token.findUnique).not.toHaveBeenCalled()
   })
 })

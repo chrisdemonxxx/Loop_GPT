@@ -1,11 +1,30 @@
 'use client'
 
-import { useState, useEffect, type JSX } from 'react'
+import { useState, useEffect, useRef, type JSX } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Sparkles, Loader2, ArrowRight } from 'lucide-react'
 import { API_URL, setAuth } from '../lib/api'
 import { track } from './Analytics'
+
+function oauthErrorMessage(code: string): string {
+  switch (code) {
+    case 'db_required':
+      return 'Sign-in needs the database enabled.'
+    case 'provider_unavailable':
+      return 'Social sign-in is not yet configured on this server. Please use email/password below.'
+    case 'invalid_state':
+      return 'That sign-in attempt expired or did not start in this browser. Start it again from this page.'
+    case 'email_unverified':
+      return 'That provider did not confirm your email address. Use a verified email, or sign up with email and password.'
+    case 'account_exists':
+      return 'An account with this email already exists and is not verified. Verify that email, or sign in with your password.'
+    case 'oauth_failed':
+      return 'Social sign-in failed. Try again, or use email and password.'
+    default:
+      return `Sign-in failed: ${code}`
+  }
+}
 
 const PROVIDER_META: Record<string, { label: string; icon: JSX.Element }> = {
   google: {
@@ -32,6 +51,8 @@ export default function AuthForm({ mode = 'login', onAuthed, compact }: { mode?:
   // TOTP MFA: shown when the backend reports the account has two-factor.
   const [totpRequired, setTotpRequired] = useState(false)
   const [totp, setTotp] = useState('')
+  const [oauthCode, setOauthCode] = useState('')
+  const oauthWelcome = useRef(false)
 
   /** Login/signup toggle — stateful so the compact side-panel can switch
    *  modes in place (the full-page form still routes via /login //signup). */
@@ -44,13 +65,7 @@ export default function AuthForm({ mode = 'login', onAuthed, compact }: { mode?:
     const token = p.get('token')
     const err = p.get('error')
     if (err) {
-      setError(
-        err === 'db_required'
-          ? 'Sign-in needs the database enabled.'
-          : err === 'provider_unavailable'
-          ? 'Social sign-in is not yet configured on this server. Please use email/password below.'
-          : `Sign-in failed: ${err}`
-      )
+      setError(oauthErrorMessage(err))
       window.history.replaceState({}, '', window.location.pathname)
       return
     }
@@ -59,27 +74,91 @@ export default function AuthForm({ mode = 'login', onAuthed, compact }: { mode?:
       track(p.get('welcome') ? 'signed_up' : 'logged_in', { method: 'oauth' })
       window.history.replaceState({}, '', window.location.pathname)
       router.push(p.get('role') === 'admin' ? '/admin' : '/chat')
+      return
+    }
+    const code = p.get('oauth_code')
+    if (code) {
+      oauthWelcome.current = p.get('welcome') === '1'
+      setOauthCode(code)
+      window.history.replaceState({}, '', window.location.pathname)
+      void exchangeOAuth(code, '')
     }
   }, [router])
 
-  function social(provider: string) {
+  async function exchangeOAuth(code: string, totpCode: string) {
+    setError('')
+    setLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/api/auth/oauth/exchange`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(totpCode ? { code, totp: totpCode } : { code }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (data.totpRequired) {
+        setTotpRequired(true)
+        setError(data.error || 'Enter your authenticator code.')
+        setLoading(false)
+        return
+      }
+      if (!res.ok || !data.user) {
+        setError(data.error || 'Sign-in failed')
+        setLoading(false)
+        return
+      }
+      setAuth(typeof data.token === 'string' ? data.token : 'cookie', data.user)
+      track(oauthWelcome.current ? 'signed_up' : 'logged_in', { method: 'oauth' })
+      if (onAuthed) { onAuthed(); return }
+      router.push(data.user?.role === 'admin' ? '/admin' : '/chat')
+    } catch (err: any) {
+      setError(err?.message || 'Network error')
+      setLoading(false)
+    }
+  }
+
+  async function social(provider: string) {
+    const path = `/api/auth/oauth/${provider}`
     // Desktop shell: the OAuth flow runs on the real site origin via the
     // popup bridge (a proxied in-window redirect 404s); the bridge copies
     // the finished session into this window and lands on /chat.
     if (typeof window !== 'undefined' && (window as any).loopDesktop?.startOAuth) {
-      void (window as any).loopDesktop.startOAuth(`/api/auth/oauth/${provider}`)
+      setError('')
+      setLoading(true)
+      try {
+        const result = await (window as any).loopDesktop.startOAuth(path)
+        if (result?.cancelled) setError('Sign-in was cancelled.')
+        else if (result?.error) setError(oauthErrorMessage(String(result.error)))
+      } catch (err: any) {
+        setError(err?.message || 'Sign-in failed.')
+      } finally {
+        setLoading(false)
+      }
       return
     }
-    window.location.href = `${API_URL}/api/auth/oauth/${provider}`
+    // Credentialed start so the login-CSRF nonce cookie is stored before the
+    // browser follows the provider redirect. Fall back to navigation when the
+    // redirect target is hidden (cross-origin opaque response).
+    try {
+      const res = await fetch(`${API_URL}${path}`, { method: 'GET', credentials: 'include', redirect: 'manual' })
+      const next = res.headers.get('Location')
+      if (next && res.status >= 300 && res.status < 400) {
+        window.location.assign(next)
+        return
+      }
+    } catch { /* navigation below still starts the flow */ }
+    window.location.assign(`${API_URL}${path}`)
   }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     setLoading(true)
+    if (oauthCode) { await exchangeOAuth(oauthCode, totp); return }
     try {
       const res = await fetch(`${API_URL}/api/auth/${isSignup ? 'register' : 'login'}`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(isSignup ? { email, password, name } : { email, password, ...(totp ? { totp } : {}) }),
       })
@@ -96,7 +175,7 @@ export default function AuthForm({ mode = 'login', onAuthed, compact }: { mode?:
       // session JWT (the hardened backend issues sessions only at login).
       if (isSignup) {
         const loginRes = await fetch(`${API_URL}/api/auth/login`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password, ...(totp ? { totp } : {}) }),
         })
         const loginData = await loginRes.json()
@@ -142,8 +221,8 @@ export default function AuthForm({ mode = 'login', onAuthed, compact }: { mode?:
         {isSignup && (
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" className="w-full bg-ink-800 border border-white/10 rounded-lg px-3 py-2.5 text-slate-100 text-sm focus:outline-none focus:accent-ring placeholder-slate-600" />
         )}
-        <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="w-full bg-ink-800 border border-white/10 rounded-lg px-3 py-2.5 text-slate-100 text-sm focus:outline-none focus:accent-ring placeholder-slate-600" />
-        <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className="w-full bg-ink-800 border border-white/10 rounded-lg px-3 py-2.5 text-slate-100 text-sm focus:outline-none focus:accent-ring placeholder-slate-600" />
+        <input type="email" required={!oauthCode} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="w-full bg-ink-800 border border-white/10 rounded-lg px-3 py-2.5 text-slate-100 text-sm focus:outline-none focus:accent-ring placeholder-slate-600" />
+        <input type="password" required={!oauthCode} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className="w-full bg-ink-800 border border-white/10 rounded-lg px-3 py-2.5 text-slate-100 text-sm focus:outline-none focus:accent-ring placeholder-slate-600" />
         {totpRequired && (
           <input
             inputMode="numeric"
