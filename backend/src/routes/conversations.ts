@@ -80,6 +80,8 @@ router.get('/', authenticateToken, async (req, res) => {
         title: conv.title,
         createdAt: conv.createdAt.toISOString(),
         updatedAt: conv.updatedAt.toISOString(),
+        shareId: null,
+        shareEnabled: false,
       })))
     }
 
@@ -102,10 +104,15 @@ router.get('/', authenticateToken, async (req, res) => {
         botId: true,
         kind: true,
         botIds: true,
+        shareToken: true,
       },
     })
 
-    res.json(conversations)
+    res.json(conversations.map((conv) => ({
+      ...conv,
+      shareId: conv.shareToken,
+      shareEnabled: Boolean(conv.shareToken),
+    })))
   } catch (error) {
     console.error('Get conversations error:', error)
     // In development, return empty array instead of error

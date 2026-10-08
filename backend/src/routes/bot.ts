@@ -202,6 +202,9 @@ router.get('/computer', asyncHandler(async (req, res) => {
   try {
     box = await ensureUserBox(userId, (user?.email || 'operator').split('@')[0], taskType)
   } catch (error: any) {
+    if (error?.code === 'forbidden' || error?.code === 'quota' || error?.code === 'unavailable' || error?.code === 'invalid_request') {
+      return botError(res, error)
+    }
     const msg = String(error?.message || 'box boot failed')
     // Honest failure modes: provider not configured vs provider error.
     if (/not configured|E2B_API_KEY/i.test(msg)) {

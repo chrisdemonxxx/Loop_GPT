@@ -82,9 +82,20 @@ model User {
   workspaceMemberships WorkspaceMember[]
   agentTasks    AgentTask[]
   bots          Bot[]
+  botBox        BotBox?
 
   @@index([role])
   @@index([plan])
+}
+
+/// Persistent computer box for one user. The worker reconnects with
+/// Sandbox.connect instead of cold-booting a second billed VM.
+model BotBox {
+  userId    String   @id
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sandboxId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 /// A named agent the user chats with. The primary row is "Loop Bot".
@@ -481,6 +492,7 @@ model DailyReservation {
 
   @@index([userId, createdAt])
   @@index([state, updatedAt])
+  @@index([windowStart])
 }
 
 enum DailySettlementStatus {

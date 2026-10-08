@@ -5,9 +5,9 @@
  *  - We ALWAYS inject a compact JSON tool protocol into the system prompt, so a
  *    model that ignores the OpenAI "tools" channel can still call tools by
  *    emitting an inline JSON object (ReAct-style).
- *  - We ALSO pass native `tools` to the API (best effort). If that request
- *    errors (e.g. server started without --jinja), we cache that the endpoint
- *    lacks native tool support and continue in inline-JSON mode.
+ *  - We ALSO pass native `tools` to the API (best effort). One failed request
+ *    falls back to inline JSON for this run only. A later success records that
+ *    the endpoint supports native tools; a single error does not disable them.
  *  - Each turn we look for a tool call in BOTH `message.tool_calls` and the
  *    inline JSON — whichever appears.
  */
@@ -125,8 +125,18 @@ function audit(entry: { userId?: string; conversationId: string; tool: string; a
   } catch { /* audit is best-effort */ }
 }
 
-/** Per-baseURL memo of whether native tool-calling works. */
+/** Per-baseURL memo of confirmed native tool-calling. Only `true` is sticky. */
 const nativeToolSupport = new Map<string, boolean>()
+
+/** Context-overflow retries that do not consume the step budget. */
+const MAX_CONTEXT_OVERFLOW_RETRIES = 3
+
+/** Hard stop so a stuck overflow or tool loop cannot run forever. */
+export const RUN_WALL_CLOCK_MS = 10 * 60 * 1000
+
+function isContextOverflow(error: unknown): boolean {
+  return /context|too long|too many tokens|maximum.*(length|tokens)|reduce.*(length|tokens)/i.test(String((error as { message?: string })?.message || ''))
+}
 
 export interface RunAgentResult {
   content: string
@@ -308,6 +318,7 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
       model,
       userId: opts.ctx.userId,
       workspaceId: opts.ctx.workspaceId,
+      conversationId: opts.ctx.conversationId,
       signal: ctx.signal,
       emit: (message) => ctx.emit({ type: 'status', message }),
     })
@@ -332,10 +343,21 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
   let forceFinalNext = false
   let lastSignature = ''
   let sameSigCount = 0
+  let nativeDisabledForRun = false
+  let overflowRetries = 0
+  const runStartedAt = Date.now()
 
   ctx.emit({ type: 'warming', message: 'Contacting model (may take a moment on cold start)…' })
 
   for (let iter = 0; iter < maxSteps; iter++) {
+    if (Date.now() - runStartedAt >= RUN_WALL_CLOCK_MS) {
+      if (forceFinalNext) {
+        finalContent = sanitizeText(finalContent) || 'This run reached its time limit before it could finish.'
+        break
+      }
+      forceFinalNext = true
+      working.push({ role: 'user', content: '[System note: this run hit its time limit. Write your final answer to the user now — do not call any more tools.]' })
+    }
     await assertRunAccess(ctx)
     elideOldToolContent(working)
     // Mid-run re-compaction: a tool-heavy run that keeps growing past the
@@ -347,6 +369,7 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
         model,
         userId: opts.ctx.userId,
         workspaceId: opts.ctx.workspaceId,
+        conversationId: opts.ctx.conversationId,
         signal: ctx.signal,
         emit: (message) => ctx.emit({ type: 'status', message }),
       })
@@ -356,7 +379,7 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
     if (iter === maxSteps - 1 && !forceFinalNext) {
       working.push({ role: 'user', content: '[System note: your tool budget for this run is now exhausted. Write your final answer to the user with everything you have gathered — do not call any more tools.]' })
     }
-    const useNative = !noTools && hasTools && nativeToolSupport.get(cfgKey) !== false
+    const useNative = !noTools && hasTools && !nativeDisabledForRun && nativeToolSupport.get(cfgKey) !== false
 
     // Sanitize streamed deltas (hold-back buffer catches cross-chunk identifiers).
     const sanitizer = makeStreamSanitizer((text) => ctx.emit({ type: 'delta', step: stepIndex, text }))
@@ -381,20 +404,25 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
       sanitizer.flush()
       // Context-window overflow from the provider: elide harder and retry —
       // a long tool run must degrade to a shorter transcript, not crash.
-      if (/context|too long|too many tokens|maximum.*(length|tokens)|reduce.*(length|tokens)/i.test(String(err?.message || ''))) {
+      // The retry does not consume the step counter, so it is capped.
+      if (isContextOverflow(err)) {
+        overflowRetries += 1
+        if (overflowRetries > MAX_CONTEXT_OVERFLOW_RETRIES || Date.now() - runStartedAt >= RUN_WALL_CLOCK_MS) throw err
         elideOldToolContent(working, 60_000)
         iter--
         continue
       }
-      // If native tool params likely caused the failure, disable and retry.
-      if (useNative && nativeToolSupport.get(cfgKey) === undefined) {
-        nativeToolSupport.set(cfgKey, false)
+      // Fall back to inline JSON for this run only. Do not poison the
+      // process-wide memo: one 500 must not turn native tools off forever.
+      if (useNative && nativeToolSupport.get(cfgKey) !== true) {
+        nativeDisabledForRun = true
         iter--
         continue
       }
       throw err
     }
 
+    overflowRetries = 0
     // A successful native-tools request confirms support.
     if (useNative && nativeToolSupport.get(cfgKey) === undefined) {
       nativeToolSupport.set(cfgKey, true)

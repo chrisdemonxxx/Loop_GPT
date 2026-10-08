@@ -20,6 +20,8 @@ import { prisma } from '../services/prisma'
 
 /** Transcript char budget that triggers a compaction pass (~4 chars/token). */
 export const COMPACT_THRESHOLD = 100_000
+/** One image part, counted toward the budget instead of the 6-char "[image]" stub. */
+export const IMAGE_CHAR_EQUIVALENT = 8_000
 /** Re-compact mid-run only after this much growth since the last pass. */
 const RECOMPACT_GROWTH = 30_000
 /** Messages kept verbatim at the tail — the live thread. */
@@ -45,8 +47,50 @@ const messageText = (m: ChatMessage): string =>
     ? m.content
     : m.content.map((p: any) => (p.type === 'text' ? p.text : '[image]')).join('\n')
 
+type ToolCallMessage = ChatMessage & {
+  tool_calls?: Array<{ function?: { name?: string; arguments?: string } }>
+}
+
+function messageBudgetChars(m: ChatMessage): number {
+  const contentChars = typeof m.content === 'string'
+    ? m.content.length
+    : (Array.isArray(m.content) ? m.content : []).reduce((n, part: any) => {
+      if (part?.type === 'text') return n + String(part.text || '').length
+      if (part?.type === 'image_url') return n + IMAGE_CHAR_EQUIVALENT
+      return n
+    }, 0)
+  const calls = (m as ToolCallMessage).tool_calls
+  const argChars = Array.isArray(calls)
+    ? calls.reduce((n, call) => n + String(call.function?.name || '').length + String(call.function?.arguments || '').length, 0)
+    : 0
+  return contentChars + argChars
+}
+
 export function transcriptSize(msgs: ChatMessage[]): number {
-  return msgs.reduce((n, m) => n + messageText(m).length, 0)
+  return msgs.reduce((n, m) => n + messageBudgetChars(m), 0)
+}
+
+function isToolResultMessage(m: ChatMessage | undefined): boolean {
+  if (!m) return false
+  if (m.role === 'tool') return true
+  return m.role === 'user' && typeof m.content === 'string' && m.content.startsWith('TOOL_RESULT')
+}
+
+/** First index kept verbatim. A tool call and its results stay on the same side of the cut. */
+export function compactionTailStart(msgs: ChatMessage[], keepTail = KEEP_TAIL): number {
+  let tailStart = Math.max(1, msgs.length - keepTail)
+  while (tailStart > 1 && isToolResultMessage(msgs[tailStart])) tailStart--
+  const prev = msgs[tailStart - 1] as ToolCallMessage | undefined
+  if (
+    tailStart > 1
+    && prev?.role === 'assistant'
+    && Array.isArray(prev.tool_calls)
+    && prev.tool_calls.length > 0
+    && isToolResultMessage(msgs[tailStart])
+  ) {
+    tailStart--
+  }
+  return tailStart
 }
 
 export function shouldCompact(msgs: ChatMessage[], sinceLastGrowth = 0): boolean {
@@ -73,13 +117,15 @@ export async function compactTranscript(opts: {
   model: string
   userId?: string
   workspaceId?: string
+  conversationId?: string
   signal?: AbortSignal
   emit?: (message: string) => void
 }): Promise<CompactResult> {
-  const { msgs, client, model, userId, workspaceId, signal, emit } = opts
+  const { msgs, client, model, userId, conversationId, signal, emit } = opts
   if (!shouldCompact(msgs)) return { compacted: false, factsSaved: 0, summaryChars: 0 }
 
-  const middle = msgs.slice(1, -KEEP_TAIL)
+  const tailStart = compactionTailStart(msgs)
+  const middle = msgs.slice(1, tailStart)
   let priorSummary = ''
   if (middle.length > 0 && messageText(middle[0]).startsWith(SUMMARY_MARKER)) {
     priorSummary = messageText(middle.shift() as ChatMessage)
@@ -125,9 +171,8 @@ export async function compactTranscript(opts: {
   const summary = (summaryMatch?.[1] || out).trim()
   if (!summary) return { compacted: false, factsSaved: 0, summaryChars: 0 }
 
-  // Splice: system head + [summary] + recent tail.
-  const removed = 1 + middle.length + (priorSummary ? 1 : 0)
-  msgs.splice(1, removed, { role: 'user', content: `${SUMMARY_MARKER}\n${summary}` })
+  // Splice: system head + [summary] + recent tail. Delete exactly [1, tailStart).
+  msgs.splice(1, tailStart - 1, { role: 'user', content: `${SUMMARY_MARKER}\n${summary}` })
 
   // Durable facts → Memory (deduped, respects the user's memory toggle).
   const facts = (factsMatch?.[1] || '')
@@ -139,6 +184,10 @@ export async function compactTranscript(opts: {
   let factsSaved = 0
   if (facts.length > 0 && userId && prisma) {
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { memoryEnabled: true } }).catch(() => null)
+    const conv = conversationId
+      ? await prisma.conversation.findUnique({ where: { id: conversationId }, select: { projectId: true } }).catch(() => null)
+      : null
+    const projectId = conv?.projectId || undefined
     if (!user || user.memoryEnabled) {
       for (const fact of facts) {
         try {
@@ -151,7 +200,7 @@ export async function compactTranscript(opts: {
               source: 'agent',
               content: fact,
               tags: ['auto-compact'],
-              projectId: workspaceId || undefined,
+              ...(projectId ? { projectId } : {}),
             },
           })
           factsSaved++

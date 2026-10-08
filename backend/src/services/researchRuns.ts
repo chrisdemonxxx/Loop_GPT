@@ -33,8 +33,8 @@ interface Live {
 const MAX_EVENTS = 800
 const live = new Map<string, Live>()
 
-async function persist(run: Live, final = false) {
-  if (!prisma) return
+async function persist(run: Live, final = false): Promise<boolean> {
+  if (!prisma) return false
   try {
     await prisma.researchRun.upsert({
       where: { id: run.view.id },
@@ -49,8 +49,12 @@ async function persist(run: Live, final = false) {
         report: run.view.report ?? null, sources: (run.view.sources ?? null) as any,
       },
     })
-  } catch { /* persistence is best-effort; the live view still serves */ }
-  if (final && run.persistTimer) { clearTimeout(run.persistTimer); run.persistTimer = undefined }
+    return true
+  } catch {
+    return false
+  } finally {
+    if (final && run.persistTimer) { clearTimeout(run.persistTimer); run.persistTimer = undefined }
+  }
 }
 
 function schedulePersist(run: Live) {
@@ -91,11 +95,11 @@ export function startRun(opts: { userId: string; conversationId: string; query: 
       run.view.report = result.report
       run.view.sources = result.sources
       for (const listener of run.listeners) { try { listener({ type: 'done' }) } catch { /* ignore */ } }
-      void persist(run, true)
+      void persist(run, true).then((saved) => { if (saved) live.delete(id) })
     },
     fail() {
       run.view.status = 'failed'
-      void persist(run, true)
+      void persist(run, true).then((saved) => { if (saved) live.delete(id) })
     },
   }
 }

@@ -13,13 +13,13 @@ import * as payments from '../stripe'
 const effects = vi.hoisted(() => ({
   findUser: vi.fn(), updateUser: vi.fn(), payment: vi.fn(), transaction: vi.fn(),
   addBalance: vi.fn(), email: vi.fn(),
-  inboxFind: vi.fn(), inboxCreate: vi.fn(), inboxUpdate: vi.fn(),
+  inboxFind: vi.fn(), inboxCreate: vi.fn(), inboxUpdate: vi.fn(), inboxClaim: vi.fn(),
 }))
 vi.mock('../prisma', () => ({
   hasDb: true,
   prisma: {
     user: { findUnique: effects.findUser, findFirst: effects.findUser, update: effects.updateUser },
-    stripeEventInbox: { findUnique: effects.inboxFind, create: effects.inboxCreate, update: effects.inboxUpdate },
+    stripeEventInbox: { findUnique: effects.inboxFind, create: effects.inboxCreate, update: effects.inboxUpdate, updateMany: effects.inboxClaim },
     payment: { create: effects.payment }, $transaction: effects.transaction,
   },
 }))
@@ -196,7 +196,15 @@ describe('payment ingress authentication and fail-closed configuration', () => {
 })
 
 describe('durable inbox and transactional fulfillment', () => {
-  beforeEach(() => { allowEffects = true })
+  beforeEach(() => {
+    allowEffects = true
+    const tx = {
+      user: { findUnique: effects.findUser, findFirst: effects.findUser, update: effects.updateUser },
+      stripeEventInbox: { findUnique: effects.inboxFind, create: effects.inboxCreate, update: effects.inboxUpdate, updateMany: effects.inboxClaim },
+    }
+    effects.inboxClaim.mockResolvedValue({ count: 1 })
+    effects.transaction.mockImplementation(async (fn: any) => (typeof fn === 'function' ? fn(tx) : fn))
+  })
 
   it('stores the inbox row before processing and fulfills a chat-plan checkout exactly once', async () => {
     vi.stubEnv('STRIPE_CHECKOUT_ENABLED', 'true'); vi.stubEnv('STRIPE_FULFILLMENT_ENABLED', 'true')
@@ -224,13 +232,13 @@ describe('durable inbox and transactional fulfillment', () => {
     effects.inboxUpdate.mockResolvedValue({})
     effects.findUser.mockResolvedValue({ id: 'victim', apiBalanceMicros: 0n })
     effects.updateUser.mockResolvedValue({})
-    const ok = signed(event({ data: { object: { metadata: { userId: 'victim', kind: 'api_topup', amountUsd: '25' } } } }))
+    const ok = signed(event({ data: { object: { payment_status: 'paid', metadata: { userId: 'victim', kind: 'api_topup', amountUsd: '25' } } } }))
     await deliver(ok.body, ok.signature, 200, { received: true })
     expect(effects.updateUser).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'victim' },
       data: { apiBalanceMicros: { increment: 25_000_000 } },
     }))
-    const oversize = signed(event({ id: 'evt_oversize', data: { object: { metadata: { userId: 'victim', kind: 'api_topup', amountUsd: '999999' } } } }))
+    const oversize = signed(event({ id: 'evt_oversize', data: { object: { payment_status: 'paid', metadata: { userId: 'victim', kind: 'api_topup', amountUsd: '999999' } } } }))
     await deliver(oversize.body, oversize.signature, 503)
     expect(effects.inboxUpdate).toHaveBeenCalledWith(expect.objectContaining({
       where: { eventId: 'evt_oversize' },
@@ -268,6 +276,27 @@ describe('durable inbox and transactional fulfillment', () => {
     expect(effects.updateUser).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'victim' },
       data: { apiBalanceMicros: { decrement: 10_000_000 } },
+    }))
+  })
+
+  it('copies top-up metadata onto the PaymentIntent and returns the checkout url', async () => {
+    vi.stubEnv('STRIPE_CHECKOUT_ENABLED', 'true'); vi.stubEnv('STRIPE_FULFILLMENT_ENABLED', 'true')
+    vi.stubEnv('STRIPE_PRICE_PRO', 'price_localPro')
+    effects.findUser.mockResolvedValue({ id: 'localFixtureUser', email: 'fixture@example.invalid' })
+    const create = vi.fn(async () => ({ url: 'https://checkout.stripe.test/c/session' }))
+    vi.spyOn(payments, 'stripe').mockReturnValue({ checkout: { sessions: { create } } } as any)
+    const layer = (router as any).stack.find((entry: any) => entry.route?.path === '/topup')
+    const req: any = { body: { amountUsd: 25 }, userId: 'localFixtureUser' }
+    const res = response()
+    for (const handler of layer.route.stack) {
+      const next = vi.fn()
+      await handler.handle(req, res, next)
+      if (!next.mock.calls.length) break
+    }
+    expect(res.json).toHaveBeenCalledWith({ url: 'https://checkout.stripe.test/c/session' })
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'payment',
+      payment_intent_data: { metadata: { userId: 'localFixtureUser', kind: 'api_topup', amountUsd: '25' } },
     }))
   })
 })

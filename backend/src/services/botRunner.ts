@@ -30,6 +30,7 @@ import { loadSkillsForUser } from '../agent/skills/skillLoader'
 import {
   AgentTaskError,
   BOT_DEFAULT_TOOLS,
+  remainingVmMinutes,
   completeAgentTask,
   failAgentTask,
   isCancelRequested,
@@ -156,9 +157,12 @@ class BotAbort extends Error {
 function computerConfig(raw: unknown): { enabled: boolean; ttlMinutes: number } {
   const cfg = raw && typeof raw === 'object' ? raw as { enabled?: unknown; ttlMinutes?: unknown } : {}
   const ttl = Number(cfg.ttlMinutes)
+  // Honor a budget clamp below the 5-minute product minimum. Missing or
+  // absurd values still default to 30 — a stored 1–4 minute clamp must not
+  // inflate back to 30 and bypass the daily cap.
   return {
     enabled: cfg.enabled === true,
-    ttlMinutes: Number.isSafeInteger(ttl) && ttl >= 5 && ttl <= 240 ? ttl : 30,
+    ttlMinutes: Number.isSafeInteger(ttl) && ttl >= 1 && ttl <= 240 ? ttl : 30,
   }
 }
 
@@ -240,6 +244,12 @@ export async function executeBotTask(
     // Dedicated computer session (task.computer.enabled): provision the VM,
     // publish the admin live view, arm the TTL, and grant the computer_* tools.
     const computerCfg = computerConfig(task.computer)
+    if (computerCfg.enabled && task.userId) {
+      // Re-check at start. The TTL stored at enqueue is stale once an earlier
+      // run has consumed the day's minutes, and in-flight minutes are not on
+      // the row until the previous run finishes.
+      computerCfg.ttlMinutes = Math.min(computerCfg.ttlMinutes, await remainingVmMinutes(task.userId))
+    }
     if (computerCfg.enabled) {
       // Grok parity: the task's computer session runs INSIDE the caller's
       // persistent box when one is alive — same always-on computer, per-task
@@ -290,11 +300,13 @@ export async function executeBotTask(
     // Teach runs distill skills; grant the writer. Skill-attached runs follow
     // their procedure. Both stay inside the reviewed builtin catalog.
     const isTeach = task.kind === 'teach'
-    if (isTeach) grantedTools.push(toolRegistry.get('create_skill')!)
+    const skillTool = isTeach ? toolRegistry.get('create_skill') : undefined
+    if (skillTool && !grantedTools.some((tool) => tool.name === 'create_skill')) grantedTools.push(skillTool)
     let runNames = computer ? [...names, ...COMPUTER_TOOL_NAMES] : names
     let systemPrompt = computer ? `${BOT_SYSTEM_PROMPT}\n\n${COMPUTER_SYSTEM_ADDENDUM}` : BOT_SYSTEM_PROMPT
     const attached = attachSkill(task, runNames, systemPrompt)
     if (attached) { runNames = attached.names; systemPrompt = attached.systemPrompt }
+    if (skillTool && !runNames.includes('create_skill')) runNames = [...runNames, 'create_skill']
     const authorizedCtx = await authorizeRunContext(ctx, identity.workspaceId, grantedTools)
     run.emit({ type: 'run', runId: run.runId } as AgentEvent)
     run.emit({ type: 'status', message: `task:${task.id}` } as AgentEvent)
@@ -421,6 +433,10 @@ export async function executeBotTask(
     if (reason === 'computer_ttl') {
       await run.fail('Dedicated computer reached its session time budget')
       return failAgentTask(claim, 'BOT_COMPUTER_TTL', 'Computer session TTL reached')
+    }
+    if (error instanceof AgentTaskError && error.code === 'quota') {
+      await run.fail("Today's dedicated-computer budget is used up")
+      return failAgentTask(claim, 'BOT_COMPUTER_QUOTA', error.message)
     }
     const code = error instanceof AgentTaskError ? 'BOT_TASK_INVALID'
       : error instanceof E2BDesktopError && error.code === 'auth' ? 'BOT_COMPUTER_UNCONFIGURED'

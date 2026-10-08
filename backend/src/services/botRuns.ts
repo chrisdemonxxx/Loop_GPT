@@ -31,6 +31,27 @@ interface Live {
 const MAX_EVENTS = 800
 const live = new Map<string, Live>()
 
+const DATA_IMAGE = /^data:image\/[a-z0-9.+-]+;base64,/i
+
+/** Persist a screenshot as an artifact reference, not the PNG bytes. */
+function redactEvent(event: AgentEvent): AgentEvent {
+  if (event.type !== 'tool_result' || !event.data || typeof event.data !== 'object') return event
+  const data = event.data as Record<string, unknown>
+  if (typeof data.imageDataUri !== 'string' || !DATA_IMAGE.test(data.imageDataUri)) return event
+  const artifacts = Array.isArray(data.artifacts) ? data.artifacts : []
+  const first = artifacts[0] && typeof artifacts[0] === 'object' ? artifacts[0] as Record<string, unknown> : null
+  const { imageDataUri: _image, ...rest } = data
+  return {
+    ...event,
+    data: {
+      ...rest,
+      screenshotRef: first
+        ? { id: first.id, name: first.name, url: first.url }
+        : { omitted: true },
+    },
+  }
+}
+
 async function persist(run: Live, final = false) {
   if (!prisma) return
   try {
@@ -79,9 +100,10 @@ export async function startRun(taskId: string): Promise<{
   return {
     runId: id,
     emit(event) {
+      const stored = redactEvent(event)
       if (run.view.events.length >= MAX_EVENTS) run.view.events.shift()
-      run.view.events.push(event)
-      for (const listener of run.listeners) { try { listener(event) } catch { /* listener gone */ } }
+      run.view.events.push(stored)
+      for (const listener of run.listeners) { try { listener(stored) } catch { /* listener gone */ } }
       schedulePersist(run)
     },
     complete(result) {
@@ -103,17 +125,47 @@ export async function startRun(taskId: string): Promise<{
   }
 }
 
-/** Replay what has already happened, then attach live. Returns unsubscribe. */
+/** Replay what has already happened, then attach live. Returns unsubscribe.
+ *  When this process is not the worker, tail the persisted row so the API
+ *  live viewer still receives events. */
 export function subscribe(runId: string, listener: (event: AgentEvent) => void): () => void {
   const run = live.get(runId)
-  if (!run) return () => {}
-  for (const event of run.view.events) { try { listener(event) } catch { /* ignore */ } }
-  if (run.view.status !== 'running') {
-    try { listener({ type: 'done' }) } catch { /* ignore */ }
-    return () => {}
+  if (run) {
+    for (const event of run.view.events) { try { listener(event) } catch { /* ignore */ } }
+    if (run.view.status !== 'running') {
+      try { listener({ type: 'done' }) } catch { /* ignore */ }
+      return () => {}
+    }
+    run.listeners.add(listener)
+    return () => run.listeners.delete(listener)
   }
-  run.listeners.add(listener)
-  return () => run.listeners.delete(listener)
+  let stopped = false
+  let cursor = 0
+  const poll: { timer?: ReturnType<typeof setInterval> } = {}
+  const stop = () => {
+    stopped = true
+    if (poll.timer) clearInterval(poll.timer)
+  }
+  const tick = async () => {
+    if (stopped || !prisma) return
+    try {
+      const row = await prisma.botRun.findUnique({ where: { id: runId }, select: { events: true, status: true } })
+      if (!row || stopped) return
+      const events = Array.isArray(row.events) ? row.events as AgentEvent[] : []
+      for (let i = cursor; i < events.length; i++) {
+        try { listener(events[i]) } catch { /* ignore */ }
+      }
+      cursor = events.length
+      if (row.status !== 'running') {
+        try { listener({ type: 'done' }) } catch { /* ignore */ }
+        stop()
+      }
+    } catch { /* next tick */ }
+  }
+  void tick()
+  poll.timer = setInterval(() => { void tick() }, 500)
+  poll.timer.unref?.()
+  return stop
 }
 
 /**

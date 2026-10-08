@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { isE2BConfigured } from './e2bDesktop'
+import { prisma } from './prisma'
 
 type Sandbox = any
 
@@ -135,16 +136,47 @@ async function readVncUrls(sandbox: Sandbox): Promise<{ streamUrl: string; inter
  */
 const pendingBoots = new Map<string, Promise<BoxSpec>>()
 
+/** Daily VM-minute budget, clamped to the provider's idle cap. Throws when the plan or quota forbids a computer. */
+async function boxTimeoutMs(userId: string): Promise<number> {
+  const { remainingVmMinutes } = await import('./agentTasks')
+  const remaining = await remainingVmMinutes(userId)
+  if (!Number.isFinite(remaining) || remaining >= 24 * 60) return BOX_IDLE_TTL_MS
+  return Math.min(BOX_IDLE_TTL_MS, Math.max(60_000, Math.floor(remaining) * 60_000))
+}
+
+async function rememberBox(userId: string, sandboxId: string): Promise<void> {
+  if (!prisma) return
+  await prisma.botBox.upsert({
+    where: { userId },
+    create: { userId, sandboxId },
+    update: { sandboxId },
+  }).catch(() => undefined)
+}
+
+/** Reconnect a box recorded in the database. A dead id falls through to a fresh boot. */
+async function connectPersistedBox(userId: string): Promise<Sandbox | null> {
+  if (!prisma) return null
+  const row = await prisma.botBox.findUnique({ where: { userId } }).catch(() => null)
+  if (!row?.sandboxId) return null
+  try {
+    const { Sandbox } = await import('@e2b/desktop')
+    return await Sandbox.connect(row.sandboxId)
+  } catch {
+    return null
+  }
+}
+
 export async function ensureUserBox(userId: string, userLabel: string, taskType: BoxTaskType = 'default'): Promise<BoxSpec> {
   const pending = pendingBoots.get(userId)
   if (pending) return pending
 
   const boot = (async (): Promise<BoxSpec> => {
+    const timeoutMs = await boxTimeoutMs(userId)
     const existing = liveBoxes.get(userId)
     if (existing) {
       try {
-        // Touch to keep alive; resume if paused.
-        await existing.sandbox.setTimeout(BOX_IDLE_TTL_MS)
+        // Touch to keep alive; resume if paused. Timeout stays inside the daily budget.
+        await existing.sandbox.setTimeout(timeoutMs)
         existing.lastTouchedAt = Date.now()
         const { streamUrl, interactiveUrl } = await readVncUrls(existing.sandbox)
         return {
@@ -161,6 +193,32 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
       }
     }
 
+    const connected = await connectPersistedBox(userId)
+    if (connected) {
+      try {
+        await connected.setTimeout(timeoutMs)
+        const state: BoxState = {
+          sandboxId: connected.sandboxId,
+          sandbox: connected,
+          createdAt: Date.now(),
+          lastTouchedAt: Date.now(),
+        }
+        liveBoxes.set(userId, state)
+        const { streamUrl, interactiveUrl } = await readVncUrls(connected)
+        return {
+          sandboxId: state.sandboxId,
+          streamUrl,
+          interactiveUrl,
+          resumed: true,
+          ageMinutes: 0,
+          taskType,
+          workspaceDir: '/workspace',
+        }
+      } catch {
+        liveBoxes.delete(userId)
+      }
+    }
+
     if (!isE2BConfigured()) {
       throw new Error('E2B is not configured on this deployment — the bot cannot boot its computer.')
     }
@@ -169,7 +227,7 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
     const { Sandbox: DesktopSandbox } = await import('@e2b/desktop')
     const sandbox: Sandbox = await DesktopSandbox.create({
       ...(template ? { template } : {}),
-      timeoutMs: BOX_IDLE_TTL_MS,
+      timeoutMs,
       metadata: { loopGpt: 'bot-box', userId },
     })
 
@@ -183,6 +241,7 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
       lastTouchedAt: Date.now(),
     }
     liveBoxes.set(userId, state)
+    await rememberBox(userId, sandbox.sandboxId)
 
     const { streamUrl, interactiveUrl } = await readVncUrls(sandbox)
     console.info('[bot-box] booted persistent box', { userId, sandboxId: sandbox.sandboxId, taskType })

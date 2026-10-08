@@ -187,6 +187,16 @@ async function lookupOwnedFile(userId: string, id: string, conversationId?: stri
   return row
 }
 
+export async function listOwnedFiles(userId: string) {
+  if (!userId) throw new FileAccessError(401, 'File owner is required')
+  return database().privateFile.findMany({
+    where: { userId, deletedAt: null },
+    orderBy: { createdAt: 'desc' },
+    take: 200,
+    select: { id: true, name: true, mimeType: true, size: true, purpose: true, createdAt: true },
+  })
+}
+
 export async function findOwnedFile(userId: string, id: string, conversationId?: string) {
   if (!userId || !FILE_ID.test(id)) throw new FileAccessError(404, 'File not found')
   return withPrivateStorage(async namespace => {

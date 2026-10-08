@@ -64,7 +64,8 @@ beforeEach(() => {
   remote.client.mockReset().mockReturnValue({})
   // Agent tool calls need no live tools here; text answers only.
   remote.turn.mockResolvedValue(finalTurn('answer'))
-  configStore.saveConnectors([])
+  configStore.saveConnectors(alice, [])
+  configStore.saveConnectors(bob, [])
 })
 
 afterAll(async () => {

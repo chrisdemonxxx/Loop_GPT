@@ -8,15 +8,14 @@ import { DailyCreditError } from './dailyReservations'
  * may start per rolling day. Protects runaway agent loops even on bypassed
  * (unlimited/admin) accounts, where credits alone impose no ceiling.
  *
- * Lock order: spend budget policy is a POLICY-class lock and is always
- * acquired BEFORE any ledger lock (user row). No path may take it while
- * holding ledger locks, and no reverse path may take it after a ledger
- * lock that another budget-enforced path takes first. The API prepaid
- * spend cap (future) must refactor its composite callers to policy-first
- * in the same change that introduces it.
+ * The policy row is read, not row-locked, on every admission. A global
+ * UPDATE of singleton id=1 serialized every turn across the platform.
+ * Counts still come from durable DailyReservation rows (indexed on
+ * windowStart). Two admissions can both pass a count check before either
+ * inserts; that small over-admit is the throughput tradeoff. 0 disables a cap.
  *
  * DB administrators update singleton id=1, increment revision, and obey
- * SQL checks. Counts derive from durable rows. 0 disables a cap.
+ * SQL checks.
  */
 export const spendBudgetPolicySchema = z.object({
   id: z.literal(1), version: z.literal(1), revision: z.number().int().positive(),
@@ -28,10 +27,8 @@ export type SpendBudgetPolicy = z.infer<typeof spendBudgetPolicySchema>
 
 export const SPEND_BUDGET_DISABLED = 0n
 
-export async function lockSpendBudget(tx: Prisma.TransactionClient) {
-  // A real row write is intentional (see VideoQueuePolicy): at SERIALIZABLE a
-  // waiter retries with a fresh snapshot rather than counting stale rows.
-  const rows = await tx.$queryRaw<SpendBudgetPolicy[]>`UPDATE "SpendBudgetPolicy" SET "id" = "id" WHERE "id" = 1 RETURNING *`
+async function readSpendBudget(tx: Prisma.TransactionClient) {
+  const rows = await tx.$queryRaw<SpendBudgetPolicy[]>`SELECT * FROM "SpendBudgetPolicy" WHERE "id" = 1`
   return rows[0]
 }
 
@@ -41,12 +38,12 @@ export function requireSpendBudgetPolicy(value: unknown): SpendBudgetPolicy {
   return parsed.data
 }
 
-/** Count-based admission inside the caller's transaction, after the policy
- * lock and BEFORE the user-row ledger lock. perUser is exact per the user's
- * rolling window; global is an honest sliding-24h approximation across the
- * platform's staggered user windows. Never discloses other users' counts. */
+/** Count-based admission inside the caller's transaction, BEFORE the user-row
+ * ledger lock. perUser is exact per the user's rolling window; global is an
+ * honest sliding-24h approximation across the platform's staggered user
+ * windows. Never discloses other users' counts. */
 export async function admitDailyReservationTx(tx: Prisma.TransactionClient, userId: string, windowStart: Date) {
-  const policy = requireSpendBudgetPolicy(await lockSpendBudget(tx))
+  const policy = requireSpendBudgetPolicy(await readSpendBudget(tx))
   const [counts] = await tx.$queryRaw<{ user: bigint; global: bigint }[]>`
     SELECT count(*) FILTER (WHERE r."userId" = ${userId} AND r."windowStart" = ${windowStart}) AS "user",
       count(*) FILTER (WHERE r."windowStart" >= ${new Date(Date.now() - 86_400_000)}) AS "global"

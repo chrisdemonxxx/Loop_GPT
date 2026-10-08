@@ -8,7 +8,7 @@ import {
   MAX_IMAGE_BYTES, FileAccessError, detectImageMime, requireOwnedConversation,
   storePrivateFile, readOwnedFile, findOwnedFile, deleteOwnedFile, fileReference,
   publishOwnedFile, unpublishOwnedFile, readPublishedFile,
-  sendFileResponse,
+  sendFileResponse, listOwnedFiles,
 } from '../services/privateFiles'
 import { extractDocumentText, MAX_DOC_BYTES } from '../services/documentText'
 import { createFileLink, verifyFileLink } from '../services/signedFileUrl'
@@ -86,6 +86,12 @@ filesRouter.get('/:id/content', async (req, res, next) => {
 })
 
 filesRouter.use(authenticateFileRequest)
+filesRouter.get('/', async (req, res) => {
+  try {
+    const files = await listOwnedFiles((req as any).userId)
+    res.json({ files: files.map((file) => ({ ...fileReference(file), purpose: file.purpose, createdAt: file.createdAt })) })
+  } catch (error) { fileErrorResponse(error, res) }
+})
 filesRouter.get('/:id', async (req, res) => {
   try { res.json(fileReference(await findOwnedFile((req as any).userId, req.params.id))) }
   catch (error) { fileErrorResponse(error, res) }

@@ -22,6 +22,11 @@ export const rememberTool: ToolDefinition = {
 
     const tags: string[] = Array.isArray(args.tags) ? args.tags.map(String).filter(Boolean) : []
     try {
+      // Memory.projectId is a Project foreign key. The run's workspace id is not a project.
+      const conv = ctx.conversationId
+        ? await prisma!.conversation.findUnique({ where: { id: ctx.conversationId }, select: { projectId: true } })
+        : null
+      const projectId = conv?.projectId || undefined
       await prisma!.memory.create({
         data: {
           userId: ctx.userId,
@@ -29,7 +34,7 @@ export const rememberTool: ToolDefinition = {
           source: 'agent',
           content,
           tags,
-          projectId: ctx.workspaceId || undefined,
+          ...(projectId ? { projectId } : {}),
         },
       })
       return { content: `Remembered: "${content.slice(0, 100)}${content.length > 100 ? '...' : ''}"` }

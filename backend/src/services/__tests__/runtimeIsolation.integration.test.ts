@@ -20,6 +20,7 @@ import { toolRegistry } from '../../agent/toolRegistry'
 import { runAgent } from '../../agent/agentRuntime'
 import { runDeepResearch } from '../../agent/research/deepResearch'
 import { configStore } from '../../agent/configStore'
+import { customToolRegistry } from '../../agent/customTools'
 import type { ToolContext, ToolDefinition } from '../../agent/types'
 import agentRouter from '../../routes/agent'
 import settingsRouter from '../../routes/settings'
@@ -184,7 +185,8 @@ describe('workspace runtime authorization', () => {
   it('rechecks revocation between two calls in the same model turn', async () => {
     const f = await fixture('editor')
     const second = vi.fn(async () => ({ content: 'must not run' }))
-    const first: ToolDefinition = { name: 'first', source: 'fixture', description: 'Test revocation', parameters: { type: 'object' }, handler: async () => {
+    // Built-in source: external sources pause for approval, which is not under test here.
+    const first: ToolDefinition = { name: 'first', source: 'builtin', description: 'Test revocation', parameters: { type: 'object' }, handler: async () => {
       await db.workspaceMember.delete({ where: { workspaceId_userId: { workspaceId: f.workspaceId, userId: bob } } })
       return { content: 'revoked' }
     } }
@@ -443,12 +445,13 @@ describe('workspace runtime authorization', () => {
       ctx.emit({ type: 'tool_output', chunk: 'boom\n', stream: 'stderr' })
       return { content: 'fixture done', data: { artifacts: [{ id: 'fa1', kind: 'file', name: 'out.txt' }] } }
     })
-    // custom: source puts the fixture in availableTools() so the route's
+    // A custom tool owned by alice is in availableTools(alice), so the route's
     // selectable set admits it.
-    toolRegistry.register({ name: 'fixture_stream_tool', source: 'custom:fixture', description: 'Streams live output', parameters: { type: 'object' }, handler })
+    const fixtureTool: ToolDefinition = { name: 'fixture_stream_tool', source: 'custom:fixture', description: 'Streams live output', parameters: { type: 'object' }, handler }
+    const owned = vi.spyOn(customToolRegistry, 'toolsFor').mockImplementation((ownerId) => (ownerId === alice ? [fixtureTool] : []))
     try {
       remote.turn.mockResolvedValueOnce({ content: '', toolCalls: [nativeCall('fixture_stream_tool')] })
-      const response = await request(`/api/agent/${f.conversationId}/stream`, alice, 'POST', { content: 'Hi', mode: 'agent', workspaceId: f.workspaceId, toolNames: ['fixture_stream_tool'] })
+      const response = await request(`/api/agent/${f.conversationId}/stream`, alice, 'POST', { content: 'Hi', mode: 'agent', workspaceId: f.workspaceId, toolNames: ['fixture_stream_tool'], autoApprove: true })
       expect(response.status).toBe(200)
       const body = await response.text()
       // Parse the SSE stream (order-independent assertions).
@@ -469,7 +472,7 @@ describe('workspace runtime authorization', () => {
       expect(meta.steps[0].tool).toBe('fixture_stream_tool')
       expect(meta.steps[0].artifacts).toEqual(['out.txt'])
     } finally {
-      toolRegistry.unregisterSource('custom:fixture')
+      owned.mockRestore()
     }
   })
 
@@ -494,7 +497,8 @@ describe('workspace runtime authorization', () => {
     // intentionally reachable from /api/conversations for compatibility).
     for (const mount of ['/api/agent', '/api/conversations']) {
       for (const group of ['mcp-servers', 'connectors', 'skills', 'custom-tools', 'plugins']) {
-        expect((await request(`${mount}/${group}`, alice)).status).toBe(200)
+        // Remote MCP servers are shared infrastructure: administrators only.
+        expect((await request(`${mount}/${group}`, alice)).status).toBe(group === 'mcp-servers' ? 403 : 200)
         expect((await fetch(`${base}${mount}/${group}`)).status).toBe(401)
       }
     }

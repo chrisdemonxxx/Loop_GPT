@@ -62,6 +62,7 @@ beforeEach(async () => {
   vi.stubEnv('HF_ENDPOINT_URL', 'https://fixture.example.test/model')
   vi.stubEnv('HF_IMAGE_ENDPOINT_URL', 'https://fixture.example.test/image')
   vi.stubEnv('VIDEO_API_URL', 'https://fixture.example.test/video')
+  vi.stubEnv('HF_VIDEO_API', '')
   vi.stubEnv('IMAGE_API_URL', 'http://127.0.0.1:8081')
   vi.stubEnv('HF_TOKEN', '')
   for (const mock of Object.values(remote)) mock.mockReset()
@@ -229,7 +230,8 @@ describe('JWT daily dispatch enforcement', () => {
   })
   it.each(paths)('rejects missing users before dispatch at $path', async ({ path, body }) => {
     const result = await request(path, body, 'missing-daily-user')
-    expect(result.status).toBe(403)
+    // A signed JWT whose user row does not exist is an invalid session.
+    expect(result.status).toBe(401)
     expect(remote.client).not.toHaveBeenCalled(); expect(remote.turn).not.toHaveBeenCalled()
     expect(remote.image).not.toHaveBeenCalled()
   })

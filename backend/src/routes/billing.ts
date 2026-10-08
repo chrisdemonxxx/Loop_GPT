@@ -116,6 +116,9 @@ router.post('/topup', authenticateToken, asyncHandler(async (req, res) => {
       customer_email: user.email,
       client_reference_id: userId,
       metadata: { userId, kind: 'api_topup', amountUsd: String(amountUsd) },
+      // Copied onto the PaymentIntent and then the Charge, so charge.refunded
+      // and charge.dispute.* can find the user and reverse the credit.
+      payment_intent_data: { metadata: { userId, kind: 'api_topup', amountUsd: String(amountUsd) } },
       success_url: `${FRONTEND()}/developers?topup=1`,
       cancel_url: `${FRONTEND()}/developers?canceled=1`,
     })
