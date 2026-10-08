@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { X, FlaskConical, Loader2, ExternalLink, RotateCcw } from 'lucide-react'
 import { API_URL, authHeaders } from '../lib/api'
+import { useFocusTrap } from '@loop/ui'
 import Markdown from './chat/Markdown'
 
 export interface ResearchRunView {
@@ -31,6 +32,7 @@ const statusCls: Record<string, string> = {
 /** Research runs for the current conversation: list, resume-in-progress, and a
  * full cited report viewer. Uses the durable /api/agent/research endpoints. */
 export default function ResearchPanel({ conversationId, onClose }: Props) {
+  const dialogRef = useFocusTrap<HTMLDivElement>(true)
   const [runs, setRuns] = useState<ResearchRunView[]>([])
   const [loading, setLoading] = useState(true)
   const [open, setOpen] = useState<ResearchRunView | null>(null)
@@ -67,8 +69,10 @@ export default function ResearchPanel({ conversationId, onClose }: Props) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <motion.div
         initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
+        ref={dialogRef}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className="glass-strong rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden border border-white/10 flex flex-col"
+        className="glass-strong rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden border border-white/10 flex flex-col outline-none"
         role="dialog" aria-modal="true" aria-label="Research runs"
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06] shrink-0">

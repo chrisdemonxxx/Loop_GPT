@@ -5,7 +5,7 @@ import Link from 'next/link'
 import {
   Cable, Check, ChevronDown, ExternalLink, Globe, Loader2, Plug, Plus, RefreshCw, X,
 } from 'lucide-react'
-import { API_URL, authHeaders } from '../../lib/api'
+import { API_URL, authHeaders, getStoredUser } from '../../lib/api'
 import { openOAuthPopup, oauthPopupNotice } from '../../lib/oauthPopup'
 import { Badge, btnGhost, btnPrimary, EmptyState, inputCls, SearchInput, SectionHeader, StatusDot } from '../ui/primitives'
 import { BrandMark } from '../connectors/BrandMark'
@@ -49,6 +49,8 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
   const [loaded, setLoaded] = useState(false)
   const [showMarketplace, setShowMarketplace] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [mcpAdmin, setMcpAdmin] = useState(false)
+  useEffect(() => { setMcpAdmin(getStoredUser()?.role === 'admin') }, [])
 
   // Credential modal (API-key connectors + Custom HTTP).
   const [addType, setAddType] = useState<string | null>(null)
@@ -363,7 +365,8 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
         </div>
       )}
 
-      {/* Advanced: MCP servers */}
+      {/* MCP servers are admin-only operator infrastructure (remote https). */}
+      {mcpAdmin && (
       <div className="pt-1">
         <button
           onClick={() => setShowAdvanced((v) => !v)}
@@ -375,6 +378,7 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
         </button>
         {showAdvanced && <div className="mt-2"><McpSection /></div>}
       </div>
+      )}
     </div>
   )
 }
@@ -382,34 +386,36 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
 /** MCP server management (advanced section). */
 function McpSection() {
   const [servers, setServers] = useState<any[]>([])
-  const [form, setForm] = useState({ name: '', transport: 'http', url: '', command: '' })
+  const [form, setForm] = useState({ name: '', url: '' })
   const [error, setError] = useState('')
   const [loadError, setLoadError] = useState('')
   const [loaded, setLoaded] = useState(false)
-  const load = () => fetch(`${API_URL}/api/agent/mcp-servers`, { headers: authHeaders() })
+  const load = () => fetch(`${API_URL}/api/agent/mcp-servers`, { headers: authHeaders(), credentials: 'include' })
     .then(async (r) => {
+      if (r.status === 403) throw new Error('admin')
       if (!r.ok) throw new Error('load')
       const d = await r.json()
       if (!Array.isArray(d)) throw new Error('load')
       setServers(d)
       setLoadError('')
     })
-    .catch(() => setLoadError('Could not load MCP servers.'))
+    .catch((e) => setLoadError(e?.message === 'admin' ? 'MCP servers are limited to administrators.' : 'Could not load MCP servers.'))
     .finally(() => setLoaded(true))
   useEffect(() => { load() }, [])
   const add = async () => {
-    if (!form.name) return
+    if (!form.name || !form.url) return
     setError('')
+    if (!/^https:\/\//i.test(form.url.trim())) { setError('URL must be a public https address.'); return }
     const res = await fetch(`${API_URL}/api/agent/mcp-servers`, {
-      method: 'POST', headers: authHeaders(),
-      body: JSON.stringify({ name: form.name, transport: form.transport, url: form.url || undefined, command: form.command || undefined, enabled: true }),
+      method: 'POST', headers: authHeaders(), credentials: 'include',
+      body: JSON.stringify({ name: form.name, transport: 'http', url: form.url.trim(), enabled: true }),
     }).catch(() => null)
     if (!res?.ok) {
       const body = res ? await res.json().catch(() => ({})) : {}
       setError(body.error || 'Could not save.')
       return
     }
-    setForm({ name: '', transport: 'http', url: '', command: '' }); load()
+    setForm({ name: '', url: '' }); load()
   }
   const remove = async (id: string) => { await fetch(`${API_URL}/api/agent/mcp-servers/${id}`, { method: 'DELETE', headers: authHeaders() }).catch(() => {}); load() }
   return (
@@ -426,7 +432,7 @@ function McpSection() {
         <div key={s.id} className="p-3 rounded-xl border border-white/[0.06] bg-white/[0.02] flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-[13px] text-slate-200">{s.name} <span className="text-[11px] text-slate-500">({s.transport})</span></div>
-            <div className="text-[11px] text-slate-500 truncate">{s.url || s.command}</div>
+            <div className="text-[11px] text-slate-500 truncate">{s.url}</div>
             <div className={`text-[11px] ${s.runtime?.status === 'connected' ? 'text-emerald-400' : 'text-rose-400'}`}>
               {s.runtime?.status === 'connected' ? `connected · ${s.runtime.tools.length} tools` : s.runtime?.error || 'not connected'}
             </div>
@@ -437,13 +443,7 @@ function McpSection() {
       <div className="p-3.5 rounded-xl border border-dashed border-white/10 space-y-2 bg-white/[0.015]">
         <div className="text-[11px] uppercase tracking-widest text-slate-500">Add server</div>
         <input placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} aria-label="Server name" />
-        <select value={form.transport} onChange={(e) => setForm({ ...form, transport: e.target.value })} className={inputCls} aria-label="Transport">
-          <option value="http" className="bg-ink-800">HTTP (Streamable)</option>
-          <option value="stdio" className="bg-ink-800">stdio (local command)</option>
-        </select>
-        {form.transport === 'http'
-          ? <input placeholder="https://server/mcp" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} className={inputCls} aria-label="Server URL" />
-          : <input placeholder="npx -y @modelcontextprotocol/server-filesystem" value={form.command} onChange={(e) => setForm({ ...form, command: e.target.value })} className={inputCls} aria-label="Command" />}
+        <input placeholder="https://server/mcp" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} className={inputCls} aria-label="Server URL" />
         <button onClick={add} className={btnPrimary}><Plus size={14} /> Add server</button>
       </div>
     </div>

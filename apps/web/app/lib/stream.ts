@@ -70,7 +70,7 @@ export interface StreamHandlers {
   onProgress?: (step: number, items: ProgressItem[]) => void
   onToolResult?: (step: number, name: string, content: string, data: any, isError?: boolean) => void
   onArtifact?: (artifact: ArtifactRef) => void
-  onPendingApproval?: (tool_name: string, args: any, prompt: string) => void
+  onPendingApproval?: (tool_name: string, args: any, prompt: string, approvalId?: string) => void
   onFinal?: (content: string, metadata: any) => void
   onError?: (message: string) => void
   onDone?: () => void
@@ -188,6 +188,7 @@ export async function runAgentStream(
 
   const res = await fetch(`${API_URL}/api/agent/${conversationId}/stream`, {
     method: 'POST',
+    credentials: 'include',
     headers: authHeaders(),
     body: JSON.stringify(safeBody),
     signal,
@@ -209,9 +210,10 @@ export async function runAgentStream(
   }
 
   const firstRead = await readSse(res, track, wrapped, signal)
-  // (S3) a stalled socket reads as 'idle': tell the user, then take the same
-  // durable-resume path a network drop would take.
+  // A stalled socket ('idle') and a thrown network error ('dropped') both
+  // take the durable-resume path instead of ending the turn.
   if (firstRead === 'idle') wrapped.onStatus?.('Connection stalled — reconnecting…')
+  if (firstRead === 'dropped') wrapped.onStatus?.('Connection dropped — reconnecting…')
 
   // ── Auto-resume: the stream ended WITHOUT a terminal event and WITHOUT a
   // user abort → reconnect to the durable run (§8-30).
@@ -220,11 +222,12 @@ export async function runAgentStream(
     if (signal?.aborted) return
     if (sawTerminal) return
     if (!runId) break // dropped before the run id arrived — nothing to resume
-    await new Promise((r) => setTimeout(r, delay))
+    await abortableDelay(delay, signal)
     if (signal?.aborted || sawTerminal) return
     let resumed: Response
     try {
       resumed = await fetch(`${API_URL}/api/agent/${conversationId}/runs/${runId}/events?after=${Math.max(lastSeq, 0)}`, {
+        credentials: 'include',
         headers: authHeaders(),
         signal,
       })
@@ -241,6 +244,7 @@ export async function runAgentStream(
     }
     const read = await readSse(resumed, track, wrapped, signal)
     if (read === 'idle') wrapped.onStatus?.('Connection stalled — reconnecting…')
+    if (read === 'dropped') wrapped.onStatus?.('Connection dropped — reconnecting…')
     if (sawTerminal) return
   }
 
@@ -249,16 +253,32 @@ export async function runAgentStream(
   }
 }
 
+/** Wait `ms`, but resolve immediately when the user hits Stop so retry
+ *  backoff cannot outlive the abort. */
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted || ms <= 0) return Promise.resolve()
+  return new Promise((resolve) => {
+    const timer = setTimeout(finish, ms)
+    const onAbort = () => finish()
+    function finish() {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }
+    signal?.addEventListener('abort', onAbort)
+  })
+}
+
 /** Read one SSE response to its end, dispatching sequenced events. Returns
  *  'done' on a clean end, 'aborted' on user cancel, 'idle' when the idle
- *  watchdog fired (no event for STREAM_IDLE_WATCHDOG_MS — the caller treats
- *  it like a drop and resumes the durable run). */
+ *  watchdog fired, and 'dropped' when the reader throws a network error.
+ *  The caller treats idle and dropped the same: resume the durable run. */
 async function readSse(
   res: Response,
   track: (event: any) => void,
   handlers: StreamHandlers,
   signal?: AbortSignal
-): Promise<'done' | 'aborted' | 'idle'> {
+): Promise<'done' | 'aborted' | 'idle' | 'dropped'> {
   if (!res.body) return 'done'
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
@@ -287,7 +307,9 @@ async function readSse(
         const name = String(err?.name || '')
         const message = String(err?.message || '')
         if (signal?.aborted || name === 'AbortError' || /abort|bodystreambuffer/i.test(message)) return 'aborted'
-        throw err
+        // A real socket drop used to throw out of readSse, which skipped the
+        // resume loop entirely. Surface it as 'dropped' so the caller reconnects.
+        return 'dropped'
       }
       if (done) break
       armIdle() // every chunk resets the watchdog
@@ -347,7 +369,7 @@ function dispatch(event: any, h: StreamHandlers) {
       if (typeof event.step === 'number') h.onProgress?.(event.step, event.items)
       break
     case 'pending_approval':
-      h.onPendingApproval?.(event.tool_name, event.args, event.prompt)
+      h.onPendingApproval?.(event.tool_name, event.args, event.prompt, typeof event.approvalId === 'string' ? event.approvalId : undefined)
       break
     case 'tool_result':
       h.onToolResult?.(event.step, event.name, event.content, event.data, event.isError)
@@ -398,7 +420,7 @@ export async function resumeStoredRun(
   for (const delay of [0, ...backoff]) {
     if (signal?.aborted) return
     if (sawTerminal) return
-    if (delay) await new Promise((r) => setTimeout(r, delay))
+    if (delay) await abortableDelay(delay, signal)
     if (signal?.aborted || sawTerminal) return
     let res: Response
     try {
@@ -418,6 +440,7 @@ export async function resumeStoredRun(
     }
     const read = await readSse(res, track, wrapped, signal)
     if (read === 'idle') wrapped.onStatus?.('Connection stalled — reconnecting…')
+    if (read === 'dropped') wrapped.onStatus?.('Connection dropped — reconnecting…')
     if (sawTerminal) return
   }
   if (!sawTerminal && !signal?.aborted) {

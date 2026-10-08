@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { CreditCard, Ticket } from 'lucide-react'
 import { API_URL, authHeaders } from '../../lib/api'
+import { startPlanCheckout } from '../../lib/billing'
 import { SectionHeader, Badge } from '../ui/primitives'
 
 interface BillingConfig {
@@ -25,6 +26,8 @@ export default function BillingTab() {
   const [code, setCode] = useState('')
   const [redeemState, setRedeemState] = useState<'idle' | 'working' | 'ok' | 'error'>('idle')
   const [redeemMsg, setRedeemMsg] = useState('')
+  const [checkoutPlan, setCheckoutPlan] = useState<string | null>(null)
+  const [checkoutMsg, setCheckoutMsg] = useState('')
 
   const loadMe = () => {
     setMeState('loading')
@@ -88,15 +91,34 @@ export default function BillingTab() {
         )}
       </div>
 
-      {config && !config.enabled && (
-        <div className="rounded-xl border border-white/[0.06] p-3.5">
-          <div className="text-[13px] text-slate-300">Paid plans are not enabled yet</div>
-          <p className="mt-1 text-[12px] leading-relaxed text-slate-500">
-            Checkout is switched off at the billing service. When paid plans go live, Pro and Gold tiers
-            will appear here with monthly and yearly options.
+      <SectionHeader title="Upgrade" />
+      <div className="rounded-xl border border-white/[0.06] p-3.5">
+        {config && !config.enabled && (
+          <p className="mb-2 text-[12px] leading-relaxed text-slate-500">
+            Paid checkout may still be switched off. If it is, the buttons below say so instead of sending you to sign up again.
           </p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          {(['pro', 'gold'] as const).map((plan) => (
+            <button
+              key={plan}
+              type="button"
+              disabled={checkoutPlan === plan || me?.plan === plan}
+              onClick={async () => {
+                setCheckoutPlan(plan); setCheckoutMsg('')
+                const result = await startPlanCheckout(plan)
+                setCheckoutPlan(null)
+                if (result.url) { window.location.href = result.url; return }
+                setCheckoutMsg(result.error || 'Could not start checkout.')
+              }}
+              className="rounded-lg border border-[#c96442]/40 bg-[#c96442]/[0.08] px-3.5 py-2 text-[13px] font-medium text-[#e79d7f] transition hover:bg-[#c96442]/[0.14] disabled:opacity-50"
+            >
+              {me?.plan === plan ? `${plan} is current` : checkoutPlan === plan ? 'Starting…' : `Upgrade to ${plan}`}
+            </button>
+          ))}
         </div>
-      )}
+        {checkoutMsg && <p role="status" className="mt-2 text-[12px] text-rose-400">{checkoutMsg}</p>}
+      </div>
 
       <SectionHeader title="Vouchers" />
       <div className="rounded-xl border border-white/[0.06] p-3.5">

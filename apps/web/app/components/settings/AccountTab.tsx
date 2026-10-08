@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { ShieldCheck, KeyRound, LogOut, ArrowRight } from 'lucide-react'
 import Link from 'next/link'
-import { API_URL, authHeaders, clearAuth, apiFetch } from '../../lib/api'
+import { API_URL, authHeaders, logoutSession, apiFetch } from '../../lib/api'
 import { SectionHeader, Badge } from '../ui/primitives'
 
 interface Me {
@@ -45,7 +45,7 @@ export default function AccountTab() {
     }
   }
 
-  const signOut = () => { clearAuth(); window.location.href = '/login' }
+  const signOut = () => { logoutSession(); window.location.href = '/login' }
 
   const fmt = (n?: number) => (n === undefined || !Number.isFinite(n) ? '—' : String(n))
 
@@ -117,6 +117,9 @@ export default function AccountTab() {
       </div>
       {mfaError && <p className="text-[12px] text-rose-400">{mfaError}</p>}
 
+      <SectionHeader title="Your data" />
+      <DataControls />
+
       <SectionHeader title="Sign out" />
       <button
         type="button"
@@ -128,6 +131,93 @@ export default function AccountTab() {
       <p className="text-[11px] leading-relaxed text-slate-600">
         Signing out clears this browser&apos;s session token. To sign out everywhere, change your password or disable MFA from the account page.
       </p>
+    </div>
+  )
+}
+
+/** Export and delete. Both calls tolerate a route the server has not shipped yet. */
+function DataControls() {
+  const [exportState, setExportState] = useState<'idle' | 'working' | 'error'>('idle')
+  const [exportMsg, setExportMsg] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState('')
+  const [deleteState, setDeleteState] = useState<'idle' | 'working' | 'error'>('idle')
+  const [deleteMsg, setDeleteMsg] = useState('')
+
+  const exportData = async () => {
+    setExportState('working'); setExportMsg('')
+    const res = await fetch(`${API_URL}/api/account/export`, { headers: authHeaders() }).catch(() => null)
+    if (!res || res.status === 404 || res.status === 501) {
+      setExportState('error'); setExportMsg('Data export is not available yet.')
+      return
+    }
+    if (!res.ok) {
+      setExportState('error'); setExportMsg('Could not export your data.')
+      return
+    }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'loop-gpt-export.json'
+    a.click()
+    URL.revokeObjectURL(url)
+    setExportState('idle')
+  }
+
+  const deleteAccount = async () => {
+    if (confirmDelete.trim().toLowerCase() !== 'delete') return
+    setDeleteState('working'); setDeleteMsg('')
+    const res = await fetch(`${API_URL}/api/account`, { method: 'DELETE', headers: authHeaders() }).catch(() => null)
+    if (!res || res.status === 404 || res.status === 501) {
+      setDeleteState('error'); setDeleteMsg('Account deletion is not available yet.')
+      return
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setDeleteState('error'); setDeleteMsg(body.error || 'Could not delete this account.')
+      return
+    }
+    logoutSession()
+    window.location.href = '/'
+  }
+
+  return (
+    <div className="space-y-2.5">
+      <div className="rounded-xl border border-white/[0.06] px-3.5 py-3">
+        <div className="text-[13px] text-slate-300">Export your data</div>
+        <p className="mt-1 text-[11px] text-slate-500">Download a copy of your account, chats, and files.</p>
+        <button
+          type="button"
+          onClick={() => void exportData()}
+          disabled={exportState === 'working'}
+          className="mt-2 rounded-lg border border-white/10 px-3 py-1.5 text-[12px] text-slate-200 hover:border-white/25 disabled:opacity-50"
+        >
+          {exportState === 'working' ? 'Preparing…' : 'Download export'}
+        </button>
+        {exportMsg && <p className="mt-2 text-[12px] text-rose-400">{exportMsg}</p>}
+      </div>
+      <div className="rounded-xl border border-rose-400/20 px-3.5 py-3">
+        <div className="text-[13px] text-rose-200">Delete account</div>
+        <p className="mt-1 text-[11px] text-slate-500">This removes your account and its chats. Type delete to confirm.</p>
+        <div className="mt-2 flex gap-2">
+          <input
+            aria-label="Type delete to confirm"
+            value={confirmDelete}
+            onChange={(e) => setConfirmDelete(e.target.value)}
+            placeholder="delete"
+            className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-[12px] text-slate-200"
+          />
+          <button
+            type="button"
+            onClick={() => void deleteAccount()}
+            disabled={deleteState === 'working' || confirmDelete.trim().toLowerCase() !== 'delete'}
+            className="rounded-lg border border-rose-400/40 px-3 py-1.5 text-[12px] text-rose-200 hover:bg-rose-500/10 disabled:opacity-50"
+          >
+            {deleteState === 'working' ? 'Deleting…' : 'Delete account'}
+          </button>
+        </div>
+        {deleteMsg && <p className="mt-2 text-[12px] text-rose-400">{deleteMsg}</p>}
+      </div>
     </div>
   )
 }

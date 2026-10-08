@@ -24,7 +24,6 @@ const CARDS = [
 
 const FIXTURE = {
   email: 'hr.mobile.probe.20260929@example.com',
-  password: 'HrProbe!2941-aa',
 }
 
 const POPOVERS = [
@@ -232,20 +231,23 @@ test.describe('P5 mobile composer gate', () => {
 
   test('LIVE leg: the fixture logs in', async ({ page }) => {
     test.skip(!process.env.LIVE_BASE_URL, 'set LIVE_BASE_URL to run the live login leg')
+    const password = process.env.E2E_PASSWORD
+    if (!password) throw new Error('E2E_PASSWORD must be set to run the live login leg')
+    const fixture = { ...FIXTURE, password }
     const LIVE = process.env.LIVE_BASE_URL!
     const base = await page.goto(LIVE)
     expect(base?.status()).toBe(200)
     const neg = await page.evaluate(async (f) => {
-      const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...f, password: 'wrong-2941-aa' }) })
+      const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...f, password: 'incorrect-password' }) })
       const t = await r.text()
       return { status: r.status, bytes: t.length, body: JSON.parse(t) }
-    }, FIXTURE)
+    }, fixture)
     expect(neg).toEqual({ status: 401, bytes: 31, body: { error: 'Invalid credentials' } })
     const res = await page.evaluate(async (f) => {
       const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(f) })
       const t = await r.text()
       return { status: r.status, bytes: t.length, body: JSON.parse(t) }
-    }, FIXTURE)
+    }, fixture)
     expect(res.status).toBe(200)
     expect(res.bytes).toBe(310)
     expect(Object.keys(res.body).sort()).toEqual(['token', 'user'])

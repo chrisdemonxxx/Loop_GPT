@@ -152,6 +152,55 @@ describe('stored run (reload reattach)', () => {
     expect(getStoredRun('conv-x')).toBeNull()
   })
 
+  it('resumes when the reader throws a network error', async () => {
+    const calls: string[] = []
+    ;(fetch as any).mockImplementation(async (url: any) => {
+      calls.push(String(url))
+      if (String(url).endsWith('/stream')) {
+        const encoder = new TextEncoder()
+        let sent = false
+        const stream = new ReadableStream({
+          pull(controller) {
+            if (!sent) {
+              sent = true
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'run', runId: 'run-drop', seq: 0 })}\n\n`))
+              return
+            }
+            controller.error(new TypeError('network down'))
+          },
+        })
+        return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+      }
+      return sse([
+        { type: 'delta', step: 0, text: 'recovered', seq: 1 },
+        { type: 'final', content: 'recovered', seq: 2 },
+        { type: 'done', seq: 3 },
+      ])
+    })
+    const onFinal = vi.fn()
+    const onError = vi.fn()
+    await runAgentStream('c-drop', base, { onFinal, onError })
+    expect(onFinal).toHaveBeenCalledWith('recovered', undefined)
+    expect(onError).not.toHaveBeenCalled()
+    expect(calls.some((url) => url.includes('/runs/run-drop/events'))).toBe(true)
+  })
+
+  it('stops the resume backoff as soon as the user aborts', async () => {
+    const controller = new AbortController()
+    let resumes = 0
+    ;(fetch as any).mockImplementation(async (url: any) => {
+      if (String(url).includes('/runs/')) resumes += 1
+      return sse([{ type: 'run', runId: 'run-abort', seq: 0 }])
+    })
+    const pending = runAgentStream('c-abort', base, {}, controller.signal)
+    await new Promise((r) => setTimeout(r, 30))
+    controller.abort()
+    const started = Date.now()
+    await pending
+    expect(Date.now() - started).toBeLessThan(500)
+    expect(resumes).toBe(0)
+  })
+
   it('clearStoredRun removes only that conversation\'s handle', () => {
     sessionStorage.setItem('loop-active-run:a', JSON.stringify({ runId: 'r1', lastSeq: 0 }))
     sessionStorage.setItem('loop-active-run:b', JSON.stringify({ runId: 'r2', lastSeq: 0 }))

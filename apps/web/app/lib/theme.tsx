@@ -94,4 +94,4 @@ export function useTheme() {
  * paint so a light-theme user never sees a dark flash on load. Mirrors
  * resolveTheme()'s logic — keep them in sync.
  */
-export const THEME_BOOT_SCRIPT = `(function(){try{var c=localStorage.getItem('${THEME_STORAGE_KEY}');var r=c;if(r==='system'){r=window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'}if(r==='light'){document.documentElement.dataset.theme='light'}}catch(e){}})()`
+export const THEME_BOOT_SCRIPT = `(function(){try{var c=localStorage.getItem('${THEME_STORAGE_KEY}');var r=c;if(r==='system'){r=window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'}if(r==='light'){var el=document.documentElement;el.dataset.theme='light';el.style.backgroundColor='#fafafa'}}catch(e){}})()`

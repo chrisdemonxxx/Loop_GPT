@@ -505,10 +505,16 @@ function ConversationRow({
   }
   return (
     <div className={`group rounded-lg transition-colors ${active ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]'}`}>
-      <div className="w-full text-left px-2.5 py-2 text-[13px] text-slate-300 flex items-center gap-2 cursor-pointer" onClick={onSelect}>
-        <MessageSquare size={13} className="text-slate-500 shrink-0" />
-        <span className="truncate flex-1">{c.title || 'New session'}</span>
-        <span className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 flex items-center gap-0.5 shrink-0 transition-opacity">
+      <div className="w-full text-left px-2.5 py-2 text-[13px] text-slate-300 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onSelect}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left text-slate-300"
+        >
+          <MessageSquare size={13} className="text-slate-500 shrink-0" />
+          <span className="truncate flex-1">{c.title || 'New session'}</span>
+        </button>
+        <span className="flex items-center gap-0.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
           <RowAction title={c.pinned ? 'Unpin' : 'Pin to top'} onClick={onPin} className={c.pinned ? 'text-[#c96442]' : undefined}>
             <Star size={12} fill={c.pinned ? 'currentColor' : 'none'} />
           </RowAction>

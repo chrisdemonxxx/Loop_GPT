@@ -162,6 +162,7 @@ export default function TurnActivity({
                   </div>
                   <div className="text-[12px] text-slate-300 mb-2.5">
                     Approve <code className="text-slate-100 bg-white/[0.07] px-1.5 py-0.5 rounded font-mono text-[11px]">{pendingApproval.toolName}</code> with the provided arguments?
+                    {pendingApproval.detail ? <div className="mt-1.5 text-slate-400">{pendingApproval.detail}</div> : null}
                   </div>
                   <div className="flex gap-2">
                     <button type="button" onClick={onApprove} className="flex-1 px-3 py-1.5 rounded-lg bg-[#c96442] text-white text-[12px] font-medium hover:bg-[#b5593a] transition">Approve</button>

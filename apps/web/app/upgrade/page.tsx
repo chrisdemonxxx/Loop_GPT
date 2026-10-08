@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Check, Ticket } from 'lucide-react'
-import { API_URL, authHeaders } from '../lib/api'
+import { API_URL, authHeaders, hasSession } from '../lib/api'
+import { startPlanCheckout } from '../lib/billing'
 
 interface Me { plan?: string; unlimited?: boolean; credits?: number }
 interface BillingConfig { enabled: boolean; checkoutEnabled: boolean; plans?: Record<string, boolean> }
@@ -37,6 +38,8 @@ export default function UpgradePage() {
   const [audience, setAudience] = useState<'individual' | 'team'>('individual')
   const [me, setMe] = useState<Me | null>(null)
   const [config, setConfig] = useState<BillingConfig | null>(null)
+  const [busyPlan, setBusyPlan] = useState<string | null>(null)
+  const [checkoutError, setCheckoutError] = useState('')
 
   useEffect(() => {
     document.title = 'Plans - Loop GPT'
@@ -45,7 +48,20 @@ export default function UpgradePage() {
       .then((r) => (r.ok ? r.json() : null)).then(setMe).catch(() => setMe(null))
   }, [])
 
-  const frozen = !config?.enabled
+  const frozen = config != null && !config.enabled
+  const signedIn = Boolean(me) || hasSession()
+
+  const checkout = async (planId: string) => {
+    setBusyPlan(planId)
+    setCheckoutError('')
+    const result = await startPlanCheckout(planId)
+    if (result.url) {
+      window.location.href = result.url
+      return
+    }
+    setBusyPlan(null)
+    setCheckoutError(result.error || 'Could not start checkout.')
+  }
 
   return (
     <main className="min-h-screen bg-[#08080a] px-5 py-8 max-w-4xl mx-auto text-slate-200">
@@ -102,15 +118,23 @@ export default function UpgradePage() {
                     ))}
                   </ul>
                   {plan.id !== 'free' ? (
-                    /* Waitlist, not a dead checkout link (P1): billing says
-                       "not enabled yet" — sending users there as the CTA was
-                       a dead end. Accounts ARE the waitlist until checkout ships. */
-                    <Link
-                      href="/signup"
-                      className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#c96442]/40 bg-[#c96442]/[0.08] px-4 py-2 text-[13px] font-medium text-[#e79d7f] transition hover:bg-[#c96442]/[0.14]"
-                    >
-                      Join the waitlist
-                    </Link>
+                    signedIn ? (
+                      <button
+                        type="button"
+                        disabled={busyPlan === plan.id || current}
+                        onClick={() => void checkout(plan.id)}
+                        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#c96442]/40 bg-[#c96442]/[0.08] px-4 py-2 text-[13px] font-medium text-[#e79d7f] transition hover:bg-[#c96442]/[0.14] disabled:opacity-50"
+                      >
+                        {current ? 'Current plan' : busyPlan === plan.id ? 'Starting checkout…' : `Upgrade to ${plan.name}`}
+                      </button>
+                    ) : (
+                      <Link
+                        href="/signup"
+                        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#c96442]/40 bg-[#c96442]/[0.08] px-4 py-2 text-[13px] font-medium text-[#e79d7f] transition hover:bg-[#c96442]/[0.14]"
+                      >
+                        Create an account to upgrade
+                      </Link>
+                    )
                   ) : (
                     <Link
                       href="/signup"
@@ -126,10 +150,13 @@ export default function UpgradePage() {
 
           {frozen && (
             <div role="note" className="mt-5 rounded-xl border border-white/[0.07] p-3.5 text-[12px] leading-relaxed text-slate-500">
-              Paid checkout is <strong className="text-slate-300">not enabled yet</strong> — creating an account
-              puts you on the waitlist and Pro/Gold unlock for you first when it ships. Voucher codes already
-              work in Settings → Billing (link below).
+              Paid checkout is <strong className="text-slate-300">not enabled yet</strong>. Signed-in upgrades
+              call checkout directly and explain a missing payment link instead of sending you back to sign up.
+              Voucher codes already work in Settings → Billing (link below).
             </div>
+          )}
+          {checkoutError && (
+            <p role="alert" className="mt-3 text-[12px] text-rose-400">{checkoutError}</p>
           )}
 
           <div className="mt-4 rounded-xl border border-white/[0.07] p-3.5">

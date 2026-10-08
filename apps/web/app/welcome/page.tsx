@@ -24,7 +24,7 @@ const PLANS = [
     features: ['~30 messages/day', 'Chat + web search + calculator', '5 images/day', '1 deep-research/day', 'PDF export', 'Community support'],
   },
   {
-    name: 'Pro', price: 'Soon', period: '', cta: 'Join the waitlist', href: '/signup', highlight: false,
+    name: 'Pro', price: '$20', period: 'per month', cta: 'Upgrade', href: '/upgrade', highlight: false,
     features: ['High daily limits', 'All tools + deep research', 'Vision + unlimited docs', 'MCP, connectors, skills, builders', 'Priority (warm) model', 'No image watermark'],
   },
 ]
@@ -109,7 +109,7 @@ export default function Welcome() {
       {/* Pricing */}
       <section id="pricing" className="max-w-4xl mx-auto px-5 py-16">
         <h2 className="text-3xl font-semibold text-center mb-2 text-slate-100">Free during launch</h2>
-        <p className="text-slate-500 text-center mb-10">Everything is free (metered) while we&apos;re in early access. Paid plans are coming soon.</p>
+        <p className="text-slate-500 text-center mb-10">Start on the free plan. Upgrade from the plans page when you need a higher daily allowance.</p>
         <div className="grid sm:grid-cols-2 gap-5">
           {PLANS.map((p) => (
             <div

@@ -34,11 +34,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={inter.className}>
-        {/* No-flash theme bootstrap (§8-35): applies the stored choice before
-            first paint. Default is dark (no attribute) — zero change for
-            existing users until they opt in. */}
+      <head>
+        {/* No-flash theme bootstrap (§8-35): runs in <head> before body paint
+            so a light-theme user never sees the dark surface first. */}
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+      </head>
+      <body className={inter.className}>
         <Analytics />
         <ErrorBoundary>
           <Providers>{children}</Providers>

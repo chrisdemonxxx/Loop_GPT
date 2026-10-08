@@ -105,7 +105,7 @@ export default function AgentsPage() {
   if (!user) return null
 
   return (
-    <div className="h-screen flex flex-col bg-[#08080a] text-slate-200 overflow-hidden">
+    <div className="h-dvh flex flex-col bg-[#08080a] text-slate-200 overflow-hidden">
       {/* Slim header — identity only; actions live in the computer view. */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.06] shrink-0">
         <Link href="/chat" className="p-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/[0.05] transition" aria-label="Back to chat">
@@ -137,7 +137,7 @@ export default function AgentsPage() {
         />
 
         {/* ── Profile panel ── */}
-        <aside className="hidden lg:flex flex-col min-h-0 border-l border-white/[0.06] bg-[#0b0b0f]">
+        <aside className="flex flex-col min-h-0 border-t lg:border-t-0 lg:border-l border-white/[0.06] bg-[#0b0b0f] max-lg:max-h-[58dvh]">
           <div className="flex flex-col items-center pt-7 pb-4 px-4 shrink-0">
             <div className="w-16 h-16 rounded-[22px] bg-[#c96442]/15 border border-[#c96442]/25 flex items-center justify-center">
               <Bot size={30} className="text-[#e79d7f]" />
@@ -221,29 +221,6 @@ export default function AgentsPage() {
             )}
           </div>
         </aside>
-      </div>
-
-      {/* Mobile: computer lives behind a bottom tab bar fallback — chat stays primary */}
-      <div className="lg:hidden border-t border-white/[0.06] shrink-0">
-        {tab === 'computer' ? (
-          <div className="h-[52vh]">
-            <AgentComputerTab session={teach} onExpand={() => setComputerExpanded(true)} />
-          </div>
-        ) : null}
-        <div className="flex gap-1 px-3 py-2">
-          {(['details', 'library', 'computer'] as const).map((id) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setTab(id)}
-              className={`px-3 py-1.5 rounded-lg text-[12px] font-medium capitalize transition ${
-                tab === id ? 'bg-white/[0.09] text-slate-100' : 'text-slate-500'
-              }`}
-            >
-              {id}
-            </button>
-          ))}
-        </div>
       </div>
 
       {/* Enlarged computer — full-window stream with the teach pill */}

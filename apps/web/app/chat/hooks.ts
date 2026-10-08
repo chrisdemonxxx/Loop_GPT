@@ -443,6 +443,21 @@ export function useAttachments(currentConversationId: string | null) {
     setUploadConversationId(null)
   }, [])
 
+  // Chips belong to the chat they were attached in. Switching chats clears
+  // them, except when the upload itself just created the conversation we
+  // landed on (the first file on a new chat).
+  const seenConvRef = useRef(currentConversationId)
+  useEffect(() => {
+    if (seenConvRef.current === currentConversationId) return
+    const previous = seenConvRef.current
+    seenConvRef.current = currentConversationId
+    if (uploadConvRef.current && uploadConvRef.current === currentConversationId) return
+    if (previous === null && currentConversationId && uploadConvRef.current === currentConversationId) return
+    setAttachments([])
+    uploadConvRef.current = currentConversationId
+    setUploadConversationId(currentConversationId)
+  }, [currentConversationId])
+
   const readyIds = attachments.filter((a) => a.status === 'done' && a.attachmentId).map((a) => a.attachmentId!)
   const uploading = attachments.some((a) => a.status === 'uploading')
 
@@ -734,6 +749,15 @@ export function useChatStream() {
   const runIdRef = useRef<string | null>(null)
   /** The conversation the active run belongs to (for the cancel POST). */
   const activeConvRef = useRef<string | null>(null)
+  /** Conversation the user is looking at. Events for any other id are ignored. */
+  const viewedConvRef = useRef<string | null>(null)
+  /** Bumped on send, reattach, and park so a superseded run cannot write UI. */
+  const generationRef = useRef(0)
+  /** Flush owner: park bumps generation so a late rAF drops its buffer. */
+  const flushOwnerRef = useRef(0)
+  /** True after a chat-switch park, so the idle edge is not a finished answer. */
+  const parkedRef = useRef(false)
+  const [liveConversationId, setLiveConversationId] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
   // ── Streamed-text batching (§8-33): accumulate per-token delta/thinking
@@ -746,6 +770,11 @@ export function useChatStream() {
   const flushScheduledRef = useRef(false)
   const flushLive = () => {
     flushScheduledRef.current = false
+    if (generationRef.current !== flushOwnerRef.current) {
+      pendingDeltasRef.current = []
+      pendingThinkingRef.current = ''
+      return
+    }
     const deltas = pendingDeltasRef.current
     const thinking = pendingThinkingRef.current
     pendingDeltasRef.current = []
@@ -800,6 +829,39 @@ export function useChatStream() {
   const resetLive = () => {
     setLiveUser(null); setLiveSteps([]); setLiveArtifacts([]); setStatusMsg(''); setLiveThinking('')
     setPendingApproval(null) // (S2) approval cards must never leak across turns
+    setLiveAnchorId(null)
+  }
+
+  /** The transcript the user is looking at. Mismatched run events no-op. */
+  const noteViewed = (id: string | null) => { viewedConvRef.current = id }
+
+  /** Drop the local reader without cancelling the server run, and hide its
+   *  live UI. The stored resume handle stays so returning reattaches. */
+  const parkRun = () => {
+    parkedRef.current = true
+    generationRef.current += 1
+    pendingDeltasRef.current = []
+    pendingThinkingRef.current = ''
+    flushScheduledRef.current = false
+    abortRef.current?.abort()
+    abortRef.current = null
+    setRunning(false)
+    setLiveConversationId(null)
+    resetLive()
+  }
+
+  /** The page's running→idle notification consumes this so a park is not
+   *  announced as a finished answer. */
+  const takeParked = () => {
+    const parked = parkedRef.current
+    parkedRef.current = false
+    return parked
+  }
+
+  const applies = (convId: string, gen: number) => {
+    if (generationRef.current !== gen) return false
+    const viewed = viewedConvRef.current
+    return !viewed || viewed === convId
   }
 
   /** Narrower reset (incognito toggle): clears the visible turn but keeps
@@ -814,27 +876,33 @@ export function useChatStream() {
   const [errorMsg, setErrorMsg] = useState('')
 
   /** The shared handler set for a run against one conversation — used by
-   *  send() and by the reload-reattach path (S4). */
-  const makeHandlers = (convId: string) => ({
-    onStatus: (m: string) => { if (!m.startsWith('conversation:')) setStatusMsg(m) },
-    onWarming: (m: string) => setStatusMsg(m),
+   *  send() and by the reload-reattach path (S4). Events are dropped when
+   *  the user is looking at a different conversation or a newer run owns the UI. */
+  const makeHandlers = (convId: string, gen: number) => ({
+    onStatus: (m: string) => { if (!applies(convId, gen)) return; if (!m.startsWith('conversation:')) setStatusMsg(m) },
+    onWarming: (m: string) => { if (!applies(convId, gen)) return; setStatusMsg(m) },
     // (S1) the retryable at-capacity wait card: the server says it's retrying —
     // surface it as a live status instead of a terminal-looking error.
-    onRetry: (attempt: number, afterMs: number) =>
-      setStatusMsg(`The model is busy — retrying automatically${attempt ? ` (attempt ${attempt})` : ''}${afterMs ? ` in ${Math.ceil(afterMs / 1000)}s` : ''}…`),
+    onRetry: (attempt: number, afterMs: number) => {
+      if (!applies(convId, gen)) return
+      setStatusMsg(`The model is busy — retrying automatically${attempt ? ` (attempt ${attempt})` : ''}${afterMs ? ` in ${Math.ceil(afterMs / 1000)}s` : ''}…`)
+    },
     // The durable run id — the stop button's cancel target (§8-30).
-    onRun: (id: string) => { runIdRef.current = id },
+    onRun: (id: string) => { if (!applies(convId, gen)) return; runIdRef.current = id },
     // Batched per frame (§8-33): per-token callbacks only buffer; the
     // flush applies them in one state update (see flushLive/scheduleFlush).
     onDelta: (step: number, text: string) => {
+      if (!applies(convId, gen)) return
       pendingDeltasRef.current.push({ step, text })
       scheduleFlush()
     },
     onThinking: (_step: number, text: string) => {
+      if (!applies(convId, gen)) return
       pendingThinkingRef.current = (pendingThinkingRef.current + text).slice(0, 20_000)
       scheduleFlush()
     },
     onToolCall: (step: number, name: string, args: any, source?: string) => {
+      if (!applies(convId, gen)) return
       setLiveSteps((prev) => {
         const next = [...prev]
         const i = next.findIndex((s) => s.index === step)
@@ -845,6 +913,7 @@ export function useChatStream() {
     },
     // Live stdout/stderr (§8-28): append to the step's bounded display buffer.
     onToolOutput: (step: number, chunk: string, stream?: 'stdout' | 'stderr') => {
+      if (!applies(convId, gen)) return
       setLiveSteps((prev) => prev.map((s) => {
         if (s.index !== step || !s.tool) return s
         const live = s.tool.liveOutput || { stdout: '', stderr: '' }
@@ -855,10 +924,12 @@ export function useChatStream() {
     },
     // Progress checklist (§8-29): the latest event for the step wins.
     onProgress: (step: number, items: any[]) => {
+      if (!applies(convId, gen)) return
       setLiveSteps((prev) => prev.map((s) =>
         s.index === step && s.tool ? { ...s, tool: { ...s.tool, progress: items } } : s))
     },
     onToolResult: (step: number, name: string, resultContent: string, data: any, isError?: boolean) => {
+      if (!applies(convId, gen)) return
       setLiveSteps((prev) =>
         prev.map((s) => {
           if (s.index !== step || !s.tool) return s
@@ -869,15 +940,33 @@ export function useChatStream() {
         })
       )
     },
-    onArtifact: (a: ArtifactRef) => setLiveArtifacts((prev) => [...prev, a]),
-    onPendingApproval: (toolName: string, args: any, _prompt: string) => {
+    onArtifact: (a: ArtifactRef) => { if (!applies(convId, gen)) return; setLiveArtifacts((prev) => [...prev, a]) },
+    onPendingApproval: (toolName: string, args: any, _prompt: string, approvalId?: string) => {
+      if (!applies(convId, gen)) return
       // The tool_call event already opened this step. Pushing another card
       // here stacked a second identical "running" row.
-      const approve = (approved: boolean) =>
-        axios.post(`${API_URL}/api/agent/${convId}/approve`, { toolName, approved }, { headers: authHeaders(false) }).catch(() => undefined)
-      setPendingApproval({ toolName, approve })
+      const approve = async (approved: boolean, id?: string) => {
+        const resolvedId = (typeof id === 'string' && id) ? id : approvalId
+        try {
+          await axios.post(`${API_URL}/api/agent/${convId}/approve`, {
+            toolName,
+            approved,
+            ...(resolvedId ? { approvalId: resolvedId } : {}),
+          }, { headers: authHeaders(false) })
+        } catch (e: any) {
+          const msg = e?.response?.data?.error || e?.message || 'Could not record that decision.'
+          setErrorMsg(typeof msg === 'string' && msg ? msg : 'Could not record that decision.')
+          throw e
+        }
+      }
+      const reason = typeof args?.reason === 'string' ? args.reason.trim().slice(0, 180) : ''
+      const detail = typeof args?.gate_id === 'string'
+        ? `Gate ${args.gate_id}${reason ? `: ${reason}` : ''}`
+        : undefined
+      setPendingApproval({ toolName, approvalId, detail, approve })
     },
     onError: (m: string) => {
+      if (!applies(convId, gen)) return
       const shown = presentStreamError(m)
       setStatusMsg(shown ? '' : (/abort|stopped/i.test(m) ? 'Stopped' : ''))
       if (shown) setErrorMsg(shown)
@@ -896,6 +985,9 @@ export function useChatStream() {
 
   async function send(opts: ChatStreamSendOptions) {
     const { content, sendMode, commandTools, attachmentIds, previews, docNames, runMode, modelTier, selectedTools, incognito, projectId, webSearch, thinking, parentMessageId, regenerateOf, connectionIds, workspaceId, botId, skipUserPersist, ensureConversation } = opts
+    const gen = ++generationRef.current
+    flushOwnerRef.current = gen
+    parkedRef.current = false
     setRunning(true); setStatusMsg(''); setLiveSteps([]); setLiveArtifacts([]); setLiveThinking('')
     setPendingApproval(null) // (S2) no approval card carries into a new run
     setErrorMsg('')
@@ -909,6 +1001,8 @@ export function useChatStream() {
     let convId: string | null = null
     try {
       convId = await ensureConversation(content)
+      if (generationRef.current !== gen) return
+      setLiveConversationId(convId)
       activeConvRef.current = convId
       const abort = new AbortController()
       abortRef.current = abort
@@ -936,8 +1030,9 @@ export function useChatStream() {
         ...(regenerateOf ? { regenerateOf } : {}),
         ...(botId ? { botId } : {}),
         ...(skipUserPersist ? { skipUserPersist: true } : {}),
-      }, makeHandlers(convId), abort.signal)
+      }, makeHandlers(convId, gen), abort.signal)
     } catch (err: any) {
+      if (generationRef.current !== gen) return
       const raw = String(err?.message || err?.name || '')
       const shown = presentStreamError(raw)
       if (!shown) setStatusMsg(err?.name === 'AbortError' || /abort/i.test(raw) ? 'Stopped' : '')
@@ -946,8 +1041,11 @@ export function useChatStream() {
       // Drain any buffered streamed text synchronously (§8-33) — nothing
       // buffered is ever lost, even if rAF never fired (background tab).
       flushLive()
+      // A chat switch parked this run. Leave the newer UI alone.
+      if (generationRef.current !== gen) return
       setRunning(false)
       abortRef.current = null
+      setLiveConversationId(null)
       setPendingApproval(null) // (S2) the run is over; its card must not linger
       if (convId) await queryClient.invalidateQueries({ queryKey: ['messages', convId] })
       await queryClient.invalidateQueries({ queryKey: ['conversations'] })
@@ -960,7 +1058,14 @@ export function useChatStream() {
    *  same live UI a fresh send would use. */
   const reattach = async (convId: string): Promise<boolean> => {
     const stored = getStoredRun(convId)
-    if (!stored || running) return false
+    if (!stored) return false
+    // The reader for this conversation is still open — don't start a second one.
+    if (activeConvRef.current === convId && abortRef.current && !abortRef.current.signal.aborted) return false
+    if (abortRef.current && !abortRef.current.signal.aborted) parkRun()
+    const gen = ++generationRef.current
+    flushOwnerRef.current = gen
+    parkedRef.current = false
+    setLiveConversationId(convId)
     setRunning(true)
     setErrorMsg('')
     setStatusMsg('Reattaching to the run in progress…')
@@ -969,13 +1074,15 @@ export function useChatStream() {
     activeConvRef.current = convId
     runIdRef.current = stored.runId
     try {
-      await resumeStoredRun(convId, stored, makeHandlers(convId), abort.signal)
+      await resumeStoredRun(convId, stored, makeHandlers(convId, gen), abort.signal)
     } catch (err: any) {
-      if (err?.message === 'run-expired') setErrorMsg('That run is no longer available — it may have finished while you were away.')
+      if (generationRef.current === gen && err?.message === 'run-expired') setErrorMsg('That run is no longer available — it may have finished while you were away.')
     } finally {
       flushLive()
+      if (generationRef.current !== gen) return true
       setRunning(false)
       abortRef.current = null
+      setLiveConversationId(null)
       setPendingApproval(null)
       await queryClient.invalidateQueries({ queryKey: ['messages', convId] })
       await queryClient.invalidateQueries({ queryKey: ['conversations'] })
@@ -987,7 +1094,8 @@ export function useChatStream() {
   return {
     running, statusMsg, errorMsg, clearError: () => setErrorMsg(''),
     liveUser, liveSteps, liveArtifacts, liveThinking, liveAnswer,
+    liveConversationId,
     pendingApproval, setPendingApproval, liveAnchorId,
-    stopRun, resetLive, clearTurn, send, reattach,
+    stopRun, resetLive, clearTurn, send, reattach, noteViewed, parkRun, takeParked,
   }
 }

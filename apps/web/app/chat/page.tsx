@@ -37,6 +37,16 @@ import type { QueuedMessage } from '../components/chat/types'
 
 // slash commands live in ../lib/commands (registry + parseCommand)
 
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (ch) => (
+    ch === '&' ? '&amp;'
+      : ch === '<' ? '&lt;'
+        : ch === '>' ? '&gt;'
+          : ch === '"' ? '&quot;'
+            : '&#39;'
+  ))
+}
+
 /** The chat workspace: sidebar, header, transcript, composer, and the
  * activity/artifacts overlays. All run mechanics live in ./hooks; presenters
  * live in ../components/chat. */
@@ -49,7 +59,7 @@ export default function ChatPage() {
 
   // S4: the ShortcutSheet advertises ⌘L (new conversation) and ⌘B (toggle
   // sidebar) — these were listed but never bound. Same registry, now real.
-  useHotkey({ key: 'l', meta: true }, () => { setCurrentConversationId(null); panels.setSidebarOpen(false) })
+  useHotkey({ key: 'l', meta: true }, () => { selectConversation(null); panels.setSidebarOpen(false) })
   useHotkey({ key: 'b', meta: true }, () => panels.setSidebarOpen((open: boolean) => !open))
   useHotkey({ key: 'ArrowUp', meta: true }, () => cycleConversationRef.current(-1))
   useHotkey({ key: 'ArrowDown', meta: true }, () => cycleConversationRef.current(1))
@@ -115,13 +125,22 @@ export default function ChatPage() {
   const { conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages, branchVersions, selectVersion, sessionsError, sessionsPending, retrySessions, messagesError, retryMessages } =
     useConversationsData(currentConversationId, (id) => { if (currentConversationId === id) setCurrentConversationId(null) })
   const chat = useChatStream()
+  /** Live UI belongs to one conversation. Another chat must not show it or
+   *  treat its composer as busy. */
+  const streamHere = !chat.liveConversationId || chat.liveConversationId === currentConversationId
+  const showRunning = chat.running && streamHere
+  const viewedRef = useRef<string | null>(currentConversationId)
   // Â§8-40: workspace-connection chips — recent-use-first, pin for next run.
   const workspaceConnections = useWorkspaceConnections(workspaceId)
   // (S4) Reload reattach: if a durable run was interrupted by a reload, resume
   // it into the live UI (replay + live attach) instead of losing the turn.
   const reattachRef = useRef(chat.reattach)
   reattachRef.current = chat.reattach
+  const noteViewedRef = useRef(chat.noteViewed)
+  noteViewedRef.current = chat.noteViewed
   useEffect(() => {
+    viewedRef.current = currentConversationId
+    noteViewedRef.current(currentConversationId)
     if (!currentConversationId) return
     void reattachRef.current(currentConversationId)
   }, [currentConversationId])
@@ -134,6 +153,7 @@ export default function ChatPage() {
     const was = wasRunningRef.current
     wasRunningRef.current = chat.running
     if (!was || chat.running) return
+    if (chat.takeParked()) return
     void (async () => {
       const { getPrefs } = await import('../lib/prefs')
       const prefs = getPrefs()
@@ -151,22 +171,22 @@ export default function ChatPage() {
   // Â§8-44 hands-free voice mode: speak each answer, re-listen, auto-send.
   const autoSpeech = useSpeech()
   const voiceMode = useVoiceMode({
-    running: chat.running,
-    answer: chat.liveAnswer,
+    running: showRunning,
+    answer: streamHere ? chat.liveAnswer : '',
     speak: (text) => autoSpeech.speak('voice-mode', text),
     stopSpeech: autoSpeech.stop,
     speakingId: autoSpeech.speakingId,
     onAutoSend: (text) => {
       setInput(text)
-      // The state flushes before the frame callback runs (same pattern as
-      // the composer's stop-and-send).
-      requestAnimationFrame(() => { void handleSend() })
+      // Pass the transcript in. handleSend's `input` state is still the
+      // previous render until React commits setInput.
+      void handleSend(undefined, text)
     },
   })
   // Â§8-39: messages sent while a run is active queue up instead of being
   // dropped; the drain fires on every run completion (FIFO).
   const toast = useToast()
-  const messageQueue = useMessageQueue(chat.running, (entry) => { void dispatchSend(entry) })
+  const messageQueue = useMessageQueue(showRunning, (entry) => { void dispatchSend(entry) })
   // â”€â”€ Sidebar search: title filter locally + server-side message-body hits
   const [sidebarSearch, setSidebarSearch] = useState('')
   const { hits: messageHits, error: searchError, retry: retrySearch } = useConversationSearch(sidebarSearch)
@@ -219,6 +239,8 @@ export default function ChatPage() {
 
   // â”€â”€ Conversation helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   function selectConversation(id: string | null) {
+    viewedRef.current = id
+    chat.noteViewed(id)
     // Drafts (Â§2.5): stash the in-progress text for the outgoing chat, then
     // restore whatever was in progress for the incoming one.
     if (typeof window !== 'undefined') {
@@ -237,7 +259,8 @@ export default function ChatPage() {
     setThreadMeta(null)
     // Â§8-39: queued messages belong to the conversation they were typed in.
     messageQueue.clear()
-    chat.resetLive()
+    if (chat.running && chat.liveConversationId !== id) chat.parkRun()
+    else if (chat.liveConversationId !== id) chat.resetLive()
     panels.setArtifactsOpen(false)
   }
 
@@ -264,7 +287,7 @@ export default function ChatPage() {
     while (userIdx >= 0 && pathMsgs[userIdx]?.role !== 'user') userIdx--
     const userMsg = pathMsgs[userIdx]
     if (!userMsg) return
-    if (!currentConversationId || chat.running) return
+    if (!currentConversationId || showRunning) return
     if (userMsg.messageType && userMsg.messageType !== 'text') {
       // Image turns can't be replayed from the stored row (their attachments
       // live in the private store): edit-resend creates the version.
@@ -380,9 +403,11 @@ export default function ChatPage() {
       { title: firstMessage.slice(0, 50) || 'New Chat' },
       { headers: authHeaders() }
     )
-    setCurrentConversationId(res.data.id)
+    const createdId = String(res.data.id || '')
+    // Don't yank the user back if they switched chats while this was creating.
+    if (viewedRef.current == null) setCurrentConversationId(createdId)
     invalidateConversations()
-    return res.data.id
+    return createdId
   }
 
   /** The actual dispatch: one run, from either the composer or the queue
@@ -437,10 +462,11 @@ export default function ChatPage() {
     if (used.size) workspaceConnections.markUsed([...used])
   }
 
-  async function handleSend(e?: React.FormEvent) {
+  async function handleSend(e?: React.FormEvent, overrideText?: string) {
     e?.preventDefault()
+    const source = overrideText !== undefined ? overrideText : input
     const hasAttachments = uploads.attachments.length > 0
-    if (!input.trim() && !hasAttachments) return
+    if (!source.trim() && !hasAttachments) return
     // While a chip is still uploading, wait — its id is what the stream
     // inlines; sending early would silently drop the attachment.
     if (uploads.uploading) return
@@ -448,9 +474,9 @@ export default function ChatPage() {
     // /bot <goal> — hand the goal to a Loop Bot (autonomous task) instead of
     // running a chat turn. The bot's result lands in the Loop Bot
     // conversation; its live trace opens from /agents.
-    const botMatch = input.trim().match(/^\/bot\b[ \t]*/i)
+    const botMatch = source.trim().match(/^\/bot\b[ \t]*/i)
     if (botMatch) {
-      const goal = input.trim().slice(botMatch[0].length)
+      const goal = source.trim().slice(botMatch[0].length)
       if (!goal) { setInput('/bot '); return }
       setInput('')
       uploads.reset()
@@ -465,7 +491,7 @@ export default function ChatPage() {
       return
     }
 
-    const { mode: sendMode, text: content, tools: commandTools } = parseCommand(input.trim())
+    const { mode: sendMode, text: content, tools: commandTools } = parseCommand(source.trim())
     if (!content && !hasAttachments) return
     const remembered = content.trim()
     if (remembered) {
@@ -523,8 +549,8 @@ export default function ChatPage() {
       setPendingBranch(undefined)
       setEditingMessageId(null)
       if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
-      if (chat.running) {
-        snaps.forEach((snap) => messageQueue.enqueue(snap))
+    if (showRunning) {
+      snaps.forEach((snap) => messageQueue.enqueue(snap))
         toast.push('info', 'Added to queue — it sends when the current run finishes')
         return
       }
@@ -545,7 +571,7 @@ export default function ChatPage() {
       }
       return
     }
-    if (chat.running) {
+    if (showRunning) {
       messageQueue.enqueue({
         id: `queued-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         ...baseSnap,
@@ -601,15 +627,17 @@ export default function ChatPage() {
     const md = (messages as Message[]).map((m) => `**${m.role === 'user' ? 'You' : 'Loop GPT'}**\n\n${m.content}`).join('\n\n---\n\n')
     if (format === 'pdf') {
       // Print-to-PDF: a clean transcript stylesheet + the browser print dialog.
+      // Title and body are escaped — a chat named `<script>` must not run.
       const w = window.open('', '_blank', 'width=800,height=900')
       if (!w) return
-      w.document.write(`<!doctype html><html><head><title>${title}</title><style>
+      const safeTitle = escapeHtml(title)
+      w.document.write(`<!doctype html><html><head><title>${safeTitle}</title><style>
         body{font:13px/1.65 -apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1e;max-width:720px;margin:32px auto;padding:0 24px}
         h1{font-size:22px;margin-bottom:4px} .meta{color:#888;font-size:12px;margin-bottom:28px}
         .msg{margin:18px 0;padding:14px;border-left:3px solid #c96442;background:#faf9f8;border-radius:6px;white-space:pre-wrap;word-break:break-word}
         .user{border-left-color:#1a1a1e;background:#f4f4f5} .who{font-weight:600;font-size:12px;color:#777;margin-bottom:6px}
-      </style></head><body><h1>${title}</h1><div class="meta">Loop GPT transcript · ${new Date().toLocaleString()}</div>
-      ${messages.map((m) => `<div class="msg ${m.role === 'user' ? 'user' : ''}"><div class="who">${m.role === 'user' ? 'You' : 'Loop GPT'}</div>${m.content.replace(/</g, '&lt;')}</div>`).join('')}
+      </style></head><body><h1>${safeTitle}</h1><div class="meta">Loop GPT transcript · ${escapeHtml(new Date().toLocaleString())}</div>
+      ${messages.map((m) => `<div class="msg ${m.role === 'user' ? 'user' : ''}"><div class="who">${m.role === 'user' ? 'You' : 'Loop GPT'}</div>${escapeHtml(m.content || '')}</div>`).join('')}
       </body></html>`)
       w.document.close()
       w.focus()
@@ -700,13 +728,13 @@ export default function ChatPage() {
   /** Per-artifact "Building…" placeholders: artifact-producing tools that are
    * in flight in the live turn (create_document/generate_image/video/style). */
   const ARTIFACT_TOOLS = new Set(['create_document', 'generate_image', 'generate_video', 'generate_style'])
-  const buildingKinds = chat.running
+  const buildingKinds = showRunning
     ? [...new Set(chat.liveSteps.filter((s) => s.kind === 'tool' && s.tool && !s.tool.result && ARTIFACT_TOOLS.has(s.tool.name)).map((s) => s.tool!.name))]
     : []
   // Every artifact from the loaded conversation plus the live run.
   const allArtifacts = [
     ...(messages as Message[]).flatMap((m) => (m.metadata?.artifacts as import('../lib/stream').ArtifactRef[] | undefined) || []),
-    ...chat.liveArtifacts,
+    ...(streamHere ? chat.liveArtifacts : []),
   ]
   const convTitle = (conversations as Conversation[]).find((c) => c.id === currentConversationId)?.title
   // Context meter (Â§2.5): honest estimate — chars/4 over the conversation,
@@ -723,8 +751,8 @@ export default function ChatPage() {
   const profileBotId = activeConv?.kind === 'bot' ? (activeConv.botId || openedBotId) : openedBotId
   const profileBot = profileBotId ? roster.bots.find((b) => b.id === profileBotId) || null : null
   const authors = Object.fromEntries(roster.bots.map((b) => [b.id, { name: b.name, color: b.avatarColor }]))
-  const liveAuthor = streamingBotId ? authors[streamingBotId] || null : null
-  const liveCanvas = canvasFromTurn(chat.liveSteps, chat.liveAnswer)
+  const liveAuthor = streamHere && streamingBotId ? authors[streamingBotId] || null : null
+  const liveCanvas = streamHere ? canvasFromTurn(chat.liveSteps, chat.liveAnswer) : null
   const storedCanvas = (() => {
     const msgs = messages as Message[]
     for (let i = msgs.length - 1; i >= 0; i--) {
@@ -970,14 +998,14 @@ export default function ChatPage() {
         <MessageList
           messages={messages}
           conversationId={currentConversationId}
-          liveUser={chat.liveUser}
-          liveSteps={chat.liveSteps}
-          liveAnswer={chat.liveAnswer}
-          liveThinking={chat.liveThinking}
-          liveArtifacts={chat.liveArtifacts}
+          liveUser={streamHere ? chat.liveUser : null}
+          liveSteps={streamHere ? chat.liveSteps : []}
+          liveAnswer={streamHere ? chat.liveAnswer : ''}
+          liveThinking={streamHere ? chat.liveThinking : ''}
+          liveArtifacts={streamHere ? chat.liveArtifacts : []}
           /** Â§8-22: while a retry/edit run streams, the transcript truncates
            * at this row and the live turn renders in its place. */
-          liveReplaceAfterId={chat.liveAnchorId}
+          liveReplaceAfterId={streamHere ? chat.liveAnchorId : null}
           /** Â§8-22 version arrows: per-row sibling info + the switch handler. */
           versions={branchVersions}
           onSelectVersion={(messageId) => selectVersionRow(currentConversationId, messageId)}
@@ -985,14 +1013,14 @@ export default function ChatPage() {
           queued={messageQueue.queue}
           onRemoveQueued={messageQueue.remove}
           onStartPrompt={(prompt) => { setInput(prompt); setTimeout(() => document.querySelector('textarea')?.focus(), 100) }}
-          running={chat.running}
-          statusMsg={chat.statusMsg}
+          running={showRunning}
+          statusMsg={streamHere ? chat.statusMsg : ''}
           errorMsg={chat.errorMsg}
           onClearError={chat.clearError}
           mode={mode}
-          pendingApproval={chat.pendingApproval}
-          onApprove={() => { chat.pendingApproval?.approve(true).then(() => chat.setPendingApproval(null)) }}
-          onDeny={() => { chat.pendingApproval?.approve(false).then(() => chat.setPendingApproval(null)) }}
+          pendingApproval={streamHere ? chat.pendingApproval : null}
+          onApprove={(approvalId) => { chat.pendingApproval?.approve(true, approvalId).then(() => chat.setPendingApproval(null)).catch(() => {}) }}
+          onDeny={(approvalId) => { chat.pendingApproval?.approve(false, approvalId).then(() => chat.setPendingApproval(null)).catch(() => {}) }}
           toolCount={toolCount}
           onOpenTools={() => pushSettingsHash('tools') }
           onOpenArtifact={openArtifact}
@@ -1024,7 +1052,7 @@ export default function ChatPage() {
               attachments={uploads.attachments}
               onRemoveAttachment={uploads.remove}
               onRetryAttachment={uploads.retry}
-              running={chat.running}
+              running={showRunning}
               runMode={runMode}
               webSearch={webSearch}
               onToggleWebSearch={setWebSearch}

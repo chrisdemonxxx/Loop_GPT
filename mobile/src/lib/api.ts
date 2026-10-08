@@ -3,7 +3,7 @@
  * the JWT lives ONLY in module memory (never AsyncStorage/device storage), so
  * app restarts require sign-in. 401 responses clear the session.
  */
-export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://web-production-20d369.up.railway.app'
+export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://api.loop-gpt.cyou'
 
 let memoryToken: string | null = null
 export function getToken(): string | null { return memoryToken }

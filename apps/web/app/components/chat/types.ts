@@ -64,7 +64,11 @@ export interface StoredStep {
 /** Pending tool-approval handshake for the live turn. */
 export interface PendingApproval {
   toolName: string
-  approve: (ok: boolean) => Promise<any>
+  /** Server id required by POST /api/agent/:conversationId/approve. */
+  approvalId?: string
+  /** Extra line for the approval card, such as a Loop-IT gate reason. */
+  detail?: string
+  approve: (ok: boolean, approvalId?: string) => Promise<any>
 }
 
 /** A message queued behind the active run (audit §8-39): the full send

@@ -4,7 +4,7 @@ import { useState } from "react"
 import { useRouter } from "next/navigation"
 import axios from "axios"
 import Sidebar from "../components/chat/Sidebar"
-import { API_URL, authHeaders, getStoredUser } from "../lib/api"
+import { API_URL, authHeaders, getStoredUser, logoutSession } from "../lib/api"
 import { useConversationsData, useConversationSearch, usePanels, useWorkspaceProjects } from "../chat/hooks"
 import type { Conversation } from "../components/chat/types"
 
@@ -38,7 +38,7 @@ export default function RecentsPage() {
   }
 
   const logout = () => {
-    localStorage.removeItem("token"); localStorage.removeItem("user")
+    logoutSession()
     window.location.href = "/login"
   }
 

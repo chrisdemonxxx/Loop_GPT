@@ -20,6 +20,7 @@ import BillingTab from './settings/BillingTab'
 import TimeFocusTab from './settings/TimeFocusTab'
 import CodeTab from './settings/CodeTab'
 import { pushSettingsHash, readCurrentSettingsHash, parseSettingsHash, type PrivacySub } from '../lib/settingsHash'
+import { useFocusTrap } from '@loop/ui'
 
 interface Props { onClose: () => void; initialTab?: string; workspaceId?: string | null; asPage?: boolean }
 
@@ -111,6 +112,7 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
     else onClose()
   }
 
+  const dialogRef = useFocusTrap<HTMLDivElement>(!asPage)
   const groups: Array<{ label: string; tabs: Array<{ id: string; label: string; Icon: typeof Wrench }> }> = [
     {
       label: 'Settings',
@@ -143,6 +145,8 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
       <motion.div
         initial={{ opacity: 0, scale: 0.96, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }}
         className={asPage ? "w-full max-w-2xl mx-auto min-h-screen flex flex-col" : "glass-strong rounded-2xl w-full max-w-2xl max-h-[min(86vh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-7.5rem))] flex flex-col overflow-hidden shadow-panel"}
+        ref={dialogRef}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         role={asPage ? "main" : "dialog"} aria-modal={asPage ? undefined : true} aria-label="Agent settings"
       >

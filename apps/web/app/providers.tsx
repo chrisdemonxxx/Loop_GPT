@@ -7,6 +7,7 @@ import { I18nProvider } from './lib/i18n'
 import { ToastProvider } from './lib/toast'
 import { ThemeProvider } from './lib/theme'
 import { RemindersEngine } from './components/RemindersEngine'
+import { OfflineBanner } from './components/OfflineBanner'
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -36,6 +37,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <I18nProvider>
             <ToastProvider>
               <RemindersEngine />
+              <OfflineBanner />
               {children}
             </ToastProvider>
           </I18nProvider>

@@ -347,7 +347,7 @@ export default function Composer({
             } else if (e.key === 'Tab' && showSlash && slashFilter.length > 0) {
               e.preventDefault()
               handleCommandClick(slashFilter[slashIndex]?.cmd)
-            } else if (e.key === 'Enter' && !e.shiftKey) {
+            } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault()
               if (showSlash && slashFilter.length > 0 && !modKey(e)) {
                 handleCommandClick((slashFilter[slashIndex] || slashFilter[0]).cmd)

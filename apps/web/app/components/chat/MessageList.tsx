@@ -51,8 +51,8 @@ interface MessageListProps {
   mode: AgentMode
   /** Live-turn tool approval handshake (inline activity card). */
   pendingApproval?: PendingApproval | null
-  onApprove?: () => void
-  onDeny?: () => void
+  onApprove?: (approvalId?: string) => void
+  onDeny?: (approvalId?: string) => void
   toolCount?: number
   onOpenTools?: () => void
   /** Artifact cards open the right-hand panel focused on the artifact (P2). */
@@ -218,9 +218,11 @@ export default function MessageList({
             ))
           )}
 
-          {/* Live user message */}
-          {liveUser && (
+          {/* Live turn: the user bubble when we have one, and the assistant
+              block whenever a run is in progress (reconnect has no bubble yet). */}
+          {(liveUser || running) && (
             <>
+              {liveUser && (
               <motion.div
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -253,6 +255,7 @@ export default function MessageList({
                   </div>
                 </div>
               </motion.div>
+              )}
 
               {/* In-run artifacts render in the flow, not only after reload */}
               {liveArtifacts.length > 0 && (
@@ -283,11 +286,14 @@ export default function MessageList({
                   </div>
                 )}
                 {shownStatus && !liveAnswer && liveSteps.length === 0 && !showWorkingLine && (
-                  <div className="flex items-center gap-2 text-[13px] text-slate-400" aria-live="polite">
+                  <div className="flex items-center gap-2 text-[13px] text-slate-400">
                     <span className="shimmer inline-block h-2.5 w-28 rounded-full" aria-hidden="true" />
                     <span>{shownStatus}</span>
                   </div>
                 )}
+                <div className="sr-only" aria-live="polite">
+                  {running && !liveAnswer ? 'Response in progress' : ''}
+                </div>
                 {liveAuthor && (
                   <div className="flex items-center gap-2 text-[12px] text-slate-300">
                     <span className="w-5 h-5 rounded-full shrink-0" style={{ background: liveAuthor.color }} aria-hidden />
@@ -295,7 +301,7 @@ export default function MessageList({
                   </div>
                 )}
                 {liveAnswer && (
-                  <div aria-live="polite">
+                  <div aria-live="off">
                     <Markdown content={liveAnswer} />
                   </div>
                 )}
@@ -306,8 +312,8 @@ export default function MessageList({
                   status={shownStatus}
                   liveSteps={liveSteps}
                   pendingApproval={pendingApproval}
-                  onApprove={onApprove}
-                  onDeny={onDeny}
+                  onApprove={onApprove ? () => onApprove(pendingApproval?.approvalId) : undefined}
+                  onDeny={onDeny ? () => onDeny(pendingApproval?.approvalId) : undefined}
                   onRetry={() => onRetryBefore(messages.length - 1)}
                   toolCount={toolCount}
                   onOpenTools={onOpenTools}
@@ -326,7 +332,7 @@ export default function MessageList({
                 <span className="absolute -top-2.5 right-3 inline-flex items-center gap-1 rounded-full bg-[#0a0a0c] border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-400" aria-label="Queued message">
                   <Loader2 size={9} className="animate-spin" /> Queued
                 </span>
-                {(q.previews?.length) && (
+                {!!q.previews?.length && (
                   <div className="flex flex-wrap gap-2 mb-2.5">
                     {q.previews.map((src, i) => (
                       <img key={i} src={src} alt={`queued upload ${i + 1}`} className="max-w-[180px] max-h-40 rounded-xl border border-white/10" />

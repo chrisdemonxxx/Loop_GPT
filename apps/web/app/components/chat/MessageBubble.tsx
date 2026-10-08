@@ -1,6 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useFocusTrap } from '@loop/ui'
 import { Copy, Check, ChevronLeft, ChevronRight, Edit2, RotateCcw, Sparkles, Volume2, Pause, Square, Brain, ThumbsUp, ThumbsDown, Loader2 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { API_URL, authHeaders } from '../../lib/api'
@@ -269,82 +271,119 @@ export function MessageBubble({
         />
       </div>
 
-      {/* Feedback modal (rating + optional comment → telemetry). */}
-      {feedbackOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-          onClick={() => setFeedbackOpen(false)}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Send feedback"
-        >
-          <div
-            className="glass-strong rounded-2xl border border-white/10 w-full max-w-sm p-4 space-y-3 shadow-panel"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="text-[14px] font-medium text-slate-100">Send feedback</div>
-            <div className="flex gap-2">
-              {(['up', 'down'] as const).map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => setRating(r)}
-                  aria-pressed={rating === r}
-                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border text-[13px] transition ${
-                    rating === r
-                      ? 'border-[#c96442]/50 bg-[#c96442]/[0.08] text-[#e79d7f]'
-                      : 'border-white/[0.08] text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {r === 'up' ? <ThumbsUp size={14} /> : <ThumbsDown size={14} />}
-                  {r === 'up' ? 'Good' : 'Needs work'}
-                </button>
-              ))}
-            </div>
-            <textarea
-              rows={3}
-              placeholder="Optional: what worked, what didn't?"
-              onChange={(e) => setComment(e.target.value)}
-              className="w-full rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-[13px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-white/15 resize-none"
-            />
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={async () => {
-                  if (!rating) return
-                  setSending(true)
-                  try {
-                    const res = await fetch(`${API_URL}/api/telemetry/feedback`, {
-                      method: 'POST',
-                      headers: authHeaders(),
-                      body: JSON.stringify({ conversationId: conversationId || null, messageId: message.id, rating, comment: comment || undefined }),
-                    })
-                    if (!res.ok) throw new Error('send')
-                    toast.push('success', 'Thanks — feedback recorded')
-                    setFeedbackOpen(false)
-                  } catch {
-                    toast.push('error', 'Could not send feedback — try again')
-                  } finally {
-                    setSending(false)
-                  }
-                }}
-                disabled={!rating || sending}
-                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[13px] font-medium text-white bg-[#c96442] hover:bg-[#b5593a] disabled:opacity-40 transition"
-              >
-                {sending && <Loader2 size={13} className="animate-spin" />} Submit feedback
-              </button>
-              <button
-                type="button"
-                onClick={() => setFeedbackOpen(false)}
-                className="px-3 py-2 rounded-xl text-[13px] text-slate-400 hover:text-slate-200 border border-white/[0.08] transition"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Feedback modal (rating + optional comment → telemetry).
+          Portaled to document.body: the bubble sits in a transformed list,
+          and position:fixed inside a transform is positioned against that
+          ancestor instead of the viewport. */}
+      {feedbackOpen && typeof document !== 'undefined' && createPortal(
+        <FeedbackDialog
+          rating={rating}
+          setRating={setRating}
+          comment={comment}
+          setComment={setComment}
+          sending={sending}
+          onClose={() => setFeedbackOpen(false)}
+          onSubmit={async () => {
+            if (!rating) return
+            setSending(true)
+            try {
+              const res = await fetch(`${API_URL}/api/telemetry/feedback`, {
+                method: 'POST',
+                headers: authHeaders(),
+                body: JSON.stringify({ conversationId: conversationId || null, messageId: message.id, rating, comment: comment || undefined }),
+              })
+              if (!res.ok) throw new Error('send')
+              toast.push('success', 'Thanks — feedback recorded')
+              setFeedbackOpen(false)
+            } catch {
+              toast.push('error', 'Could not send feedback — try again')
+            } finally {
+              setSending(false)
+            }
+          }}
+        />,
+        document.body,
       )}
     </motion.div>
+  )
+}
+
+function FeedbackDialog({
+  rating, setRating, comment, setComment, sending, onClose, onSubmit,
+}: {
+  rating: 'up' | 'down' | null
+  setRating: (r: 'up' | 'down') => void
+  comment: string
+  setComment: (v: string) => void
+  sending: boolean
+  onClose: () => void
+  onSubmit: () => void
+}) {
+  const trapRef = useFocusTrap<HTMLDivElement>(true)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm p-4 sm:items-center"
+      onClick={onClose}
+    >
+      <div
+        ref={trapRef}
+        tabIndex={-1}
+        className="glass-strong rounded-2xl border border-white/10 w-full max-w-sm p-4 space-y-3 shadow-panel outline-none"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Send feedback"
+      >
+        <div className="text-[14px] font-medium text-slate-100">Send feedback</div>
+        <div className="flex gap-2">
+          {(['up', 'down'] as const).map((r) => (
+            <button
+              key={r}
+              type="button"
+              onClick={() => setRating(r)}
+              aria-pressed={rating === r}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border text-[13px] transition ${
+                rating === r
+                  ? 'border-[#c96442]/50 bg-[#c96442]/[0.08] text-[#e79d7f]'
+                  : 'border-white/[0.08] text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {r === 'up' ? <ThumbsUp size={14} /> : <ThumbsDown size={14} />}
+              {r === 'up' ? 'Good' : 'Needs work'}
+            </button>
+          ))}
+        </div>
+        <textarea
+          rows={3}
+          value={comment}
+          placeholder="Optional: what worked, what didn't?"
+          onChange={(e) => setComment(e.target.value)}
+          className="w-full rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-[13px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-white/15 resize-none"
+        />
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={!rating || sending}
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[13px] font-medium text-white bg-[#c96442] hover:bg-[#b5593a] disabled:opacity-40 transition"
+          >
+            {sending && <Loader2 size={13} className="animate-spin" />} Submit feedback
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-2 rounded-xl text-[13px] text-slate-400 hover:text-slate-200 border border-white/[0.08] transition"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 

@@ -85,25 +85,31 @@ export default function PrivacyTab({ sub, onOpenSub, onOpenMemory }: Props) {
 }
 
 /** One of the five blueprint sub-panels. */
+function isSharedChat(c: { shareId?: string; shareToken?: string; shareUrl?: string; shareEnabled?: boolean; shared?: boolean; isShared?: boolean }) {
+  return Boolean(c?.shareId || c?.shareToken || c?.shareUrl || c?.shareEnabled || c?.shared || c?.isShared)
+}
+
 function PrivacySubPanel({ sub, onBack, onOpenMemory }: { sub: PrivacySub; onBack: () => void; onOpenMemory: () => void }) {
-  const [rows, setRows] = useState<Array<{ title: string; hint?: string }> | null>(null)
+  const [rows, setRows] = useState<Array<{ id?: string; title: string; hint?: string }> | null>(null)
   const [failed, setFailed] = useState(false)
+  const [revoking, setRevoking] = useState<string | null>(null)
 
   useEffect(() => {
     if (sub === 'shared-chats') {
       fetch(`${API_URL}/api/conversations`, { headers: authHeaders() })
         .then((r) => (r.ok ? r.json() : Promise.reject()))
         .then((list) => {
-          const shared = (Array.isArray(list) ? list : []).filter((c: any) => c?.shareId || c?.shareEnabled)
-          setRows(shared.map((c: any) => ({ title: c.title || 'Untitled chat', hint: c.updatedAt ? `Shared ${String(c.updatedAt).slice(0, 10)}` : undefined })))
+          const raw = Array.isArray(list) ? list : (Array.isArray(list?.conversations) ? list.conversations : [])
+          const shared = raw.filter((c: any) => isSharedChat(c))
+          setRows(shared.map((c: any) => ({ id: c.id, title: c.title || 'Untitled chat', hint: c.updatedAt ? `Shared ${String(c.updatedAt).slice(0, 10)}` : undefined })))
         })
         .catch(() => { setFailed(true); setRows([]) })
     } else if (sub === 'uploaded-files') {
       fetch(`${API_URL}/api/files`, { headers: authHeaders() })
         .then((r) => (r.ok ? r.json() : Promise.reject()))
         .then((d) => {
-          const list = Array.isArray(d) ? d : (d?.files ?? [])
-          setRows(list.map((f: any) => ({ title: f.name || f.filename || 'File', hint: f.size != null ? `${f.size} B` : undefined })))
+          const list = Array.isArray(d) ? d : (Array.isArray(d?.files) ? d.files : [])
+          setRows(list.map((f: any) => ({ id: f.id, title: f.name || f.filename || 'File', hint: f.size != null ? `${f.size} B` : undefined })))
         })
         .catch(() => { setFailed(true); setRows([]) })
     } else if (sub === 'memory-preferences') {
@@ -153,7 +159,7 @@ function PrivacySubPanel({ sub, onBack, onOpenMemory }: { sub: PrivacySub; onBac
           icon={<ShieldCheck size={20} />}
           title={failed ? 'Could not load this list.' : 'No shared content found'}
           body={sub === 'shared-artifacts'
-            ? 'Artifacts shared through links will appear here once artifact sharing ships.'
+            ? 'Artifacts you share from a chat will be listed here.'
             : sub === 'your-feedback'
               ? 'Feedback you send on responses will appear here.'
               : undefined}
@@ -161,9 +167,26 @@ function PrivacySubPanel({ sub, onBack, onOpenMemory }: { sub: PrivacySub; onBac
       ) : (
         <ul className="divide-y divide-white/5 rounded-xl border border-white/[0.06]">
           {rows.map((r, i) => (
-            <li key={i} className="flex items-center justify-between gap-3 px-3.5 py-2.5 text-[13px]">
+            <li key={r.id || i} className="flex items-center justify-between gap-3 px-3.5 py-2.5 text-[13px]">
               <span className="min-w-0 truncate text-slate-300">{r.title}</span>
-              {r.hint && <span className="shrink-0 text-[11px] text-slate-500">{r.hint}</span>}
+              <span className="flex shrink-0 items-center gap-2">
+                {r.hint && <span className="text-[11px] text-slate-500">{r.hint}</span>}
+                {sub === 'shared-chats' && r.id && (
+                  <button
+                    type="button"
+                    disabled={revoking === r.id}
+                    onClick={async () => {
+                      setRevoking(r.id!)
+                      const res = await fetch(`${API_URL}/api/conversations/${r.id}/share`, { method: 'DELETE', headers: authHeaders() }).catch(() => null)
+                      setRevoking(null)
+                      if (res?.ok) setRows((prev) => (prev || []).filter((row) => row.id !== r.id))
+                    }}
+                    className="text-[11px] text-rose-300 hover:underline disabled:opacity-50"
+                  >
+                    {revoking === r.id ? 'Revoking…' : 'Revoke'}
+                  </button>
+                )}
+              </span>
             </li>
           ))}
         </ul>

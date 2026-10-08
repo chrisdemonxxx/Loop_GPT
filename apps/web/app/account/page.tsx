@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Sparkles, Ticket, Zap, ImageIcon, ArrowLeft, Loader2, CheckCircle2, Infinity as InfinityIcon, ShieldCheck, ShieldOff, Bot } from 'lucide-react'
 import QRCode from 'qrcode'
-import { apiFetch, clearAuth } from '../lib/api'
+import { apiFetch, logoutSession } from '../lib/api'
 import type { BotQuota } from '../lib/bot'
 
 interface Account {
@@ -290,7 +290,7 @@ export default function AccountPage() {
           )}
 
           {acct && (
-            <button onClick={() => { clearAuth(); location.href = '/login' }} className="mt-8 text-xs text-slate-500 hover:text-rose-400">Sign out</button>
+            <button onClick={() => { logoutSession(); location.href = '/login' }} className="mt-8 text-xs text-slate-500 hover:text-rose-400">Sign out</button>
           )}
         </>
       )}

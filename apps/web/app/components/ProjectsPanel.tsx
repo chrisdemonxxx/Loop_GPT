@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { X, FolderPlus, Trash2, Upload, Check, Database, MessageSquare, ChevronLeft, FileText, ExternalLink } from 'lucide-react'
 import { API_URL, authHeaders } from '../lib/api'
+import { useFocusTrap } from '@loop/ui'
 import { Badge, btnGhost, btnPrimary, inputCls } from './ui/primitives'
 
 export interface Project {
@@ -66,6 +67,7 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
   const [seedFiles, setSeedFiles] = useState<File[]>([])
   const [seedMsg, setSeedMsg] = useState('')
   const [busy, setBusy] = useState(false)
+  const dialogRef = useFocusTrap<HTMLDivElement>(!asPage)
 
   // Per-project knowledge upload.
   const [ingestFor, setIngestFor] = useState<string | null>(null)
@@ -248,8 +250,10 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
     <div className={asPage ? "min-h-screen bg-[#08080a] text-slate-200" : "fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"} onClick={asPage ? undefined : onClose}>
       <motion.div
         initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
+        ref={dialogRef}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className={asPage ? "w-full max-w-xl mx-auto px-5 py-8" : "glass-strong rounded-2xl w-full max-w-xl max-h-[85vh] overflow-y-auto border border-white/10 p-5"}
+        className={asPage ? "w-full max-w-xl mx-auto px-5 py-8" : "glass-strong rounded-2xl w-full max-w-xl max-h-[85vh] overflow-y-auto border border-white/10 p-5 outline-none"}
         role={asPage ? "main" : "dialog"} aria-modal={asPage ? undefined : true} aria-label="Projects"
       >
         <div className="flex items-center justify-between mb-4">

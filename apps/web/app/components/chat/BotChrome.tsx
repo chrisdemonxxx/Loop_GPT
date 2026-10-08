@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, Users, X } from 'lucide-react'
 import { AVATAR_COLORS, type BotGroup, type NamedBot } from '../../lib/namedBots'
+import { useFocusTrap } from '@loop/ui'
 import { listBotSkills, type BotSkillRef } from '../../lib/bot'
 import { useTeachSession } from '../team-bot/useTeachSession'
 
@@ -111,9 +112,10 @@ export function StartChatPicker({
   onPickBot: (bot: NamedBot) => void
 }) {
   useDismissOnEscape(onClose)
+  const trapRef = useFocusTrap<HTMLDivElement>(true)
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 pt-24 px-4" onClick={onClose}>
-      <div role="dialog" aria-label="Start a chat" className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#141418] shadow-panel overflow-hidden" onClick={(e) => e.stopPropagation()}>
+      <div ref={trapRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Start a chat" className="w-full max-w-sm rounded-2xl border border-white/10 bg-[var(--bg-panel)] shadow-panel overflow-hidden outline-none" onClick={(e) => e.stopPropagation()}>
         <div className="px-4 py-3 text-[13px] text-slate-400">Start a chat with…</div>
         <button type="button" onClick={onCreateBot} className="w-full text-left px-4 py-2.5 text-[14px] text-slate-100 hover:bg-white/[0.05]">＋ Create new Bot</button>
         <button type="button" onClick={onCreateGroup} className="w-full text-left px-4 py-2.5 text-[14px] text-slate-100 hover:bg-white/[0.05]">Create group chat</button>
@@ -147,12 +149,16 @@ export function CreateBotDialog({ busy, onClose, onCreate }: {
   const [tools, setTools] = useState<string[]>(['web_search', 'create_document'])
   const [cloud, setCloud] = useState(false)
   useDismissOnEscape(onClose)
+  const trapRef = useFocusTrap<HTMLFormElement>(true)
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <form
+        ref={trapRef}
+        tabIndex={-1}
         role="dialog"
+        aria-modal="true"
         aria-label="Create new Bot"
-        className="w-full max-w-md rounded-2xl border border-white/10 bg-[#141418] p-5 space-y-3"
+        className="w-full max-w-md rounded-2xl border border-white/10 bg-[var(--bg-panel)] p-5 space-y-3 outline-none"
         onClick={(e) => e.stopPropagation()}
         onSubmit={(e) => { e.preventDefault(); if (name.trim()) onCreate({ name: name.trim(), label: label.trim(), avatarColor: color, persona: persona.trim(), defaultTools: tools, cloudComputer: cloud }) }}
       >
@@ -195,12 +201,16 @@ export function CreateGroupDialog({ bots, busy, onClose, onCreate }: {
   const [name, setName] = useState('')
   const toggle = (id: string) => setPicked((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
   useDismissOnEscape(onClose)
+  const trapRef = useFocusTrap<HTMLFormElement>(true)
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <form
+        ref={trapRef}
+        tabIndex={-1}
         role="dialog"
+        aria-modal="true"
         aria-label="Create group chat"
-        className="w-full max-w-md rounded-2xl border border-white/10 bg-[#141418] p-5 space-y-3"
+        className="w-full max-w-md rounded-2xl border border-white/10 bg-[var(--bg-panel)] p-5 space-y-3 outline-none"
         onClick={(e) => e.stopPropagation()}
         onSubmit={(e) => { e.preventDefault(); if (picked.length >= 2) onCreate(picked, name.trim()) }}
       >
