@@ -54,6 +54,11 @@ const envSchema = z.object({
   
   // Dev mode
   ENABLE_DEV_MODE: z.string().optional(),
+
+  // Sandboxing / proxies
+  SANDBOX_PROVIDER: z.string().optional(),
+  MCP_ALLOW_STDIO: z.string().optional(),
+  TRUST_PROXY_HOPS: z.string().regex(/^\d{1,2}$/, 'TRUST_PROXY_HOPS must be a small integer').optional(),
 }).superRefine((env, ctx) => {
   const issue = (key: string, message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message })
   for (const problem of privateStorageConfigIssues(env)) issue(problem.key, problem.message)
@@ -87,6 +92,11 @@ const envSchema = z.object({
   if (env.ENABLE_DEV_MODE && env.ENABLE_DEV_MODE !== 'false') {
     issue('ENABLE_DEV_MODE', 'Development authentication bypass must be disabled in production')
   }
+  const sandbox = (env.SANDBOX_PROVIDER || '').trim().toLowerCase()
+  if (sandbox && !['e2b', 'hf'].includes(sandbox)) {
+    issue('SANDBOX_PROVIDER', 'Production code execution must use a managed sandbox (e2b or hf)')
+  }
+  if (env.MCP_ALLOW_STDIO === 'true') issue('MCP_ALLOW_STDIO', 'stdio MCP servers spawn host processes and are not allowed in production')
 })
 
 /**

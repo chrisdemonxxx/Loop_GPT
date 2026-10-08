@@ -1,11 +1,17 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { Check, Copy, Download, ExternalLink, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Check, Copy, Download, X } from 'lucide-react'
 import type { CanvasDoc } from '../../lib/canvasDoc'
 
+/** Separate-origin preview host. When set, model HTML is loaded there so a
+ *  script cannot read the app's token even if the sandbox is widened later.
+ *  Empty means srcdoc inside sandbox="allow-scripts" (opaque origin). */
+const ARTIFACT_ORIGIN = (process.env.NEXT_PUBLIC_ARTIFACT_ORIGIN || '').replace(/\/$/, '')
+
 /** Claude-style code canvas. Preview re-renders a sandboxed iframe as the
- *  document streams (debounced). Chat keeps its own compact artifact card. */
+ *  document streams (debounced). Chat keeps its own compact artifact card.
+ *  Model HTML never opens in a blob: tab — that origin can read the parent. */
 export function CanvasPanel({ doc, onClose }: { doc: CanvasDoc; onClose: () => void }) {
   const [tab, setTab] = useState<'code' | 'preview'>(doc.html ? 'preview' : 'code')
   const [copied, setCopied] = useState(false)
@@ -35,24 +41,18 @@ export function CanvasPanel({ doc, onClose }: { doc: CanvasDoc; onClose: () => v
     a.click()
     URL.revokeObjectURL(url)
   }
-  const openTab = () => {
-    const blob = new Blob([doc.html ? doc.content : `<pre>${doc.content.replace(/</g, '&lt;')}</pre>`], { type: 'text/html' })
-    const url = URL.createObjectURL(blob)
-    window.open(url, '_blank', 'noopener')
-    setTimeout(() => URL.revokeObjectURL(url), 30_000)
-  }
 
   return (
     <aside
       aria-label="Canvas"
-      className="relative h-full shrink-0 flex flex-col bg-[#0c0c0e] border-l border-white/[0.06] min-w-0"
+      className="relative h-full shrink-0 flex flex-col bg-[var(--bg-sunken)] border-l border-white/[0.06] min-w-0 max-md:fixed max-md:inset-0 max-md:z-50 max-md:!w-full max-md:border-l-0"
       style={{ width }}
     >
       <div
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize canvas"
-        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize"
+        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize max-md:hidden"
         onPointerDown={(e) => {
           const startX = e.clientX
           const startW = width
@@ -65,7 +65,7 @@ export function CanvasPanel({ doc, onClose }: { doc: CanvasDoc; onClose: () => v
           window.addEventListener('pointerup', up)
         }}
       />
-      <div className="flex items-center gap-2 px-3 h-12 border-b border-white/[0.06] shrink-0">
+      <div className="flex items-center gap-2 px-3 h-12 border-b border-white/[0.06] shrink-0 pt-[env(safe-area-inset-top)] md:pt-0">
         <span className="text-[13px] text-slate-200 truncate min-w-0 flex-1">{doc.title}</span>
         <div className="flex rounded-lg border border-white/[0.08] overflow-hidden text-[12px]">
           <button type="button" onClick={() => setTab('code')} className={`px-2.5 py-1 ${tab === 'code' ? 'bg-white/[0.08] text-slate-100' : 'text-slate-400'}`} aria-pressed={tab === 'code'}>Code</button>
@@ -73,16 +73,10 @@ export function CanvasPanel({ doc, onClose }: { doc: CanvasDoc; onClose: () => v
         </div>
         <button type="button" onClick={copy} aria-label="Copy canvas" className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.05]">{copied ? <Check size={14} /> : <Copy size={14} />}</button>
         <button type="button" onClick={download} aria-label="Download canvas" title="Download to deploy" className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.05]"><Download size={14} /></button>
-        <button type="button" onClick={openTab} aria-label="Open preview in a new tab" className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.05]"><ExternalLink size={14} /></button>
         <button type="button" onClick={onClose} aria-label="Close canvas" className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.05]"><X size={14} /></button>
       </div>
       {tab === 'preview' && doc.html ? (
-        <iframe
-          title="Live preview"
-          sandbox="allow-scripts"
-          srcDoc={preview}
-          className="flex-1 w-full bg-white min-h-0"
-        />
+        <SandboxedPreview html={preview} />
       ) : (
         <div className="flex-1 overflow-auto min-h-0 font-mono text-[12px] leading-5">
           <table className="w-full border-collapse">
@@ -98,5 +92,39 @@ export function CanvasPanel({ doc, onClose }: { doc: CanvasDoc; onClose: () => v
         </div>
       )}
     </aside>
+  )
+}
+
+/** Model HTML runs only inside sandbox="allow-scripts" (no allow-same-origin).
+ *  With NEXT_PUBLIC_ARTIFACT_ORIGIN, the frame's src is that host and the
+ *  HTML is delivered by postMessage. Otherwise srcdoc gives the frame an
+ *  opaque origin that cannot read the app. */
+function SandboxedPreview({ html }: { html: string }) {
+  const frameRef = useRef<HTMLIFrameElement>(null)
+  useEffect(() => {
+    if (!ARTIFACT_ORIGIN) return
+    frameRef.current?.contentWindow?.postMessage({ type: 'loop-artifact-html', html }, ARTIFACT_ORIGIN)
+  }, [html])
+  if (ARTIFACT_ORIGIN) {
+    return (
+      <iframe
+        ref={frameRef}
+        title="Live preview"
+        sandbox="allow-scripts"
+        src={ARTIFACT_ORIGIN}
+        onLoad={() => {
+          frameRef.current?.contentWindow?.postMessage({ type: 'loop-artifact-html', html }, ARTIFACT_ORIGIN)
+        }}
+        className="flex-1 w-full bg-white min-h-0"
+      />
+    )
+  }
+  return (
+    <iframe
+      title="Live preview"
+      sandbox="allow-scripts"
+      srcDoc={html}
+      className="flex-1 w-full bg-white min-h-0"
+    />
   )
 }

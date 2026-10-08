@@ -12,6 +12,9 @@ const nextConfig = {
     // on the serving proxy (nginx `/api` upstream). Set an absolute URL only
     // when the API lives on a different origin.
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || '',
+    // Optional separate origin for Canvas HTML previews. Empty keeps srcdoc
+    // inside a sandboxed iframe (opaque origin, scripts allowed, no parent access).
+    NEXT_PUBLIC_ARTIFACT_ORIGIN: process.env.NEXT_PUBLIC_ARTIFACT_ORIGIN || '',
   },
 }
 

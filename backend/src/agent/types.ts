@@ -78,7 +78,7 @@ export type AgentEvent =
   | { type: 'progress'; step?: number; items: Array<{ id: string; label: string; status: 'pending' | 'active' | 'done' | 'error' }> }
   | { type: 'tool_result'; step: number; name: string; content: string; data?: any; isError?: boolean }
   | { type: 'artifact'; artifact: ArtifactRef }
-  | { type: 'pending_approval'; tool_name: string; args: Record<string, any>; prompt: string }
+  | { type: 'pending_approval'; tool_name: string; args: Record<string, any>; prompt: string; approvalId?: string }
   | { type: 'final'; content: string; metadata?: any }
   | { type: 'error'; message: string }
   | { type: 'done' }

@@ -9,6 +9,20 @@ import type { ToolContext } from '../../agent/types'
  * marketplace api_request/probe run against a fixture fetch — no network,
  * no DB; regressions in URL/shape/auth are caught here. */
 
+// The adapter's public transport resolves DNS; route it to the stubbed fetch
+// while keeping the real origin lock.
+vi.mock('../../extensionHttp', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../extensionHttp')>()
+  return {
+    ...actual,
+    extensionRequest: vi.fn(async (url: string, opts: any = {}) => {
+      if (opts.origin && new URL(url).origin !== opts.origin) throw new Error('origin escape')
+      const res: any = await fetch(url, { method: opts.method || 'GET', headers: opts.headers, body: opts.body })
+      return { ok: res.status >= 200 && res.status < 300, status: res.status, text: await res.text() }
+    }),
+  }
+})
+
 const fetchMock = vi.fn()
 beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock)

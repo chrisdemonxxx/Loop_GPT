@@ -1,7 +1,7 @@
 /**
- * Agent bootstrap: register reviewed built-ins and the user-configured
- * extensions (plugins, connectors, custom tools, MCP servers). Call
- * initAgent() once at server startup.
+ * Agent bootstrap: register reviewed built-ins and load shared extension
+ * sources (operator plugins, MCP servers). Per-user extensions are resolved by
+ * availableTools(userId). Call initAgent() once at server startup.
  */
 import { toolRegistry } from './toolRegistry'
 import { webSearchTool } from './tools/webSearch'
@@ -22,6 +22,8 @@ import { pluginRegistry } from './plugins/pluginLoader'
 import { connectorRegistry } from './connectors/connectorRegistry'
 import { customToolRegistry } from './customTools'
 import { mcpRegistry } from './mcp/mcpRegistry'
+import { BUILTIN_TOOL_NAMES } from './reservedNames'
+import type { ToolDefinition } from './types'
 
 const BUILTIN_TOOLS = [
   webSearchTool,
@@ -54,30 +56,47 @@ export function builtinToolNames(): string[] {
 /** Reviewed definitions, independent of registrations in the legacy map. */
 export function builtinTools() { return [...BUILTIN_TOOLS] }
 
-/** Sources contributed by user-configured extensions. */
-const EXTENSION_SOURCES = [/^plugin:/, /^connector:/, /^custom:/, /^mcp:/]
+function extensionToolsFor(userId: string): ToolDefinition[] {
+  const sources: Array<[string, () => ToolDefinition[]]> = [
+    ['custom tools', () => customToolRegistry.toolsFor(userId)],
+    ['connectors', () => connectorRegistry.toolsFor(userId)],
+    ['plugins', () => pluginRegistry.toolsFor(userId)],
+    ['mcp', () => mcpRegistry.toolsFor(userId)],
+  ]
+  const out: ToolDefinition[] = []
+  for (const [label, load] of sources) {
+    try { out.push(...load()) } catch (err) { console.error(`${label} load error:`, (err as Error)?.message) }
+  }
+  return out
+}
 
 /**
- * Every tool a run may be granted: reviewed built-ins plus the user's enabled
- * plugins, connectors, custom webhook tools and connected MCP servers.
- * Authority is still server-issued per run (see runAuthorization).
+ * Every tool a run may be granted: reviewed built-ins plus the extensions owned
+ * by (or shared with) `userId`. Without a user only built-ins are offered.
+ * Built-ins always win a name collision; later duplicates are dropped so no
+ * extension can shadow another tool. Authority is still server-issued per run
+ * (see runAuthorization).
  */
-export function availableTools() {
-  const extras = toolRegistry
-    .list()
-    .filter((t) => t.source && EXTENSION_SOURCES.some((re) => re.test(t.source!)))
-  return [...builtinTools(), ...extras]
+export function availableTools(userId?: string): ToolDefinition[] {
+  const builtins = builtinTools()
+  if (!userId) return builtins
+  const names = new Set(builtins.map((t) => t.name))
+  const out = [...builtins]
+  for (const tool of extensionToolsFor(userId)) {
+    if (names.has(tool.name) || BUILTIN_TOOL_NAMES.has(tool.name)) continue
+    names.add(tool.name)
+    out.push(tool)
+  }
+  return out
 }
 
 export async function initAgent() {
   registerBuiltinTools()
-  // User-configured extensions. Each registry reads the JSON config store and
-  // (re)registers the tools it owns; failures are isolated per entry.
-  try { customToolRegistry.init() } catch (err) { console.error('custom tool init error:', (err as Error)?.message) }
-  try { connectorRegistry.init() } catch (err) { console.error('connector init error:', (err as Error)?.message) }
+  // Shared operator plugins and MCP connections are loaded once; per-user
+  // custom tools and connectors are built from the config store per run.
   try { pluginRegistry.init() } catch (err) { console.error('plugin init error:', (err as Error)?.message) }
   try { await mcpRegistry.init() } catch (err) { console.error('mcp init error:', (err as Error)?.message) }
-  console.log(`🧰 Agent ready — ${toolRegistry.list().length} tools registered`)
+  console.log(`🧰 Agent ready — ${toolRegistry.list().length} built-in tools registered`)
 }
 
 export { toolRegistry }

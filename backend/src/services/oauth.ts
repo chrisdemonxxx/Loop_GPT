@@ -21,7 +21,10 @@ export type OAuthProvider = 'google' | 'github' | 'apple'
 export interface OAuthProfile {
   email: string
   name: string
+  /** The provider's stable subject id — the only safe account key. */
   providerId: string
+  /** True only when the provider asserts the address is verified. */
+  emailVerified: boolean
 }
 
 export function providerEnabled(p: OAuthProvider): boolean {
@@ -106,7 +109,9 @@ export async function exchangeCode(provider: OAuthProvider, code: string, redire
       grant_type: 'authorization_code',
     })
     const info: any = await getJson('https://www.googleapis.com/oauth2/v3/userinfo', { Authorization: `Bearer ${tok.access_token}` })
-    return { email: info.email, name: info.name || info.given_name || info.email?.split('@')[0], providerId: info.sub }
+    if (!info?.sub || !info?.email) throw new Error('Google did not return an identity')
+    return { email: info.email, name: info.name || info.given_name || info.email.split('@')[0], providerId: String(info.sub),
+      emailVerified: info.email_verified === true || info.email_verified === 'true' }
   }
   if (provider === 'github') {
     const tok = await postForm('https://github.com/login/oauth/access_token', {
@@ -119,19 +124,20 @@ export async function exchangeCode(provider: OAuthProvider, code: string, redire
       Authorization: `Bearer ${tok.access_token}`,
       'User-Agent': 'loop-gpt',
     })
-    let email = user.email
-    if (!email) {
-      const emails: any = await getJson('https://api.github.com/user/emails', {
-        Authorization: `Bearer ${tok.access_token}`,
-        'User-Agent': 'loop-gpt',
-      })
-      const primary = Array.isArray(emails) ? emails.find((e: any) => e.primary && e.verified) || emails[0] : null
-      email = primary?.email
-    }
+    if (user?.id === undefined || user?.id === null) throw new Error('GitHub did not return an identity')
+    // The profile email may be unverified; only the verified primary counts.
+    const emails: any = await getJson('https://api.github.com/user/emails', {
+      Authorization: `Bearer ${tok.access_token}`,
+      'User-Agent': 'loop-gpt',
+    })
+    const primary = Array.isArray(emails) ? emails.find((e: any) => e?.primary && e?.verified && typeof e.email === 'string') : null
+    const email = primary?.email || (typeof user.email === 'string' ? user.email : '')
     if (!email) throw new Error('GitHub account has no accessible email')
-    return { email, name: user.name || user.login, providerId: String(user.id) }
+    return { email, name: user.name || user.login, providerId: String(user.id), emailVerified: !!primary }
   }
-  // apple: the token response contains an id_token (JWT) with email/sub.
+  // apple: the token response contains an id_token (JWT) with email/sub. It
+  // comes straight from Apple's token endpoint over TLS, so its signature is
+  // not re-verified, but it must be addressed to us.
   const tok = await postForm('https://appleid.apple.com/auth/token', {
     code,
     client_id: process.env.APPLE_CLIENT_ID!,
@@ -140,8 +146,10 @@ export async function exchangeCode(provider: OAuthProvider, code: string, redire
     grant_type: 'authorization_code',
   })
   const claims: any = jwt.decode(tok.id_token) || {}
-  if (!claims.email) throw new Error('Apple did not return an email')
-  return { email: claims.email, name: claims.email.split('@')[0], providerId: claims.sub }
+  if (claims.iss !== 'https://appleid.apple.com' || claims.aud !== process.env.APPLE_CLIENT_ID) throw new Error('Apple identity token was not issued for this app')
+  if (!claims.sub || !claims.email) throw new Error('Apple did not return an email')
+  return { email: claims.email, name: claims.email.split('@')[0], providerId: String(claims.sub),
+    emailVerified: claims.email_verified === true || claims.email_verified === 'true' }
 }
 
 async function postForm(url: string, body: Record<string, string>): Promise<any> {
@@ -149,14 +157,16 @@ async function postForm(url: string, body: Record<string, string>): Promise<any>
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     body: new URLSearchParams(body).toString(),
+    redirect: 'error',
+    signal: AbortSignal.timeout(15_000),
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok || data.error) throw new Error(`token exchange failed: ${data.error_description || data.error || res.status}`)
+  if (!res.ok || data.error) throw new Error(`token exchange failed: ${res.status}`)
   return data
 }
 
 async function getJson(url: string, headers: Record<string, string>): Promise<any> {
-  const res = await fetch(url, { headers: { Accept: 'application/json', ...headers } })
+  const res = await fetch(url, { headers: { Accept: 'application/json', ...headers }, redirect: 'error', signal: AbortSignal.timeout(15_000) })
   if (!res.ok) throw new Error(`profile fetch failed: ${res.status}`)
   return res.json()
 }

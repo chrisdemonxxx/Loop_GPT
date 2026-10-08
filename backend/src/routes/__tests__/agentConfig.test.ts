@@ -18,6 +18,7 @@ import { initAgent, availableTools } from '../../agent'
 import agentRouter from '../agent'
 import { configStore } from '../../agent/configStore'
 
+const DEV_USER = 'dev-user-123'
 let server: Server
 let base: string
 
@@ -51,10 +52,10 @@ afterAll(async () => {
 
 beforeEach(() => {
   // Reset account-scoped config between tests.
-  configStore.setEnabledSkills([])
-  configStore.setEnabledPlugins([])
-  configStore.saveConnectors([])
-  configStore.saveCustomTools([])
+  configStore.setEnabledSkills(DEV_USER, [])
+  configStore.setEnabledPlugins(DEV_USER, [])
+  configStore.saveConnectors(DEV_USER, [])
+  configStore.saveCustomTools(DEV_USER, [])
 })
 
 describe('agent extension configuration routes (previously 410)', () => {
@@ -246,10 +247,12 @@ describe('agent extension configuration routes (previously 410)', () => {
     expect((await req('DELETE', `/api/agent/connectors/${added.json.id}`)).json.ok).toBe(true)
   })
 
-  it('lists MCP servers (none configured) without erroring', async () => {
-    const { status, json } = await req('GET', '/api/agent/mcp-servers')
-    expect(status).toBe(200)
-    expect(Array.isArray(json)).toBe(true)
+  it('keeps MCP server management behind the administrator gate', async () => {
+    // No DB in unit tests, so requireAdmin fails closed before any listing.
+    expect((await req('GET', '/api/agent/mcp-servers')).status).toBe(503)
+    const added = await req('POST', '/api/agent/mcp-servers', { name: 'x', transport: 'stdio', command: 'node' })
+    expect(added.status).toBe(503)
+    expect(configStore.listAllMcpServers()).toHaveLength(0)
   })
 
   it('exposes per-tool permissions with defaults and applies an override', async () => {

@@ -29,7 +29,7 @@ async function refreshAccessToken(cfg: ConnectorConfig): Promise<string | null> 
     if (!tokens.access_token) return null
     cfg.config.access_token = tokens.access_token
     cfg.config.expires_at = String(Date.now() + (tokens.expires_in || 3600) * 1000)
-    configStore.saveConnectors(configStore.listConnectors().map((c) => (c.id === cfg.id ? cfg : c)))
+    configStore.updateConnector(cfg)
     return tokens.access_token
   } catch {
     return null

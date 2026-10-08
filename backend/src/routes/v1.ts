@@ -35,6 +35,9 @@ import {
 } from '../services/apiReservations'
 
 const router = express.Router()
+// Parsed only after API-key auth: 75MB so /media/publish can carry base64 video
+// payloads (≈50MB decoded cap on the route).
+const v1Json = express.json({ limit: '75mb' })
 
 async function accounting<T>(operation: () => Promise<T>): Promise<T> {
   try { return await operation() }
@@ -204,7 +207,7 @@ function sanitizeIdentity(text: string): string {
 }
 
 /** POST /v1/chat/completions — streaming and non-streaming chat. */
-router.post('/chat/completions', authenticateApiKey, asyncHandler(async (req: ApiRequest, res) => {
+router.post('/chat/completions', authenticateApiKey, v1Json, asyncHandler(async (req: ApiRequest, res) => {
   const parsed = chatSchema.safeParse(req.body)
   if (!parsed.success) {
     return apiError(
@@ -443,7 +446,7 @@ function toEmbeddingVector(row: unknown): number[] {
  * cost orders of magnitude less than chat; a dedicated rate can be carved
  * out later without changing this surface).
  */
-router.post('/embeddings', authenticateApiKey, asyncHandler(async (req: ApiRequest, res) => {
+router.post('/embeddings', authenticateApiKey, v1Json, asyncHandler(async (req: ApiRequest, res) => {
   const parsed = embeddingsSchema.safeParse(req.body)
   if (!parsed.success) {
     return apiError(
@@ -572,7 +575,7 @@ const imageSchema = z.object({
 })
 
 /** POST /v1/images/generations — text-to-image. */
-router.post('/images/generations', authenticateApiKey, asyncHandler(async (req: ApiRequest, res) => {
+router.post('/images/generations', authenticateApiKey, v1Json, asyncHandler(async (req: ApiRequest, res) => {
   const parsed = imageSchema.safeParse(req.body)
   if (!parsed.success) {
     return apiError(
@@ -651,7 +654,7 @@ function serializeVideoJob(job: any) {
 
 /** Server-generated job identities; this endpoint is NOT HTTP-idempotent.
  * No provider I/O or process-local work starts in the request handler. */
-router.post('/videos/generations', authenticateApiKey, asyncHandler(async (req: ApiRequest, res) => {
+router.post('/videos/generations', authenticateApiKey, v1Json, asyncHandler(async (req: ApiRequest, res) => {
   try {
     const job = await createAccountedVideoJob(req.api!, req.body)
     return res.status(202).json(serializeVideoJob(job))
@@ -680,7 +683,7 @@ router.get('/videos/generations/:id', authenticateApiKey, asyncHandler(async (re
   return res.json(serializeVideoJob(job))
 }))
 
-router.post('/videos/generations/:id/cancel', authenticateApiKey, asyncHandler(async (req: ApiRequest, res) => {
+router.post('/videos/generations/:id/cancel', authenticateApiKey, v1Json, asyncHandler(async (req: ApiRequest, res) => {
   try { await cancelAccountedVideoJob(req.params.id, req.api!); return res.json({ ok: true }) }
   catch (error) {
     const status = error instanceof VideoJobError && error.code === 'not_found' ? 404 : 503
@@ -727,7 +730,7 @@ router.get('/usage', authenticateApiKey, asyncHandler(async (req: ApiRequest, re
  * POST /v1/media/publish — publish a base64 media blob (generated video/image)
  * to owned storage. Returned URLs require the owner's JWT or developer key.
  */
-router.post('/media/publish', authenticateApiKey, asyncHandler(async (req: ApiRequest, res) => {
+router.post('/media/publish', authenticateApiKey, v1Json, asyncHandler(async (req: ApiRequest, res) => {
   const { mime, b64, name } = req.body || {}
   if (!b64 || typeof b64 !== 'string') {
     return apiError(res, 400, 'Missing b64 payload.', 'invalid_request_error', 'missing_payload')

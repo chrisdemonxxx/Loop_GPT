@@ -40,6 +40,11 @@ memoryRouter.get('/', asyncHandler(async (req, res) => {
 memoryRouter.post('/', asyncHandler(async (req, res) => {
   const userId = (req as any).userId
   const input = createInput.parse(req.body)
+  if (input.projectId) {
+    const project = await db().project.findFirst({
+      where: { id: input.projectId, workspace: { members: { some: { userId } } } }, select: { id: true } })
+    if (!project) return res.status(404).json({ error: 'Project not found.' })
+  }
   const row = await db().memory.create({ data: { userId, ...input, projectId: input.projectId ?? undefined } })
   res.status(201).json(row)
 }))

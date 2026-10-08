@@ -10,6 +10,7 @@
  */
 import type { ToolDefinition, ToolContext } from '../types'
 import type { ConnectorConfig } from '../configStore'
+import { extensionFailure, extensionRequest, scopedUrl } from '../extensionHttp'
 
 export type AuthStyle = 'bearer' | 'header' | 'query' | 'basic' | 'none'
 
@@ -444,9 +445,9 @@ export function buildCatalogTools(def: CatalogConnector, cfg: ConnectorConfig): 
           headers['Authorization'] = 'Basic ' + Buffer.from(`${user}:${cred}`).toString('base64')
         }
 
-        // URL + query
+        // URL + query. Credentials stay on the connector's configured origin.
         const path = fill(spec.path, args, cfg)
-        const url = new URL(path.startsWith('http') ? path : `${rawBase}${path.startsWith('/') ? '' : '/'}${path}`)
+        const url = new URL(scopedUrl(rawBase, path))
         for (const q of spec.query || []) {
           if (args?.[q] != null) url.searchParams.set(q, String(args[q]))
         }
@@ -466,14 +467,12 @@ export function buildCatalogTools(def: CatalogConnector, cfg: ConnectorConfig): 
           }
         }
 
-        const ctrl = new AbortController()
-        const timer = setTimeout(() => ctrl.abort(), 25000)
-        const res = await fetch(url.toString(), { method: spec.method, headers, body, signal: ctrl.signal }).finally(() => clearTimeout(timer))
-        const text = await res.text()
-        if (!res.ok) return { content: `[${def.name}] HTTP ${res.status}: ${text.slice(0, 600)}`, isError: true }
-        return { content: text.slice(0, 8000) }
-      } catch (e: any) {
-        return { content: `[${def.name}] request failed: ${e?.message || e}`, isError: true }
+        const res = await extensionRequest(url.toString(), { method: spec.method, headers, body, origin: new URL(rawBase).origin,
+          signal: (_ctx as any)?.signal, timeoutMs: 25_000 })
+        if (!res.ok) return { content: `[${def.name}] HTTP ${res.status}`, isError: true }
+        return { content: res.text.slice(0, 8000) }
+      } catch (error) {
+        return { content: `[${def.name}] ${extensionFailure(error)}`, isError: true }
       }
     },
   }))

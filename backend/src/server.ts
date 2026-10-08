@@ -49,7 +49,7 @@ import { ttsRouter } from './routes/tts'
 import mediaRoutes from './routes/media'
 import developerRoutes from './routes/developer'
 import v1Routes from './routes/v1'
-import { rateLimiter } from './middleware/rateLimiter'
+import { byBodyField, byIp, rateLimiter } from './middleware/rateLimiter'
 import { readinessHandler } from './routes/ready'
 import { createCorsOriginPolicy } from './middleware/corsPolicy'
 import { asyncHandler, errorLogger } from './middleware/errorLogger'
@@ -71,6 +71,20 @@ initAgent().catch((err) => console.error('Agent init error:', err))
 
 const app = express()
 const PORT = process.env.PORT || 3001
+
+// Behind Railway's edge (and our nginx web service) req.ip must come from the
+// proxy hop, not the socket, or every user shares one rate-limit bucket.
+// Only TRUST_PROXY_HOPS hops are trusted, so client-sent X-Forwarded-For
+// entries cannot pick their own IP.
+const trustHops = Number(process.env.TRUST_PROXY_HOPS ?? (process.env.NODE_ENV === 'production' ? 1 : 0))
+if (Number.isInteger(trustHops) && trustHops > 0) app.set('trust proxy', trustHops)
+app.disable('x-powered-by')
+if (process.env.NODE_ENV === 'production') {
+  app.use((_req, res, next) => {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+    next()
+  })
+}
 
 // Exact configured origins only. Hosting-provider siblings are not trusted.
 const isAllowedOrigin = createCorsOriginPolicy(process.env.FRONTEND_URL || 'http://localhost:3000')
@@ -105,8 +119,24 @@ app.use('/api', versionRouter)
 // Readiness for deploy health checks: database + private storage.
 app.get('/ready', asyncHandler(readinessHandler()))
 
-// 75MB so /v1/media/publish can carry base64 video payloads (≈50MB decoded cap on the route).
-app.use(express.json({ limit: '75mb' }))
+// App JSON bodies are small. /v1 parses its own (large, for base64 media
+// publish) bodies only after API-key authentication.
+const isV1 = (url = '') => /^\/v1(?:[/?]|$)/.test(url)
+app.use(express.json({
+  limit: '2mb',
+  type: (req: any) => !isV1(req.url) && /^application\/json\b/i.test(String(req.headers['content-type'] || '')),
+}))
+
+// Credential endpoints: per-IP budgets plus a per-account budget on login so
+// one target cannot be brute-forced from many addresses.
+const loginByIp = rateLimiter(15 * 60 * 1000, 20, { key: byIp })
+const loginByEmail = rateLimiter(15 * 60 * 1000, 10, { key: byBodyField('email') })
+app.post('/api/auth/login', loginByIp, loginByEmail)
+app.post('/api/auth/register', rateLimiter(60 * 60 * 1000, 10, { key: byIp }))
+app.post('/api/auth/forgot', rateLimiter(15 * 60 * 1000, 5, { key: byIp }), rateLimiter(60 * 60 * 1000, 3, { key: byBodyField('email') }))
+app.post('/api/auth/reset', rateLimiter(15 * 60 * 1000, 10, { key: byIp }))
+app.post('/api/auth/verify', rateLimiter(15 * 60 * 1000, 20, { key: byIp }))
+app.post('/api/mail/inbound', rateLimiter(60 * 1000, 60, { key: byIp }))
 
 // Operator tooling gets its own generous, separately-bucketed limiter: the
 // admin consoles poll live (admin portal + bot computer pages), and a shared
@@ -131,7 +161,6 @@ app.use('/api/conversations', imageUploadRouter)
 // Routes
 app.use('/api/auth', authRoutes)
 app.use('/api/auth', oauthRouter)
-app.use('/api/oauth-connector', oauthConnectorRouter)
 app.use('/api/oauth-connector', oauthConnectorRouter)
 // Root-level /oauth/:provider relay (social-login buttons built from DOMAIN_SERVER land here)
 app.use(oauthRelayRouter)

@@ -10,6 +10,8 @@
  * SDK is only needed when MCP is actually used.
  */
 import type { McpServerConfig } from '../configStore'
+import { publicFetch } from '../extensionHttp'
+import { validatePublicUrl } from '../../services/publicHttp'
 
 // Preserve a real ESM dynamic import at runtime (TS would otherwise rewrite it).
 const importESM: (m: string) => Promise<any> = new Function('m', 'return import(m)') as any
@@ -28,19 +30,29 @@ export class McpConnection {
 
   async connect(): Promise<void> {
     if (this.connected) return
+    let target: URL | null = null
+    if (this.cfg.transport === 'stdio') {
+      // A stdio server is a host process. It can only come from an operator
+      // who edited the data dir by hand AND opted in; the API never creates one.
+      if (process.env.MCP_ALLOW_STDIO !== 'true') throw new Error('stdio MCP servers are disabled')
+      if (!this.cfg.command) throw new Error('stdio MCP server requires a command')
+    } else {
+      if (!this.cfg.url) throw new Error('http MCP server requires a url')
+      target = validatePublicUrl(this.cfg.url)
+    }
+
     const { Client } = await importESM('@modelcontextprotocol/sdk/client/index.js')
     this.client = new Client({ name: 'loop-gpt', version: '1.0.0' }, { capabilities: {} })
 
     if (this.cfg.transport === 'stdio') {
-      if (!this.cfg.command) throw new Error('stdio MCP server requires a command')
       const { StdioClientTransport } = await importESM('@modelcontextprotocol/sdk/client/stdio.js')
       const transport = new StdioClientTransport({ command: this.cfg.command, args: this.cfg.args || [] })
       await this.client.connect(transport)
-    } else {
-      if (!this.cfg.url) throw new Error('http MCP server requires a url')
+    } else if (target) {
       const { StreamableHTTPClientTransport } = await importESM('@modelcontextprotocol/sdk/client/streamableHttp.js')
-      const transport = new StreamableHTTPClientTransport(new URL(this.cfg.url), {
+      const transport = new StreamableHTTPClientTransport(target, {
         requestInit: { headers: this.cfg.headers || {} },
+        fetch: publicFetch(target.origin),
       })
       await this.client.connect(transport)
     }

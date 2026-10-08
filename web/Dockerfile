@@ -56,9 +56,12 @@ fail() { echo 'Invalid owned-web operator configuration (origin, upstream, port 
 cr=$(printf '\r')
 lf='
 '
-for value in "${PORT:-8080}" "${OWNED_WEB_ORIGIN:-}" "${API_UPSTREAM:-}"; do
+for value in "${PORT:-8080}" "${OWNED_WEB_ORIGIN:-}" "${API_UPSTREAM:-}" "${PROXY_SHARED_SECRET:-}"; do
   case "$value" in *"$cr"*|*"$lf"*) fail ;; esac
 done
+# Optional; rendered into a quoted nginx header value, so keep it to a token charset.
+printf '%s' "${PROXY_SHARED_SECRET:-}" | grep -Eq '^[A-Za-z0-9_-]{0,256}$' || fail
+export PROXY_SHARED_SECRET="${PROXY_SHARED_SECRET:-}"
 case "${PORT:-8080}" in ''|*[!0-9]*) fail ;; esac
 [ "$PORT" -ge 1024 ] && [ "$PORT" -le 65535 ] || fail
 printf '%s' "${OWNED_WEB_ORIGIN:-}" | grep -Eq '^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$' || fail
@@ -81,7 +84,7 @@ case "$resolver" in ''|*[!0-9a-fA-F.:]*) fail ;; esac
 case "$resolver" in *:*) resolver="[$resolver]" ;; esac
 export API_HOST="$authority" API_TLS_NAME="$host" API_RESOLVER="$resolver"
 # Subprocess exports do not reach the stock entrypoint. Render explicitly here.
-envsubst '${PORT} ${API_UPSTREAM} ${API_HOST} ${API_TLS_NAME} ${API_RESOLVER}' \
+envsubst '${PORT} ${API_UPSTREAM} ${API_HOST} ${API_TLS_NAME} ${API_RESOLVER} ${PROXY_SHARED_SECRET}' \
   < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf
 # Keep restarts idempotent; the stock renderer must not overwrite these values.
 export NGINX_ENVSUBST_TEMPLATE_DIR=/nonexistent

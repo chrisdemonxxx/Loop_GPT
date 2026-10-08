@@ -26,7 +26,7 @@ export const searchKnowledgeTool: ToolDefinition = {
     let projectId = String(args.projectId || '')
     if (!projectId && ctx.conversationId) {
       try {
-        const conv = await prisma!.conversation.findUnique({ where: { id: ctx.conversationId }, select: { projectId: true } })
+        const conv = await prisma!.conversation.findFirst({ where: { id: ctx.conversationId, userId: ctx.userId }, select: { projectId: true } })
         projectId = conv?.projectId || ''
       } catch { /* fall through to workspace-wide search */ }
     }
@@ -34,6 +34,16 @@ export const searchKnowledgeTool: ToolDefinition = {
     if (!query) return { content: 'A search query is required.', isError: true }
 
     try {
+      const memberships = await prisma!.workspaceMember.findMany({
+        where: { userId: ctx.userId, role: { in: ['owner', 'editor', 'viewer'] } },
+        select: { workspaceId: true },
+      })
+      const workspaceIds = memberships.map((m) => m.workspaceId)
+      // The model chooses projectId: it must name a project the user can read.
+      if (projectId && !await prisma!.project.findFirst({ where: { id: projectId, workspaceId: { in: workspaceIds } }, select: { id: true } })) {
+        return { content: 'No knowledge base results found.' }
+      }
+
       const queryVec = await generateEmbedding(query)
 
       // Single-project scopes use the pgvector ANN index when available.
@@ -45,12 +55,6 @@ export const searchKnowledgeTool: ToolDefinition = {
           if (result) return { content: `Knowledge base results:\n\n${result}`, data: { results: ann, engine: 'pgvector' } }
         }
       }
-
-      const memberships = await prisma!.workspaceMember.findMany({
-        where: { userId: ctx.userId, role: { in: ['owner', 'editor', 'viewer'] } },
-        select: { workspaceId: true },
-      })
-      const workspaceIds = memberships.map((m) => m.workspaceId)
 
       const chunks = await prisma!.knowledgeChunk.findMany({
         where: projectId

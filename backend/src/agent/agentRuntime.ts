@@ -36,15 +36,28 @@ import { configStore, type ToolPermission } from './configStore'
 import { compactTranscript, shouldRecompact, transcriptSize } from './compactTranscript'
 import { narrateSteps } from '../services/botRoster'
 
+/** Tools that always pause for the user, whatever overrides or autoApprove say. */
+export const MANDATORY_APPROVAL_TOOLS = new Set(['create_custom_tool'])
+
 /** Resolve the effective permission.
- *  An explicit configStore override (including built-in defaults such as
- *  create_document → allow and execute_code → approval) wins. External
+ *  The user's own override (or a built-in default such as
+ *  create_document → allow and execute_code → approval) wins, except that
+ *  mandatory-approval tools can only be tightened to blocked. External
  *  sources (connectors, MCP, custom HTTP) stay gated. A tool's own
- *  needsApproval flag applies only when nothing else decided. */
-export function permissionFor(name: string, needsApproval?: boolean, source?: string): ToolPermission {
-  const override = configStore.getToolPermissions()[name]
+ *  needsApproval flag applies only when nothing else decided.
+ *  `overrides` defaults to the built-in defaults (no user). */
+export function permissionFor(
+  name: string,
+  needsApproval?: boolean,
+  source?: string,
+  overrides: Record<string, ToolPermission> = configStore.getToolPermissions(),
+): ToolPermission {
+  const override = overrides[name]
+  if (MANDATORY_APPROVAL_TOOLS.has(name)) return override === 'blocked' ? 'blocked' : 'approval'
   if (override) return override
-  if (source && source !== 'builtin') return 'approval'
+  // Workspace connection tools are read-only and explicitly selected for each
+  // run (toolNames + connectionIds); the run grant is their gate.
+  if (source && source !== 'builtin' && !source.startsWith('connection:')) return 'approval'
   return needsApproval ? 'approval' : 'allow'
 }
 
@@ -92,7 +105,8 @@ export function settleFinalAnswer(content: string, fallback: string): string {
  *  - autoApprove (Accept edits) disables the interactive gate entirely.
  *  - stepMode forces a pause for every tool, whatever its permission level.
  */
-export function requiresInteractivePause(permission: ToolPermission, stepMode: boolean, autoApprove: boolean): boolean {
+export function requiresInteractivePause(permission: ToolPermission, stepMode: boolean, autoApprove: boolean, toolName?: string): boolean {
+  if (toolName && MANDATORY_APPROVAL_TOOLS.has(toolName)) return permission !== 'blocked'
   if (autoApprove) return false
   return permission === 'approval' || stepMode
 }
@@ -455,8 +469,8 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
       // Approval gate: if the tool requires approval and hasn't been
       // pre-approved, emit a pending_approval event and wait for the user
       // to respond via POST /api/agent/:conversationId/approve.
-      const toolDef = toolRegistry.get(call.name)
-      const permission = permissionFor(call.name, toolDef?.needsApproval, toolDef?.source)
+      const toolDef = tools.find((tool) => tool.name === call.name)
+      const permission = permissionFor(call.name, toolDef?.needsApproval, toolDef?.source, configStore.getToolPermissions(ctx.userId))
 
       // Blocked: never execute; tell the model and record it.
       if (permission === 'blocked') {
@@ -472,10 +486,10 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
 
       // "Ask before each action": every tool pauses for approval (except when
       // auto-approve is on, which disables the interactive gate entirely).
-      if (requiresInteractivePause(permission, stepMode, autoApprove)) {
-        storeApproval(ctx.conversationId, call.name, call.args)
-        ctx.emit({ type: 'pending_approval', tool_name: call.name, args: call.args, prompt: `Approve "${call.name}" with the provided arguments?` })
-        const approved = await waitForApproval(ctx.conversationId, call.name)
+      if (requiresInteractivePause(permission, stepMode, autoApprove, call.name)) {
+        const approvalId = storeApproval(ctx.userId || '', ctx.conversationId, call.name, call.args)
+        ctx.emit({ type: 'pending_approval', tool_name: call.name, args: call.args, approvalId, prompt: `Approve "${call.name}" with the provided arguments?` })
+        const approved = await waitForApproval(approvalId)
         if (!approved) {
           const denialResult = { content: `Tool "${call.name}" was not approved by the user.`, isError: true }
           ctx.emit({ type: 'tool_result', step: stepIndex, name: call.name, content: denialResult.content, isError: true })

@@ -27,6 +27,13 @@ const projectBotsInput = z.object({
   botIds: z.array(z.string().trim().min(1).max(80)).max(24),
 }).strict()
 
+/** Membership is checked on the URL's workspace, so every project-scoped route
+ *  must also prove the project belongs to that workspace. */
+export async function projectInWorkspace(projectId: string, workspaceId: string): Promise<boolean> {
+  if (typeof projectId !== 'string' || !projectId || typeof workspaceId !== 'string' || !workspaceId) return false
+  return !!await prisma!.project.findFirst({ where: { id: projectId, workspaceId }, select: { id: true } })
+}
+
 function fail(res: express.Response, error: unknown) {
   if (error instanceof BotError) {
     const status = error.code === 'not_found' ? 404 : error.code === 'forbidden' ? 403 : error.code === 'unavailable' ? 503 : 400
@@ -70,7 +77,9 @@ projectRouter.patch('/:workspaceId/projects/:projectId', asyncHandler(async (req
   const projectId = req.params.projectId
   await requireMembership(userId, workspaceId, 'editor')
   const input = projectUpdateInput.parse(req.body)
-  const project = await prisma!.project.update({ where: { id: projectId }, data: input })
+  const updated = await prisma!.project.updateMany({ where: { id: projectId, workspaceId }, data: input })
+  if (!updated.count) return res.status(404).json({ error: 'Project not found.' })
+  const project = await prisma!.project.findFirst({ where: { id: projectId, workspaceId } })
   res.json(project)
 }))
 
@@ -121,8 +130,9 @@ projectRouter.delete('/:workspaceId/projects/:projectId', asyncHandler(async (re
   const workspaceId = req.params.workspaceId
   const projectId = req.params.projectId
   await requireMembership(userId, workspaceId, 'owner')
-  await prisma!.knowledgeChunk.deleteMany({ where: { projectId } })
-  await prisma!.project.delete({ where: { id: projectId } })
+  if (!await projectInWorkspace(projectId, workspaceId)) return res.status(404).json({ error: 'Project not found.' })
+  await prisma!.knowledgeChunk.deleteMany({ where: { projectId, project: { workspaceId } } })
+  await prisma!.project.deleteMany({ where: { id: projectId, workspaceId } })
   await prisma!.workspaceAuditEvent.create({ data: { workspaceId, actorId: userId, action: 'project.deleted', resourceId: projectId } })
   res.status(204).end()
 }))
@@ -170,6 +180,7 @@ projectRouter.post('/:workspaceId/projects/:projectId/ingest', asyncHandler(asyn
   const workspaceId = req.params.workspaceId
   const projectId = req.params.projectId
   await requireMembership(userId, workspaceId, 'editor')
+  if (!await projectInWorkspace(projectId, workspaceId)) return res.status(404).json({ error: 'Project not found.' })
 
   const { text } = z.object({ text: z.string().min(1).max(500_000) }).parse(req.body)
   const result = await ingestText(projectId, text)
@@ -184,6 +195,7 @@ projectRouter.post('/:workspaceId/projects/:projectId/ingest-file', asyncHandler
   const workspaceId = req.params.workspaceId
   const projectId = req.params.projectId
   await requireMembership(userId, workspaceId, 'editor')
+  if (!await projectInWorkspace(projectId, workspaceId)) return res.status(404).json({ error: 'Project not found.' })
 
   await new Promise<void>((resolve, reject) => {
     ingestUpload.single('file')(req as any, res as any, (err: any) => (err ? reject(Object.assign(new Error(err.code === 'LIMIT_FILE_SIZE' ? 'File exceeds the 15MB limit.' : 'Invalid upload.'), { status: 413 })) : resolve()))
@@ -195,7 +207,9 @@ projectRouter.post('/:workspaceId/projects/:projectId/ingest-file', asyncHandler
     const result = await ingestText(projectId, extracted.text)
     res.json({ ...result, kind: extracted.kind, truncated: extracted.truncated, name: req.file.originalname, projectId })
   } catch (e: any) {
-    res.status(e?.status || 500).json({ error: e?.message || 'Extraction failed.' })
+    // Only deliberate, user-facing errors carry a status; never leak internals.
+    if (e?.status && e.status < 500) return res.status(e.status).json({ error: e.message })
+    res.status(500).json({ error: 'Extraction failed.' })
   }
 }))
 
@@ -205,6 +219,7 @@ projectRouter.get('/:workspaceId/projects/:projectId/search', asyncHandler(async
   const workspaceId = req.params.workspaceId
   const projectId = req.params.projectId
   await requireMembership(userId, workspaceId, 'viewer')
+  if (!await projectInWorkspace(projectId, workspaceId)) return res.status(404).json({ error: 'Project not found.' })
 
   const query = z.string().min(1).max(2000).parse(req.query.q)
   const topK = Math.min(Math.max(Number(req.query.limit) || 5, 1), 20)

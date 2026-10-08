@@ -8,6 +8,7 @@
 import type { ToolDefinition, ToolContext } from '../types'
 import { configStore, type ConnectorConfig } from '../configStore'
 import { MARKETPLACE_OAUTH_PROVIDERS } from './oauthProviders'
+import { extensionFailure, extensionRequest, scopedUrl } from '../extensionHttp'
 
 function apiBaseFor(spec: { apiBase?: string }, cfg: ConnectorConfig): string {
   return (spec.apiBase || '').replace(/\{(\w+)\}/g, (_m, k) => cfg.config[k] || '')
@@ -39,22 +40,20 @@ export function marketplaceConnectorTools(cfg: ConnectorConfig): ToolDefinition[
         const token = cfg.config.access_token
         if (!token) return { content: `${spec.name} not connected.`, isError: true }
         try {
-          const path = String(args.path || '')
-          const url = path.startsWith('http') ? path : `${base}${path.startsWith('/') ? '' : '/'}${path}`
+          // The bearer token is bound to the provider's API origin.
+          const url = scopedUrl(base, String(args.path || ''))
           const headers: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+          const isPost = String(args.method || 'GET').toUpperCase() === 'POST'
           let body: string | undefined
-          if ((args.method || 'GET').toUpperCase() === 'POST') {
+          if (isPost) {
             headers['Content-Type'] = 'application/json'
             body = JSON.stringify(args.body ?? {})
           }
-          const ctrl = new AbortController()
-          const timer = setTimeout(() => ctrl.abort(), 25000)
-          const res = await fetch(url, { method: (args.method || 'GET').toUpperCase(), headers, body, signal: ctx.signal || ctrl.signal }).finally(() => clearTimeout(timer))
-          const text = await res.text()
-          if (!res.ok) return { content: `[${spec.name}] HTTP ${res.status}: ${text.slice(0, 600)}`, isError: true }
-          return { content: text.slice(0, 8000) || '(empty response)' }
-        } catch (e: any) {
-          return { content: `[${spec.name}] request failed: ${e?.message || e}`, isError: true }
+          const res = await extensionRequest(url, { method: isPost ? 'POST' : 'GET', headers, body, origin: new URL(base).origin, signal: ctx?.signal, timeoutMs: 25_000 })
+          if (!res.ok) return { content: `[${spec.name}] HTTP ${res.status}`, isError: true }
+          return { content: res.text.slice(0, 8000) || '(empty response)' }
+        } catch (error) {
+          return { content: `[${spec.name}] ${extensionFailure(error)}`, isError: true }
         }
       },
     },
@@ -93,5 +92,5 @@ export async function probeMarketplaceConnector(cfg: ConnectorConfig): Promise<{
 }
 
 export function refreshMarketplaceEntry(cfg: ConnectorConfig): void {
-  configStore.saveConnectors(configStore.listConnectors().map((c) => (c.id === cfg.id ? cfg : c)))
+  configStore.updateConnector(cfg)
 }

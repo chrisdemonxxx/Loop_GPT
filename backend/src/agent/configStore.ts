@@ -3,6 +3,11 @@
  * (MCP servers, connectors, enabled skills/plugins). Works without a database,
  * consistent with the app's existing in-memory fallback pattern. Can be
  * swapped for Postgres later.
+ *
+ * Tenancy: every record is owned. Connectors, custom tools and MCP servers
+ * carry an `ownerId`; enabled skills/plugins and tool-permission overrides are
+ * stored per owner. Owner-less records written before ownership existed are
+ * never served to a user (they stay readable through the `*All` admin views).
  */
 import fs from 'fs'
 import path from 'path'
@@ -31,6 +36,7 @@ function write<T>(name: string, value: T) {
 export interface McpServerConfig {
   id: string
   name: string
+  /** Only remote (HTTP) servers can be configured through the API. */
   transport: 'stdio' | 'http'
   /** stdio: command + args. http: url. */
   command?: string
@@ -38,6 +44,10 @@ export interface McpServerConfig {
   url?: string
   headers?: Record<string, string>
   enabled: boolean
+  /** Administrator who configured the server. */
+  ownerId?: string
+  /** When true the server's tools are offered to every user, not just the owner. */
+  shared?: boolean
 }
 
 export interface ConnectorConfig {
@@ -53,6 +63,7 @@ export interface ConnectorConfig {
   lastTestMessage?: string
   /** Display label for the connected account/workspace (no secrets). */
   account?: string
+  ownerId?: string
 }
 
 export interface CustomToolParam {
@@ -72,6 +83,7 @@ export interface CustomToolConfig {
   headers?: Record<string, string>
   params: CustomToolParam[]
   enabled: boolean
+  ownerId?: string
 }
 
 export type ToolPermission = 'allow' | 'approval' | 'blocked'
@@ -89,64 +101,119 @@ export interface ToolAuditEntry {
 
 const AUDIT_CAP = 1000
 
+/** Built-in permission defaults. Destructive execution needs approval. */
+const PERMISSION_DEFAULTS: Readonly<Record<string, ToolPermission>> = Object.freeze({
+  create_document: 'allow',
+  web_search: 'allow',
+  web_fetch: 'allow',
+  calculator: 'allow',
+  get_current_time: 'allow',
+  generate_image: 'allow',
+  generate_video: 'allow',
+  execute_code: 'approval',
+  create_custom_tool: 'approval',
+})
+
+type PerOwner<T> = Record<string, T>
+
+function owned<T extends { ownerId?: string }>(items: T[], ownerId: string): T[] {
+  return ownerId ? items.filter((item) => item.ownerId === ownerId) : []
+}
+
+/** Replace one owner's slice of a shared list, leaving every other owner's rows intact. */
+function replaceOwned<T extends { ownerId?: string }>(all: T[], ownerId: string, next: T[]): T[] {
+  if (!ownerId) throw new Error('ownerId is required')
+  return [...all.filter((item) => item.ownerId !== ownerId), ...next.map((item) => ({ ...item, ownerId }))]
+}
+
+function readPerOwner<T>(name: string): PerOwner<T> {
+  const value = read<unknown>(name, {})
+  // Pre-tenancy files stored a single global value (an array or flat map).
+  // That value belonged to nobody; it is dropped rather than shared.
+  if (!value || typeof value !== 'object' || Array.isArray(value) || (value as any).__owners !== true) return {}
+  return (value as any).owners || {}
+}
+
+function writePerOwner<T>(name: string, owners: PerOwner<T>) {
+  write(name, { __owners: true, owners })
+}
+
 export const configStore = {
-  listMcpServers(): McpServerConfig[] {
+  // ── MCP servers (admin-configured) ──────────────────────────────────────
+  listAllMcpServers(): McpServerConfig[] {
     return read<McpServerConfig[]>('mcp-servers', [])
   },
-  saveMcpServers(servers: McpServerConfig[]) {
+  saveAllMcpServers(servers: McpServerConfig[]) {
     write('mcp-servers', servers)
   },
-  listConnectors(): ConnectorConfig[] {
+
+  // ── Connectors ──────────────────────────────────────────────────────────
+  listAllConnectors(): ConnectorConfig[] {
     return read<ConnectorConfig[]>('connectors', [])
   },
-  saveConnectors(connectors: ConnectorConfig[]) {
-    write('connectors', connectors)
+  listConnectors(ownerId: string): ConnectorConfig[] {
+    return owned(configStore.listAllConnectors(), ownerId)
   },
-  getEnabledSkills(): string[] {
-    return read<string[]>('enabled-skills', [])
+  saveConnectors(ownerId: string, connectors: ConnectorConfig[]) {
+    write('connectors', replaceOwned(configStore.listAllConnectors(), ownerId, connectors))
   },
-  setEnabledSkills(ids: string[]) {
-    write('enabled-skills', ids)
+  /** Update one connector in place, matched by id AND owner. */
+  updateConnector(cfg: ConnectorConfig) {
+    if (!cfg.ownerId) return
+    write('connectors', configStore.listAllConnectors().map((c) => (c.id === cfg.id && c.ownerId === cfg.ownerId ? cfg : c)))
   },
-  getEnabledPlugins(): string[] {
-    return read<string[]>('enabled-plugins', [])
+
+  // ── Skills / plugins enablement ─────────────────────────────────────────
+  getEnabledSkills(ownerId: string): string[] {
+    return ownerId ? readPerOwner<string[]>('enabled-skills')[ownerId] || [] : []
   },
-  setEnabledPlugins(ids: string[]) {
-    write('enabled-plugins', ids)
+  setEnabledSkills(ownerId: string, ids: string[]) {
+    if (!ownerId) throw new Error('ownerId is required')
+    const all = readPerOwner<string[]>('enabled-skills')
+    all[ownerId] = [...new Set(ids)]
+    writePerOwner('enabled-skills', all)
   },
-  listCustomTools(): CustomToolConfig[] {
+  getEnabledPlugins(ownerId: string): string[] {
+    return ownerId ? readPerOwner<string[]>('enabled-plugins')[ownerId] || [] : []
+  },
+  setEnabledPlugins(ownerId: string, ids: string[]) {
+    if (!ownerId) throw new Error('ownerId is required')
+    const all = readPerOwner<string[]>('enabled-plugins')
+    all[ownerId] = [...new Set(ids)]
+    writePerOwner('enabled-plugins', all)
+  },
+
+  // ── Custom webhook tools ────────────────────────────────────────────────
+  listAllCustomTools(): CustomToolConfig[] {
     return read<CustomToolConfig[]>('custom-tools', [])
   },
-  saveCustomTools(tools: CustomToolConfig[]) {
-    write('custom-tools', tools)
+  listCustomTools(ownerId: string): CustomToolConfig[] {
+    return owned(configStore.listAllCustomTools(), ownerId)
   },
-  /** Per-tool permission overrides: allow | approval | blocked.
+  saveCustomTools(ownerId: string, tools: CustomToolConfig[]) {
+    write('custom-tools', replaceOwned(configStore.listAllCustomTools(), ownerId, tools))
+  },
+
+  // ── Tool permissions ────────────────────────────────────────────────────
+  /** Per-tool permission overrides for one user: allow | approval | blocked.
    *  Built-in document/search tools allow by default. Destructive execution
    *  and anything the user explicitly sets still win. */
-  getToolPermissions(): Record<string, ToolPermission> {
-    const defaults: Record<string, ToolPermission> = {
-      create_document: 'allow',
-      web_search: 'allow',
-      web_fetch: 'allow',
-      calculator: 'allow',
-      get_current_time: 'allow',
-      generate_image: 'allow',
-      generate_video: 'allow',
-      execute_code: 'approval',
-    }
-    return { ...defaults, ...read<Record<string, ToolPermission>>('tool-permissions', {}) }
+  getToolPermissions(ownerId?: string): Record<string, ToolPermission> {
+    const mine = ownerId ? readPerOwner<Record<string, ToolPermission>>('tool-permissions')[ownerId] || {} : {}
+    return { ...PERMISSION_DEFAULTS, ...mine }
   },
-  setToolPermission(name: string, level: ToolPermission) {
-    const map = read<Record<string, ToolPermission>>('tool-permissions', {})
-    const defaults: Record<string, ToolPermission> = {
-      create_document: 'allow', web_search: 'allow', web_fetch: 'allow', calculator: 'allow',
-      get_current_time: 'allow', generate_image: 'allow', generate_video: 'allow', execute_code: 'approval',
-    }
-    const implicit = defaults[name] || 'allow'
+  setToolPermission(ownerId: string, name: string, level: ToolPermission) {
+    if (!ownerId) throw new Error('ownerId is required')
+    const all = readPerOwner<Record<string, ToolPermission>>('tool-permissions')
+    const map = { ...(all[ownerId] || {}) }
+    const implicit = PERMISSION_DEFAULTS[name] || 'allow'
     if (level === implicit) delete map[name]
     else map[name] = level
-    write('tool-permissions', map)
+    all[ownerId] = map
+    writePerOwner('tool-permissions', all)
   },
+
+  // ── Audit ───────────────────────────────────────────────────────────────
   /** Append a tool-call audit record; the log is bounded (most recent kept). */
   appendToolAudit(entry: ToolAuditEntry) {
     const log = read<ToolAuditEntry[]>('tool-audit', [])

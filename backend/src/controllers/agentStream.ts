@@ -159,7 +159,7 @@ export async function streamAgentRun(req: Request, res: Response) {
   try { target = resolveHostedModelRequest(req.body, { contentLength: String(req.body?.content || '').length, mode: req.body?.mode, hasImage: !!(req.body?.attachmentId || req.body?.attachmentIds?.length), toolNames: req.body?.toolNames }) }
   catch { return res.status(400).json({ code: 'HOSTED_MODEL_REQUIRED', error: 'Invalid hosted model selection or unsupported provider override' }) }
   // Clear any stale approvals from a previous turn in this conversation.
-  clearApproval(conversationId)
+  clearApproval(conversationId, userId)
   const input = streamInput.safeParse(req.body)
   if (!input.success) return res.status(400).json({ error: 'Invalid message; use attachmentId instead of server file paths' })
   const { attachmentId, mode } = input.data
@@ -193,7 +193,7 @@ export async function streamAgentRun(req: Request, res: Response) {
   }
   // Up to four images per turn (a single `attachmentId` is also accepted).
   const attachmentIds = [...(attachmentId ? [attachmentId] : []), ...(input.data.attachmentIds || [])].slice(0, 4)
-  const reviewed = availableTools()
+  const reviewed = availableTools(userId)
   const connectionIds = input.data.connectionIds
   if (connectionIds.length && mode !== 'agent') return res.status(400).json({ error: 'Connections require agent mode' })
   // Incognito runs never offer the remember tool (memory stays untouched).
@@ -456,7 +456,7 @@ export async function streamAgentRun(req: Request, res: Response) {
       // Enabled skills: compiled built-ins whose triggers match, plus the user's
       // own skills (skillLoader) selected by trigger. Full instructions are
       // injected; the name+description index is always available to the model.
-      const active = getActiveSkills(content || '')
+      const active = getActiveSkills(userId, content || '')
       const builtinMatched = BUILTIN_SKILLS.filter((skill) => skill.triggers?.some((trigger) => (content || '').toLowerCase().includes(trigger)))
       const userSkills = active.skills.filter((s) => !s.builtin)
       const skillInstructions = [...builtinMatched, ...userSkills].map((skill) => skill.instructions)

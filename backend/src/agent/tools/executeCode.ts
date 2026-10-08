@@ -7,6 +7,9 @@
  * kills runaway code.
  *
  * Isolation modes:
+ *  - e2b: a fresh E2B microVM per call (production default; needs E2B_API_KEY).
+ *  - hf: a dedicated Hugging Face sandbox VM per call (SANDBOX_PROVIDER=hf).
+ *  Production refuses the two host-local modes below.
  *  - container (default when Docker is available, or SANDBOX_DOCKER=true):
  *    `docker run --rm --network none --memory ... --cpus 1 -v <workspace>:/work`
  *    using a small language image. Real kernel/namespace isolation.
@@ -46,9 +49,10 @@ const INTERPRETERS: Record<string, string[]> = {
 
 /** Sandbox backend selection. SANDBOX_PROVIDER wins; legacy SANDBOX_DOCKER is
  *  still honored when it is unset; otherwise auto-detect Docker once. */
-export type SandboxProvider = 'hf' | 'docker' | 'subprocess'
-export function sandboxProviderEnv(): 'hf' | 'docker' | 'subprocess' | null {
+export type SandboxProvider = 'e2b' | 'hf' | 'docker' | 'subprocess'
+export function sandboxProviderEnv(): SandboxProvider | null {
   const v = (process.env.SANDBOX_PROVIDER || '').trim().toLowerCase()
+  if (v === 'e2b') return 'e2b'
   if (v === 'hf') return 'hf'
   if (v === 'docker') return 'docker'
   if (v === 'subprocess') return 'subprocess'
@@ -67,11 +71,88 @@ function dockerAvailable(): Promise<boolean> {
   })
 }
 
-/** Provider resolution: explicit env wins, else auto-detect Docker. */
-async function chooseProvider(): Promise<SandboxProvider> {
+export class SandboxUnavailableError extends Error {}
+
+/** Provider resolution. In production only managed VMs (E2B, HF) run user
+ *  code: the host interpreter and the host Docker daemon share the server's
+ *  kernel, filesystem and network, so they are refused. E2B is the default
+ *  when E2B_API_KEY is set. Elsewhere: explicit env wins, else auto-detect
+ *  Docker. */
+export async function chooseProvider(): Promise<SandboxProvider> {
   const explicit = sandboxProviderEnv()
+  if (process.env.NODE_ENV === 'production') {
+    if (explicit === 'e2b' || explicit === 'hf') return explicit
+    if (explicit) throw new SandboxUnavailableError(`SANDBOX_PROVIDER=${explicit} is not allowed in production`)
+    if (process.env.E2B_API_KEY) return 'e2b'
+    throw new SandboxUnavailableError('No production code sandbox is configured')
+  }
   if (explicit) return explicit
   return (await dockerAvailable()) ? 'docker' : 'subprocess'
+}
+
+const E2B_WORKDIR = '/home/user/work'
+
+/** Run the snippet in a fresh E2B microVM. Outbound network is off unless
+ *  SANDBOX_NETWORK=true; the VM is destroyed when the call ends. */
+async function runInE2bSandbox(
+  language: string,
+  filename: string,
+  code: string,
+  timeoutSec: number,
+  ctx: Parameters<ToolDefinition['handler']>[1],
+  onChunk: (chunk: string, stream: 'stdout' | 'stderr') => void,
+): Promise<{ result: RunResult; artifacts: any[] }> {
+  if (!process.env.E2B_API_KEY) throw new SandboxUnavailableError('E2B_API_KEY is not set')
+  const { Sandbox, CommandExitError } = await import('e2b')
+  ctx.emit({ type: 'status', message: 'Provisioning an isolated sandbox VM…' })
+  const sandbox = await Sandbox.create({
+    apiKey: process.env.E2B_API_KEY,
+    timeoutMs: (timeoutSec + 60) * 1000,
+    allowInternetAccess: process.env.SANDBOX_NETWORK === 'true',
+  })
+  const onAbort = () => { sandbox.kill().catch(() => undefined) }
+  ctx.signal?.addEventListener('abort', onAbort, { once: true })
+  try {
+    await sandbox.files.write(`${E2B_WORKDIR}/${filename}`, code)
+    ctx.emit({ type: 'status', message: `Running ${language} in the sandbox VM…` })
+    const command = language === 'python' ? `python3 ${filename}` : language === 'javascript' ? `node ${filename}` : `bash ${filename}`
+    let stdout = ''
+    let stderr = ''
+    let exitCode: number | null = null
+    let timedOut = false
+    const cap = (s: string, chunk: string) => (s.length >= MAX_OUTPUT ? s : (s + chunk).slice(0, MAX_OUTPUT))
+    try {
+      const res = await sandbox.commands.run(command, {
+        cwd: E2B_WORKDIR,
+        envs: { HOME: E2B_WORKDIR, LANG: 'C.UTF-8', PYTHONUNBUFFERED: '1' },
+        timeoutMs: timeoutSec * 1000,
+        onStdout: (chunk: string) => { stdout = cap(stdout, chunk); onChunk(chunk, 'stdout') },
+        onStderr: (chunk: string) => { stderr = cap(stderr, chunk); onChunk(chunk, 'stderr') },
+      })
+      exitCode = res.exitCode
+    } catch (error: any) {
+      if (error instanceof CommandExitError) exitCode = error.exitCode
+      else if (/timeout|deadline/i.test(String(error?.message || error?.name || ''))) timedOut = true
+      else throw error
+    }
+    const artifacts: any[] = []
+    try {
+      for (const entry of await sandbox.files.list(E2B_WORKDIR)) {
+        if (entry.name === filename || String(entry.type) !== 'file' || artifacts.length >= MAX_FILES) continue
+        if (!entry.size || entry.size > MAX_FILE_BYTES) continue
+        try {
+          const bytes = await sandbox.files.read(entry.path, { format: 'bytes' })
+          const artifact = await saveArtifact(entry.name, Buffer.from(bytes), { userId: ctx.userId, conversationId: ctx.conversationId })
+          artifacts.push(artifact)
+          ctx.emit({ type: 'artifact', artifact })
+        } catch { /* skip unreadable file */ }
+      }
+    } catch { /* listing failed; output still returns */ }
+    return { result: { stdout, stderr, exitCode, timedOut }, artifacts }
+  } finally {
+    ctx.signal?.removeEventListener('abort', onAbort)
+    await sandbox.kill().catch(() => undefined)
+  }
 }
 
 const hfDeps = { fetchImpl: sdkFetch as any }
@@ -203,21 +284,46 @@ export const executeCodeTool: ToolDefinition = {
     const timeoutSec = Math.min(Math.max(Number(args.timeout_seconds) || 30, 1), 120)
     const timeoutMs = timeoutSec * 1000
 
-    const workdir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-sbx-'))
     const filename = CODE_FILES[language]
-    fs.writeFileSync(path.join(workdir, filename), code, 'utf-8')
-
-    // Scrubbed environment: no secrets, no ambient credentials.
-    const env: NodeJS.ProcessEnv = { HOME: workdir, TMPDIR: workdir, LANG: 'C.UTF-8',
-      PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin', PYTHONUNBUFFERED: '1' }
-
-    const provider = await chooseProvider()
+    let provider: SandboxProvider
+    try { provider = await chooseProvider() }
+    catch (e) {
+      if (e instanceof SandboxUnavailableError) return { content: 'Code execution is not available on this server.', isError: true }
+      throw e
+    }
     // Live output (audit §8-28): chunks stream to the client as they are
     // produced; the runtime stamps the executing step on each event.
     const batcher = makeOutputBatcher((chunk, stream) => ctx.emit({ type: 'tool_output', chunk, stream }))
     const onChunk = (chunk: string, stream: 'stdout' | 'stderr') => batcher.push(chunk, stream)
     let result: RunResult
     let artifacts: any[] = []
+    if (provider === 'e2b') {
+      try {
+        const e2b = await runInE2bSandbox(language, filename, code, timeoutSec, ctx, onChunk)
+        result = e2b.result
+        artifacts = e2b.artifacts
+      } catch {
+        batcher.flush()
+        return { content: 'Sandbox error: the code sandbox could not run this snippet.', isError: true }
+      }
+      batcher.flush()
+      const header = `exit=${result.exitCode ?? 'null'}${result.timedOut ? ' (timed out)' : ''} · ${language} · e2b-sandbox`
+      const out = result.stdout.trim() || '(no stdout)'
+      const err = result.stderr.trim()
+      const summary = artifacts.length ? `\n\nGenerated ${artifacts.length} file(s): ${artifacts.map((a) => a.name).join(', ')}` : ''
+      return {
+        content: `${header}\n\nSTDOUT:\n${out}${err ? `\n\nSTDERR:\n${err}` : ''}${summary}`,
+        data: { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, timedOut: result.timedOut, artifacts, mode: 'e2b-sandbox' },
+        isError: (result.exitCode ?? 1) !== 0 || undefined,
+      }
+    }
+
+    const workdir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-sbx-'))
+    fs.writeFileSync(path.join(workdir, filename), code, 'utf-8')
+
+    // Scrubbed environment: no secrets, no ambient credentials.
+    const env: NodeJS.ProcessEnv = { HOME: workdir, TMPDIR: workdir, LANG: 'C.UTF-8',
+      PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin', PYTHONUNBUFFERED: '1' }
     if (provider === 'hf') {
       // Managed isolation: a dedicated HF Sandbox VM per run. No local workdir.
       fs.rmSync(workdir, { recursive: true, force: true })

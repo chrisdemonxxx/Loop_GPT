@@ -24,16 +24,10 @@ export const transcribeTool: ToolDefinition = {
       const lang = String(args.language || '')
       ctx.emit({ type: 'status', message: 'Transcribing audio…' })
       const endpoint = process.env.HF_ASR_ENDPOINT_URL || 'https://router.huggingface.co/hf-inference/models/openai/whisper-large-v3-turbo'
-      const isEndpoint = !!process.env.HF_ASR_ENDPOINT_URL
-      const body = isEndpoint
-        ? JSON.stringify({ inputs: audio })
-        : audio.startsWith('http')
-          ? JSON.stringify({ inputs: (await (await fetch(audio, { signal: AbortSignal.timeout(15_000) })).arrayBuffer()) })
-          : JSON.stringify({ inputs: audio })
       const { headers, ...auth } = mediaAuth(endpoint)
       const res = await providerRequest(endpoint, {
         ...auth, method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
-        body: isEndpoint ? JSON.stringify({ inputs: audio }) : JSON.stringify({ inputs: audio }),
+        body: JSON.stringify({ inputs: audio }),
         signal: op.signal, timeoutMs: op.remaining(60_000), maxBytes: IMAGE_RESPONSE_BYTES,
       })
       op.check()

@@ -67,6 +67,7 @@ model User {
   dailyReservations DailyReservation[]
   payments      Payment[]
   tokens        Token[]
+  oauthIdentities OAuthIdentity[]
   memories      Memory[]
   styles        UserStyle[]
   researchScratchpads ResearchScratchpad[]
@@ -325,6 +326,21 @@ model Token {
 
   @@index([userId])
   @@index([type])
+}
+
+/// A social sign-in linked to an account, keyed by the provider's stable
+/// subject id (never by email, which providers let users change).
+model OAuthIdentity {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider       String   // 'google' | 'github' | 'apple'
+  providerUserId String
+  email          String
+  createdAt      DateTime @default(now())
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
 }
 
 /// A redeemable code. `type=unlimited` flips the user to unlimited (team use);

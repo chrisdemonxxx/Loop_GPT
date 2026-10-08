@@ -11,9 +11,10 @@
  *    init call carries { clientId, clientSecret } created in the provider's
  *    developer console.
  *
- * On success the tokens are stored BOTH as an encrypted WorkspaceConnection
- * (existing flow) AND as a config-store connector entry, so the Settings →
- * Connectors tab shows the live connection and the agent tools register.
+ * Only a workspace owner can start or finish a flow. On success the tokens
+ * are stored as an encrypted WorkspaceConnection AND as a config-store
+ * connector entry owned by the connecting user, so their Settings →
+ * Connectors tab shows the live connection and their runs get the tools.
  *
  * Redirect URIs (2026-10-05, the redirect_uri_mismatch fix):
  *  - Platform connectors ride the sign-in flow's registered callback:
@@ -30,7 +31,7 @@ import crypto from 'crypto'
 import { encryptConnectionConfig } from '../services/credentialVault'
 import { prisma } from '../services/prisma'
 import { configStore } from '../agent/configStore'
-import { connectorRegistry } from '../agent/connectors/connectorRegistry'
+import { requireMembership, WorkspaceError } from '../services/workspaces'
 import { ALL_OAUTH_PROVIDERS, PLATFORM_OAUTH_PROVIDERS, MARKETPLACE_OAUTH_PROVIDERS, loginProviderForConnector, requestedScopes } from '../agent/connectors/oauthProviders'
 import { publicCallbackBase } from '../services/oauth'
 
@@ -107,14 +108,28 @@ export function oauthRedirectUri(type: string): string {
   return `${baseUrl()}/api/oauth-connector/callback`
 }
 
+/** Origin allowed to receive the popup result (the app that opened it). */
+function frontendOrigin(): string {
+  const app = process.env.FRONTEND_URL?.split(',')?.[0]?.trim() || baseUrl()
+  try { return new URL(app).origin } catch { return 'null' }
+}
+
+/** Error codes the client may display; anything else collapses to oauth_failed. */
+const FLOW_ERRORS = new Set(['invalid_state', 'unknown_provider', 'token_exchange_failed', 'access_denied', 'forbidden', 'oauth_failed'])
+function flowError(code: string | undefined): string {
+  return code && FLOW_ERRORS.has(code) ? code : 'oauth_failed'
+}
+
 /** The response when the flow runs in a popup: postMessage the opener, close. */
 function popupCloser(res: express.Response, payload: { ok: boolean; connectorType: string; error?: string }): void {
-  const data = JSON.stringify({ source: 'loop-oauth', ...payload })
+  // JSON in a <script> block: escape "<" so no value can close the tag.
+  const data = JSON.stringify({ source: 'loop-oauth', ...payload }).replace(/</g, '\\u003c')
+  const target = JSON.stringify(frontendOrigin()).replace(/</g, '\\u003c')
   res.set('Cache-Control', 'no-store')
   res.set('Content-Type', 'text/html; charset=utf-8')
   res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Connected</title></head>
 <body><script>
-(function(){try{if(window.opener&&!window.opener.closed){window.opener.postMessage(${data},'*')}}catch(e){}}try{window.close()}catch(e){}})();
+(function(){try{if(window.opener&&!window.opener.closed){window.opener.postMessage(${data},${target})}}catch(e){}}try{window.close()}catch(e){}})();
 </script>
 <p style="font-family:system-ui,sans-serif;color:#666">You can close this window.</p>
 </body></html>`)
@@ -127,7 +142,7 @@ oauthConnectorRouter.post('/init/:connectorType', authenticateToken, asyncHandle
   const userId = (req as any).userId
   const workspaceId = req.body?.workspaceId
   const connectorType = req.params.connectorType
-  if (!userId || !workspaceId) return res.status(400).json({ error: 'Authentication and workspaceId required.' })
+  if (!userId || typeof workspaceId !== 'string' || !workspaceId) return res.status(400).json({ error: 'Authentication and workspaceId required.' })
 
   const provider = ALL_OAUTH_PROVIDERS[connectorType]
   if (!provider) return res.status(400).json({ error: `Unknown connector: ${connectorType}` })
@@ -144,11 +159,18 @@ oauthConnectorRouter.post('/init/:connectorType', authenticateToken, asyncHandle
   } else if (!clientIdFor(connectorType)) {
     return res.status(503).json({ error: `OAuth client not configured for ${connectorType}.` })
   }
+  // Connection writes are owner-only, same as the workspace connections API.
+  try { await requireMembership(userId, workspaceId, 'owner') }
+  catch (error) {
+    if (error instanceof WorkspaceError) return res.status(error.status).json({ error: error.message })
+    throw error
+  }
 
   const state = generateState()
   const codeVerifier = generateVerifier()
   const codeChallenge = sha256(codeVerifier)
-  pkceStore.set(state, { state, codeVerifier, redirectTo: req.body?.redirectTo || '/chat', connectorType, userId, workspaceId,
+  const redirectTo = typeof req.body?.redirectTo === 'string' && /^\/(?![/\\])/.test(req.body.redirectTo) ? req.body.redirectTo : '/chat'
+  pkceStore.set(state, { state, codeVerifier, redirectTo, connectorType, userId, workspaceId,
     userClientId, userClientSecret, viaPopup: req.body?.via === 'popup', expiresAt: Date.now() + 600_000 })
 
   const params = new URLSearchParams({
@@ -201,13 +223,14 @@ async function fetchAccountLabel(type: string, accessToken: string): Promise<str
 
 /** Respond for a completed/failed flow: popup closer or legacy redirect. */
 function flowDone(pkce: PkceStore, res: express.Response, payload: { ok: boolean; error?: string }): void {
-  const target = pkce.redirectTo?.startsWith('/') ? pkce.redirectTo : '/chat'
+  const error = payload.ok ? undefined : flowError(payload.error)
+  const type = encodeURIComponent(pkce.connectorType || '')
   if (pkce.viaPopup) {
-    popupCloser(res, { ok: payload.ok, connectorType: pkce.connectorType, error: payload.error })
+    popupCloser(res, { ok: payload.ok, connectorType: pkce.connectorType, error })
     return
   }
-  if (payload.ok) return res.redirect(`/chat/?oauth=connected&type=${pkce.connectorType}`)
-  res.redirect(`/chat/?oauth_error=${encodeURIComponent(payload.error || 'oauth_failed')}&type=${pkce.connectorType}`)
+  if (payload.ok) return res.redirect(`/chat/?oauth=connected&type=${type}`)
+  res.redirect(`/chat/?oauth_error=${encodeURIComponent(error!)}&type=${type}`)
 }
 
 export async function completeConnectorCallback(code: string | undefined, state: string | undefined, res: express.Response): Promise<void> {
@@ -219,6 +242,10 @@ export async function completeConnectorCallback(code: string | undefined, state:
   if (!provider) return flowDone(pkce, res, { ok: false, error: 'unknown_provider' })
 
   try {
+    // Membership may have changed while the user was at the provider.
+    try { await requireMembership(pkce.userId, pkce.workspaceId, 'owner') }
+    catch { return flowDone(pkce, res, { ok: false, error: 'forbidden' }) }
+
     const tokenRes = await fetch(provider.tokenUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
@@ -226,9 +253,11 @@ export async function completeConnectorCallback(code: string | undefined, state:
         client_id: clientIdFor(pkce.connectorType, pkce) || '', client_secret: clientSecretFor(pkce.connectorType, pkce) || '',
         code: code || '', code_verifier: pkce.codeVerifier, grant_type: 'authorization_code', redirect_uri: oauthRedirectUri(pkce.connectorType),
       }).toString(),
+      redirect: 'error',
+      signal: AbortSignal.timeout(20_000),
     })
     const tokens = await tokenRes.json()
-    if (!tokens.access_token) return flowDone(pkce, res, { ok: false, error: tokens.error || 'token_exchange_failed' })
+    if (!tokens.access_token) return flowDone(pkce, res, { ok: false, error: 'token_exchange_failed' })
 
     const config: Record<string, string> = {
       access_token: tokens.access_token,
@@ -237,21 +266,26 @@ export async function completeConnectorCallback(code: string | undefined, state:
       scope: tokens.scope || '',
     }
     if (tokens.instance_url) config.instanceUrl = String(tokens.instance_url)
-    const encrypted = encryptConnectionConfig(pkce.workspaceId, crypto.randomUUID(), config)
-
+    // The AAD binds the ciphertext to the row id, so encrypt with the id the
+    // row actually has (or will have) — never a throwaway one.
+    const configuredFields = Object.keys(config).sort()
     const existing = await prisma?.workspaceConnection.findFirst({ where: { workspaceId: pkce.workspaceId, type: pkce.connectorType } })
     if (existing) {
-      await prisma!.workspaceConnection.update({ where: { id: existing.id }, data: { enabled: true, encryptedConfig: encrypted, configuredFields: Object.keys(config).sort() } })
+      await prisma!.workspaceConnection.update({ where: { id: existing.id }, data: { enabled: true,
+        encryptedConfig: encryptConnectionConfig(pkce.workspaceId, existing.id, config), configuredFields, version: { increment: 1 } } })
     } else {
-      await prisma!.workspaceConnection.create({ data: { workspaceId: pkce.workspaceId, type: pkce.connectorType, name: provider.name, enabled: true, encryptedConfig: encrypted, configuredFields: Object.keys(config).sort() } })
+      const id = crypto.randomUUID()
+      await prisma!.workspaceConnection.create({ data: { id, workspaceId: pkce.workspaceId, type: pkce.connectorType, name: provider.name, enabled: true,
+        encryptedConfig: encryptConnectionConfig(pkce.workspaceId, id, config), configuredFields } })
     }
 
-    // Dual-write: also upsert a config-store connector so Settings → Connectors
-    // shows the live connection and the adapter tools register immediately.
+    // The agent's adapter tools read the connecting user's own config-store
+    // entry (Settings → Connectors). It is owner-scoped: no other account's
+    // runs can see or use these tokens.
     const account = await fetchAccountLabel(pkce.connectorType, tokens.access_token)
     const storeConfig = { ...config }
     if (pkce.connectorType === 'github') storeConfig.token = tokens.access_token
-    const list = configStore.listConnectors()
+    const list = configStore.listConnectors(pkce.userId)
     const existingEntry = list.find((c) => c.type === pkce.connectorType)
     const entry = {
       id: existingEntry?.id || `oauth-${crypto.randomUUID().slice(0, 8)}`,
@@ -263,13 +297,13 @@ export async function completeConnectorCallback(code: string | undefined, state:
       lastTestedAt: new Date().toISOString(),
       lastTestOk: true,
       lastTestMessage: 'Authorized via provider sign-in.',
+      ownerId: pkce.userId,
     }
-    configStore.saveConnectors(existingEntry ? list.map((c) => (c.id === entry.id ? entry : c)) : [...list, entry])
-    connectorRegistry.activate(entry as any)
+    configStore.saveConnectors(pkce.userId, existingEntry ? list.map((c) => (c.id === entry.id ? entry : c)) : [...list, entry])
 
     return flowDone(pkce, res, { ok: true })
-  } catch (e: any) {
-    return flowDone(pkce, res, { ok: false, error: e?.message || 'token_exchange_failed' })
+  } catch {
+    return flowDone(pkce, res, { ok: false, error: 'token_exchange_failed' })
   }
 }
 
@@ -283,7 +317,7 @@ oauthConnectorRouter.get('/callback', asyncHandler(async (req, res) => {
     // shape the flow started in (popup vs redirect) when we can.
     const pkce = state ? pkceStore.get(state) : undefined
     if (pkce) { pkceStore.delete(state || ''); return flowDone(pkce, res, { ok: false, error }) }
-    return res.redirect(`/chat/?oauth_error=${encodeURIComponent(error)}`)
+    return res.redirect(`/chat/?oauth_error=${encodeURIComponent(flowError(error))}`)
   }
   if (!code || !state) return res.status(400).send('Missing code or state.')
   return completeConnectorCallback(code, state, res)

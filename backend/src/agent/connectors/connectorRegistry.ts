@@ -2,14 +2,15 @@
  * Connector framework.
  *
  * A "connector type" knows how to turn a stored config (tokens/URLs) into a set
- * of agent tools. Connectors are enabled/configured via the config store and
- * their tools are registered with source `connector:<id>`. Ships one reference
- * connector (GitHub, token-based). OAuth-based connectors can implement the
- * same interface with an added auth route.
+ * of agent tools. Connectors are configured per user in the config store and
+ * their tools (source `connector:<id>`) are offered only to the owning
+ * account's runs. Ships one reference connector (GitHub, token-based).
+ * OAuth-based connectors can implement the same interface with an added auth
+ * route.
  */
 import axios from 'axios'
-import { toolRegistry } from '../toolRegistry'
 import { configStore, type ConnectorConfig } from '../configStore'
+import { extensionFailure, extensionRequest, scopedUrl } from '../extensionHttp'
 import type { ToolDefinition } from '../types'
 import { CONNECTOR_CATALOG, buildCatalogTools, type CatalogConnector } from './catalog'
 import { GOOGLE_CONNECTOR_ADAPTERS } from './googleAdapters'
@@ -120,13 +121,17 @@ const httpConnector: ConnectorType = {
         source: `connector:${id}`,
         description: `[${cfg.name}] GET a path from ${base}. Args: path (e.g. "/v1/items?limit=5").`,
         parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
-        async handler(args) {
-          const path = String(args.path || '')
-          const url = path.startsWith('http') ? path : `${base}${path.startsWith('/') ? '' : '/'}${path}`
-          const res = await fetch(url, { headers })
-          const text = await res.text()
-          if (!res.ok) return { content: `HTTP ${res.status}: ${text.slice(0, 500)}`, isError: true }
-          return { content: text.slice(0, 6000) }
+        async handler(args, ctx) {
+          try {
+            // The auth header is bound to the configured base; a model-supplied
+            // absolute URL can never carry it to another host.
+            const url = scopedUrl(base, String(args.path || ''))
+            const res = await extensionRequest(url, { headers, origin: new URL(base).origin, signal: ctx?.signal })
+            if (!res.ok) return { content: `HTTP ${res.status}`, isError: true }
+            return { content: res.text.slice(0, 6000) }
+          } catch (error) {
+            return { content: extensionFailure(error), isError: true }
+          }
         },
       },
     ]
@@ -188,22 +193,25 @@ class ConnectorRegistry {
       }))
   }
 
-  /** Activate all enabled connectors from the config store. */
-  init() {
-    for (const cfg of configStore.listConnectors()) {
-      if (cfg.enabled) this.activate(cfg)
+  hasType(type: string): boolean {
+    return this.types.has(type)
+  }
+
+  /** Tools for the owner's enabled connectors. Connector tool names are
+   *  server-namespaced (`connector__<id>__…`); anything else is dropped. */
+  toolsFor(ownerId: string): ToolDefinition[] {
+    const out: ToolDefinition[] = []
+    for (const cfg of configStore.listConnectors(ownerId)) {
+      if (!cfg.enabled) continue
+      const type = this.types.get(cfg.type)
+      if (!type) continue
+      try {
+        for (const tool of type.createTools(cfg)) {
+          if (tool.name.startsWith(`connector__${cfg.id}__`)) out.push(tool)
+        }
+      } catch { /* one broken connector never hides the others */ }
     }
-  }
-
-  activate(cfg: ConnectorConfig) {
-    const type = this.types.get(cfg.type)
-    if (!type) return
-    toolRegistry.unregisterSource(`connector:${cfg.id}`)
-    for (const tool of type.createTools(cfg)) toolRegistry.register(tool)
-  }
-
-  deactivate(id: string) {
-    toolRegistry.unregisterSource(`connector:${id}`)
+    return out
   }
 }
 

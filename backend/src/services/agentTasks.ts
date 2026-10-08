@@ -45,11 +45,11 @@ export const BOT_VM_MINUTES_PER_DAY: Record<string, number> = { free: 5, pro: 30
 
 export const AGENT_TASK_MAX_ATTEMPTS = 3
 
-/** Read-only default toolset for autonomous runs. Media generation, voice,
- *  and mutation tools (create_skill / create_custom_tool) stay out unless an
- *  admin explicitly allowlists them per task. */
+/** Read-only default toolset for autonomous runs. Code execution, media
+ *  generation, voice, and mutation tools (create_skill / create_custom_tool)
+ *  stay out unless an admin explicitly allowlists them per task. */
 export const BOT_DEFAULT_TOOLS: readonly string[] = [
-  'web_search', 'web_fetch', 'execute_code', 'create_document',
+  'web_search', 'web_fetch', 'create_document',
   'calculator', 'get_current_time', 'remember', 'search_knowledge',
 ]
 

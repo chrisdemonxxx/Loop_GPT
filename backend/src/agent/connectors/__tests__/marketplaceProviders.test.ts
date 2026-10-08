@@ -26,6 +26,32 @@ process.env.BASE_URL = 'http://127.0.0.1:3999'
 process.env.FRONTEND_URL = 'http://127.0.0.1:3999'
 process.env.CONNECTION_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64')
 
+const membership = vi.hoisted(() => ({ allowed: true }))
+vi.mock('../../../services/workspaces', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../services/workspaces')>()
+  return {
+    ...actual,
+    requireMembership: vi.fn(async () => {
+      if (!membership.allowed) throw new actual.WorkspaceError(404, 'Workspace not found')
+      return { role: 'owner' }
+    }),
+  }
+})
+
+// The adapter's public transport resolves DNS; route it to the stubbed fetch
+// while keeping the real origin lock.
+vi.mock('../../extensionHttp', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../extensionHttp')>()
+  return {
+    ...actual,
+    extensionRequest: vi.fn(async (url: string, opts: any = {}) => {
+      if (opts.origin && new URL(url).origin !== opts.origin) throw new Error('origin escape')
+      const res: any = await fetch(url, { method: opts.method || 'GET', headers: opts.headers, body: opts.body })
+      return { ok: res.status >= 200 && res.status < 300, status: res.status, text: await res.text() }
+    }),
+  }
+})
+
 import {
   MARKETPLACE_OAUTH_PROVIDERS,
 } from '../../connectors/oauthProviders'
@@ -139,6 +165,20 @@ describe('marketplace PKCE init route (per provider)', () => {
     expect(res.status).toBe(400)
     const body = await res.json()
     expect(body.error).toContain('clientId and clientSecret')
+  })
+
+  it('refuses to start a flow for a workspace the caller does not own', async () => {
+    membership.allowed = false
+    try {
+      const res = await fetch(`${base}/api/oauth-connector/init/figma`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId: 'someone-elses', clientId: 'x', clientSecret: 'y' }),
+      })
+      expect(res.status).toBe(404)
+    } finally {
+      membership.allowed = true
+    }
   })
 
   it('rejects unknown connector types', async () => {
