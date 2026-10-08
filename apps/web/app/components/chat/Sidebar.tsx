@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import {
   Plus, PanelLeft, Search, MessageSquare, Edit2, Trash2, Star, Share2, Check,
-  Settings, CreditCard, ShieldCheck, LogOut, ChevronDown, Sparkles, FolderOpen, Terminal, Download, Bot,
+  Settings, CreditCard, ShieldCheck, LogOut, ChevronDown, Sparkles, FolderOpen, Terminal, Download, Bot, Blocks,
 } from 'lucide-react'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -11,6 +11,9 @@ import { useI18n, locales, localeNames, type Locale } from '../../lib/i18n'
 import type { Conversation } from './types'
 import { BotSidebarSection } from './BotChrome'
 import type { BotGroup, NamedBot } from '../../lib/namedBots'
+
+/** Baked at `next build` from LOOPIT_ENABLED. Empty keeps the Build link hidden. */
+const LOOPIT_ENABLED = process.env.NEXT_PUBLIC_LOOPIT_ENABLED === '1'
 
 interface SidebarProject { id: string; name: string; _count?: { knowledgeChunks: number; conversations: number } }
 export interface ConversationSearchHit {
@@ -175,6 +178,7 @@ export default function Sidebar({
           links that read as an afterthought). */}
       <nav aria-label="Workspace" className="px-3 pb-2 space-y-0.5 shrink-0">
         {[
+          ...(LOOPIT_ENABLED ? [{ href: '/build', label: 'Build', icon: Blocks }] : []),
           { href: '/agents', label: 'Loop Bot', icon: Bot },
           { href: '/artifacts', label: 'Files', icon: Download },
           { href: '/recents', label: 'Recents', icon: MessageSquare },

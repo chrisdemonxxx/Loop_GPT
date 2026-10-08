@@ -197,13 +197,13 @@ export function useConversationsData(
   // become <2/3> version arrows instead of destructive rewrites.
   // (S8) a failed fetch THROWS now — the old catch-to-empty rendered a blank
   // transcript on any transient error, indistinguishable from a new chat.
-  const { data: branch = { activeLeafId: null, messages: [] }, isError: messagesError, refetch: refetchMessages } = useQuery<{ activeLeafId: string | null; messages: Message[] }>({
+  const { data: branch = { activeLeafId: null, loopitRunId: null, messages: [] }, isError: messagesError, refetch: refetchMessages } = useQuery<{ activeLeafId: string | null; loopitRunId: string | null; messages: Message[] }>({
     queryKey: ['messages', currentConversationId],
     queryFn: async () => {
-      if (!currentConversationId) return { activeLeafId: null, messages: [] }
+      if (!currentConversationId) return { activeLeafId: null, loopitRunId: null, messages: [] }
       const d = (await axios.get(`${API_URL}/api/conversations/${currentConversationId}/messages?branch=1`, { headers: authHeaders(false) })).data
       if (!d || typeof d !== 'object' || !Array.isArray(d.messages)) throw new Error('messages')
-      return d
+      return { activeLeafId: d.activeLeafId ?? null, loopitRunId: typeof d.loopitRunId === 'string' ? d.loopitRunId : null, messages: d.messages }
     },
     enabled: !!currentConversationId && typeof window !== 'undefined',
     retry: 1,
@@ -217,7 +217,7 @@ export function useConversationsData(
     mutationFn: async ({ conversationId, messageId }: { conversationId: string; messageId: string }) =>
       (await axios.post(`${API_URL}/api/conversations/${conversationId}/branch-select`, { messageId }, { headers: authHeaders() })).data as { activeLeafId: string },
     onSuccess: (data, variables) => {
-      queryClient.setQueryData<{ activeLeafId: string | null; messages: Message[] }>(['messages', variables.conversationId], (old) =>
+      queryClient.setQueryData<{ activeLeafId: string | null; loopitRunId: string | null; messages: Message[] }>(['messages', variables.conversationId], (old) =>
         old ? { ...old, activeLeafId: data.activeLeafId } : old)
     },
   })
@@ -254,6 +254,8 @@ export function useConversationsData(
     branchVersions: branchView.versions as Record<string, BranchVersionInfo>,
     /** The conversation's active branch tip. */
     activeLeafId: branch.activeLeafId,
+    /** Loop-IT run linked on the conversation, from the branch envelope. */
+    loopitRunId: branch.loopitRunId ?? null,
     /** Switch the active path to a version row (§8-22 arrows). */
     selectVersion,
   }
@@ -744,6 +746,8 @@ export function useChatStream() {
    * truncated at this row and the live turn renders in its place — the
    * Claude-style "the old version swaps out while the new one streams". */
   const [liveAnchorId, setLiveAnchorId] = useState<string | null>(null)
+  /** Run id returned by start_run before the transcript refetch lands. */
+  const [liveLoopitRunId, setLiveLoopitRunId] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   /** The active durable run's id (§8-30) — the stop button cancels it. */
   const runIdRef = useRef<string | null>(null)
@@ -830,6 +834,7 @@ export function useChatStream() {
     setLiveUser(null); setLiveSteps([]); setLiveArtifacts([]); setStatusMsg(''); setLiveThinking('')
     setPendingApproval(null) // (S2) approval cards must never leak across turns
     setLiveAnchorId(null)
+    setLiveLoopitRunId(null)
   }
 
   /** The transcript the user is looking at. Mismatched run events no-op. */
@@ -869,6 +874,7 @@ export function useChatStream() {
   const clearTurn = () => {
     setLiveSteps([]); setLiveArtifacts([]); setLiveUser(null)
     setPendingApproval(null)
+    setLiveLoopitRunId(null)
   }
 
   /** (S5) Persistent run error: statusMsg is transient (cleared in finally);
@@ -930,6 +936,7 @@ export function useChatStream() {
     },
     onToolResult: (step: number, name: string, resultContent: string, data: any, isError?: boolean) => {
       if (!applies(convId, gen)) return
+      if (typeof data?.loopitRunId === 'string' && data.loopitRunId) setLiveLoopitRunId(data.loopitRunId)
       setLiveSteps((prev) =>
         prev.map((s) => {
           if (s.index !== step || !s.tool) return s
@@ -1095,7 +1102,7 @@ export function useChatStream() {
     running, statusMsg, errorMsg, clearError: () => setErrorMsg(''),
     liveUser, liveSteps, liveArtifacts, liveThinking, liveAnswer,
     liveConversationId,
-    pendingApproval, setPendingApproval, liveAnchorId,
+    pendingApproval, setPendingApproval, liveAnchorId, liveLoopitRunId,
     stopRun, resetLive, clearTurn, send, reattach, noteViewed, parkRun, takeParked,
   }
 }

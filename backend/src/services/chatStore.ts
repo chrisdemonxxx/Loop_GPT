@@ -43,6 +43,8 @@ export interface SaveMessageInput {
  * client can derive the visible path and the <2/3> version groups locally. */
 export interface BranchEnvelope {
   activeLeafId: string | null
+  /** Loop-IT build linked to this conversation, when one has been started. */
+  loopitRunId: string | null
   messages: StoredMessage[]
 }
 
@@ -161,17 +163,19 @@ export async function listBranchMessages(conversationId: string): Promise<Branch
   if (USE_MEMORY_STORE) {
     return {
       activeLeafId: null,
+      loopitRunId: null,
       messages: memoryStore.getMessages(conversationId).map((m) => ({
         ...m, createdAt: m.createdAt.toISOString(),
       })) as StoredMessage[],
     }
   }
   const [conversation, rows] = await Promise.all([
-    prisma!.conversation.findUnique({ where: { id: conversationId }, select: { activeLeafId: true } }),
+    prisma!.conversation.findUnique({ where: { id: conversationId }, select: { activeLeafId: true, loopitRunId: true } }),
     prisma!.message.findMany({ where: { conversationId }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] }),
   ])
   return {
     activeLeafId: conversation?.activeLeafId ?? null,
+    loopitRunId: conversation?.loopitRunId ?? null,
     messages: rows.map((m) => ({ ...m, createdAt: m.createdAt.toISOString() })) as StoredMessage[],
   }
 }

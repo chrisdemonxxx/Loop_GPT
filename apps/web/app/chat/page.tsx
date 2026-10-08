@@ -17,6 +17,7 @@ import { ShortcutSheet } from '../components/ShortcutSheet'
 import Sidebar from '../components/chat/Sidebar'
 import Composer from '../components/chat/Composer'
 import MessageList from '../components/chat/MessageList'
+import { LoopitRunCard } from '../components/chat/LoopitRunCard'
 import ArtifactsPanel from '../components/chat/ArtifactsPanel'
 import ChatHeader from '../components/chat/ChatHeader'
 import { CanvasPanel } from '../components/chat/CanvasPanel'
@@ -122,13 +123,15 @@ export default function ChatPage() {
 
   // â”€â”€ Data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const { workspaceId, projects, activeProjectId, setActiveProjectId, refreshProjects } = useWorkspaceProjects()
-  const { conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages, branchVersions, selectVersion, sessionsError, sessionsPending, retrySessions, messagesError, retryMessages } =
+  const { conversations, messages, updateConv, deleteConv, invalidateConversations, invalidateMessages, branchVersions, selectVersion, sessionsError, sessionsPending, retrySessions, messagesError, retryMessages, loopitRunId: persistedLoopitRunId } =
     useConversationsData(currentConversationId, (id) => { if (currentConversationId === id) setCurrentConversationId(null) })
   const chat = useChatStream()
   /** Live UI belongs to one conversation. Another chat must not show it or
    *  treat its composer as busy. */
   const streamHere = !chat.liveConversationId || chat.liveConversationId === currentConversationId
   const showRunning = chat.running && streamHere
+  const listedLoopitRunId = (conversations as Conversation[]).find((c) => c.id === currentConversationId)?.loopitRunId || null
+  const loopitRunId = (streamHere && chat.liveLoopitRunId) || persistedLoopitRunId || listedLoopitRunId || null
   const viewedRef = useRef<string | null>(currentConversationId)
   // Â§8-40: workspace-connection chips — recent-use-first, pin for next run.
   const workspaceConnections = useWorkspaceConnections(workspaceId)
@@ -991,6 +994,12 @@ export default function ChatPage() {
               <span className="flex-1">Couldn&apos;t load this conversation.</span>
               <button type="button" onClick={() => retryMessages()} className="shrink-0 text-[#e79d7f] hover:underline">Retry</button>
             </div>
+          </div>
+        )}
+
+        {loopitRunId && (
+          <div className="max-w-[48rem] mx-auto w-full px-4 pt-3">
+            <LoopitRunCard runId={loopitRunId} />
           </div>
         )}
 

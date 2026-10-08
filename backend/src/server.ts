@@ -63,6 +63,7 @@ import { projectRouter } from './routes/projects'
 import { stylesRouter } from './routes/styles'
 import { memoryRouter } from './routes/memory'
 import { oauthConnectorRouter } from './routes/oauthConnector'
+import loopitRoutes from './routes/loopit'
 
 
 // Register reviewed built-ins; legacy shared extensions are not bootstrapped.
@@ -164,6 +165,7 @@ app.use('/api/conversations', imageUploadRouter)
 // Routes
 app.use('/api/auth', authRoutes)
 app.use('/api/auth', oauthRouter)
+app.use('/api/loopit', loopitRoutes)
 app.use('/api/oauth-connector', oauthConnectorRouter)
 // Root-level /oauth/:provider relay (social-login buttons built from DOMAIN_SERVER land here)
 app.use(oauthRelayRouter)

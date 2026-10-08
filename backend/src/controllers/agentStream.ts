@@ -22,6 +22,7 @@ import { BUILTIN_SKILLS } from '../agent/skills/builtin'
 import { selectedConnectionIds, workspaceConnectionTools } from '../services/workspaceTools'
 import { connectionToolName } from '../agent/connectors/reviewedAdapters'
 import { runAgent } from '../agent/agentRuntime'
+import { LOOPIT_BUILD_INSTRUCTIONS, LOOPIT_START_TOOL } from '../agent/mcp/loopitBuiltin'
 import { groupPreamble, labelSpeaker, shouldPersistUserMessage } from '../services/botRoster'
 import { runDeepResearch } from '../agent/research/deepResearch'
 import { initSSE, sendEvent, endSSE, startKeepalive } from '../agent/streaming'
@@ -463,6 +464,7 @@ export async function streamAgentRun(req: Request, res: Response) {
       const skillIndex = [...builtinMatched, ...userSkills].map((skill) => `- ${skill.name}: ${skill.description}`)
       const systemPrompt = [
         botPersona || BASE_SYSTEM_PROMPT,
+        selectedNames.includes(LOOPIT_START_TOOL) ? LOOPIT_BUILD_INSTRUCTIONS : '',
         skillIndex.length ? `Available skills (already applied where relevant):\n${skillIndex.join('\n')}` : '',
         ...skillInstructions,
         // §8-34 enforcement: the detected threat gets a targeted hardening

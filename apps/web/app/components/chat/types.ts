@@ -27,6 +27,8 @@ export interface Conversation {
   kind?: string
   botId?: string | null
   botIds?: string[]
+  /** Loop-IT build started from this conversation. */
+  loopitRunId?: string | null
 }
 
 /** One streamed agent step (tool call or text delta group) in the live turn. */

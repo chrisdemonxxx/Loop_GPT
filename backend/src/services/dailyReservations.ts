@@ -215,3 +215,84 @@ export async function finishDailyFailureTx(tx: Prisma.TransactionClient, id: str
 export async function cleanupDailyReservation(id: string | undefined) {
   if (id) await finishDailyFailure(id).catch(() => console.error('Daily reservation needs reconciliation:', id))
 }
+
+export interface LoopitMeterCharge {
+  userId: string
+  /** sha256 of workspace id + idempotency key. Same key never debits twice. */
+  requestFingerprint: string
+  /** sha256 of the meter payload. A reused key with different usage conflicts. */
+  payloadFingerprint: string
+  model: string
+  tokensIn: number
+  tokensOut: number
+  /** Pre-bypass credit amount. Unlimited and admin owners store a zero charge. */
+  credits: number
+  pricingSnapshot: Prisma.InputJsonObject
+}
+
+function snapshotFingerprint(value: Prisma.JsonValue | null): string | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const fingerprint = value.payloadFingerprint
+  return typeof fingerprint === 'string' ? fingerprint : undefined
+}
+
+/**
+ * Charge one Loop-IT meter event to a workspace owner and capture it on the
+ * daily reservation ledger. The user row lock serializes the idempotency
+ * check with the debit, so a replay cannot create a second reservation.
+ */
+export async function recordLoopitMeteredUsage(input: LoopitMeterCharge): Promise<{ reservationId: string; credits: number; duplicate: boolean }> {
+  if (!/^[a-f0-9]{64}$/.test(input.requestFingerprint) || !/^[a-f0-9]{64}$/.test(input.payloadFingerprint)) {
+    throw new DailyCreditError(400, 'INVALID_DAILY_USAGE', 'Invalid usage metrics')
+  }
+  const tokensIn = count(input.tokensIn)
+  const tokensOut = count(input.tokensOut)
+  const credits = count(input.credits)
+  if (credits < 1 || credits > 10_000) throw new DailyCreditError(400, 'INVALID_DAILY_USAGE', 'Invalid usage metrics')
+  if (!input.model || input.model.length > 1024 || !input.userId || input.userId.length > 256) {
+    throw new DailyCreditError(400, 'INVALID_DAILY_USAGE', 'Invalid usage metrics')
+  }
+  const usage: DailyUsage = { tokensIn, tokensOut, model: input.model }
+  return database().$transaction(async (tx) => {
+    const user = await resetUser(tx, await lockedUser(tx, input.userId))
+    const bypass = user.role === 'admin' || user.unlimited
+    const charge = bypass ? 0 : credits
+    const existing = await tx.dailyReservation.findFirst({
+      where: { userId: input.userId, kind: 'loopit', requestFingerprint: input.requestFingerprint },
+    })
+    if (existing) {
+      if (snapshotFingerprint(existing.pricingSnapshot) !== input.payloadFingerprint || existing.credits !== charge) {
+        throw new DailyCreditError(409, 'LOOPIT_USAGE_CONFLICT', 'Usage event does not match the recorded charge')
+      }
+      if (existing.state !== 'captured') {
+        await enqueueDailySettlementTx(tx, existing.id, input.userId, 'loopit', usage)
+        await captureDailySettlementTx(tx, existing.id)
+      }
+      return { reservationId: existing.id, credits: existing.credits, duplicate: true }
+    }
+    await admitDailyReservationTx(tx, input.userId, user.creditsResetAt)
+    const debited = await tx.user.updateMany({
+      where: { id: input.userId, ...(bypass ? {} : { credits: { gte: charge } }) },
+      data: { credits: { decrement: charge } },
+    })
+    if (!debited.count) throw new DailyCreditError(402, 'OUT_OF_CREDITS', 'Out of daily credits')
+    const row = await tx.dailyReservation.create({
+      data: {
+        id: randomUUID(),
+        userId: input.userId,
+        kind: 'loopit',
+        model: input.model,
+        credits: charge,
+        imageCredits: 0,
+        bypass,
+        windowStart: user.creditsResetAt,
+        state: 'dispatched',
+        requestFingerprint: input.requestFingerprint,
+        pricingSnapshot: { ...input.pricingSnapshot, payloadFingerprint: input.payloadFingerprint },
+      },
+    })
+    await enqueueDailySettlementTx(tx, row.id, input.userId, 'loopit', usage)
+    await captureDailySettlementTx(tx, row.id)
+    return { reservationId: row.id, credits: charge, duplicate: false }
+  })
+}

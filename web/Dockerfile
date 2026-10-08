@@ -11,6 +11,8 @@ RUN node -e "const [a,b]=process.versions.node.split('.').map(Number);if(a<22||(
 ARG NEXT_PUBLIC_SENTRY_DSN=""
 ARG NEXT_PUBLIC_POSTHOG_KEY=""
 ARG NEXT_PUBLIC_POSTHOG_HOST=""
+# Bake the Build section into the static export. Empty keeps /code on /developer.
+ARG LOOPIT_ENABLED=""
 # Served revision of THIS image (contract AF). For repo-triggered builds,
 # Railway injects RAILWAY_GIT_COMMIT_SHA (provided variable) — declare it as
 # an ARG so it reaches the build (the ${{RAILWAY_GIT_COMMIT_SHA}} *reference*
@@ -21,7 +23,9 @@ ARG GIT_REVISION=""
 ARG RAILWAY_GIT_COMMIT_SHA=""
 ENV NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN} \
     NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY} \
-    NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
+    NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST} \
+    LOOPIT_ENABLED=${LOOPIT_ENABLED} \
+    NEXT_PUBLIC_LOOPIT_ENABLED=${LOOPIT_ENABLED}
 # npm workspaces: `npm ci` needs every workspace's package.json (manifests
 # only) before install, then the sources can land for the build.
 COPY package.json package-lock.json ./
@@ -83,8 +87,31 @@ resolver=$(awk '$1 == "nameserver" { print $2; exit }' /etc/resolv.conf)
 case "$resolver" in ''|*[!0-9a-fA-F.:]*) fail ;; esac
 case "$resolver" in *:*) resolver="[$resolver]" ;; esac
 export API_HOST="$authority" API_TLS_NAME="$host" API_RESOLVER="$resolver"
+# Optional Loop-IT gateway. Unset copies the main API upstream so /api/loopit/
+# stays on Loop-GPT until LOOPIT_API_UPSTREAM is set. http is limited to
+# platform-internal names, matching API_UPSTREAM.
+if [ -n "${LOOPIT_API_UPSTREAM:-}" ]; then
+  case "$LOOPIT_API_UPSTREAM" in *"$cr"*|*"$lf"*) fail ;; esac
+  printf '%s' "$LOOPIT_API_UPSTREAM" | grep -Eq '^https?://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$' || fail
+  loopit_authority=${LOOPIT_API_UPSTREAM#*://}
+  loopit_host=${loopit_authority%%:*}
+  case "$LOOPIT_API_UPSTREAM" in
+    https://*) ;;
+    http://*) case "$loopit_host" in *.railway.internal|loopit-api|backend) ;; *) fail ;; esac ;;
+    *) fail ;;
+  esac
+  if [ "$loopit_authority" != "$loopit_host" ]; then
+    loopit_port=${loopit_authority##*:}
+    [ "$loopit_port" -ge 1 ] && [ "$loopit_port" -le 65535 ] || fail
+  fi
+  export LOOPIT_API_HOST="$loopit_authority" LOOPIT_API_TLS_NAME="$loopit_host"
+else
+  export LOOPIT_API_UPSTREAM="$API_UPSTREAM"
+  export LOOPIT_API_HOST="$API_HOST"
+  export LOOPIT_API_TLS_NAME="$API_TLS_NAME"
+fi
 # Subprocess exports do not reach the stock entrypoint. Render explicitly here.
-envsubst '${PORT} ${API_UPSTREAM} ${API_HOST} ${API_TLS_NAME} ${API_RESOLVER} ${PROXY_SHARED_SECRET}' \
+envsubst '${PORT} ${API_UPSTREAM} ${API_HOST} ${API_TLS_NAME} ${API_RESOLVER} ${PROXY_SHARED_SECRET} ${LOOPIT_API_UPSTREAM} ${LOOPIT_API_HOST} ${LOOPIT_API_TLS_NAME}' \
   < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf
 # Keep restarts idempotent; the stock renderer must not overwrite these values.
 export NGINX_ENVSUBST_TEMPLATE_DIR=/nonexistent

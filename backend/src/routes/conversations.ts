@@ -105,6 +105,7 @@ router.get('/', authenticateToken, async (req, res) => {
         kind: true,
         botIds: true,
         shareToken: true,
+        loopitRunId: true,
       },
     })
 

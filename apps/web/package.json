@@ -18,6 +18,8 @@
   },
   "dependencies": {
     "@loop/api-client": "*",
+    "@loop/loopit-client": "*",
+    "@loop/loopit-contracts": "*",
     "@loop/shared": "*",
     "@loop/ui": "*",
     "@sentry/browser": "^8.47.0",

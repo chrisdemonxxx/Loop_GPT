@@ -207,6 +207,8 @@ model Project {
   name        String
   instructions String    @default("")
   role        ProjectRole @default(viewer)
+  /// Loop-IT project this project is linked to. Null until linked.
+  loopitProjectId String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -451,6 +453,8 @@ model Conversation {
   botIds    Json?
   /// 'chat' | 'bot' | 'group'. Existing rows stay 'chat'.
   kind      String    @default("chat")
+  /// Loop-IT run linked to this conversation. Null until a build is started.
+  loopitRunId String?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -785,6 +789,8 @@ model Workspace {
   name String
   personalOwnerId String? @unique
   personalOwner User? @relation("PersonalWorkspace", fields: [personalOwnerId], references: [id], onDelete: Cascade)
+  /// Loop-IT org this workspace is linked to. Null until linked.
+  loopitOrgId String?
   createdAt DateTime @default(now())
   members WorkspaceMember[]
   connections WorkspaceConnection[]

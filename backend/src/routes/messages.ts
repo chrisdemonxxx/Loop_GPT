@@ -49,7 +49,7 @@ router.get('/:conversationId/messages', authenticateToken, validate(validationSc
       const conversation = memoryStore.getConversation(conversationId)
       if (!conversation || conversation.userId !== userId) return res.status(404).json({ error: 'Conversation not found' })
       const messages = memoryStore.getMessages(conversationId).map(msg => ({ ...msg, imagePath: null, createdAt: msg.createdAt.toISOString() }))
-      if (req.query.branch === '1') return res.json({ activeLeafId: null, messages })
+      if (req.query.branch === '1') return res.json({ activeLeafId: null, loopitRunId: null, messages })
       return res.json(messages)
     }
     const conversation = await prisma!.conversation.findFirst({ where: { id: conversationId, userId } })

@@ -1,0 +1,70 @@
+# Loop-IT is a uv workspace (Loop-it/uv.lock). This job installs uv, then runs
+# scripts/check_invariants.py and pytest. If the uv action cannot be installed,
+# the job skips instead of failing the rest of CI. After a manual
+# `git subtree add --prefix=loopit`, the same steps run from loopit/.
+
+name: Loop-IT validation
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    paths:
+      - 'Loop-it/**'
+      - 'loopit/**'
+      - '.github/workflows/loopit-validation.yml'
+  push:
+    paths:
+      - 'Loop-it/**'
+      - 'loopit/**'
+      - '.github/workflows/loopit-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  loopit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install uv
+        id: uv
+        continue-on-error: true
+        uses: astral-sh/setup-uv@v5
+      - name: Invariants and pytest
+        if: steps.uv.outcome == 'success'
+        run: |
+          set -eu
+          if [ -f Loop-it/pyproject.toml ]; then
+            cd Loop-it
+          elif [ -f loopit/pyproject.toml ]; then
+            cd loopit
+          else
+            echo "Loop-IT tree is not in this checkout; skipping."
+            exit 0
+          fi
+          if ! command -v uv >/dev/null 2>&1; then
+            echo "uv is not on PATH; skipping Loop-IT checks."
+            echo "Install uv (https://docs.astral.sh/uv/) and run:"
+            echo "  uv sync --frozen --group dev"
+            echo "  uv run python scripts/check_invariants.py"
+            echo "  uv run pytest"
+            exit 0
+          fi
+          uv sync --frozen --group dev
+          uv run python scripts/check_invariants.py
+          uv run pytest
+      - name: Skip when the uv toolchain is unavailable
+        if: steps.uv.outcome != 'success'
+        run: |
+          echo "uv toolchain is not available; skipping Loop-IT checks."
+          echo "Loop-IT is a uv workspace. Install uv from https://docs.astral.sh/uv/ then, in Loop-it/:"
+          echo "  uv sync --frozen --group dev"
+          echo "  uv run python scripts/check_invariants.py"
+          echo "  uv run pytest"

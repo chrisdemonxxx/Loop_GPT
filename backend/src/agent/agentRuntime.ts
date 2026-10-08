@@ -31,13 +31,16 @@ import { resolveThinking, thinkingFamily } from './thinking'
 import { assertRunAccess, grantedTools, restrictRunContext } from './runAuthorization'
 import { CONFIDENTIALITY_PROMPT, sanitizeText, sanitizeMetadata, makeStreamSanitizer, guardrailsEnabled } from './guardrails'
 import { storeApproval, waitForApproval, clearApproval } from './approvalStore'
+import { LOOPIT_APPROVE_TOOL } from './mcp/loopitBuiltin'
 import { getMemories } from './tools/remember'
 import { configStore, type ToolPermission } from './configStore'
 import { compactTranscript, shouldRecompact, transcriptSize } from './compactTranscript'
 import { narrateSteps } from '../services/botRoster'
 
-/** Tools that always pause for the user, whatever overrides or autoApprove say. */
-export const MANDATORY_APPROVAL_TOOLS = new Set(['create_custom_tool'])
+/** Tools that always pause for the user, whatever overrides or autoApprove say.
+ *  The Loop-IT gate tool is included so a build gate still asks in chat when
+ *  the run mode would otherwise auto-approve MCP calls. */
+export const MANDATORY_APPROVAL_TOOLS = new Set(['create_custom_tool', LOOPIT_APPROVE_TOOL])
 
 /** Resolve the effective permission.
  *  The user's own override (or a built-in default such as

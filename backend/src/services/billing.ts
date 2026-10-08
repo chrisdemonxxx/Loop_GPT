@@ -7,7 +7,7 @@
 import { prisma, hasDb } from './prisma'
 import { enqueueDailySettlement, captureDailySettlement, DailyCreditError, getDailyAccountUser } from './dailyReservations'
 
-export type UsageKind = 'chat' | 'agent' | 'research' | 'image' | 'video' | 'bot'
+export type UsageKind = 'chat' | 'agent' | 'research' | 'image' | 'video' | 'bot' | 'loopit'
 
 /**
  * Daily allowances per plan (rolling 24h reset per user).
@@ -32,6 +32,9 @@ export const CREDIT_COST: Record<UsageKind, number> = {
   video: 10,
   // Autonomous background run: multi-step, so it holds more than a chat turn.
   bot: 2,
+  // Flat price only if this kind is reserved directly. Metered Loop-IT usage
+  // charges a computed amount through recordLoopitMeteredUsage.
+  loopit: 1,
 }
 
 function planLimits(plan: string) {

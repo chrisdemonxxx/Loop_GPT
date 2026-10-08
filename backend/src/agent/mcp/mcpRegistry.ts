@@ -4,6 +4,7 @@
  * sees servers its user owns, plus servers an admin marked `shared`.
  */
 import { McpConnection } from './mcpClient'
+import { loopitBuiltinTools } from './loopitBuiltin'
 import { configStore, type McpServerConfig } from '../configStore'
 import type { ToolContext, ToolDefinition } from '../types'
 
@@ -30,9 +31,10 @@ class McpRegistry {
     }))
   }
 
-  /** Tools from servers visible to `userId` (owned by them, or shared). */
+  /** Tools from servers visible to `userId` (owned by them, or shared),
+   * plus the code-configured loopit-mcp tools when LOOPIT_MCP_URL is set. */
   toolsFor(userId: string): ToolDefinition[] {
-    const out: ToolDefinition[] = []
+    const out: ToolDefinition[] = userId ? loopitBuiltinTools() : []
     const seen = new Set(out.map((tool) => tool.name))
     for (const s of this.servers.values()) {
       if (s.status !== 'connected' || !s.cfg.enabled) continue
