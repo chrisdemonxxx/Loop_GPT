@@ -64,7 +64,9 @@ for value in "${PORT:-8080}" "${OWNED_WEB_ORIGIN:-}" "${API_UPSTREAM:-}" "${PROX
   case "$value" in *"$cr"*|*"$lf"*) fail ;; esac
 done
 # Optional; rendered into a quoted nginx header value, so keep it to a token charset.
-printf '%s' "${PROXY_SHARED_SECRET:-}" | grep -Eq '^[A-Za-z0-9_-]{0,256}$' || fail
+# Unset is allowed: skip the grep (grep on zero-byte input has no lines, so even
+# a {0,} pattern fails — the old form hard-failed every secretless deployment).
+[ -z "${PROXY_SHARED_SECRET:-}" ] || { printf '%s' "$PROXY_SHARED_SECRET" | grep -Eq '^[A-Za-z0-9_-]{1,256}$' || fail; }
 export PROXY_SHARED_SECRET="${PROXY_SHARED_SECRET:-}"
 case "${PORT:-8080}" in ''|*[!0-9]*) fail ;; esac
 [ "$PORT" -ge 1024 ] && [ "$PORT" -le 65535 ] || fail
