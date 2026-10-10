@@ -48,7 +48,8 @@ export function resolveOpenAIConfig(
   switch (provider) {
     case 'huggingface': {
       endpoint = modelBaseUrl(getHFBaseUrl(baseUrl))
-      const allowed = [env.HF_ENDPOINT_URL, env.HF_LARGE_ENDPOINT_URL].filter((value): value is string => !!value)
+      const allowed = [env.HF_ENDPOINT_URL, env.HF_LARGE_ENDPOINT_URL, env.HF_GLM_ENDPOINT_URL, env.HF_VISION_ENDPOINT_URL]
+        .filter((value): value is string => !!value)
         .map(value => modelBaseUrl(getHFBaseUrl(value)))
       if (!allowed.includes(endpoint)) throw new ModelTransportError()
       serverKey = env.HF_TOKEN
