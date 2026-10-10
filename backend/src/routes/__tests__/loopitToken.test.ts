@@ -93,6 +93,14 @@ describe('POST /api/loopit/token', () => {
     expect(body.expires_in).toBe(900)
     expect(typeof body.access_token).toBe('string')
     expect(res.headers.get('cache-control')).toBe('no-store')
+    // The web client's createTokenStore parses these two fields; they must
+    // carry the same token and a real expiry or the Build page dies offline.
+    expect(body.token).toBe(body.access_token)
+    expect(typeof body.token).toBe('string')
+    expect(body.token.length).toBeGreaterThan(0)
+    const parsedExpiry = Date.parse(String(body.expiresAt))
+    expect(Number.isNaN(parsedExpiry)).toBe(false)
+    expect(parsedExpiry).toBeGreaterThan(Date.now())
   })
 
   it('accepts a bearer token and maps an editor to member', async () => {

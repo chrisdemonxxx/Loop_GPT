@@ -161,6 +161,23 @@ await withSmokeCleanup({ run: async () => {
   assert.match(new TextDecoder().decode((await v1reader.read()).value), /first/)
   assert.ok(Date.now() - v1start < 1200, '/v1 SSE first frame must arrive before delayed final frame')
   await v1reader.cancel()
+
+  // Build gateway probe: the mint stays on the main API upstream and speaks
+  // the exact contract the web client parses; /api/loopit/runs strips to the
+  // engine's /api/runs and accepts the minted bearer. This is the chain that
+  // once broke the whole Build page (client parsed {token, expiresAt} while
+  // the route answered {access_token, expires_in}).
+  const mint = await (await response(`${fixtureBase}/api/loopit/token`, { method: 'POST', body: '{}' })).json()
+  assert.equal(mint.token, mint.access_token)
+  assert.ok(typeof mint.token === 'string' && mint.token.length > 0)
+  assert.equal(mint.token_type, 'bearer')
+  assert.ok(!Number.isNaN(Date.parse(mint.expiresAt)), 'expiresAt must be an ISO timestamp')
+  const withBearer = await response(`${fixtureBase}/api/loopit/runs`, { headers: { authorization: `Bearer ${mint.token}` } })
+  assert.equal(withBearer.status, 200)
+  assert.deepEqual(await withBearer.json(), [])
+  assert.equal((await response(`${fixtureBase}/api/loopit/runs`)).status, 401)
+  console.log('PASS: /api/loopit mint contract, prefix strip, and bearer chain through the real nginx')
+
   docker(['restart', webFixture])
   await waitHttp(`${fixtureBase}/healthz`)
   docker(['run', '--rm', '--network', 'none', '--label', fixtureLabel, '-e', 'API_UPSTREAM=https://good.invalid;include /tmp/evil;',

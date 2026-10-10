@@ -61,6 +61,8 @@ export interface RunSummary {
   run_id: string
   project_id: string
   prompt: string
+  /** Product-style name composed by the engine's brief; absent on legacy runs. */
+  title?: string
   status: RunStatus
   started_at: string
   finished_at: string | null
@@ -175,10 +177,15 @@ export function createLoopitClient(options: LoopitClientOptions = {}): LoopitCli
         max_iterations: runOptions.maxIterations ?? 12,
       }),
     }),
-    deployProject: (projectId, checkpointId, reason) => apiFetch(`/projects/${encodeURIComponent(projectId)}/deploy`, {
-      method: 'POST',
-      body: JSON.stringify({ checkpoint_id: checkpointId, confirmed: true, reason }),
-    }),
+    deployProject: async (projectId, checkpointId, reason) => {
+      const body = await apiFetch<{ production_url: string; status: string }>(`/projects/${encodeURIComponent(projectId)}/deploy`, {
+        method: 'POST',
+        body: JSON.stringify({ checkpoint_id: checkpointId, confirmed: true, reason }),
+      })
+      // The engine returns a root-relative site path; route it through the
+      // gateway so the "Open app" link actually loads the deployed site.
+      return { production_url: resolvePreviewUrl(body.production_url, baseUrl), status: body.status }
+    },
     approveGate: async (runId, gateId, reason) => {
       await apiFetch(`/runs/${encodeURIComponent(runId)}/gates/${encodeURIComponent(gateId)}/approve`, {
         method: 'POST',
@@ -220,10 +227,24 @@ function fetchImpl(options: LoopitClientOptions): typeof fetch {
   return options.fetchImpl ?? fetch
 }
 
+/**
+ * Make an engine-returned site URL loadable from the browser.
+ *
+ * The engine hands back root-relative paths on its own data plane
+ * (`/api/projects/<id>/site/t/<token>/index.html`). Served same-origin those
+ * hit the Loop-GPT backend and 404; they must carry the `/api/loopit` gateway
+ * prefix (or the client's configured base) to reach the engine. Absolute
+ * URLs pass through untouched, and already-prefixed paths are idempotent.
+ */
 export function resolvePreviewUrl(url: string, baseUrl = LOOPIT_API_BASE): string {
   if (url.startsWith('http://') || url.startsWith('https://')) return url
-  if (url.startsWith('/')) return url
-  return `${baseUrl.replace(/\/$/, '')}/${url.replace(/^\//, '')}`
+  const base = baseUrl.replace(/\/$/, '')
+  if (url.startsWith('/')) {
+    // Idempotency: a path that already carries the base must not be prefixed twice.
+    if (url === base || url.startsWith(`${base}/`)) return url
+    return `${base}${url}`
+  }
+  return `${base}/${url.replace(/^\//, '')}`
 }
 
 async function readJson<T>(response: Response): Promise<T> {

@@ -93,6 +93,31 @@ describe('isServiceMissing', () => {
   })
 })
 
+describe('mint response contract', () => {
+  it('parses the exact JSON POST /api/loopit/token returns', async () => {
+    // Mirrors the backend route (backend/src/routes/loopit.ts) whose own test
+    // asserts these fields are emitted. This is the seam that once broke the
+    // whole Build page: the client parsed {token, expiresAt} while the route
+    // answered {access_token, expires_in}. Pinning both halves together.
+    const mintResponse = {
+      access_token: 'id.tok.en',
+      token: 'id.tok.en',
+      token_type: 'bearer',
+      expires_in: 900,
+      expiresAt: new Date(Date.now() + 120_000).toISOString(),
+      org: 'ws_1',
+      role: 'owner',
+    }
+    const fetchImpl = vi.fn(async () => json(mintResponse))
+    const store = createTokenStore({ fetchImpl })
+    await expect(store.getToken()).resolves.toBe('id.tok.en')
+    expect(fetchImpl).toHaveBeenCalledWith(LOOPIT_TOKEN_PATH, expect.objectContaining({
+      method: 'POST',
+      credentials: 'include',
+    }))
+  })
+})
+
 describe('createLoopitClient token refresh', () => {
   it('mints a new bearer after a 401 and retries the call once', async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

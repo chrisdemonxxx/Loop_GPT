@@ -1,8 +1,39 @@
 // Local smoke fixture only; never copied into either deliverable image.
 import { createServer } from 'node:http'
 let disconnected = false
+// Build-gateway probe state: one bearer minted per fixture process.
+let issuedBearer = null
 createServer((req, res) => {
   if (req.url === '/api/disconnected') { res.end(JSON.stringify({ disconnected })); return }
+  // POST /api/loopit/token answers the exact mint contract the Loop-GPT
+  // backend emits: { access_token, token, token_type, expires_in, expiresAt,
+  // org, role }. The web client's createTokenStore parses token/expiresAt.
+  if (req.url === '/api/loopit/token' && req.method === 'POST') {
+    issuedBearer = `smoke-bearer-${Date.now().toString(36)}`
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+    res.end(JSON.stringify({
+      access_token: issuedBearer,
+      token: issuedBearer,
+      token_type: 'bearer',
+      expires_in: 900,
+      expiresAt: new Date(Date.now() + 900_000).toISOString(),
+      org: 'org_smoke',
+      role: 'owner',
+    }))
+    return
+  }
+  // The engine data plane behind the /api/loopit prefix: /api/loopit/runs
+  // arrives here as /api/runs (prefix stripped by nginx) and demands the bearer.
+  if (req.url === '/api/runs' && req.method === 'GET') {
+    if (!issuedBearer || req.headers.authorization !== `Bearer ${issuedBearer}`) {
+      res.writeHead(401, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ detail: 'authentication required' }))
+      return
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end('[]')
+    return
+  }
   if (req.url === '/api/stream' || req.url === '/v1/stream') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream' })
     res.write('data: first\n\n')

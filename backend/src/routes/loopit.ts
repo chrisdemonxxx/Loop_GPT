@@ -92,10 +92,17 @@ router.post('/token', authenticateToken, async (req, res) => {
       orgId: membership.workspaceId,
       role,
     })
+    // Two vocabularies, one response: `access_token`/`expires_in` (OAuth style,
+    // the original contract) and `token`/`expiresAt` (what the web client's
+    // createTokenStore parses). Both must stay present — the seam test pins
+    // them together so the browser mint can never drift from this route again.
+    const expiresAt = new Date(Date.now() + LOOPIT_IDENTITY_TTL_SECONDS * 1000).toISOString()
     res.json({
       access_token: accessToken,
+      token: accessToken,
       token_type: 'bearer',
       expires_in: LOOPIT_IDENTITY_TTL_SECONDS,
+      expiresAt,
       org: membership.workspaceId,
       role,
     })
