@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client'
 import { ZodError } from 'zod'
 import { providerRequest, ProviderHttpError } from './providerHttp'
 import { checkedMedia, mediaAuth, mediaOperation, mediaUrl, VIDEO_RESPONSE_BYTES } from '../agent/httpClient'
-import { decodeVideoResponse } from '../agent/tools/generateVideo'
+import { decodeVideoResponse, videoTaskApi, videoTaskName, videoTaskSaveDir } from '../agent/tools/generateVideo'
 import { stagePrivateArtifact, verifyStagedArtifact } from './privateFiles'
 import { checkPrivateStorageReadiness, resolveRoot } from './privateStorage'
 import { validateVideoMp4 } from './mp4Validation'
@@ -259,6 +259,34 @@ export async function processVideoClaim(claim: VideoClaim, options: VideoWorkerO
     if (row.job.resultUrl) mediaUrl(row.job.resultUrl, endpoint)
     const url = submitting ? mediaUrl(endpoint) : mediaUrl(row.job.statusUrl!, endpoint, true)
     const input = prepared.input
+
+    // LightX2V/MiniMax task API (HF_VIDEO_API=lightx2v): this endpoint does not
+    // speak the plain {inputs} job contract the generic submit below expects —
+    // it takes a task POST and serves the finished clip from the task's result
+    // URL. Map the task onto the job's status/result URLs so the shared polling
+    // flow completes it unchanged.
+    if (submitting && videoTaskApi()) {
+      const taskBase = endpoint.replace(/\/+$/, '')
+      const savePath = `${videoTaskSaveDir()}/loopgpt-${claim.jobId}.mp4`
+      const submitted = await providerRequest(`${taskBase}/v1/tasks/video/`, { ...auth, method: 'POST',
+        headers: { ...auth.headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: videoTaskName(0), prompt: input.prompt, seed: Math.floor(Math.random() * 1_000_000),
+          num_frames: input.numFrames, size: [input.height, input.width], save_result_path: savePath }),
+        signal: op.signal, timeoutMs: op.remaining(), maxBytes: VIDEO_RESPONSE_BYTES })
+      op.check()
+      const job = await submitted.json()
+      const taskId = String(job?.task_id || '')
+      if (!taskId || taskId.length > 256) throw new VideoJobError('invalid_provider')
+      const statusUrl = `${taskBase}/v1/tasks/${encodeURIComponent(taskId)}/status`
+      const resultUrl = `${taskBase}/v1/tasks/${encodeURIComponent(taskId)}/result`
+      await withVideoFence(claim, async (tx, value) => {
+        await tx.mediaJob.update({ where: { id: value.jobId }, data: { providerJobId: taskId, statusUrl, resultUrl, progress: 5 } })
+        await tx.accountedVideoJob.update({ where: { jobId: value.jobId }, data: { state: 'polling' } })
+        await retryTx(tx, value, prepared.config.pollMs, false)
+      })
+      return 'advanced'
+    }
+
     const response = await providerRequest(url, { ...auth, method: submitting ? 'POST' : 'GET',
       ...(submitting ? { headers: { ...auth.headers, 'Content-Type': 'application/json', Accept: 'application/json, video/mp4' },
         body: JSON.stringify({ inputs: input.prompt, parameters: { width: input.width, height: input.height, fps: input.fps, num_frames: input.numFrames } }) } : {}),
