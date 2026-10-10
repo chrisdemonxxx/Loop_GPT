@@ -1,6 +1,7 @@
 export * from './primitives'
 export * from './Popover'
 export * from './BottomSheet'
+export * from './Dialog'
 export * from './motion'
 export * from './useMenuDismiss'
 export * from './useFocusTrap'

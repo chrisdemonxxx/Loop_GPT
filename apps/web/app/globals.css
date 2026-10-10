@@ -28,6 +28,11 @@
     --accent-soft-border: rgba(201, 100, 66, 0.38); /* chip-on tint border */
     --accent-text: #d97757;                          /* AA on dark (GAP-003) */
     --accent-glow: rgba(201, 100, 66, 0.55);
+    --accent-soft-hover: rgba(201, 100, 66, 0.14);
+    /* Solid accent fill under white text: #b5593a = 4.70:1, hover 5.74:1. */
+    --accent-fill: #b5593a;
+    --accent-fill-hover: #a34d2f;
+    --accent-fill-active: #8f4227;
 
     /* Semantic surfaces + ink */
     --bg-base: #08080a;
@@ -40,10 +45,21 @@
     --ink-primary: #e2e8f0;
     --ink-secondary: #94a3b8;
     --ink-muted: #7c8ba1;
+    /* Interactive tints over any surface (hover rows, ghost buttons, wells). */
+    --bg-tint: rgba(255, 255, 255, 0.02);
+    --bg-hover: rgba(255, 255, 255, 0.05);
+    --bg-hover-strong: rgba(255, 255, 255, 0.09);
+    --bg-code: #0d0d0f;
 
-    /* Status */
+    /* Status. `--danger` is text/icon color; `--danger-strong` is a fill
+       under white text (#be123c = 6.0:1, hover #9f1239 = 7.9:1). */
     --success: #34d399;
     --danger: #fb7185;
+    --danger-strong: #be123c;
+    --danger-strong-hover: #9f1239;
+    --danger-soft: rgba(244, 63, 94, 0.08);
+    --danger-soft-border: rgba(251, 113, 133, 0.3);
+    --warning: #fbbf24;
 
     /* Single type stack (Inter from next/font, system fallbacks) */
     --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
@@ -68,6 +84,17 @@
     --ink-primary: #1f1f23;
     --ink-secondary: #47474f;
     --ink-muted: #6b6b74;
+    --accent-soft-hover: rgba(181, 89, 58, 0.16);
+    --bg-tint: rgba(0, 0, 0, 0.035);
+    --bg-hover: rgba(0, 0, 0, 0.06);
+    --bg-hover-strong: rgba(0, 0, 0, 0.1);
+    --bg-code: #f4f4f5;
+    /* AA on white: #047857 = 5.5:1, #be123c = 6.0:1, #a34a08 = 5.9:1. */
+    --success: #047857;
+    --danger: #be123c;
+    --danger-soft: rgba(190, 18, 60, 0.06);
+    --danger-soft-border: rgba(190, 18, 60, 0.28);
+    --warning: #a34a08;
   }
 
   body {
@@ -257,6 +284,90 @@ html[data-theme='light'] .hover\:bg-white\/\[0\.05\]:hover { background-color: r
 html[data-theme='light'] .hover\:bg-white\/\[0\.06\]:hover { background-color: rgba(0, 0, 0, 0.085); }
 html[data-theme='light'] .hover\:bg-white\/\[0\.08\]:hover { background-color: rgba(0, 0, 0, 0.11); }
 html[data-theme='light'] .hover\:bg-white\/\[0\.09\]:hover { background-color: rgba(0, 0, 0, 0.12); }
+
+/* Remaining white-alpha utilities that vanished on light surfaces
+   (UI consistency sweep, 2026-10-07). */
+html[data-theme='light'] .bg-white\/5 { background-color: rgba(0, 0, 0, 0.06); }
+html[data-theme='light'] .bg-white\/\[0\.025\] { background-color: rgba(0, 0, 0, 0.04); }
+html[data-theme='light'] .bg-white\/\[0\.14\] { background-color: rgba(0, 0, 0, 0.14); }
+html[data-theme='light'] .bg-white\/\[0\.16\] { background-color: rgba(0, 0, 0, 0.16); }
+html[data-theme='light'] .odd\:bg-white\/\[0\.02\]:nth-child(odd) { background-color: rgba(0, 0, 0, 0.035); }
+html[data-theme='light'] .hover\:bg-white\/5:hover { background-color: rgba(0, 0, 0, 0.06); }
+html[data-theme='light'] .hover\:bg-white\/10:hover { background-color: rgba(0, 0, 0, 0.1); }
+html[data-theme='light'] .hover\:bg-white\/15:hover { background-color: rgba(0, 0, 0, 0.14); }
+html[data-theme='light'] .hover\:bg-white\/\[0\.07\]:hover { background-color: rgba(0, 0, 0, 0.095); }
+html[data-theme='light'] .hover\:bg-white\/\[0\.12\]:hover { background-color: rgba(0, 0, 0, 0.13); }
+html[data-theme='light'] .focus\:bg-white\/\[0\.06\]:focus { background-color: rgba(0, 0, 0, 0.05); }
+html[data-theme='light'] .border-white\/5 { border-color: rgba(0, 0, 0, 0.09); }
+html[data-theme='light'] .border-white\/\[0\.09\] { border-color: rgba(0, 0, 0, 0.13); }
+html[data-theme='light'] .divide-white\/5 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(0, 0, 0, 0.09); }
+html[data-theme='light'] .hover\:border-white\/12:hover { border-color: rgba(0, 0, 0, 0.2); }
+html[data-theme='light'] .hover\:border-white\/15:hover { border-color: rgba(0, 0, 0, 0.22); }
+html[data-theme='light'] .hover\:border-white\/20:hover { border-color: rgba(0, 0, 0, 0.24); }
+html[data-theme='light'] .hover\:border-white\/25:hover { border-color: rgba(0, 0, 0, 0.28); }
+html[data-theme='light'] .hover\:border-white\/\[0\.14\]:hover { border-color: rgba(0, 0, 0, 0.2); }
+html[data-theme='light'] .hover\:border-white\/\[0\.16\]:hover { border-color: rgba(0, 0, 0, 0.22); }
+html[data-theme='light'] .group:hover .group-hover\:border-white\/20 { border-color: rgba(0, 0, 0, 0.24); }
+html[data-theme='light'] .focus-within\:border-white\/\[0\.14\]:focus-within { border-color: rgba(0, 0, 0, 0.2); }
+html[data-theme='light'] .ring-white\/10 { --tw-ring-color: rgba(0, 0, 0, 0.12); }
+html[data-theme='light'] .ring-white\/\[0\.08\] { --tw-ring-color: rgba(0, 0, 0, 0.1); }
+html[data-theme='light'] .hover\:ring-white\/\[0\.14\]:hover { --tw-ring-color: rgba(0, 0, 0, 0.18); }
+/* Outline buttons brighten their label to white on hover in dark; on paper
+   that erased the label. (Solid accent fills keep text-white untouched.) */
+html[data-theme='light'] .hover\:text-white:hover { color: #1f1f23; }
+html[data-theme='light'] .group:hover .group-hover\:text-slate-300 { color: #1f1f23; }
+html[data-theme='light'] .text-slate-700 { color: #6b6b74; }
+html[data-theme='light'] .text-slate-400\/70 { color: rgba(93, 93, 102, 0.85); }
+
+/* Second-palette status text (team-bot, admin) with no light mapping. */
+html[data-theme='light'] .text-violet-200,
+html[data-theme='light'] .text-violet-300,
+html[data-theme='light'] .text-violet-400 { color: #6d28d9; }
+html[data-theme='light'] .text-violet-300\/70,
+html[data-theme='light'] .text-violet-300\/80,
+html[data-theme='light'] .text-violet-300\/90,
+html[data-theme='light'] .text-violet-400\/80 { color: rgba(109, 40, 217, 0.9); }
+html[data-theme='light'] .text-amber-100,
+html[data-theme='light'] .text-amber-200,
+html[data-theme='light'] .text-amber-300 { color: #92400e; }
+html[data-theme='light'] .text-amber-200\/60,
+html[data-theme='light'] .text-amber-300\/80 { color: rgba(146, 64, 14, 0.85); }
+html[data-theme='light'] .text-sky-300,
+html[data-theme='light'] .text-sky-300\/80,
+html[data-theme='light'] .text-sky-300\/90 { color: #0369a1; }
+html[data-theme='light'] .text-emerald-200\/90,
+html[data-theme='light'] .text-emerald-300\/90 { color: #065f46; }
+html[data-theme='light'] .text-rose-100,
+html[data-theme='light'] .text-rose-300\/80,
+html[data-theme='light'] .text-rose-300\/90 { color: #9f1239; }
+html[data-theme='light'] .hover\:text-rose-100:hover,
+html[data-theme='light'] .hover\:text-rose-300:hover,
+html[data-theme='light'] .hover\:text-rose-400:hover { color: #9f1239; }
+html[data-theme='light'] .text-red-300 { color: #b91c1c; }
+html[data-theme='light'] .text-pink-400 { color: #be185d; }
+
+/* Dark slate cards (team-bot queue, skills, live computer, run timeline). */
+html[data-theme='light'] .bg-slate-950\/60,
+html[data-theme='light'] .bg-slate-900,
+html[data-theme='light'] .bg-slate-900\/50,
+html[data-theme='light'] .bg-slate-900\/70,
+html[data-theme='light'] .bg-slate-900\/80,
+html[data-theme='light'] .bg-slate-800\/80 { background-color: #f4f4f5; }
+html[data-theme='light'] .ring-slate-700\/60,
+html[data-theme='light'] .ring-slate-700\/70,
+html[data-theme='light'] .ring-slate-800 { --tw-ring-color: rgba(0, 0, 0, 0.1); }
+html[data-theme='light'] .hover\:ring-slate-700:hover { --tw-ring-color: rgba(0, 0, 0, 0.2); }
+
+/* Code wells on translucent black read as muddy grey on paper. */
+html[data-theme='light'] .bg-black\/30,
+html[data-theme='light'] .bg-black\/40 { background-color: #f4f4f5; }
+
+/* Scroll-fade edges on the settings tab strip. */
+html[data-theme='light'] .from-\[\#0f0f12\] {
+  --tw-gradient-from: #ffffff var(--tw-gradient-from-position);
+  --tw-gradient-to: rgb(255 255 255 / 0) var(--tw-gradient-to-position);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
 
 /* Component-layer surfaces */
 html[data-theme='light'] .glass {

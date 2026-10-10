@@ -85,6 +85,17 @@ module.exports = {
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
       },
+      // App UI type scale. Size-only (no line-height) so these are drop-in
+      // replacements for the old text-[Npx] utilities; Tailwind's own
+      // xs/sm/base keep their paired line-heights for prose.
+      fontSize: {
+        '3xs': '10px',
+        '2xs': '11px',
+        'ui-xs': '12px',
+        'ui-sm': '13px',
+        'ui-base': '14px',
+        'ui-md': '15px',
+      },
       fontFamily: {
         // Single stack: the token resolves to Inter (next/font) + system fallbacks.
         sans: ['var(--font-sans)'],
