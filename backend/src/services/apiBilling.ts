@@ -27,10 +27,17 @@ export const RATE_CHAT_LARGE_OUTPUT_PER_MTOK = 3 * MICROS_PER_USD // $3.00 / 1M 
 /** Cached input is billed at 10% of the standard input rate. */
 export const CACHED_INPUT_DISCOUNT = 0.1
 
-/** Per-tier chat rates, keyed by the tiers in `services/chatModels.ts`. */
+/** Per-tier chat rates, keyed by the tiers in `services/chatModels.ts`. Every
+ * tier the catalog can route must appear here: grossCostMicros rejects any
+ * tier absent from the table with invalid_request (the vision tier's absence
+ * 400'd every vision call, and the GLM 5.3 tier inherited the same gate). */
 export const CHAT_TIER_RATES: Record<string, { input: number; output: number }> = {
   standard: { input: RATE_CHAT_INPUT_PER_MTOK, output: RATE_CHAT_OUTPUT_PER_MTOK },
   large: { input: RATE_CHAT_LARGE_INPUT_PER_MTOK, output: RATE_CHAT_LARGE_OUTPUT_PER_MTOK },
+  // The dedicated VLM tier serves the same flagship model class as `large`.
+  vision: { input: RATE_CHAT_LARGE_INPUT_PER_MTOK, output: RATE_CHAT_LARGE_OUTPUT_PER_MTOK },
+  // GLM 5.3 deep-reasoning: heavyweight like the flagship, billed the same.
+  glm5: { input: RATE_CHAT_LARGE_INPUT_PER_MTOK, output: RATE_CHAT_LARGE_OUTPUT_PER_MTOK },
 }
 
 export function chatRatesFor(tier?: string | null) {
