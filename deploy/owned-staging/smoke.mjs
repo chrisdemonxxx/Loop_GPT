@@ -175,8 +175,24 @@ await withSmokeCleanup({ run: async () => {
   const withBearer = await response(`${fixtureBase}/api/loopit/runs`, { headers: { authorization: `Bearer ${mint.token}` } })
   assert.equal(withBearer.status, 200)
   assert.deepEqual(await withBearer.json(), [])
+
+  // Preview URLs: the engine answers with a path on its own data plane; the
+  // browser URL is gateway base + that path minus its leading /api, because
+  // nginx re-adds /api after stripping the base. Pinned live: the un-stripped
+  // form 404s (double /api) and the stripped form serves. This mirrors
+  // resolvePreviewUrl in packages/loopit-client.
+  const preview = await (await response(`${fixtureBase}/api/loopit/projects/proj_smoke/preview`, {
+    method: 'POST', headers: { authorization: `Bearer ${mint.token}`, 'content-type': 'application/json' }, body: '{"path":"index.html"}',
+  })).json()
+  assert.ok(preview.url.startsWith('/api/projects/'), 'engine preview URL must be engine-relative')
+  const browserPath = `/api/loopit${preview.url.replace(/^\/api/, '')}`
+  const site = await response(`${fixtureBase}${browserPath}`)
+  assert.equal(site.status, 200)
+  assert.match(await site.text(), /fixture site/)
+  const unstripped = await response(`${fixtureBase}/api/loopit${preview.url}`)
+  assert.equal(unstripped.status, 404)
   assert.equal((await response(`${fixtureBase}/api/loopit/runs`)).status, 401)
-  console.log('PASS: /api/loopit mint contract, prefix strip, and bearer chain through the real nginx')
+  console.log('PASS: /api/loopit mint contract, prefix strip, bearer chain, and site URL transform through the real nginx')
 
   docker(['restart', webFixture])
   await waitHttp(`${fixtureBase}/healthz`)

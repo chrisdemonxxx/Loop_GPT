@@ -230,11 +230,13 @@ function fetchImpl(options: LoopitClientOptions): typeof fetch {
 /**
  * Make an engine-returned site URL loadable from the browser.
  *
- * The engine hands back root-relative paths on its own data plane
- * (`/api/projects/<id>/site/t/<token>/index.html`). Served same-origin those
- * hit the Loop-GPT backend and 404; they must carry the `/api/loopit` gateway
- * prefix (or the client's configured base) to reach the engine. Absolute
- * URLs pass through untouched, and already-prefixed paths are idempotent.
+ * The engine hands back paths on its own data plane
+ * (`/api/projects/<id>/site/t/<token>/index.html`). The nginx gateway strips
+ * the `/api/loopit` prefix and re-adds `/api` itself (`proxy_pass
+ * $upstream/api/$path`), so the browser URL keeps the base's `/api` and drops
+ * the path's: `/api/loopit/projects/...`. A full-URL base (direct engine
+ * access, no gateway) keeps the path verbatim. Absolute URLs pass through,
+ * and already-routed paths are idempotent.
  */
 export function resolvePreviewUrl(url: string, baseUrl = LOOPIT_API_BASE): string {
   if (url.startsWith('http://') || url.startsWith('https://')) return url
@@ -242,7 +244,9 @@ export function resolvePreviewUrl(url: string, baseUrl = LOOPIT_API_BASE): strin
   if (url.startsWith('/')) {
     // Idempotency: a path that already carries the base must not be prefixed twice.
     if (url === base || url.startsWith(`${base}/`)) return url
-    return `${base}${url}`
+    // The gateway base contributes /api; nginx re-adds it upstream.
+    const enginePath = base.startsWith('http') ? url : url.replace(/^\/api(?=\/)/, '')
+    return `${base}${enginePath}`
   }
   return `${base}/${url.replace(/^\//, '')}`
 }

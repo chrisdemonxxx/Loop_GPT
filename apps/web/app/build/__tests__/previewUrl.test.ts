@@ -8,16 +8,21 @@ function json(body: unknown, status = 200): Response {
   })
 }
 
+const SITE_URL = '/api/projects/proj_1/site/t/tok/index.html'
+
 describe('resolvePreviewUrl', () => {
   it('routes an engine data-plane path through the /api/loopit gateway', () => {
-    expect(resolvePreviewUrl('/api/projects/proj_1/site/t/tok/index.html')).toBe(
-      '/api/loopit/api/projects/proj_1/site/t/tok/index.html',
-    )
+    // The gateway base contributes /api (nginx re-adds it after stripping
+    // the base), so the engine's own /api prefix is dropped — proven live:
+    // /api/loopit/api/projects/... 404s, /api/loopit/projects/... serves.
+    expect(resolvePreviewUrl(SITE_URL)).toBe('/api/loopit/projects/proj_1/site/t/tok/index.html')
   })
 
-  it('is idempotent: an already-gatewayed path passes through unchanged', () => {
-    const routed = `${LOOPIT_API_BASE}/api/projects/proj_1/site/t/tok/index.html`
+  it('is idempotent for both already-routed forms', () => {
+    const routed = `${LOOPIT_API_BASE}/projects/proj_1/site/t/tok/index.html`
     expect(resolvePreviewUrl(routed)).toBe(routed)
+    const baseOnly = `${LOOPIT_API_BASE}/api/projects/proj_1/site/t/tok/index.html`
+    expect(resolvePreviewUrl(baseOnly)).toBe(baseOnly)
   })
 
   it('passes absolute http(s) URLs through untouched', () => {
@@ -26,14 +31,14 @@ describe('resolvePreviewUrl', () => {
       .toBe('http://localhost:8000/api/projects/p/site/t/t/index.html')
   })
 
-  it('joins a bare relative path onto the base', () => {
-    expect(resolvePreviewUrl('site/t/tok/index.html', '/api/loopit')).toBe('/api/loopit/site/t/tok/index.html')
+  it('keeps the full engine path against a direct-engine base URL', () => {
+    expect(resolvePreviewUrl(SITE_URL, 'http://loopit-api:8000/')).toBe(
+      'http://loopit-api:8000/api/projects/proj_1/site/t/tok/index.html',
+    )
   })
 
-  it('prefixes engine paths against a direct-engine base URL too', () => {
-    expect(resolvePreviewUrl('/api/projects/p/site/t/t/index.html', 'http://loopit-api:8000/')).toBe(
-      'http://loopit-api:8000/api/projects/p/site/t/t/index.html',
-    )
+  it('joins a bare relative path onto the base', () => {
+    expect(resolvePreviewUrl('site/t/tok/index.html', '/api/loopit')).toBe('/api/loopit/site/t/tok/index.html')
   })
 
   it('treats an exact-base path as already routed', () => {
@@ -55,13 +60,13 @@ describe('createLoopitClient site URL surfaces', () => {
 
   it('gateway-prefixes the preview URL minted by the engine', async () => {
     const fetchImpl = routingFetch(() => ({
-      url: '/api/projects/proj_1/site/t/tok/index.html',
+      url: SITE_URL,
       expires_at: 0,
       token_type: 'signed_url',
     }))
     const client = createLoopitClient({ fetchImpl })
     await expect(client.createPreviewUrl('proj_1')).resolves.toBe(
-      '/api/loopit/api/projects/proj_1/site/t/tok/index.html',
+      '/api/loopit/projects/proj_1/site/t/tok/index.html',
     )
     expect(String(fetchImpl.mock.calls.at(-1)?.[0])).toBe('/api/loopit/projects/proj_1/preview')
   })
@@ -72,12 +77,12 @@ describe('createLoopitClient site URL surfaces', () => {
       project_id: 'proj_1',
       checkpoint_id: 'cp_1',
       status: 'live',
-      production_url: '/api/projects/proj_1/site/t/tok/index.html',
+      production_url: SITE_URL,
       reason: 'ship it',
     }))
     const client = createLoopitClient({ fetchImpl })
     const result = await client.deployProject('proj_1', 'cp_1', 'ship it')
-    expect(result.production_url).toBe('/api/loopit/api/projects/proj_1/site/t/tok/index.html')
+    expect(result.production_url).toBe('/api/loopit/projects/proj_1/site/t/tok/index.html')
     expect(result.status).toBe('live')
   })
 })

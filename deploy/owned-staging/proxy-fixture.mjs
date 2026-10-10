@@ -34,6 +34,29 @@ createServer((req, res) => {
     res.end('[]')
     return
   }
+  // Preview mint + token-prefixed site serving, in the engine's exact shapes:
+  // POST /api/projects/<id>/preview answers a root-relative site URL, and the
+  // site route serves it. The browser path is the gateway base plus that URL
+  // with its own /api dropped (nginx re-adds /api after stripping the base).
+  if (/^\/api\/projects\/[^/]+\/preview$/.test(req.url) && req.method === 'POST') {
+    if (!issuedBearer || req.headers.authorization !== `Bearer ${issuedBearer}`) {
+      res.writeHead(401, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ detail: 'authentication required' }))
+      return
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({
+      url: '/api/projects/proj_smoke/site/t/smoke-token/index.html',
+      expires_at: Date.now() + 900_000,
+      token_type: 'signed_url',
+    }))
+    return
+  }
+  if (req.url === '/api/projects/proj_smoke/site/t/smoke-token/index.html') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' })
+    res.end('<!doctype html>\n<html><body>fixture site</body></html>\n')
+    return
+  }
   if (req.url === '/api/stream' || req.url === '/v1/stream') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream' })
     res.write('data: first\n\n')
