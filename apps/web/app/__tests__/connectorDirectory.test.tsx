@@ -1,11 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { ReactNode } from 'react'
 import DirectoryPage from '../customize/connectors/all/page'
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: nav.push }) }))
 const nav = vi.hoisted(() => ({ push: vi.fn() }))
 const ws = vi.hoisted(() => ({ id: 'ws-1' as string | null }))
 vi.mock('../chat/hooks', () => ({ useWorkspaceProjects: () => ({ workspaceId: ws.id }) }))
+
+/** The page fetches via React Query; wrap renders with a throwaway client. */
+function withQuery(node: ReactNode) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>)
+}
 
 const fetchMock = vi.fn()
 vi.stubGlobal('fetch', fetchMock)
@@ -29,7 +37,7 @@ function json(body: unknown) {
 describe('connector directory (S3, CONTRACT_S3_CONNECTORS)', () => {
   it('renders every catalog card with category badges and the connect affordance', async () => {
     fetchMock.mockResolvedValue(json(CATALOG))
-    render(<DirectoryPage />)
+    withQuery(<DirectoryPage />)
     expect(await screen.findByText('Notion')).toBeInTheDocument()
     expect(screen.getByText('Slack')).toBeInTheDocument()
     expect(screen.getByText('GitHub')).toBeInTheDocument()
@@ -43,7 +51,7 @@ describe('connector directory (S3, CONTRACT_S3_CONNECTORS)', () => {
 
   it('search and category filter narrow the grid', async () => {
     fetchMock.mockResolvedValue(json(CATALOG))
-    render(<DirectoryPage />)
+    withQuery(<DirectoryPage />)
     await screen.findByText('Notion')
     fireEvent.change(screen.getByLabelText('Search connectors'), { target: { value: 'slack' } })
     expect(screen.getByText('Slack')).toBeInTheDocument()
@@ -57,7 +65,7 @@ describe('connector directory (S3, CONTRACT_S3_CONNECTORS)', () => {
   it('opens the detail view from ?type= with the Tools region and related connectors', async () => {
     window.history.replaceState(null, '', '/customize/connectors/all?type=notion')
     fetchMock.mockResolvedValue(json(CATALOG))
-    render(<DirectoryPage />)
+    withQuery(<DirectoryPage />)
     expect(await screen.findByRole('heading', { name: 'Notion' })).toBeInTheDocument()
     const tools = screen.getByRole('region', { name: 'Tools' })
     expect(tools).toHaveTextContent('notion__search')
@@ -72,7 +80,7 @@ describe('connector directory (S3, CONTRACT_S3_CONNECTORS)', () => {
   it('shows the honest empty state for an unknown ?type=', async () => {
     window.history.replaceState(null, '', '/customize/connectors/all?type=teleport')
     fetchMock.mockResolvedValue(json(CATALOG))
-    render(<DirectoryPage />)
+    withQuery(<DirectoryPage />)
     expect(await screen.findByText('That connector does not exist')).toBeInTheDocument()
     expect(screen.getByText(/No directory entry matches type "teleport"/)).toBeInTheDocument()
   })
@@ -80,7 +88,7 @@ describe('connector directory (S3, CONTRACT_S3_CONNECTORS)', () => {
   it('saves credentials with the same request shape as the Connectors tab', async () => {
     window.history.replaceState(null, '', '/customize/connectors/all?type=notion')
     fetchMock.mockResolvedValue(json(CATALOG))
-    render(<DirectoryPage />)
+    withQuery(<DirectoryPage />)
     await screen.findByRole('heading', { name: 'Notion' })
     fireEvent.change(screen.getByLabelText('Integration token'), { target: { value: 'secret-token' } })
     fetchMock.mockResolvedValueOnce(json({ id: 'c2' }))
@@ -98,7 +106,7 @@ describe('connector directory (S3, CONTRACT_S3_CONNECTORS)', () => {
     try {
       window.history.replaceState(null, '', '/customize/connectors/all?type=github')
       fetchMock.mockResolvedValue(json(CATALOG))
-      render(<DirectoryPage />)
+      withQuery(<DirectoryPage />)
       fireEvent.click(await screen.findByRole('button', { name: /Connect GitHub with OAuth/ }))
       await waitFor(() => expect(screen.getByText('Open a project first (Projects in the sidebar), then connect.')).toBeInTheDocument())
       const oauthCalls = fetchMock.mock.calls.filter((c) => String(c[0]).includes('oauth-connector'))
@@ -110,7 +118,7 @@ describe('connector directory (S3, CONTRACT_S3_CONNECTORS)', () => {
 
   it('a failed load offers Retry and never renders cards', async () => {
     fetchMock.mockRejectedValue(new Error('offline'))
-    render(<DirectoryPage />)
+    withQuery(<DirectoryPage />)
     expect(await screen.findByText('Could not load the connector directory.')).toBeInTheDocument()
     expect(screen.queryByText('Notion')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()

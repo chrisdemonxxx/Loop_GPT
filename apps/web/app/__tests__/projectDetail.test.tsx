@@ -1,11 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { ReactNode } from 'react'
 import ProjectDetailPage from '../project/page'
 
 const nav = vi.hoisted(() => ({ push: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: nav.push }) }))
 const ws = vi.hoisted(() => ({ id: 'ws-1' as string | null }))
 vi.mock('../chat/hooks', () => ({ useWorkspaceProjects: () => ({ workspaceId: ws.id, projects: [], activeProjectId: null }) }))
+
+/** The page fetches via React Query; wrap renders with a throwaway client. */
+function withQuery(node: ReactNode) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>)
+}
 
 const fetchMock = vi.fn()
 vi.stubGlobal('fetch', fetchMock)
@@ -41,7 +49,7 @@ describe('/project?id= detail page (blueprint §A2.3)', () => {
   afterEach(() => { cleanup(); nav.push.mockClear() })
 
   it('renders the project header with real counts and the scoped chat list', async () => {
-    render(<ProjectDetailPage />)
+    withQuery(<ProjectDetailPage />)
     expect(await screen.findByRole('heading', { name: 'Payments rewrite' })).toBeInTheDocument()
     expect(screen.getByText(/2 chats/)).toBeInTheDocument()
     expect(screen.getByText(/4 indexed passages/)).toBeInTheDocument()
@@ -53,7 +61,7 @@ describe('/project?id= detail page (blueprint §A2.3)', () => {
   })
 
   it('saves instructions through the real PATCH shape', async () => {
-    render(<ProjectDetailPage />)
+    withQuery(<ProjectDetailPage />)
     await screen.findByRole('heading', { name: 'Payments rewrite' })
     const ta = screen.getByLabelText('Project instructions')
     fireEvent.change(ta, { target: { value: 'Prefer functional style.' } })
@@ -68,7 +76,7 @@ describe('/project?id= detail page (blueprint §A2.3)', () => {
   })
 
   it('ingests text through the real endpoint and reports the count', async () => {
-    render(<ProjectDetailPage />)
+    withQuery(<ProjectDetailPage />)
     await screen.findByRole('heading', { name: 'Payments rewrite' })
     fireEvent.change(screen.getByLabelText('Add text to project knowledge'), { target: { value: 'API notes to index' } })
     fetchMock.mockImplementation((url: string) => {
@@ -84,7 +92,7 @@ describe('/project?id= detail page (blueprint §A2.3)', () => {
   })
 
   it('searches project knowledge and renders passages', async () => {
-    render(<ProjectDetailPage />)
+    withQuery(<ProjectDetailPage />)
     await screen.findByRole('heading', { name: 'Payments rewrite' })
     fireEvent.change(screen.getByLabelText('Search project knowledge'), { target: { value: 'refund flow' } })
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ chunk: { content: 'The refund flow retries three times.' } }] }) })
@@ -94,13 +102,13 @@ describe('/project?id= detail page (blueprint §A2.3)', () => {
 
   it('shows the honest missing state for an unknown id', async () => {
     window.history.replaceState(null, '', '/project?id=nope')
-    render(<ProjectDetailPage />)
+    withQuery(<ProjectDetailPage />)
     expect(await screen.findByText('That project does not exist')).toBeInTheDocument()
     expect(screen.getByText('It may have been deleted, or the link is stale.')).toBeInTheDocument()
   })
 
   it('links a scoped chat to the conversation', async () => {
-    render(<ProjectDetailPage />)
+    withQuery(<ProjectDetailPage />)
     await screen.findByRole('heading', { name: 'Payments rewrite' })
     const link = screen.getByRole('link', { name: /In project/ })
     expect(link).toHaveAttribute('href', '/chat?conversation=c1')

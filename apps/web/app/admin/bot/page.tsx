@@ -1,8 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
-import Link from 'next/link'
-import { ArrowLeft, Bot, RefreshCw } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Bot, RefreshCw } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../../lib/api'
 import { useBotRunFeed } from '../../lib/botSse'
 import { EnqueueForm } from '../../components/team-bot/EnqueueForm'
@@ -11,6 +11,8 @@ import { LiveComputerCard } from '../../components/team-bot/LiveComputerCard'
 import { FramesStrip } from '../../components/team-bot/FramesStrip'
 import { RunTimeline } from '../../components/team-bot/RunTimeline'
 import { SkillManager, type BotSkill } from '../../components/team-bot/SkillManager'
+import { AppPage } from '../../components/AppPage'
+import { ErrorState, btnGhost } from '@loop/ui'
 
 interface BotTask {
   id: string
@@ -50,11 +52,10 @@ interface ComputerInfo {
 const BASE = '/api/admin/bot'
 
 export default function AdminBotPage() {
-  const [tasks, setTasks] = useState<BotTask[]>([])
-  const [error, setError] = useState('')
+  const queryClient = useQueryClient()
+  const [actionError, setActionError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [suggestions, setSuggestions] = useState<BotSkill[]>([])
-  const [skills, setSkills] = useState<BotSkill[]>([])
   const [selected, setSelected] = useState<BotTask | null>(null)
   const [run, setRun] = useState<RunView | null>(null)
   const [computerInfo, setComputerInfo] = useState<ComputerInfo | null>(null)
@@ -62,23 +63,32 @@ export default function AdminBotPage() {
 
   const { events, connected, usingPoll } = useBotRunFeed(BASE, selected?.runs?.[0]?.id || null)
 
-  const refresh = useCallback(async () => {
-    try {
-      const data = await apiFetch<{ tasks: BotTask[] }>(`${BASE}/tasks?limit=50`)
-      setTasks(data.tasks || [])
-      setError('')
-    } catch (e: any) { setError(e.message) }
-  }, [])
+  const tasksQuery = useQuery<{ tasks: BotTask[] }>({
+    queryKey: ['admin', 'bot', 'tasks'],
+    queryFn: () => apiFetch<{ tasks: BotTask[] }>(`${BASE}/tasks?limit=50`),
+    enabled: typeof window !== 'undefined',
+    retry: false,
+    refetchInterval: 15000,
+  })
+  const skillsQuery = useQuery<{ skills: BotSkill[] }>({
+    queryKey: ['admin', 'bot', 'skills'],
+    queryFn: () => apiFetch<{ skills: BotSkill[] }>(`${BASE}/skills`),
+    enabled: typeof window !== 'undefined',
+    retry: false,
+    refetchInterval: 15000,
+  })
+  const tasks = tasksQuery.data?.tasks ?? []
+  const skills = skillsQuery.data?.skills ?? []
+  const error = tasksQuery.isError
+    ? ((tasksQuery.error as { message?: string })?.message || 'Failed to load tasks')
+    : skillsQuery.isError
+      ? ((skillsQuery.error as { message?: string })?.message || 'Failed to load skills')
+      : actionError
 
-  useEffect(() => {
-    refresh()
-    const loadSkills = async () => {
-      try { const s = await apiFetch<{ skills: BotSkill[] }>(`${BASE}/skills`); setSkills(s.skills || []) } catch { /* optional surface */ }
-    }
-    loadSkills()
-    const t = setInterval(() => { if (!document.hidden) { refresh(); loadSkills() } }, 15000)
-    return () => clearInterval(t)
-  }, [refresh])
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ['admin', 'bot', 'tasks'] })
+    void queryClient.invalidateQueries({ queryKey: ['admin', 'bot', 'skills'] })
+  }
 
   // Selected task slow poll: final summary, artifacts, runs list. SSE drives
   // the live event feed; this keeps result/artifacts/terminal state fresh.
@@ -114,20 +124,19 @@ export default function AdminBotPage() {
       const res = await apiFetch<{ task: BotTask; suggestedSkills: BotSkill[] }>(`${BASE}/tasks`, { method: 'POST', body: JSON.stringify(input) })
       setSuggestions(res.suggestedSkills || [])
       refresh()
-    } catch (e: any) { setError(e.message) } finally { setSubmitting(false) }
+    } catch (e: any) { setActionError(e.message) } finally { setSubmitting(false) }
   }
 
   const deleteSkill = async (ownerId: string | undefined, id: string) => {
     try {
       if (ownerId) await apiFetch(`${BASE}/skills/${ownerId}/${id}`, { method: 'DELETE' })
       else await apiFetch(`${BASE}/skills/${id}`, { method: 'DELETE' })
-      const s = await apiFetch<{ skills: BotSkill[] }>(`${BASE}/skills`)
-      setSkills(s.skills || [])
-    } catch (e: any) { setError(e.message) }
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'bot', 'skills'] })
+    } catch (e: any) { setActionError(e.message) }
   }
 
   const cancel = async (id: string) => {
-    try { await apiFetch(`${BASE}/tasks/${id}/cancel`, { method: 'POST', body: '{}' }); refresh() } catch (e: any) { setError(e.message) }
+    try { await apiFetch(`${BASE}/tasks/${id}/cancel`, { method: 'POST', body: '{}' }); refresh() } catch (e: any) { setActionError(e.message) }
   }
 
   const takeover = async (on: boolean) => {
@@ -136,68 +145,67 @@ export default function AdminBotPage() {
     try {
       const res = await apiFetch<{ interactiveUrl: string | null }>(`${BASE}/runs/${run.id}/takeover`, { method: 'POST', body: JSON.stringify({ takeover: on }) })
       setComputerInfo((ci) => ci ? { ...ci, takeoverRequested: on, interactiveUrl: on ? res.interactiveUrl : null } : ci)
-    } catch (e: any) { setError(e.message) } finally { setTakeoverBusy(false) }
+    } catch (e: any) { setActionError(e.message) } finally { setTakeoverBusy(false) }
   }
 
   return (
-    <div className="min-h-screen bg-[#0b0e14] p-6 text-slate-200">
-      <div className="mx-auto max-w-6xl space-y-5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link href="/admin" className="text-slate-400 hover:text-slate-200"><ArrowLeft size={18} /></Link>
-            <Bot className="text-violet-400" />
-            <h1 className="text-xl font-semibold bg-gradient-to-r from-violet-300 to-sky-300 bg-clip-text text-transparent">Bot computer</h1>
-            <span className={`text-[10px] uppercase tracking-wider ${connected ? 'text-emerald-400' : usingPoll ? 'text-amber-400' : 'text-slate-500'}`}>
-              {connected ? '● realtime' : usingPoll ? '● poll fallback' : '○ idle'}
-            </span>
+    <AppPage
+      title="Bot computer"
+      documentTitle="Bot computer"
+      back={{ href: '/admin', label: 'Admin portal' }}
+      width="wide"
+      icon={<Bot size={18} className="text-[var(--accent-text)]" aria-hidden />}
+      meta={(
+        <span className={`text-3xs uppercase tracking-wider ${connected ? 'text-[var(--success)]' : usingPoll ? 'text-[var(--warning)]' : 'text-[var(--ink-muted)]'}`}>
+          {connected ? '● realtime' : usingPoll ? '● poll fallback' : '○ idle'}
+        </span>
+      )}
+      actions={<button type="button" onClick={refresh} className={`${btnGhost} px-2.5 py-1.5 text-ui-xs`}><RefreshCw size={13} aria-hidden /> Refresh</button>}
+    >
+      {error && <div className="mb-4"><ErrorState title={error} compact onDismiss={() => setActionError('')} /></div>}
+      {suggestions.length > 0 && (
+        <div className="mb-4 rounded-lg border border-[var(--accent-soft-border)] bg-[var(--accent-soft)] px-3 py-2 text-sm text-[var(--accent-text)]">
+          <div className="mb-1.5 text-2xs uppercase tracking-wider opacity-80">Skill match</div>
+          <div className="flex flex-wrap items-center gap-2">
+            {suggestions.map((skill) => (
+              <button key={skill.id} type="button" onClick={() => { setSuggestions([]) }}
+                className="rounded-lg bg-[var(--bg-raised)] px-2.5 py-1 text-ui-xs text-[var(--accent-text)] border border-[var(--accent-soft-border)] hover:border-[var(--accent-text)]" title={skill.description}>
+                ✨ {skill.name}
+              </button>
+            ))}
+            <span className="text-2xs text-[var(--ink-muted)]">taught skill matches this goal — queue again with it attached for a guided run</span>
           </div>
-          <button onClick={refresh} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200"><RefreshCw size={13} /> Refresh</button>
         </div>
-        {error && <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">{error}</div>}
-        {suggestions.length > 0 && (
-          <div className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-sm text-violet-200">
-            <div className="mb-1.5 text-[11px] uppercase tracking-wider text-violet-300/70">Skill match</div>
-            <div className="flex flex-wrap items-center gap-2">
-              {suggestions.map((skill) => (
-                <button key={skill.id} onClick={() => { setSuggestions([]) }}
-                  className="rounded-lg bg-slate-900/80 px-2.5 py-1 text-[12px] text-violet-200 ring-1 ring-violet-500/40 hover:ring-violet-400" title={skill.description}>
-                  ✨ {skill.name}
-                </button>
-              ))}
-              <span className="text-[11px] text-slate-500">taught skill matches this goal — queue again with it attached for a guided run</span>
-            </div>
-          </div>
-        )}
+      )}
 
-        <EnqueueForm onEnqueue={enqueue} busy={submitting} computerAllowed />
+      <EnqueueForm onEnqueue={enqueue} busy={submitting} computerAllowed />
 
+      <div className="glass rounded-2xl p-4 mt-5">
+        <div className="mb-3 text-sm font-medium text-[var(--ink-secondary)]">Taught skills (every user)</div>
+        <SkillManager skills={skills} showOwner onDelete={deleteSkill} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 mt-5">
         <div className="glass rounded-2xl p-4">
-          <div className="mb-3 text-sm font-medium text-slate-300">Taught skills (every user)</div>
-          <SkillManager skills={skills} showOwner onDelete={deleteSkill} />
+          <div className="mb-3 text-sm font-medium text-[var(--ink-secondary)]">Tasks</div>
+          <TaskQueueList tasks={tasks} selectedId={selected?.id} onSelect={setSelected} onCancel={cancel} />
         </div>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="space-y-4">
+          {computerInfo?.viewUrl && (
+            <LiveComputerCard info={computerInfo} takeover={takeover} takeoverBusy={takeoverBusy} />
+          )}
           <div className="glass rounded-2xl p-4">
-            <div className="mb-3 text-sm font-medium text-slate-300">Tasks</div>
-            <TaskQueueList tasks={tasks} selectedId={selected?.id} onSelect={setSelected} onCancel={cancel} />
-          </div>
-
-          <div className="space-y-4">
-            {computerInfo?.viewUrl && (
-              <LiveComputerCard info={computerInfo} takeover={takeover} takeoverBusy={takeoverBusy} />
-            )}
-            <div className="glass rounded-2xl p-4">
-              <div className="mb-2 text-sm font-medium text-slate-300">
-                {selected ? `Run ${run ? `· ${run.status}` : ''}` : 'Select a task'}
-              </div>
-              {run && <FramesStrip artifacts={run.artifacts || []} active={run.status === 'running'} />}
-              <RunTimeline events={events} status={run?.status} />
-              {run?.result && <div className="mt-2 max-h-28 overflow-y-auto rounded-lg bg-emerald-500/5 p-2 text-xs text-emerald-200/90 whitespace-pre-wrap">{run.result}</div>}
-              {run?.error && <div className="mt-2 rounded-lg bg-rose-500/10 p-2 text-xs text-rose-300">{run.error}</div>}
+            <div className="mb-2 text-sm font-medium text-[var(--ink-secondary)]">
+              {selected ? `Run ${run ? `· ${run.status}` : ''}` : 'Select a task'}
             </div>
+            {run && <FramesStrip artifacts={run.artifacts || []} active={run.status === 'running'} />}
+            <RunTimeline events={events} status={run?.status} />
+            {run?.result && <div className="mt-2 max-h-28 overflow-y-auto rounded-lg bg-[var(--bg-tint)] border border-[var(--border-subtle)] p-2 text-ui-xs text-[var(--success)] whitespace-pre-wrap">{run.result}</div>}
+            {run?.error && <div className="mt-2 rounded-lg bg-[var(--danger-soft)] border border-[var(--danger-soft-border)] p-2 text-ui-xs text-[var(--danger)]">{run.error}</div>}
           </div>
         </div>
       </div>
-    </div>
+    </AppPage>
   )
 }

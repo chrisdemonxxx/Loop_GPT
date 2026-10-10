@@ -3,13 +3,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  ArrowLeft, Cable, ChevronLeft, ExternalLink, Loader2, Plug, Plus, RefreshCw, Wrench,
+  Cable, ChevronLeft, ExternalLink, Loader2, Plug, Plus, RefreshCw, Wrench,
 } from 'lucide-react'
 import { API_URL, authHeaders } from '../../../lib/api'
 import { openOAuthPopup, oauthPopupNotice } from '../../../lib/oauthPopup'
 import { useWorkspaceProjects } from '../../../chat/hooks'
-import { Badge, EmptyState, SectionHeader, Skeleton } from '../../../components/ui/primitives'
+import { AppPage } from '../../../components/AppPage'
+import {
+  Badge, EmptyState, ErrorState, LoadingState, SectionHeader, Skeleton, btnSecondary, inputCls, linkCls, panelCls, selectCls,
+} from '@loop/ui'
 import { BrandMark } from '../../../components/connectors/BrandMark'
 
 interface ConnectorField { key: string; label: string; secret?: boolean; required?: boolean; placeholder?: string }
@@ -22,6 +26,11 @@ interface ConnectorType {
 interface ConfiguredConnector {
   id: string; type: string; name: string; enabled: boolean
   account: string | null; lastTestedAt: string | null; lastTestOk: boolean | null
+}
+
+interface DirectoryPayload {
+  types: ConnectorType[]
+  configured: ConfiguredConnector[]
 }
 
 function typeFromLocation(search: string): string {
@@ -49,11 +58,28 @@ function connectState(t: ConnectorType, configured: ConfiguredConnector[]): { la
  */
 export default function ConnectorDirectoryPage() {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const { workspaceId } = useWorkspaceProjects()
-  const [types, setTypes] = useState<ConnectorType[]>([])
-  const [configured, setConfigured] = useState<ConfiguredConnector[]>([])
-  const [loadError, setLoadError] = useState(false)
-  const [loaded, setLoaded] = useState(false)
+
+  const directory = useQuery<DirectoryPayload>({
+    queryKey: ['connectors', 'directory'],
+    queryFn: async () => {
+      const r = await fetch(`${API_URL}/api/agent/connectors`, { headers: authHeaders() })
+      if (!r.ok) throw new Error('load')
+      const d = await r.json()
+      if (!d || !Array.isArray(d.types)) throw new Error('load')
+      return { types: d.types, configured: Array.isArray(d.configured) ? d.configured : [] }
+    },
+    enabled: typeof window !== 'undefined',
+    retry: false,
+  })
+  const types = directory.data?.types ?? []
+  const configured = directory.data?.configured ?? []
+  const loaded = directory.isSuccess
+  const loadError = directory.isError
+
+  const refresh = () => { void queryClient.invalidateQueries({ queryKey: ['connectors', 'directory'] }) }
+
   const [detail, setDetail] = useState('')
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('All categories')
@@ -61,20 +87,6 @@ export default function ConnectorDirectoryPage() {
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState('')
   const [notice, setNotice] = useState('')
-
-  const load = () =>
-    fetch(`${API_URL}/api/agent/connectors`, { headers: authHeaders() })
-      .then(async (r) => {
-        if (!r.ok) throw new Error('load')
-        const d = await r.json()
-        if (!d || !Array.isArray(d.types)) throw new Error('load')
-        setTypes(d.types)
-        setConfigured(Array.isArray(d.configured) ? d.configured : [])
-        setLoadError(false)
-      })
-      .catch(() => setLoadError(true))
-      .finally(() => setLoaded(true))
-  useEffect(() => { load() }, [])
 
   // Query-param routing: ?type= on load + back/forward (popstate/hashchange).
   useEffect(() => {
@@ -103,7 +115,7 @@ export default function ConnectorDirectoryPage() {
   // One flow, same shapes as ConnectorsTab (contract §3) — popup mode: the
   // provider consent opens in a centered popup and the backend callback
   // postMessages the outcome back (2026-10-05).
-  const startOAuth = async (t: ConnectorType) => {
+  async function startOAuth(t: ConnectorType) {
     setActionError(''); setNotice(''); setBusy(true)
     try {
       if (!workspaceId) { setActionError('Open a project first (Projects in the sidebar), then connect.'); return }
@@ -115,7 +127,7 @@ export default function ConnectorDirectoryPage() {
       if (!res.ok) { setActionError('Could not start the sign-in flow.'); return }
       const popup = openOAuthPopup(d.authorizeUrl, (result) => {
         const note = oauthPopupNotice(result, t.name)
-        if (note.kind === 'ok') { setNotice(note.text); setActionError(''); load() }
+        if (note.kind === 'ok') { setNotice(note.text); setActionError(''); refresh() }
         else if (note.kind === 'error') setActionError(note.text)
       })
       if (!popup) setActionError(oauthPopupNotice({ ok: false, error: 'popup_blocked' }, t.name).text)
@@ -125,7 +137,7 @@ export default function ConnectorDirectoryPage() {
   const selected = detail ? types.find((t) => t.type === detail) : undefined
   const selectedConfigured = selected ? configured.filter((c) => c.type === selected.type) : []
 
-  const saveCredentials = async () => {
+  async function saveCredentials() {
     if (!selected || selected.oauth) return
     setActionError(''); setBusy(true)
     try {
@@ -137,26 +149,26 @@ export default function ConnectorDirectoryPage() {
       if (!res.ok) { setActionError(d.error || 'Could not connect.'); return }
       setNotice(`${selected.name} connected.`)
       setFieldValues({})
-      load()
+      refresh()
     } finally { setBusy(false) }
   }
 
-  const disconnect = async (id: string) => {
+  async function disconnect(id: string) {
     setActionError(''); setBusy(true)
     try {
       await fetch(`${API_URL}/api/agent/connectors/${id}`, { method: 'DELETE', headers: authHeaders() }).catch(() => {})
       setNotice('Disconnected.')
-      load()
+      refresh()
     } finally { setBusy(false) }
   }
 
-  const test = async (id: string) => {
+  async function test(id: string) {
     setBusy(true)
     try {
       const res = await fetch(`${API_URL}/api/agent/connectors/${id}/test`, { method: 'POST', headers: authHeaders() })
       const d = await res.json().catch(() => ({}))
       setNotice(d.ok ? 'Connection OK' : (d.message || 'Test failed'))
-      load()
+      refresh()
     } finally { setBusy(false) }
   }
 
@@ -167,15 +179,24 @@ export default function ConnectorDirectoryPage() {
     (!q || t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q) || (t.category || '').toLowerCase().includes(q))
   ), [types, q, category])
 
+  const loadErrorNotice = loadError && (
+    <ErrorState
+      title="Could not load the connector directory."
+      onRetry={() => { void directory.refetch() }}
+    />
+  )
+
   // ── detail view ─────────────────────────────────────────────────────────
   if (detail) {
     return (
-      <main className="min-h-screen bg-[#08080a] px-5 py-6 max-w-4xl mx-auto text-slate-200">
-        <Link href="/customize" className="inline-flex items-center gap-1.5 text-[12px] text-slate-400 transition hover:text-slate-200">
-          <ArrowLeft size={14} /> Connectors
-        </Link>
-        <button type="button" onClick={backToDirectory} className="mt-4 inline-flex items-center gap-1.5 text-[12px] text-slate-400 transition hover:text-slate-200">
-          <ChevronLeft size={14} /> All connectors
+      <AppPage
+        title={selected ? selected.name : 'Connectors'}
+        documentTitle={selected ? selected.name : 'Connectors'}
+        back={{ href: '/customize', label: 'Connectors' }}
+        width="wide"
+      >
+        <button type="button" onClick={backToDirectory} className="mb-4 inline-flex items-center gap-1.5 rounded-md text-ui-xs text-[var(--ink-muted)] transition hover:text-[var(--ink-primary)]">
+          <ChevronLeft size={14} aria-hidden /> All connectors
         </button>
 
         {loaded && !selected && (
@@ -184,25 +205,25 @@ export default function ConnectorDirectoryPage() {
               icon={<Cable size={22} />}
               title="That connector does not exist"
               body={`No directory entry matches type "${detail}". It may have been removed.`}
-              action={<button type="button" onClick={backToDirectory} className="mt-2 text-[12px] text-[#e79d7f] hover:underline">Back to the directory</button>}
+              action={<button type="button" onClick={backToDirectory} className={`mt-2 text-ui-xs ${linkCls}`}>Back to the directory</button>}
             />
           </div>
         )}
+        {!loaded && !loadError && <LoadingState label="Loading connector" variant="lines" count={3} />}
 
         {selected && (
-          <div className="mt-4 space-y-5">
+          <div className="space-y-5">
             <div className="flex items-start justify-between gap-4">
               <div className="flex items-start gap-3">
                 <Avatar name={selected.name} />
                 <div className="min-w-0">
-                  <h1 className="text-xl font-semibold text-slate-100">{selected.name}</h1>
-                  <p className="mt-0.5 text-[13px] leading-relaxed text-slate-500">{selected.description}</p>
+                  <p className="text-ui-sm leading-relaxed text-[var(--ink-muted)]">{selected.description}</p>
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     <Badge>{selected.category}</Badge>
                     {selected.oauth && <Badge tone="accent">OAuth</Badge>}
                     {selected.tools && selected.tools.length > 0 && (
-                      <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
-                        <Wrench size={10} /> {selected.tools.length} tools
+                      <span className="inline-flex items-center gap-1 text-3xs text-[var(--ink-muted)]">
+                        <Wrench size={10} aria-hidden /> {selected.tools.length} tools
                       </span>
                     )}
                   </div>
@@ -210,27 +231,27 @@ export default function ConnectorDirectoryPage() {
               </div>
             </div>
 
-            {actionError && <p className="text-[12px] text-rose-400" role="alert">{actionError}</p>}
-            {notice && <p className="text-[12px] text-emerald-400" role="status">{notice}</p>}
+            {actionError && <p className="text-ui-xs text-[var(--danger)]" role="alert">{actionError}</p>}
+            {notice && <p className="text-ui-xs text-[var(--success)]" role="status">{notice}</p>}
 
             {/* Connected instances: test + disconnect (lifecycle §9.4). */}
             {selectedConfigured.length > 0 && (
               <div className="space-y-2">
                 <SectionHeader title="Your connections" count={selectedConfigured.length} />
                 {selectedConfigured.map((c) => (
-                  <div key={c.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.06] px-3.5 py-3">
-                    <span className="min-w-0 text-[13px]">
-                      <span className="text-slate-300">{c.name}</span>
-                      {c.account && <span className="ml-2 text-[11px] text-slate-500">{c.account}</span>}
-                      <span className="block text-[11px] text-slate-500">
+                  <div key={c.id} className={`flex items-center justify-between gap-3 ${panelCls} px-3.5 py-3`}>
+                    <span className="min-w-0 text-ui-sm">
+                      <span className="text-[var(--ink-secondary)]">{c.name}</span>
+                      {c.account && <span className="ml-2 text-2xs text-[var(--ink-muted)]">{c.account}</span>}
+                      <span className="block text-2xs text-[var(--ink-muted)]">
                         {c.lastTestedAt ? (c.lastTestOk ? 'tested OK' : 'last test failed') : 'not tested yet'}
                       </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-1.5">
-                      <button type="button" onClick={() => test(c.id)} disabled={busy} className="rounded-lg bg-white/[0.04] px-2.5 py-1.5 text-[12px] text-slate-300 transition hover:bg-white/[0.08] disabled:opacity-50">
-                        <RefreshCw size={12} className={busy ? 'inline animate-spin' : 'inline'} /> Test
+                      <button type="button" onClick={() => void test(c.id)} disabled={busy} className="rounded-lg bg-[var(--bg-hover)] px-2.5 py-1.5 text-ui-xs text-[var(--ink-secondary)] transition hover:bg-[var(--bg-hover-strong)] disabled:opacity-50">
+                        <RefreshCw size={12} className={busy ? 'inline animate-spin' : 'inline'} aria-hidden /> Test
                       </button>
-                      <button type="button" onClick={() => disconnect(c.id)} disabled={busy} className="rounded-lg px-2.5 py-1.5 text-[12px] text-slate-400 transition hover:text-rose-400 disabled:opacity-50">
+                      <button type="button" onClick={() => void disconnect(c.id)} disabled={busy} className="rounded-lg px-2.5 py-1.5 text-ui-xs text-[var(--ink-muted)] transition hover:text-[var(--danger)] disabled:opacity-50">
                         Disconnect
                       </button>
                     </span>
@@ -245,20 +266,20 @@ export default function ConnectorDirectoryPage() {
                 <SectionHeader title="Sign in" />
                 <button
                   type="button"
-                  onClick={() => startOAuth(selected)}
+                  onClick={() => void startOAuth(selected)}
                   disabled={busy}
-                  className="inline-flex items-center gap-2 rounded-xl border border-[#c96442]/40 bg-[#c96442]/[0.08] px-4 py-2.5 text-[13px] font-medium text-[#e79d7f] transition hover:bg-[#c96442]/[0.14] disabled:opacity-50"
+                  className={btnSecondary}
                 >
-                  {busy ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />} Connect {selected.name} with OAuth
+                  {busy ? <Loader2 size={14} className="animate-spin" aria-hidden /> : <Plug size={14} aria-hidden />} Connect {selected.name} with OAuth
                 </button>
-                <p className="mt-1.5 text-[11px] leading-snug text-slate-600">
-                  If Google shows an &ldquo;unverified app&rdquo; screen, choose <span className="text-slate-500">Advanced → Continue</span>. It disappears once our verification completes.
+                <p className="mt-1.5 text-2xs leading-snug text-[var(--ink-muted)]">
+                  If Google shows an &ldquo;unverified app&rdquo; screen, choose <span className="text-[var(--ink-secondary)]">Advanced → Continue</span>. It disappears once our verification completes.
                 </p>
               </div>
             ) : selected.fields.length > 0 && (
-              <div className="rounded-xl border border-white/[0.06] p-3.5">
-                <div className="text-[13px] text-slate-300">Connect {selected.name}</div>
-                <p className="mt-1 text-[11px] text-slate-500">The credential is validated against {selected.name} before it is saved.</p>
+              <div className={`${panelCls} p-3.5`}>
+                <div className="text-ui-sm text-[var(--ink-secondary)]">Connect {selected.name}</div>
+                <p className="mt-1 text-2xs text-[var(--ink-muted)]">The credential is validated against {selected.name} before it is saved.</p>
                 <div className="mt-2.5 space-y-2">
                   {selected.fields.map((f) => (
                     <input
@@ -268,16 +289,16 @@ export default function ConnectorDirectoryPage() {
                       value={fieldValues[f.key] || ''}
                       aria-label={f.label}
                       onChange={(e) => setFieldValues((cur) => ({ ...cur, [f.key]: e.target.value }))}
-                      className="w-full rounded-lg border border-white/10 bg-ink-800 px-3 py-2 text-[13px] text-slate-200 placeholder:text-slate-600 focus:border-[#c96442]/50 focus:outline-none"
+                      className={`${inputCls} text-ui-sm`}
                     />
                   ))}
                   <button
                     type="button"
-                    onClick={saveCredentials}
+                    onClick={() => void saveCredentials()}
                     disabled={busy}
-                    className="inline-flex items-center gap-2 rounded-lg border border-[#c96442]/40 bg-[#c96442]/[0.08] px-3.5 py-2 text-[13px] font-medium text-[#e79d7f] transition hover:bg-[#c96442]/[0.14] disabled:opacity-50"
+                    className={btnSecondary}
                   >
-                    {busy ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />} Connect
+                    {busy ? <Loader2 size={14} className="animate-spin" aria-hidden /> : <Plug size={14} aria-hidden />} Connect
                   </button>
                 </div>
               </div>
@@ -285,13 +306,13 @@ export default function ConnectorDirectoryPage() {
 
             {/* Tools region (blueprint: role=region "Tools"). */}
             {selected.tools && selected.tools.length > 0 && (
-              <section aria-label="Tools" className="rounded-xl border border-white/[0.06] p-3.5">
-                <div className="text-[13px] text-slate-300">Tools the agent gains</div>
+              <section aria-label="Tools" className={`${panelCls} p-3.5`}>
+                <div className="text-ui-sm text-[var(--ink-secondary)]">Tools the agent gains</div>
                 <ul className="mt-2 space-y-1.5">
                   {selected.tools.map((tool) => (
-                    <li key={tool.suffix} className="flex items-start gap-2 text-[12px]">
-                      <Wrench size={12} className="mt-0.5 shrink-0 text-slate-500" />
-                      <span><span className="text-slate-200">{selected.type}__{tool.suffix}</span><span className="block text-slate-500">{tool.description}</span></span>
+                    <li key={tool.suffix} className="flex items-start gap-2 text-ui-xs">
+                      <Wrench size={12} className="mt-0.5 shrink-0 text-[var(--ink-muted)]" aria-hidden />
+                      <span><span className="text-[var(--ink-primary)]">{selected.type}__{tool.suffix}</span><span className="block text-[var(--ink-muted)]">{tool.description}</span></span>
                     </li>
                   ))}
                 </ul>
@@ -300,92 +321,75 @@ export default function ConnectorDirectoryPage() {
 
             {/* Facts + related (blueprint right column). */}
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="rounded-xl border border-white/[0.06] p-3.5 text-[12px]">
-                <div className="mb-1.5 text-[11px] uppercase tracking-wider text-slate-500">Details</div>
-                <div className="space-y-1 text-slate-400">
-                  <div>Category: <span className="text-slate-300">{selected.category}</span></div>
-                  <div>Sign-in: <span className="text-slate-300">{selected.oauth ? 'OAuth' : 'API credential'}</span></div>
+              <div className={`${panelCls} p-3.5 text-ui-xs`}>
+                <div className="mb-1.5 text-2xs uppercase tracking-wider text-[var(--ink-muted)]">Details</div>
+                <div className="space-y-1 text-[var(--ink-secondary)]">
+                  <div>Category: <span className="text-[var(--ink-primary)]">{selected.category}</span></div>
+                  <div>Sign-in: <span className="text-[var(--ink-primary)]">{selected.oauth ? 'OAuth' : 'API credential'}</span></div>
                   {selected.docs && (
-                    <div>Docs: <a href={selected.docs} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[#e79d7f] hover:underline">developer docs <ExternalLink size={10} /></a></div>
+                    <div>Docs: <a href={selected.docs} target="_blank" rel="noreferrer" className={`inline-flex items-center gap-1 ${linkCls}`}>developer docs <ExternalLink size={10} aria-hidden /></a></div>
                   )}
                 </div>
               </div>
-              <section aria-label="Related connectors" className="rounded-xl border border-white/[0.06] p-3.5">
-                <div className="mb-2 text-[11px] uppercase tracking-wider text-slate-500">Related connectors</div>
+              <section aria-label="Related connectors" className={`${panelCls} p-3.5`}>
+                <div className="mb-2 text-2xs uppercase tracking-wider text-[var(--ink-muted)]">Related connectors</div>
                 <ul className="space-y-1.5">
                   {types.filter((t) => t.type !== selected.type && (t.category || 'Other') === (selected.category || 'Other')).slice(0, 6).map((t) => (
                     <li key={t.type}>
-                      <button type="button" onClick={() => openDetail(t.type)} className="text-left text-[12px] text-slate-300 hover:text-[#e79d7f] hover:underline">
+                      <button type="button" onClick={() => openDetail(t.type)} className={`text-left text-ui-xs text-[var(--ink-secondary)] ${linkCls}`}>
                         {t.name}
                       </button>
                     </li>
                   ))}
                   {types.filter((t) => t.type !== selected.type && (t.category || 'Other') === (selected.category || 'Other')).length === 0 && (
-                    <li className="text-[12px] text-slate-600">No other connectors in this category yet.</li>
+                    <li className="text-ui-xs text-[var(--ink-muted)]">No other connectors in this category yet.</li>
                   )}
                 </ul>
               </section>
             </div>
           </div>
         )}
-        {loadError && (
-          <p className="mt-4 text-[12px] text-rose-400">
-            Could not load the connector directory.
-            <button type="button" onClick={load} className="ml-1.5 underline hover:text-rose-300">Retry</button>
-          </p>
-        )}
-      </main>
+        {loadErrorNotice}
+      </AppPage>
     )
   }
 
   // ── directory view ──────────────────────────────────────────────────────
   return (
-    <main className="min-h-screen bg-[#08080a] px-5 py-6 max-w-5xl mx-auto text-slate-200">
-      <Link href="/customize" className="inline-flex items-center gap-1.5 text-[12px] text-slate-400 transition hover:text-slate-200">
-        <ArrowLeft size={14} /> Connectors
-      </Link>
-      <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-100">Connector directory</h1>
-          <p className="mt-0.5 text-[12px] text-slate-500">Browse every integration. Connected tools become callable by the agent.</p>
-        </div>
-        <Link href="/customize" className="rounded-lg border border-white/10 px-3 py-1.5 text-[12px] text-slate-300 transition hover:border-white/25 hover:text-slate-100">
-          Manage connected
-        </Link>
-      </div>
-
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+    <AppPage
+      title="Connector directory"
+      description="Browse every integration. Connected tools become callable by the agent."
+      back={{ href: '/customize', label: 'Connectors' }}
+      width="wide"
+      actions={<Link href="/customize" className={`${btnSecondary} px-3 py-1.5 text-ui-xs`}>Manage connected</Link>}
+    >
+      <div className="mt-1 flex flex-wrap items-center gap-2">
         <input
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search connectors"
           aria-label="Search connectors"
-          className="min-w-[12rem] flex-1 rounded-lg border border-white/10 bg-ink-800 px-3 py-2 text-[13px] text-slate-200 placeholder:text-slate-600 focus:border-[#c96442]/50 focus:outline-none"
+          className={`${inputCls} min-w-[12rem] flex-1 text-ui-sm`}
         />
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value)}
           aria-label="Filter by category"
-          className="rounded-lg border border-white/10 bg-ink-800 px-3 py-2 text-[13px] text-slate-200 focus:border-[#c96442]/50 focus:outline-none"
+          className={`${selectCls} text-ui-sm`}
         >
           {categories.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
       </div>
 
-      {loadError && (
-        <p className="mt-4 text-[12px] text-rose-400">
-          Could not load the connector directory.
-          <button type="button" onClick={load} className="ml-1.5 underline hover:text-rose-300">Retry</button>
-        </p>
-      )}
-      {!loaded && !loadError && (
+      {loadErrorNotice}
+      {directory.isPending && (
         <div className="mt-4 grid grid-cols-2 gap-2.5 max-sm:grid-cols-1" role="status" aria-label="Loading connectors">
           {[0, 1, 2, 3].map((i) => <Skeleton key={i} variant="card" />)}
         </div>
       )}
-      {loaded && !loadError && filtered.length === 0 && (
-        <p className="mt-6 text-center text-[13px] text-slate-600">
+      {loaded && filtered.length === 0 && (
+        <p className="mt-6 text-center text-ui-sm text-[var(--ink-muted)]">
           {q || category !== 'All categories' ? `No connectors match “${query || category}”.` : 'No connectors available yet.'}
         </p>
       )}
@@ -394,12 +398,12 @@ export default function ConnectorDirectoryPage() {
         {filtered.map((t) => {
           const cs = connectState(t, configured)
           return (
-            <div key={t.type} className="h-[168px] flex flex-col rounded-xl border border-white/[0.07] bg-white/[0.025] p-3.5">
+            <div key={t.type} className={`h-[168px] flex flex-col ${panelCls} p-3.5`}>
               <div className="flex min-w-0 items-center gap-2.5">
                 <Avatar name={t.name} />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px] font-medium text-slate-100">{t.name}</div>
-                  <div className="mt-0.5 line-clamp-1 text-[12px] text-slate-400">{t.description}</div>
+                  <div className="truncate text-ui-sm font-medium text-[var(--ink-primary)]">{t.name}</div>
+                  <div className="mt-0.5 line-clamp-1 text-ui-xs text-[var(--ink-secondary)]">{t.description}</div>
                 </div>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -407,20 +411,20 @@ export default function ConnectorDirectoryPage() {
                 {cs.state === 'connected' && <Badge tone="green">connected</Badge>}
                 {t.oauth ? <Badge tone="accent">OAuth</Badge> : <Badge>API key</Badge>}
                 {t.tools && t.tools.length > 0 && (
-                  <span className="inline-flex items-center gap-1 text-[10px] text-slate-500"><Wrench size={10} /> {t.tools.length}</span>
+                  <span className="inline-flex items-center gap-1 text-3xs text-[var(--ink-muted)]"><Wrench size={10} aria-hidden /> {t.tools.length}</span>
                 )}
               </div>
               <button
                 type="button"
                 onClick={() => openDetail(t.type)}
-                className="mt-auto inline-flex items-center justify-center gap-1.5 h-8 rounded-lg bg-[#c96442] text-white text-[12px] font-medium"
+                className="mt-auto inline-flex items-center justify-center gap-1.5 h-8 rounded-lg bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] active:bg-[var(--accent-fill-active)] text-white text-ui-xs font-medium transition"
               >
-                <Plus size={12} /> {cs.label}
+                <Plus size={12} aria-hidden /> {cs.label}
               </button>
             </div>
           )
         })}
       </div>
-    </main>
+    </AppPage>
   )
 }

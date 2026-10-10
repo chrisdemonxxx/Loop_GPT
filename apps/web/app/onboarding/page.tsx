@@ -2,6 +2,8 @@
 
 import Link from 'next/link'
 import { ArrowRight, Blocks, Cable, FlaskConical, FolderKanban, Image as ImageIcon, ListChecks, Mic, Sparkles } from 'lucide-react'
+import { AppPage } from '../components/AppPage'
+import { btnGhost, btnPrimary, panelCls } from '@loop/ui'
 
 const TOUR = [
   {
@@ -57,42 +59,42 @@ const TOUR = [
 /** Onboarding — a real "what to try first" guide (brief P2). */
 export default function Onboarding() {
   return (
-    <div className="min-h-screen bg-[#08080a] text-slate-200">
-      <div className="max-w-3xl mx-auto px-5 py-14">
-        <div className="flex items-center gap-2.5 mb-3">
-          <div className="w-8 h-8 rounded-lg bg-[#c96442] flex items-center justify-center"><Sparkles size={15} className="text-white" /></div>
-          <span className="font-semibold text-slate-100">Loop GPT</span>
+    <AppPage
+      documentTitle="What to try first"
+      width="default"
+      header={(
+        <div className="mb-10">
+          <h1 className="text-3xl sm:text-4xl font-semibold text-slate-100 mb-3">What to try first</h1>
+          <p className="text-[var(--ink-muted)] max-w-xl">A two-minute tour of what the agent can do. Every item below is live right now — no setup, no keys.</p>
         </div>
-        <h1 className="text-3xl sm:text-4xl font-semibold text-slate-100 mb-3">What to try first</h1>
-        <p className="text-slate-500 mb-10 max-w-xl">A two-minute tour of what the agent can do. Every item below is live right now — no setup, no keys.</p>
-
-        <div className="space-y-3">
-          {TOUR.map((t, i) => (
-            <div key={t.title} className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-5 flex gap-4">
-              <div className="w-10 h-10 rounded-xl bg-[#c96442]/10 border border-[#c96442]/20 flex items-center justify-center shrink-0">
-                <t.icon size={17} className="text-[#e79d7f]" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-[11px] font-mono text-slate-600">{String(i + 1).padStart(2, '0')}</span>
-                  <h2 className="text-[15px] font-semibold text-slate-100">{t.title}</h2>
-                </div>
-                <p className="text-[13.5px] text-slate-400 leading-relaxed mt-1">{t.body}</p>
-                <p className="text-[12px] text-slate-600 mt-1.5">{t.tip}</p>
-              </div>
+      )}
+    >
+      <div className="space-y-3">
+        {TOUR.map((t, i) => (
+          <div key={t.title} className={`${panelCls} rounded-2xl p-5 flex gap-4`}>
+            <div className="w-10 h-10 rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-soft-border)] flex items-center justify-center shrink-0">
+              <t.icon size={17} className="text-[var(--accent-text)]" aria-hidden />
             </div>
-          ))}
-        </div>
-
-        <div className="mt-10 flex flex-wrap gap-3">
-          <Link href="/chat" className="inline-flex items-center gap-2 px-5 py-3 rounded-xl text-white bg-[#c96442] hover:bg-[#b5593a] transition font-medium">
-            Start chatting <ArrowRight size={16} />
-          </Link>
-          <Link href="/" className="inline-flex items-center px-5 py-3 rounded-xl border border-white/10 text-slate-300 hover:bg-white/[0.04] transition">
-            Back to home
-          </Link>
-        </div>
+            <div className="min-w-0">
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xs font-mono text-[var(--ink-muted)]">{String(i + 1).padStart(2, '0')}</span>
+                <h2 className="text-ui-md font-semibold text-[var(--ink-primary)]">{t.title}</h2>
+              </div>
+              <p className="text-ui-sm text-[var(--ink-secondary)] leading-relaxed mt-1">{t.body}</p>
+              <p className="text-ui-xs text-[var(--ink-muted)] mt-1.5">{t.tip}</p>
+            </div>
+          </div>
+        ))}
       </div>
-    </div>
+
+      <div className="mt-10 flex flex-wrap gap-3">
+        <Link href="/chat" className={`${btnPrimary} px-5 py-3 rounded-xl`}>
+          Start chatting <ArrowRight size={16} aria-hidden />
+        </Link>
+        <Link href="/" className={`${btnGhost} px-5 py-3 rounded-xl`}>
+          Back to home
+        </Link>
+      </div>
+    </AppPage>
   )
 }

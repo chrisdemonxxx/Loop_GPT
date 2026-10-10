@@ -1,12 +1,15 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import {
-  Users, Zap, DollarSign, Activity, Ticket, ArrowLeft, Loader2, Plus, Crown,
+  Users, Zap, DollarSign, Activity, Ticket, Loader2, Plus, Crown,
   Infinity as InfinityIcon, RefreshCw, ShieldCheck,
 } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
+import { AppPage } from '../components/AppPage'
+import { ErrorState, btnGhost, btnPrimary, btnSecondary, selectCls } from '@loop/ui'
 
 interface Stats {
   hasDb: boolean
@@ -16,28 +19,74 @@ interface Stats {
   revenue?: { totalCents: number; payments: number }
 }
 
+interface AdminUser {
+  id: string; name: string; email: string; role: string; plan: string
+  unlimited: boolean; credits: number; imageCredits: number
+  tokensInTotal?: number; tokensOutTotal?: number; messagesTotal: number
+}
+interface UsageEvent { id: string; kind: string; userId?: string; user?: { email?: string }; tokensIn: number; tokensOut: number; createdAt: string }
+interface Voucher { id: string; code: string; type: string; plan?: string; credits?: number; imageCredits?: number; active: boolean; redemptionCount: number; maxRedemptions: number }
+interface Payment { id: string; userId?: string; user?: { email?: string }; provider: string; amount: number; status: string }
+
+interface Dashboard {
+  stats: Stats
+  users: AdminUser[]
+  usage: UsageEvent[]
+  vouchers: Voucher[]
+  payments: Payment[]
+}
+
 const fmt = (n = 0) => n.toLocaleString()
 const money = (c = 0) => `$${(c / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
 
 function Card({ icon, label, value, sub, accent }: { icon: React.ReactNode; label: string; value: string; sub?: string; accent?: string }) {
   return (
     <div className="glass rounded-xl p-4">
-      <div className={`flex items-center gap-2 text-xs mb-1 ${accent || 'text-slate-400'}`}>{icon}{label}</div>
-      <div className="text-2xl font-semibold text-slate-100">{value}</div>
-      {sub && <div className="text-xs text-slate-500 mt-0.5">{sub}</div>}
+      <div className={`flex items-center gap-2 text-ui-xs mb-1 ${accent || 'text-[var(--ink-muted)]'}`}>{icon}{label}</div>
+      <div className="text-2xl font-semibold text-[var(--ink-primary)]">{value}</div>
+      {sub && <div className="text-ui-xs text-[var(--ink-muted)] mt-0.5">{sub}</div>}
     </div>
   )
 }
 
 export default function AdminPage() {
-  const [stats, setStats] = useState<Stats | null>(null)
-  const [users, setUsers] = useState<any[]>([])
-  const [usage, setUsage] = useState<any[]>([])
-  const [vouchers, setVouchers] = useState<any[]>([])
-  const [payments, setPayments] = useState<any[]>([])
-  const [error, setError] = useState('')
+  const queryClient = useQueryClient()
   const [live, setLive] = useState(true)
   const [tab, setTab] = useState<'users' | 'usage' | 'vouchers' | 'payments'>('users')
+
+  const dashboard = useQuery<Dashboard>({
+    queryKey: ['admin', 'dashboard'],
+    queryFn: async () => {
+      const [s, u, us, v, p] = await Promise.all([
+        apiFetch<Stats>('/api/admin/stats'),
+        apiFetch<{ users?: AdminUser[] }>('/api/admin/users?take=25'),
+        apiFetch<{ events?: UsageEvent[] }>('/api/admin/usage?take=40'),
+        apiFetch<{ vouchers?: Voucher[] }>('/api/admin/vouchers'),
+        apiFetch<{ payments?: Payment[] }>('/api/admin/payments?take=25'),
+      ])
+      return {
+        stats: s,
+        users: u.users || [],
+        usage: us.events || [],
+        vouchers: v.vouchers || [],
+        payments: p.payments || [],
+      }
+    },
+    enabled: typeof window !== 'undefined',
+    retry: false,
+    refetchInterval: live ? 5000 : false,
+  })
+
+  const refresh = () => { void queryClient.invalidateQueries({ queryKey: ['admin', 'dashboard'] }) }
+
+  const stats = dashboard.data?.stats ?? null
+  const users = dashboard.data?.users ?? []
+  const usage = dashboard.data?.usage ?? []
+  const vouchers = dashboard.data?.vouchers ?? []
+  const payments = dashboard.data?.payments ?? []
+  const error = dashboard.isError
+    ? ((dashboard.error as { message?: string })?.message || 'Failed to load admin data')
+    : ''
 
   // Voucher form
   const [vType, setVType] = useState<'gold' | 'pro' | 'unlimited' | 'credits'>('gold')
@@ -45,118 +94,94 @@ export default function AdminPage() {
   const [vMax, setVMax] = useState(1)
   const [vCredits, setVCredits] = useState(0)
   const [vImages, setVImages] = useState(0)
-  const [creating, setCreating] = useState(false)
+  const [actionError, setActionError] = useState('')
 
-  const refresh = useCallback(async () => {
-    try {
-      const [s, u, us, v, p] = await Promise.all([
-        apiFetch<Stats>('/api/admin/stats'),
-        apiFetch<any>('/api/admin/users?take=25'),
-        apiFetch<any>('/api/admin/usage?take=40'),
-        apiFetch<any>('/api/admin/vouchers'),
-        apiFetch<any>('/api/admin/payments?take=25'),
-      ])
-      setStats(s)
-      setUsers(u.users || [])
-      setUsage(us.events || [])
-      setVouchers(v.vouchers || [])
-      setPayments(p.payments || [])
-      setError('')
-    } catch (e: any) {
-      setError(e?.message || 'Failed to load admin data')
-    }
-  }, [])
+  const createVoucher = useMutation({
+    mutationFn: (input: { type: string; count: number; maxRedemptions: number; credits: number; imageCredits: number }) =>
+      apiFetch('/api/admin/vouchers', { method: 'POST', body: JSON.stringify(input) }),
+    onSuccess: () => refresh(),
+    onError: (e: any) => { setActionError(e?.message) },
+  })
 
-  useEffect(() => {
-    refresh()
-  }, [refresh])
-
-  useEffect(() => {
-    if (!live) return
-    const t = setInterval(refresh, 5000)
-    return () => clearInterval(t)
-  }, [live, refresh])
-
-  async function createVoucher(e: React.FormEvent) {
-    e.preventDefault()
-    setCreating(true)
-    try {
-      await apiFetch('/api/admin/vouchers', {
-        method: 'POST',
-        body: JSON.stringify({ type: vType, count: vCount, maxRedemptions: vMax, credits: vCredits, imageCredits: vImages }),
-      })
-      refresh()
-    } catch (e: any) {
-      setError(e?.message)
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  async function patchUser(id: string, data: any) {
+  async function patchUser(id: string, data: Record<string, unknown>) {
     try {
       await apiFetch(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
       refresh()
     } catch (e: any) {
-      setError(e?.message)
+      setActionError(e?.message)
     }
   }
 
-  async function toggleVoucher(v: any) {
+  async function toggleVoucher(v: Voucher) {
     await apiFetch(`/api/admin/vouchers/${v.id}`, { method: 'PATCH', body: JSON.stringify({ active: !v.active }) }).catch(() => {})
     refresh()
+  }
+
+  function onCreateVoucher(e: FormEvent) {
+    e.preventDefault()
+    createVoucher.mutate({ type: vType, count: vCount, maxRedemptions: vMax, credits: vCredits, imageCredits: vImages })
   }
 
   const noDb = stats && stats.hasDb === false
 
   return (
-    <div className="min-h-screen px-5 py-6 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <Link href="/chat" aria-label="Back to chat" className="text-slate-400 hover:text-slate-200"><ArrowLeft size={18} /></Link>
-          <h1 className="text-xl font-semibold text-slate-100 flex items-center gap-2"><ShieldCheck size={18} className="text-[#c96442]" /> Admin Portal</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link href="/admin/loopit" className="text-xs px-3 py-1.5 rounded-lg border text-slate-300 border-white/10 hover:bg-white/5">Loop-it ops</Link>
-          <Link href="/admin/bot" className="text-xs px-3 py-1.5 rounded-lg border text-violet-300 border-violet-500/30 bg-violet-500/10 hover:bg-violet-500/20">Bot computer</Link>
-          <button onClick={() => setLive((v) => !v)} className={`text-xs px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${live ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' : 'text-slate-400 border-white/10'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${live ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} /> {live ? 'Live' : 'Paused'}
+    <AppPage
+      title="Admin Portal"
+      documentTitle="Admin"
+      back={{ href: '/chat', label: 'Chat' }}
+      width="wide"
+      icon={<ShieldCheck size={18} className="text-[var(--accent-text)]" aria-hidden />}
+      actions={(
+        <>
+          <Link href="/admin/loopit" className={`${btnSecondary} px-3 py-1.5 text-ui-xs`}>Loop-IT ops</Link>
+          <Link href="/admin/bot" className={`${btnSecondary} px-3 py-1.5 text-ui-xs`}>Bot computer</Link>
+          <button
+            type="button"
+            onClick={() => setLive((v) => !v)}
+            className={`inline-flex items-center gap-1.5 text-ui-xs px-3 py-1.5 rounded-lg border transition ${live ? 'text-[var(--success)] border-[var(--border-subtle)] bg-[var(--bg-tint)]' : 'text-[var(--ink-muted)] border-[var(--border-strong)]'}`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${live ? 'bg-[var(--success)] animate-pulse' : 'bg-[var(--ink-muted)]'}`} aria-hidden /> {live ? 'Live' : 'Paused'}
           </button>
-          <button onClick={refresh} aria-label="Refresh stats" className="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-400 hover:text-slate-200"><RefreshCw size={13} /></button>
+          <button type="button" onClick={refresh} aria-label="Refresh stats" className={`${btnGhost} px-2.5 py-1.5 text-ui-xs`}><RefreshCw size={13} aria-hidden /></button>
+        </>
+      )}
+    >
+      {error && <div className="mb-4"><ErrorState title={error} compact /></div>}
+      {actionError && <div className="mb-4"><ErrorState title={actionError} compact onDismiss={() => setActionError('')} /></div>}
+      {noDb && (
+        <div role="note" className="mb-4 text-ui-xs text-[var(--warning)] bg-[var(--bg-tint)] border border-[var(--border-subtle)] rounded-lg px-3 py-2">
+          Running without a database — connect Postgres (DATABASE_URL) to see live stats.
         </div>
-      </div>
-
-      {error && <div className="mb-4 text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">{error}</div>}
-      {noDb && <div className="mb-4 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">Running without a database — connect Postgres (DATABASE_URL) to see live stats.</div>}
+      )}
 
       {/* Headline stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        <Card icon={<Users size={13} />} label="Users" value={fmt(stats?.users?.total)} sub={`+${fmt(stats?.users?.new24h)} in 24h`} accent="text-[#d8a08a]" />
-        <Card icon={<Zap size={13} />} label="Tokens (24h)" value={fmt((stats?.tokens?.in24h || 0) + (stats?.tokens?.out24h || 0))} sub={`${fmt(stats?.tokens?.inTotal)} in / ${fmt(stats?.tokens?.outTotal)} out total`} accent="text-[#c96442]" />
-        <Card icon={<Activity size={13} />} label="Actions (24h)" value={fmt(stats?.activity?.events24h)} sub={`${fmt(stats?.activity?.imagesTotal)} images all-time`} accent="text-amber-400" />
-        <Card icon={<DollarSign size={13} />} label="Revenue" value={money(stats?.revenue?.totalCents)} sub={`${fmt(stats?.revenue?.payments)} payments`} accent="text-emerald-400" />
+        <Card icon={<Users size={13} aria-hidden />} label="Users" value={fmt(stats?.users?.total)} sub={`+${fmt(stats?.users?.new24h)} in 24h`} accent="text-[var(--accent-text)]" />
+        <Card icon={<Zap size={13} aria-hidden />} label="Tokens (24h)" value={fmt((stats?.tokens?.in24h || 0) + (stats?.tokens?.out24h || 0))} sub={`${fmt(stats?.tokens?.inTotal)} in / ${fmt(stats?.tokens?.outTotal)} out total`} accent="text-[var(--accent-text)]" />
+        <Card icon={<Activity size={13} aria-hidden />} label="Actions (24h)" value={fmt(stats?.activity?.events24h)} sub={`${fmt(stats?.activity?.imagesTotal)} images all-time`} accent="text-[var(--warning)]" />
+        <Card icon={<DollarSign size={13} aria-hidden />} label="Revenue" value={money(stats?.revenue?.totalCents)} sub={`${fmt(stats?.revenue?.payments)} payments`} accent="text-[var(--success)]" />
       </div>
 
       {/* Plan mix */}
-      <div className="flex flex-wrap gap-2 mb-6 text-xs">
-        <span className="px-2.5 py-1 rounded-full bg-ink-800 border border-white/10 text-slate-300">Free: {fmt(stats?.users?.free)}</span>
-        <span className="px-2.5 py-1 rounded-full bg-[#c96442]/10 border border-[#c96442]/20 text-[#c96442]">Pro: {fmt(stats?.users?.pro)}</span>
-        <span className="px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center gap-1"><Crown size={11} /> Gold: {fmt(stats?.users?.gold)}</span>
-        <span className="px-2.5 py-1 rounded-full bg-[#d8a08a]/10 border border-[#d8a08a]/20 text-[#d8a08a] flex items-center gap-1"><InfinityIcon size={11} /> Unlimited: {fmt(stats?.users?.unlimited)}</span>
-        <span className="px-2.5 py-1 rounded-full bg-ink-800 border border-white/10 text-slate-300">Admins: {fmt(stats?.users?.admins)}</span>
+      <div className="flex flex-wrap gap-2 mb-6 text-ui-xs">
+        <span className="px-2.5 py-1 rounded-full bg-[var(--bg-raised)] border border-[var(--border-strong)] text-[var(--ink-secondary)]">Free: {fmt(stats?.users?.free)}</span>
+        <span className="px-2.5 py-1 rounded-full bg-[var(--accent-soft)] border border-[var(--accent-soft-border)] text-[var(--accent-text)]">Pro: {fmt(stats?.users?.pro)}</span>
+        <span className="px-2.5 py-1 rounded-full bg-[var(--bg-tint)] border border-[var(--border-subtle)] text-[var(--warning)] flex items-center gap-1"><Crown size={11} aria-hidden /> Gold: {fmt(stats?.users?.gold)}</span>
+        <span className="px-2.5 py-1 rounded-full bg-[var(--accent-soft)] border border-[var(--accent-soft-border)] text-[var(--accent-text)] flex items-center gap-1"><InfinityIcon size={11} aria-hidden /> Unlimited: {fmt(stats?.users?.unlimited)}</span>
+        <span className="px-2.5 py-1 rounded-full bg-[var(--bg-raised)] border border-[var(--border-strong)] text-[var(--ink-secondary)]">Admins: {fmt(stats?.users?.admins)}</span>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-4 border-b border-white/5">
+      <div className="flex gap-1 mb-4 border-b border-[var(--border-subtle)]">
         {(['users', 'usage', 'vouchers', 'payments'] as const).map((t) => (
-          <button key={t} onClick={() => setTab(t)} className={`px-3 py-2 text-sm capitalize transition border-b-2 -mb-px ${tab === t ? 'text-slate-100 border-[#c96442]' : 'text-slate-500 border-transparent hover:text-slate-300'}`}>{t}</button>
+          <button key={t} type="button" onClick={() => setTab(t)} aria-current={tab === t ? 'true' : undefined} className={`px-3 py-2 text-sm capitalize transition border-b-2 -mb-px ${tab === t ? 'text-[var(--ink-primary)] border-[var(--accent-fill)]' : 'text-[var(--ink-muted)] border-transparent hover:text-[var(--ink-secondary)]'}`}>{t}</button>
         ))}
       </div>
 
       {tab === 'users' && (
         <div className="glass rounded-xl overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-slate-500 text-xs bg-ink-900/50"><tr>
+            <thead className="text-[var(--ink-muted)] text-ui-xs bg-[var(--bg-sunken)]"><tr>
               <th className="text-left px-3 py-2 font-medium">User</th>
               <th className="text-left px-3 py-2 font-medium">Plan</th>
               <th className="text-right px-3 py-2 font-medium">Credits</th>
@@ -166,25 +191,25 @@ export default function AdminPage() {
             </tr></thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id} className="border-t border-white/5">
+                <tr key={u.id} className="border-t border-[var(--border-subtle)]">
                   <td className="px-3 py-2">
-                    <div className="text-slate-200 flex items-center gap-1.5">{u.name} {u.role === 'admin' && <ShieldCheck size={12} className="text-[#c96442]" />} {u.unlimited && <InfinityIcon size={12} className="text-[#d8a08a]" />}</div>
-                    <div className="text-xs text-slate-500">{u.email}</div>
+                    <div className="text-[var(--ink-primary)] flex items-center gap-1.5">{u.name} {u.role === 'admin' && <ShieldCheck size={12} className="text-[var(--accent-text)]" aria-hidden />} {u.unlimited && <InfinityIcon size={12} className="text-[var(--accent-text)]" aria-hidden />}</div>
+                    <div className="text-ui-xs text-[var(--ink-muted)]">{u.email}</div>
                   </td>
-                  <td className="px-3 py-2"><span className={`text-xs px-2 py-0.5 rounded-full ${u.plan === 'gold' ? 'bg-amber-500/10 text-amber-400' : u.plan === 'pro' ? 'bg-[#c96442]/10 text-[#c96442]' : 'bg-ink-800 text-slate-400'}`}>{u.plan}</span></td>
-                  <td className="px-3 py-2 text-right text-slate-300">{u.unlimited ? '∞' : `${u.credits}/${u.imageCredits}img`}</td>
-                  <td className="px-3 py-2 text-right text-slate-400">{fmt((u.tokensInTotal || 0) + (u.tokensOutTotal || 0))}</td>
-                  <td className="px-3 py-2 text-right text-slate-400">{fmt(u.messagesTotal)}</td>
+                  <td className="px-3 py-2"><span className={`text-ui-xs px-2 py-0.5 rounded-full ${u.plan === 'gold' ? 'bg-[var(--bg-tint)] text-[var(--warning)]' : u.plan === 'pro' ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]' : 'bg-[var(--bg-raised)] text-[var(--ink-secondary)]'}`}>{u.plan}</span></td>
+                  <td className="px-3 py-2 text-right text-[var(--ink-secondary)]">{u.unlimited ? '∞' : `${u.credits}/${u.imageCredits}img`}</td>
+                  <td className="px-3 py-2 text-right text-[var(--ink-muted)]">{fmt((u.tokensInTotal || 0) + (u.tokensOutTotal || 0))}</td>
+                  <td className="px-3 py-2 text-right text-[var(--ink-muted)]">{fmt(u.messagesTotal)}</td>
                   <td className="px-3 py-2">
                     <div className="flex items-center justify-center gap-1">
-                      <button onClick={() => patchUser(u.id, { plan: 'gold' })} title="Make Gold" className="text-xs px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 hover:bg-amber-500/20">Gold</button>
-                      <button onClick={() => patchUser(u.id, { unlimited: !u.unlimited })} title="Toggle unlimited" className="text-xs px-1.5 py-0.5 rounded bg-[#d8a08a]/10 text-[#d8a08a] hover:bg-[#d8a08a]/20">∞</button>
-                      <button onClick={() => patchUser(u.id, { role: u.role === 'admin' ? 'user' : 'admin' })} title="Toggle admin" className="text-xs px-1.5 py-0.5 rounded bg-[#c96442]/10 text-[#c96442] hover:bg-[#c96442]/20">Admin</button>
+                      <button type="button" onClick={() => void patchUser(u.id, { plan: 'gold' })} title="Make Gold" className="text-ui-xs px-1.5 py-0.5 rounded bg-[var(--bg-tint)] text-[var(--warning)] hover:bg-[var(--bg-hover)]">Gold</button>
+                      <button type="button" onClick={() => void patchUser(u.id, { unlimited: !u.unlimited })} title="Toggle unlimited" className="text-ui-xs px-1.5 py-0.5 rounded bg-[var(--accent-soft)] text-[var(--accent-text)] hover:bg-[var(--accent-soft-hover)]">∞</button>
+                      <button type="button" onClick={() => void patchUser(u.id, { role: u.role === 'admin' ? 'user' : 'admin' })} title="Toggle admin" className="text-ui-xs px-1.5 py-0.5 rounded bg-[var(--accent-soft)] text-[var(--accent-text)] hover:bg-[var(--accent-soft-hover)]">Admin</button>
                     </div>
                   </td>
                 </tr>
               ))}
-              {!users.length && <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-600">No users yet.</td></tr>}
+              {!users.length && <tr><td colSpan={6} className="px-3 py-8 text-center text-[var(--ink-muted)]">No users yet.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -193,46 +218,46 @@ export default function AdminPage() {
       {tab === 'usage' && (
         <div className="glass rounded-xl p-2 max-h-[480px] overflow-y-auto">
           {usage.map((e) => (
-            <div key={e.id} className="flex items-center justify-between px-2 py-1.5 text-xs border-b border-white/5 last:border-0">
+            <div key={e.id} className="flex items-center justify-between px-2 py-1.5 text-ui-xs border-b border-[var(--border-subtle)] last:border-0">
               <div className="flex items-center gap-2">
-                <span className={`px-1.5 py-0.5 rounded ${e.kind === 'image' ? 'bg-pink-500/10 text-pink-400' : e.kind === 'research' ? 'bg-amber-500/10 text-amber-400' : 'bg-[#c96442]/10 text-[#c96442]'}`}>{e.kind}</span>
-                <span className="text-slate-400">{e.user?.email || e.userId}</span>
+                <span className={`px-1.5 py-0.5 rounded ${e.kind === 'image' ? 'bg-[var(--danger-soft)] text-[var(--danger)]' : e.kind === 'research' ? 'bg-[var(--bg-tint)] text-[var(--warning)]' : 'bg-[var(--accent-soft)] text-[var(--accent-text)]'}`}>{e.kind}</span>
+                <span className="text-[var(--ink-muted)]">{e.user?.email || e.userId}</span>
               </div>
-              <div className="text-slate-500">{e.tokensIn + e.tokensOut} tok · {new Date(e.createdAt).toLocaleTimeString()}</div>
+              <div className="text-[var(--ink-muted)]">{e.tokensIn + e.tokensOut} tok · {new Date(e.createdAt).toLocaleTimeString()}</div>
             </div>
           ))}
-          {!usage.length && <div className="px-3 py-8 text-center text-slate-600 text-sm">No activity yet.</div>}
+          {!usage.length && <div className="px-3 py-8 text-center text-[var(--ink-muted)] text-sm">No activity yet.</div>}
         </div>
       )}
 
       {tab === 'vouchers' && (
         <div className="space-y-4">
-          <form onSubmit={createVoucher} className="glass rounded-xl p-4 flex flex-wrap items-end gap-3">
+          <form onSubmit={onCreateVoucher} className="glass rounded-xl p-4 flex flex-wrap items-end gap-3">
             <div>
-              <label className="text-xs text-slate-500 block mb-1">Type</label>
-              <select value={vType} onChange={(e) => setVType(e.target.value as any)} className="bg-ink-800 border border-white/10 rounded-lg px-2.5 py-2 text-sm text-slate-100">
+              <label className="text-ui-xs text-[var(--ink-muted)] block mb-1">Type</label>
+              <select value={vType} onChange={(e) => setVType(e.target.value as typeof vType)} className={`${selectCls} px-2.5 py-2 text-sm`}>
                 <option value="gold">T1 Gold (team, capped-max)</option>
                 <option value="pro">Pro</option>
                 <option value="unlimited">Unlimited (internal)</option>
                 <option value="credits">Credits top-up</option>
               </select>
             </div>
-            <div><label className="text-xs text-slate-500 block mb-1">Count</label><input type="number" min={1} max={100} value={vCount} onChange={(e) => setVCount(+e.target.value)} className="w-20 bg-ink-800 border border-white/10 rounded-lg px-2.5 py-2 text-sm text-slate-100" /></div>
-            <div><label className="text-xs text-slate-500 block mb-1">Max uses</label><input type="number" min={1} value={vMax} onChange={(e) => setVMax(+e.target.value)} className="w-20 bg-ink-800 border border-white/10 rounded-lg px-2.5 py-2 text-sm text-slate-100" /></div>
+            <div><label className="text-ui-xs text-[var(--ink-muted)] block mb-1">Count</label><input type="number" min={1} max={100} value={vCount} onChange={(e) => setVCount(+e.target.value)} className="w-20 bg-[var(--bg-raised)] border border-[var(--border-strong)] rounded-lg px-2.5 py-2 text-sm text-[var(--ink-primary)]" /></div>
+            <div><label className="text-ui-xs text-[var(--ink-muted)] block mb-1">Max uses</label><input type="number" min={1} value={vMax} onChange={(e) => setVMax(+e.target.value)} className="w-20 bg-[var(--bg-raised)] border border-[var(--border-strong)] rounded-lg px-2.5 py-2 text-sm text-[var(--ink-primary)]" /></div>
             {vType === 'credits' && (
               <>
-                <div><label className="text-xs text-slate-500 block mb-1">+Msg credits</label><input type="number" min={0} value={vCredits} onChange={(e) => setVCredits(+e.target.value)} className="w-24 bg-ink-800 border border-white/10 rounded-lg px-2.5 py-2 text-sm text-slate-100" /></div>
-                <div><label className="text-xs text-slate-500 block mb-1">+Image credits</label><input type="number" min={0} value={vImages} onChange={(e) => setVImages(+e.target.value)} className="w-24 bg-ink-800 border border-white/10 rounded-lg px-2.5 py-2 text-sm text-slate-100" /></div>
+                <div><label className="text-ui-xs text-[var(--ink-muted)] block mb-1">+Msg credits</label><input type="number" min={0} value={vCredits} onChange={(e) => setVCredits(+e.target.value)} className="w-24 bg-[var(--bg-raised)] border border-[var(--border-strong)] rounded-lg px-2.5 py-2 text-sm text-[var(--ink-primary)]" /></div>
+                <div><label className="text-ui-xs text-[var(--ink-muted)] block mb-1">+Image credits</label><input type="number" min={0} value={vImages} onChange={(e) => setVImages(+e.target.value)} className="w-24 bg-[var(--bg-raised)] border border-[var(--border-strong)] rounded-lg px-2.5 py-2 text-sm text-[var(--ink-primary)]" /></div>
               </>
             )}
-            <button type="submit" disabled={creating} className="px-4 py-2 rounded-lg text-white bg-gradient-to-r from-[#c96442] to-[#b5593a] hover:opacity-90 disabled:opacity-50 shadow-glow text-sm font-medium flex items-center gap-1.5">
-              {creating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Generate
+            <button type="submit" disabled={createVoucher.isPending} className={btnPrimary}>
+              {createVoucher.isPending ? <Loader2 size={14} className="animate-spin" aria-hidden /> : <Plus size={14} aria-hidden />} Generate
             </button>
           </form>
 
           <div className="glass rounded-xl overflow-hidden overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-slate-500 text-xs bg-ink-900/50"><tr>
+              <thead className="text-[var(--ink-muted)] text-ui-xs bg-[var(--bg-sunken)]"><tr>
                 <th className="text-left px-3 py-2 font-medium">Code</th>
                 <th className="text-left px-3 py-2 font-medium">Type / Plan</th>
                 <th className="text-right px-3 py-2 font-medium">Uses</th>
@@ -240,14 +265,14 @@ export default function AdminPage() {
               </tr></thead>
               <tbody>
                 {vouchers.map((v) => (
-                  <tr key={v.id} className="border-t border-white/5">
-                    <td className="px-3 py-2 font-mono text-slate-200 flex items-center gap-1.5">{v.type === 'unlimited' && <InfinityIcon size={12} className="text-[#d8a08a]" />}{v.plan === 'gold' && <Crown size={12} className="text-amber-400" />}{v.code}</td>
-                    <td className="px-3 py-2 text-slate-400">{v.type}{v.plan ? ` · ${v.plan}` : ''}{v.credits ? ` · +${v.credits}c` : ''}{v.imageCredits ? ` +${v.imageCredits}img` : ''}</td>
-                    <td className="px-3 py-2 text-right text-slate-400">{v.redemptionCount}/{v.maxRedemptions}</td>
-                    <td className="px-3 py-2 text-center"><button onClick={() => toggleVoucher(v)} className={`text-xs px-2 py-0.5 rounded-full ${v.active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-500/10 text-slate-500'}`}>{v.active ? 'active' : 'off'}</button></td>
+                  <tr key={v.id} className="border-t border-[var(--border-subtle)]">
+                    <td className="px-3 py-2 font-mono text-[var(--ink-primary)] flex items-center gap-1.5">{v.type === 'unlimited' && <InfinityIcon size={12} className="text-[var(--accent-text)]" aria-hidden />}{v.plan === 'gold' && <Crown size={12} className="text-[var(--warning)]" aria-hidden />}{v.code}</td>
+                    <td className="px-3 py-2 text-[var(--ink-muted)]">{v.type}{v.plan ? ` · ${v.plan}` : ''}{v.credits ? ` · +${v.credits}c` : ''}{v.imageCredits ? ` +${v.imageCredits}img` : ''}</td>
+                    <td className="px-3 py-2 text-right text-[var(--ink-muted)]">{v.redemptionCount}/{v.maxRedemptions}</td>
+                    <td className="px-3 py-2 text-center"><button type="button" onClick={() => void toggleVoucher(v)} className={`text-ui-xs px-2 py-0.5 rounded-full ${v.active ? 'bg-[var(--bg-tint)] text-[var(--success)]' : 'bg-[var(--bg-hover)] text-[var(--ink-muted)]'}`}>{v.active ? 'active' : 'off'}</button></td>
                   </tr>
                 ))}
-                {!vouchers.length && <tr><td colSpan={4} className="px-3 py-8 text-center text-slate-600">No vouchers yet — generate T1 Gold codes above.</td></tr>}
+                {!vouchers.length && <tr><td colSpan={4} className="px-3 py-8 text-center text-[var(--ink-muted)]">No vouchers yet — generate T1 Gold codes above.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -257,16 +282,16 @@ export default function AdminPage() {
       {tab === 'payments' && (
         <div className="glass rounded-xl p-2 max-h-[480px] overflow-y-auto">
           {payments.map((p) => (
-            <div key={p.id} className="flex items-center justify-between px-2 py-1.5 text-xs border-b border-white/5 last:border-0">
-              <div className="text-slate-300">{p.user?.email || p.userId} <span className="text-slate-600">· {p.provider}</span></div>
-              <div className="flex items-center gap-2"><span className="text-emerald-400">{money(p.amount)}</span><span className={`px-1.5 py-0.5 rounded ${p.status === 'succeeded' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>{p.status}</span></div>
+            <div key={p.id} className="flex items-center justify-between px-2 py-1.5 text-ui-xs border-b border-[var(--border-subtle)] last:border-0">
+              <div className="text-[var(--ink-secondary)]">{p.user?.email || p.userId} <span className="text-[var(--ink-muted)]">· {p.provider}</span></div>
+              <div className="flex items-center gap-2"><span className="text-[var(--success)]">{money(p.amount)}</span><span className={`px-1.5 py-0.5 rounded ${p.status === 'succeeded' ? 'bg-[var(--bg-tint)] text-[var(--success)]' : 'bg-[var(--bg-tint)] text-[var(--warning)]'}`}>{p.status}</span></div>
             </div>
           ))}
-          {!payments.length && <div className="px-3 py-8 text-center text-slate-600 text-sm">No payments recorded yet.</div>}
+          {!payments.length && <div className="px-3 py-8 text-center text-[var(--ink-muted)] text-sm">No payments recorded yet.</div>}
         </div>
       )}
 
-      <div className="mt-6 flex items-center gap-1.5 text-xs text-slate-600"><Ticket size={12} /> Tip: generate T1 Gold vouchers for team members — capped-max usage, far above free, but not unlimited.</div>
-    </div>
+      <div className="mt-6 flex items-center gap-1.5 text-ui-xs text-[var(--ink-muted)]"><Ticket size={12} aria-hidden /> Tip: generate T1 Gold vouchers for team members — capped-max usage, far above free, but not unlimited.</div>
+    </AppPage>
   )
 }

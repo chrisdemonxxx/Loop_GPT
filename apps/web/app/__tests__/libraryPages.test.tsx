@@ -198,7 +198,7 @@ describe('/artifacts', () => {
       ok: true,
       json: async () => [{ id: 'f1', name: 'report.md', kind: 'md', url: '/api/files/f1/content', mimeType: 'text/markdown' }],
     })
-    render(<ArtifactsPage />)
+    withQuery(<ArtifactsPage />)
     const link = await screen.findByRole('link', { name: /report.md/ })
     expect(link).toHaveAttribute('href', '/artifact?id=f1')
     expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -207,14 +207,14 @@ describe('/artifacts', () => {
 
   it('uses the empty line only after a successful read with none', async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => [] })
-    render(<ArtifactsPage />)
+    withQuery(<ArtifactsPage />)
     expect(await screen.findByText('Generated files and code snippets appear here as the agent creates them.')).toBeInTheDocument()
     expect(screen.queryByText("Couldn't load files.")).not.toBeInTheDocument()
   })
 
   it('a failed read is not the empty library and Retry repeats the same read', async () => {
     fetchMock.mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'no' }) })
-    render(<ArtifactsPage />)
+    withQuery(<ArtifactsPage />)
     expect(await screen.findByText("Couldn't load files.")).toBeInTheDocument()
     expect(screen.queryByText('Generated files and code snippets appear here as the agent creates them.')).not.toBeInTheDocument()
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => [] })
@@ -235,7 +235,7 @@ describe('/artifact/:id', () => {
       }
     })
     window.history.pushState({}, '', '/artifact/?id=file-1')
-    render(<ArtifactPage />)
+    withQuery(<ArtifactPage />)
     expect(await screen.findByText('notes.md')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Preview' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Download' })).toBeInTheDocument()
@@ -246,7 +246,7 @@ describe('/artifact/:id', () => {
   it('a missing file is not the empty library and Retry refetches that file', async () => {
     fetchMock.mockResolvedValue({ ok: false, json: async () => ({ error: 'missing' }) })
     window.history.pushState({}, '', '/artifact/?id=file-1')
-    render(<ArtifactPage />)
+    withQuery(<ArtifactPage />)
     expect(await screen.findByText("Couldn't open this file.")).toBeInTheDocument()
     expect(screen.queryByText('Generated files and code snippets appear here as the agent creates them.')).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Back to files' })).toHaveAttribute('href', '/artifacts')

@@ -1,11 +1,11 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import {
-  Bot, ArrowLeft, Monitor, Sparkles, Loader2, Trash2, Clock, Square,
+  Bot, Loader2, Sparkles, Trash2, Clock, Monitor, Square,
 } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   enqueueBotTask, listBotTasks, cancelBotTask, getBotQuota, listBotSkills, deleteBotSkill,
   BOT_STATUS_LABEL, BOT_STATUS_TONE,
@@ -16,6 +16,7 @@ import RunViewer from '../components/team-bot/RunViewer'
 import { AgentComputerTab } from '../components/team-bot/AgentComputerTab'
 import { AgentChatPane } from '../components/team-bot/AgentChatPane'
 import { useTeachSession } from '../components/team-bot/useTeachSession'
+import { AppPage } from '../components/AppPage'
 
 /**
  * Loop Bot (/agents) — Grok Bot layout:
@@ -29,22 +30,11 @@ import { useTeachSession } from '../components/team-bot/useTeachSession'
  */
 export default function AgentsPage() {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const [user, setUser] = useState<any>(null)
-  const [tasks, setTasks] = useState<BotTask[] | null>(null)
-  const [quota, setQuota] = useState<BotQuota | null>(null)
-  const [loadError, setLoadError] = useState('')
   const [watchTaskId, setWatchTaskId] = useState<string | null>(null)
   const [tab, setTab] = useState<'details' | 'library' | 'computer'>('details')
-  const [skills, setSkills] = useState<BotSkillRef[] | null>(null)
   const [computerExpanded, setComputerExpanded] = useState(false)
-  const [sending, setSending] = useState(false)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  const loadSkills = useCallback(() => {
-    listBotSkills().then((s) => setSkills(s.skills || [])).catch(() => {})
-  }, [])
-
-  const teach = useTeachSession(loadSkills)
 
   useEffect(() => {
     const u = getStoredUser()
@@ -52,25 +42,41 @@ export default function AgentsPage() {
     setUser(u)
   }, [router])
 
-  const load = useCallback(async () => {
-    try {
+  const tasksQuery = useQuery<{ tasks: BotTask[]; quota: BotQuota | null }>({
+    queryKey: ['bot', 'tasks'],
+    queryFn: async () => {
       const [t, q] = await Promise.all([listBotTasks({ limit: 100 }), getBotQuota().catch(() => null)])
-      setTasks(t.tasks)
-      setQuota(q)
-      setLoadError('')
-    } catch (err: any) {
-      setLoadError(err?.message || 'Could not load Loop Bot tasks.')
-    }
-  }, [])
+      return { tasks: t.tasks, quota: q }
+    },
+    enabled: typeof window !== 'undefined' && !!user,
+    retry: false,
+    refetchInterval: (q) => {
+      const tasks = q.state.data?.tasks
+      return Array.isArray(tasks) && tasks.some((t) => t.status === 'queued' || t.status === 'processing') ? 6000 : false
+    },
+  })
+  const tasks = tasksQuery.data?.tasks ?? null
+  const quota = tasksQuery.data?.quota ?? null
+  const loadError = tasksQuery.isError
+    ? ((tasksQuery.error as { message?: string })?.message || 'Could not load Loop Bot tasks.')
+    : ''
 
-  useEffect(() => { if (user) { void load(); loadSkills() } }, [user, load, loadSkills])
+  const skillsQuery = useQuery<{ skills: BotSkillRef[] }>({
+    queryKey: ['bot', 'skills'],
+    queryFn: () => listBotSkills(),
+    enabled: typeof window !== 'undefined' && !!user,
+    retry: false,
+  })
+  const skills = skillsQuery.data?.skills ?? null
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] })
+    void queryClient.invalidateQueries({ queryKey: ['bot', 'skills'] })
+  }
+
+  const teach = useTeachSession(refresh)
 
   const anyActive = useMemo(() => !!tasks?.some((t) => t.status === 'queued' || t.status === 'processing'), [tasks])
-  useEffect(() => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
-    if (anyActive) pollRef.current = setInterval(load, 6000)
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [anyActive, load])
 
   // A teach session drives the operator straight into the enlarged computer.
   useEffect(() => {
@@ -82,45 +88,37 @@ export default function AgentsPage() {
 
   const routines = useMemo(() => (tasks || []).filter((t) => t.kind === 'scheduled'), [tasks])
 
-  const cancel = async (id: string) => {
-    try { await cancelBotTask(id); await load() } catch { await load() }
-  }
+  const cancel = useMutation({
+    mutationFn: (id: string) => cancelBotTask(id).catch(() => {}),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] }) },
+  })
 
   /** Chat is the instruction channel: a message = a one-shot task on the box. */
-  const sendInstruction = async (text: string) => {
-    if (sending) return
-    setSending(true)
-    try {
-      await enqueueBotTask({
+  const sendInstruction = useMutation({
+    mutationFn: (text: string) =>
+      enqueueBotTask({
         goal: text,
         maxSteps: 16,
         computer: { enabled: true, ttlMinutes: 30 },
-      })
-      await load()
-    } finally {
-      setSending(false)
-    }
-  }
+      }),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] }) },
+  })
 
   if (!user) return null
 
   return (
-    <div className="h-dvh flex flex-col bg-[#08080a] text-slate-200 overflow-hidden">
-      {/* Slim header — identity only; actions live in the computer view. */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.06] shrink-0">
-        <Link href="/chat" className="p-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/[0.05] transition" aria-label="Back to chat">
-          <ArrowLeft size={17} />
-        </Link>
-        <h1 className="text-[15px] font-semibold text-slate-100">Loop Bot</h1>
+    <AppPage width="fill" title="Loop Bot" documentTitle="Loop Bot">
+      {/* Slim status strip — actions live in the computer view. */}
+      <div className="flex items-center gap-3 px-4 py-2 border-b border-[var(--border-subtle)] shrink-0 min-h-[38px]">
         {anyActive && (
-          <span className="flex items-center gap-1.5 text-[11.5px] text-[var(--accent-text)]">
-            <Loader2 size={11} className="animate-spin" /> working
+          <span className="flex items-center gap-1.5 text-ui-xs text-[var(--accent-text)]">
+            <Loader2 size={11} className="animate-spin" aria-hidden /> working
           </span>
         )}
         {loadError && (
-          <span className="ml-auto text-[12px] text-rose-300/90 flex items-center gap-2">
+          <span className="ml-auto text-ui-xs text-[var(--danger)] flex items-center gap-2" role="alert">
             {loadError}
-            <button type="button" onClick={() => void load()} className="text-[#e79d7f] hover:underline">Retry</button>
+            <button type="button" onClick={() => { void tasksQuery.refetch() }} className="text-[var(--accent-text)] hover:underline">Retry</button>
           </span>
         )}
       </div>
@@ -130,20 +128,20 @@ export default function AgentsPage() {
         {/* ── Chat pane ── */}
         <AgentChatPane
           tasks={tasks}
-          sending={sending}
-          onSend={sendInstruction}
+          sending={sendInstruction.isPending}
+          onSend={async (text) => { await sendInstruction.mutateAsync(text) }}
           onWatch={(id) => setWatchTaskId(id)}
-          onCancel={cancel}
+          onCancel={(id) => { cancel.mutate(id) }}
         />
 
         {/* ── Profile panel ── */}
-        <aside className="flex flex-col min-h-0 border-t lg:border-t-0 lg:border-l border-white/[0.06] bg-[#0b0b0f] max-lg:max-h-[58dvh]">
+        <aside className="flex flex-col min-h-0 border-t lg:border-t-0 lg:border-l border-[var(--border-subtle)] bg-[var(--bg-sunken)] max-lg:max-h-[58dvh]">
           <div className="flex flex-col items-center pt-7 pb-4 px-4 shrink-0">
-            <div className="w-16 h-16 rounded-[22px] bg-[#c96442]/15 border border-[#c96442]/25 flex items-center justify-center">
-              <Bot size={30} className="text-[#e79d7f]" />
+            <div className="w-16 h-16 rounded-[22px] bg-[var(--accent-soft)] border border-[var(--accent-soft-border)] flex items-center justify-center">
+              <Bot size={30} className="text-[var(--accent-text)]" aria-hidden />
             </div>
-            <div className="mt-3 text-[17px] font-semibold text-slate-100">Loop Bot</div>
-            <div className="text-[12px] text-slate-500">Autonomous operator</div>
+            <div className="mt-3 text-ui-md font-semibold text-[var(--ink-primary)]">Loop Bot</div>
+            <div className="text-ui-xs text-[var(--ink-muted)]">Autonomous operator</div>
           </div>
 
           <div className="flex gap-1 px-4 shrink-0">
@@ -152,14 +150,14 @@ export default function AgentsPage() {
                 key={id}
                 type="button"
                 onClick={() => setTab(id)}
-                className={`px-3.5 py-1.5 rounded-lg text-[12.5px] font-medium capitalize transition ${
-                  tab === id ? 'bg-white/[0.09] text-slate-100' : 'text-slate-500 hover:text-slate-300'
+                className={`px-3.5 py-1.5 rounded-lg text-ui-xs font-medium capitalize transition ${
+                  tab === id ? 'bg-[var(--bg-hover-strong)] text-[var(--ink-primary)]' : 'text-[var(--ink-muted)] hover:text-[var(--ink-secondary)]'
                 }`}
               >
                 {id === 'computer' ? (
                   <span className="flex items-center gap-1.5">
                     Computer
-                    {teach.phase === 'recording' && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" aria-hidden />}
+                    {teach.phase === 'recording' && <span className="w-1.5 h-1.5 rounded-full bg-[var(--danger)] animate-pulse" aria-hidden />}
                   </span>
                 ) : id}
               </button>
@@ -170,22 +168,22 @@ export default function AgentsPage() {
             {tab === 'details' && (
               <div className="space-y-4">
                 {quota && (
-                  <p className="text-[12px] text-slate-500">
+                  <p className="text-ui-xs text-[var(--ink-muted)]">
                     {quota.unlimited
                       ? 'Unlimited computer minutes (admin).'
                       : `${quota.remaining ?? 0} of ${quota.cap ?? 0} computer minutes left today.`}
                   </p>
                 )}
                 <div>
-                  <h3 className="text-[11px] uppercase tracking-widest text-slate-500 font-medium mb-2">Routines</h3>
+                  <h3 className="text-2xs uppercase tracking-widest text-[var(--ink-muted)] font-medium mb-2">Routines</h3>
                   {routines.length === 0 ? (
-                    <p className="text-[12.5px] text-slate-500 leading-relaxed">
+                    <p className="text-ui-sm text-[var(--ink-muted)] leading-relaxed">
                       Routines are recurring tasks this Bot runs on a schedule. Ask it in chat to set one up.
                     </p>
                   ) : (
                     <div className="space-y-2">
                       {routines.map((t) => (
-                        <RoutineRow key={t.id} task={t} onCancel={cancel} onWatch={() => setWatchTaskId(t.id)} />
+                        <RoutineRow key={t.id} task={t} onCancel={(id) => { cancel.mutate(id) }} onWatch={() => setWatchTaskId(t.id)} />
                       ))}
                     </div>
                   )}
@@ -195,27 +193,27 @@ export default function AgentsPage() {
 
             {tab === 'library' && (
               skills === null ? (
-                <div className="text-[12px] text-slate-500 flex items-center gap-2"><Loader2 size={12} className="animate-spin" /> Loading skills…</div>
+                <div className="text-ui-xs text-[var(--ink-muted)] flex items-center gap-2"><Loader2 size={12} className="animate-spin" aria-hidden /> Loading skills…</div>
               ) : skills.length === 0 ? (
                 <div className="pt-2">
-                  <Sparkles size={18} className="text-slate-600 mb-2" />
-                  <p className="text-[12.5px] text-slate-500 leading-relaxed">
+                  <Sparkles size={18} className="text-[var(--ink-muted)] mb-2" aria-hidden />
+                  <p className="text-ui-sm text-[var(--ink-muted)] leading-relaxed">
                     Nothing taught yet. Open the Computer, enlarge it, press{' '}
-                    <span className="text-slate-300">Teach a task</span> and drive the work once — the
+                    <span className="text-[var(--ink-secondary)]">Teach a task</span> and drive the work once — the
                     recording becomes a one-click skill here.
                   </p>
                 </div>
               ) : (
                 <div className="space-y-2">
                   {skills.map((skill) => (
-                    <SkillCard key={skill.id} skill={skill} onDeleted={loadSkills} />
+                    <SkillCard key={skill.id} skill={skill} onDeleted={() => { void queryClient.invalidateQueries({ queryKey: ['bot', 'skills'] }) }} />
                   ))}
                 </div>
               )
             )}
 
             {tab === 'computer' && (
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden h-[46vh]">
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] overflow-hidden h-[46vh]">
                 <AgentComputerTab session={teach} onExpand={() => setComputerExpanded(true)} />
               </div>
             )}
@@ -233,7 +231,7 @@ export default function AgentsPage() {
       )}
 
       {watchTaskId && <RunViewer taskId={watchTaskId} onClose={() => setWatchTaskId(null)} />}
-    </div>
+    </AppPage>
   )
 }
 
@@ -243,22 +241,22 @@ function RoutineRow({ task, onCancel, onWatch }: { task: BotTask; onCancel: (id:
   const tone = BOT_STATUS_TONE[task.status]
   const active = task.status === 'queued' || task.status === 'processing'
   return (
-    <div className="flex items-center gap-2.5 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
+    <div className="flex items-center gap-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-3 py-2.5">
       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-        tone === 'accent' ? 'bg-[var(--accent)] animate-pulse' : tone === 'green' ? 'bg-emerald-400' : tone === 'rose' ? 'bg-rose-400' : 'bg-slate-600'
+        tone === 'accent' ? 'bg-[var(--accent-fill)] animate-pulse' : tone === 'green' ? 'bg-[var(--success)]' : tone === 'rose' ? 'bg-[var(--danger)]' : 'bg-[var(--ink-muted)]'
       }`} aria-hidden />
       <div className="min-w-0 flex-1">
-        <div className="text-[12.5px] text-slate-200 truncate">{task.goal}</div>
-        <div className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5">
-          <Clock size={10} /> every {task.schedule} · {BOT_STATUS_LABEL[task.status]}
+        <div className="text-ui-sm text-[var(--ink-primary)] truncate">{task.goal}</div>
+        <div className="text-2xs text-[var(--ink-muted)] flex items-center gap-1.5 mt-0.5">
+          <Clock size={10} aria-hidden /> every {task.schedule} · {BOT_STATUS_LABEL[task.status]}
         </div>
       </div>
-      <button type="button" onClick={onWatch} className="p-1.5 rounded-lg text-slate-400 hover:bg-white/[0.06] transition" aria-label="Open trace">
-        <Monitor size={13} />
+      <button type="button" onClick={onWatch} className="p-1.5 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] transition" aria-label="Open trace">
+        <Monitor size={13} aria-hidden />
       </button>
       {active && (
-        <button type="button" onClick={() => onCancel(task.id)} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-white/[0.06] transition" aria-label="Cancel">
-          <Square size={11} />
+        <button type="button" onClick={() => onCancel(task.id)} className="p-1.5 rounded-lg text-[var(--ink-muted)] hover:text-[var(--danger)] hover:bg-[var(--bg-hover)] transition" aria-label="Cancel">
+          <Square size={11} aria-hidden />
         </button>
       )}
     </div>
@@ -273,20 +271,20 @@ function SkillCard({ skill, onDeleted }: { skill: BotSkillRef; onDeleted: () => 
     onDeleted()
   }
   return (
-    <div className="rounded-xl bg-white/[0.04] p-3 ring-1 ring-white/[0.08] hover:ring-white/[0.14]">
+    <div className="rounded-xl bg-[var(--bg-hover)] p-3 border border-[var(--border-strong)] hover:border-[var(--border-strong)]">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="truncate text-[13px] font-medium text-slate-200">{skill.name}</div>
-          {skill.description && <div className="mt-0.5 truncate text-[11px] text-slate-500">{skill.description}</div>}
+          <div className="truncate text-ui-sm font-medium text-[var(--ink-primary)]">{skill.name}</div>
+          {skill.description && <div className="mt-0.5 truncate text-2xs text-[var(--ink-muted)]">{skill.description}</div>}
           {!!skill.triggers?.length && (
             <div className="mt-1.5 flex flex-wrap gap-1">
               {skill.triggers.slice(0, 4).map((trigger) => (
-                <span key={trigger} className="rounded bg-white/[0.07] px-1.5 py-0.5 font-mono text-[10px] text-slate-400">{trigger}</span>
+                <span key={trigger} className="rounded bg-[var(--bg-hover-strong)] px-1.5 py-0.5 font-mono text-3xs text-[var(--ink-secondary)]">{trigger}</span>
               ))}
             </div>
           )}
         </div>
-        <button onClick={remove} aria-label="Delete skill" className="shrink-0 text-slate-500 hover:text-rose-400"><Trash2 size={13} /></button>
+        <button type="button" onClick={() => void remove()} aria-label="Delete skill" className="shrink-0 text-[var(--ink-muted)] hover:text-[var(--danger)]"><Trash2 size={13} aria-hidden /></button>
       </div>
     </div>
   )
