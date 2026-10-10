@@ -114,9 +114,24 @@ export async function gradioCallSpace(
   const root = mediaUrl(base).replace(/\/+$/, '')
   const auth = mediaAuth(root)
   console.error('[gradio] fetching info from', root)
-  const infoRes = await providerRequest(`${root}/gradio_api/info`, {
-    ...auth, signal: opts.signal, timeoutMs: 30000, maxBytes: 2 * 1024 * 1024,
-  })
+  // Spaces sleep when idle and can take 30-90s to wake: the info request itself
+  // triggers the wake, so retry it a few times on timeout/503 instead of
+  // declaring the media endpoint dead on the first cold hit.
+  let infoRes: any
+  let infoErr: any
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      infoRes = await providerRequest(`${root}/gradio_api/info`, {
+        ...auth, signal: opts.signal, timeoutMs: 60000, maxBytes: 2 * 1024 * 1024,
+      })
+      infoErr = undefined
+      break
+    } catch (err: any) {
+      infoErr = err
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 10_000))
+    }
+  }
+  if (!infoRes) throw infoErr
   const info = await infoRes.json()
   const chosen = pickApi(info, opts.mode, !!opts.imageBase64)
   if (!chosen) throw new Error('No usable Gradio endpoint')
