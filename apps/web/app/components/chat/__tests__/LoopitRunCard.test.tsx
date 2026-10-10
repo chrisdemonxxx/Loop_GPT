@@ -9,14 +9,15 @@ vi.mock('next/link', () => ({
 }))
 
 describe('LoopitRunCard', () => {
-  it('offers the build preview for the linked run', () => {
+  it('links the run to its Build page', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={client}>
         <LoopitRunCard runId="run_abc123" />
       </QueryClientProvider>,
     )
-    const link = screen.getByRole('link', { name: 'Open preview' })
+    expect(screen.getByText('Build')).toBeTruthy()
+    const link = screen.getByRole('link', { name: 'Open build' })
     expect(link.getAttribute('href')).toBe('/build/?run=run_abc123')
     expect(screen.getByText('run_abc123')).toBeTruthy()
   })

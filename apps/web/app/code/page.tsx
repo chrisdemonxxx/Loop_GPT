@@ -3,19 +3,15 @@
 import { useEffect } from 'react'
 
 /**
- * /code (blueprint §9.8): the Code app shell. Our code surface is /developer
- * (real, shipped — API keys, usage, console). Nothing is plan-gated today, so
- * an upgrade gate would be fiction (contract team/CONTRACT_S3_ROUTES.md).
- * LOOPIT_ENABLED (baked as NEXT_PUBLIC_LOOPIT_ENABLED) sends this route to
- * /build instead. Off keeps the current /developer redirect.
+ * /code (blueprint §9.8): the Loop Code alias. Loop Code is the CLI and
+ * developer surface, which lives at /developer (API keys, usage, console).
+ * Build has its own route (/build) and nav entry; this alias never targets it.
  */
-const loopitEnabled = process.env.NEXT_PUBLIC_LOOPIT_ENABLED === '1'
-
 export default function CodeRedirect() {
-  useEffect(() => { window.location.replace(loopitEnabled ? '/build' : '/developer') }, [])
+  useEffect(() => { window.location.replace('/developer') }, [])
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#08080a] text-slate-400">
-      <p className="text-[13px]" role="status">Opening Loop Code…</p>
+    <main className="flex min-h-dvh items-center justify-center bg-[var(--bg-base)] text-[var(--ink-muted)]">
+      <p className="text-ui-sm" role="status">Opening Loop Code (developer API)…</p>
     </main>
   )
 }

@@ -3,16 +3,24 @@
 import { useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  approveGate,
   createPreviewUrl,
+  deployProject,
+  forkCheckpoint,
   getRun,
   listRuns,
+  rejectGate,
+  rollbackCheckpoint,
   startRun,
   streamRunEvents,
   toUserFacingError,
+  type ApprovalGate,
+  type CheckpointView,
   type RunDetail,
   type RunSummary,
   type StreamEvent,
 } from '@loop/loopit-client'
+import { isLiveStatus } from './status'
 
 export function useBuildRuns() {
   const query = useQuery<RunSummary[]>({
@@ -23,7 +31,7 @@ export function useBuildRuns() {
     refetchInterval: (q) => {
       const runs = q.state.data
       if (!Array.isArray(runs)) return false
-      return runs.some((run) => run.status === 'running') ? 4000 : false
+      return runs.some((run) => isLiveStatus(run.status)) ? 4000 : false
     },
   })
   return query
@@ -36,7 +44,7 @@ export function useBuildRun(runId: string) {
     queryFn: () => getRun(runId),
     enabled,
     retry: false,
-    refetchInterval: (q) => (q.state.data?.status === 'running' ? 3000 : false),
+    refetchInterval: (q) => (isLiveStatus(q.state.data?.status) ? 3000 : false),
   })
 }
 
@@ -46,6 +54,39 @@ export function useStartBuild() {
     mutationFn: (input: { prompt: string; maxIterations: number }) =>
       startRun(input.prompt, { maxIterations: input.maxIterations }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['loopit-runs'] }),
+  })
+}
+
+export type CheckpointAction = { kind: 'deploy' | 'rollback' | 'fork'; checkpoint: CheckpointView }
+
+/** Deploy / roll back / fork a checkpoint, then refresh the run. */
+export function useCheckpointAction(runId: string, projectId: string | null) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ pending, reason }: { pending: CheckpointAction; reason: string }) => {
+      if (!projectId) throw new Error('This build has no project yet')
+      if (pending.kind === 'deploy') return deployProject(projectId, pending.checkpoint.checkpoint_id, reason)
+      if (pending.kind === 'rollback') {
+        await rollbackCheckpoint(projectId, pending.checkpoint.checkpoint_id)
+        return null
+      }
+      return forkCheckpoint(projectId, pending.checkpoint.checkpoint_id)
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['loopit-run', runId] }),
+  })
+}
+
+/** Approve or reject a human gate, then refresh the run. */
+export function useGateDecision(runId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ gate, approved }: { gate: ApprovalGate; approved: boolean }) => {
+      const reason = approved ? 'approved by user in the build page' : 'rejected by user in the build page'
+      if (approved) await approveGate(runId, gate.gate_id, reason)
+      else await rejectGate(runId, gate.gate_id, reason)
+      return gate.gate_id
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['loopit-run', runId] }),
   })
 }
 
