@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  cleanPromptTitle,
   emptyRunUiState,
   extractCost,
   extractDag,
@@ -8,6 +9,9 @@ import {
   orderedDagNodes,
   pickPreviewFile,
   reduceRunEvent,
+  runTitle,
+  toActivity,
+  type Activity,
   type ApprovalGate,
   type RunDetail,
   type RunStreamEvent,
@@ -75,8 +79,11 @@ describe('run state mapping', () => {
       detail: { tool: 'read_file', path: 'index.html' },
     })
     expect(state.activity).toHaveLength(1)
-    expect(state.activity[0]?.title).toBe('Read a file')
-    expect(state.activity[0]?.rawType).toBe('tool.called')
+    expect(state.activity[0]?.title).toBe('Reviewed part of the project')
+    expect(state.activity[0]?.body).toBe('index.html')
+    // Product voice: the audit's internal event name never reaches the UI.
+    expect('rawType' in (state.activity[0] as Activity)).toBe(false)
+    expect(JSON.stringify(state.activity[0])).not.toContain('tool.called')
 
     const dag: TaskDagView = {
       plan_id: 'p',
@@ -139,5 +146,73 @@ describe('run state mapping', () => {
     expect(isCompletedNode({ id: 'a', goal: '', dag_parents: [], expected_verification: [], destructive: false, status: 'running' })).toBe(false)
     expect(pickPreviewFile(['src/App.js', 'public/index.html', 'notes.html'])).toBe('public/index.html')
     expect(pickPreviewFile(['src/App.js'])).toBe('src/App.js')
+  })
+})
+
+describe('run titles', () => {
+  it('prefers the brief title and never shows the raw request', () => {
+    expect(runTitle({ title: 'Customer Intake Form', prompt: 'just build this' })).toBe('Customer Intake Form')
+    expect(runTitle({ prompt: 'please just build me a landing page' })).toBe('A landing page')
+    expect(runTitle({ prompt: 'Build a customer intake form' })).toBe('A customer intake form')
+    expect(runTitle({ prompt: '' })).toBe('Untitled build')
+    expect(runTitle(null)).toBe('Untitled build')
+  })
+
+  it('keeps the first clause only', () => {
+    expect(cleanPromptTitle('Build a form. It should also have a table.')).toBe('A form')
+  })
+})
+
+describe('activity in product voice', () => {
+  const at = '2026-10-07T12:00:00.000Z'
+
+  it('names tools in plain language and shows only the files they touched', () => {
+    const edit = toActivity(
+      { kind: 'audit', type: 'tool.called', outcome: 'success', occurred_at: at, detail: { tool: 'apply_patch', args: { patch: '--- /dev/null\n+++ b/App.js\n@@\n+x' } } },
+      0,
+    )
+    expect(edit.title).toBe('Wrote changes')
+    expect(edit.body).toBe('App.js')
+
+    const read = toActivity(
+      { kind: 'audit', type: 'tool.called', outcome: 'success', occurred_at: at, detail: { tool: 'search_code', query: 'find the form handler' } },
+      1,
+    )
+    expect(read.title).toBe('Scanned the project')
+    expect(read.body).toBe('')
+  })
+
+  it('never surfaces commands, event names, or raw model text', () => {
+    const shell = toActivity(
+      { kind: 'audit', type: 'tool.called', outcome: 'success', occurred_at: at, detail: { tool: 'run_shell', command: 'rm -rf /tmp/x', args: { command: 'rm -rf /tmp/x' } } },
+      0,
+    )
+    expect(shell.title).toBe('Ran a setup command')
+    expect(shell.body).toBe('')
+    expect(JSON.stringify(shell)).not.toContain('rm -rf')
+
+    const unknown = toActivity(
+      { kind: 'audit', type: 'model.fenced_future_event', outcome: 'success', occurred_at: at, detail: { tool: 'new_tool' } },
+      1,
+    )
+    expect(unknown.title).toBe('Working…')
+    expect(JSON.stringify(unknown)).not.toContain('model.fenced_future_event')
+
+    const result = toActivity(
+      { kind: 'audit', type: 'tool.result', outcome: 'failure', occurred_at: at, detail: { observation: 'stack trace: TypeError at line 1' } },
+      2,
+    )
+    expect(result.title).toBe('A step did not go as planned')
+    expect(result.body).toBe('')
+    expect(JSON.stringify(result)).not.toContain('stack trace')
+  })
+
+  it('reports verification and completion as outcomes a person reads', () => {
+    const passed = toActivity({ kind: 'audit', type: 'task.completed', outcome: 'success', occurred_at: at, detail: { summary: 'stopped: whatever' } }, 0)
+    expect(passed.title).toBe('Build verified')
+    expect(passed.body).toBe('')
+    const failed = toActivity({ kind: 'audit', type: 'verification.completed', outcome: 'failure', occurred_at: at, detail: { verdict: 'nope' } }, 1)
+    expect(failed.title).toBe('The checks found something to fix')
+    expect(failed.body).toBe('')
   })
 })

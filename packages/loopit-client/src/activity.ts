@@ -2,8 +2,11 @@
  * Turns audit records into something a person can read.
  *
  * The API streams the run's real audit events, which are named for the audit
- * store rather than for a reader. The raw type is always kept alongside the
- * friendly line so the timeline can be reconciled with the audit log.
+ * store rather than for a reader. What reaches the product surface is a
+ * product voice: plain sentences, no event names, no tool output, no
+ * commands, no stack text. The full, unredacted record still lives in the
+ * audit log where an operator can read it — the timeline here is for the
+ * person waiting on their app.
  */
 
 import type { AuditStreamEvent } from './api'
@@ -11,7 +14,6 @@ import type { AuditStreamEvent } from './api'
 export interface Activity {
   id: string
   at: string
-  rawType: string
   title: string
   body: string
   tone: 'neutral' | 'good' | 'bad' | 'work'
@@ -20,17 +22,18 @@ export interface Activity {
 function asText(value: unknown): string {
   if (value === null || value === undefined) return ''
   if (typeof value === 'string') return value
-  return JSON.stringify(value)
+  return ''
 }
 
-const TOOL_VERBS: Record<string, string> = {
-  read_file: 'Read a file',
-  search_code: 'Searched the project',
-  apply_patch: 'Edited files',
-  run_shell: 'Ran a command',
-  browser: 'Opened the preview',
-  provision: 'Provisioned the database',
-  deploy: 'Deployed',
+/** Plain-language name for each tool the builder reaches for. */
+const TOOL_TITLES: Record<string, string> = {
+  read_file: 'Reviewed part of the project',
+  search_code: 'Scanned the project',
+  apply_patch: 'Wrote changes',
+  run_shell: 'Ran a setup command',
+  browser: 'Checked the result in a browser',
+  provision: 'Set up a data table',
+  deploy: 'Prepared a deployment',
 }
 
 export function toActivity(event: AuditStreamEvent, index: number): Activity {
@@ -41,14 +44,13 @@ export function toActivity(event: AuditStreamEvent, index: number): Activity {
 
   switch (event.type) {
     case 'task.started':
-      return { id, at, rawType: event.type, title: 'Run started', body: asText(detail.goal), tone: 'neutral' }
+      return { id, at, title: 'Started building', body: '', tone: 'work' }
     case 'tool.called':
       return {
         id,
         at,
-        rawType: event.type,
-        title: TOOL_VERBS[tool] ?? `Called ${tool || 'a tool'}`,
-        body: describeArgs(detail),
+        title: TOOL_TITLES[tool] ?? 'Working on the build',
+        body: describeWork(detail),
         tone: 'work',
       }
     case 'tool.result':
@@ -56,18 +58,19 @@ export function toActivity(event: AuditStreamEvent, index: number): Activity {
       return {
         id,
         at,
-        rawType: event.type,
-        title: event.outcome === 'failure' ? 'That did not work' : 'Result',
-        body: asText(detail.observation ?? detail.output ?? detail.summary),
+        title: event.outcome === 'failure' ? 'A step did not go as planned' : 'Step finished',
+        body: '',
         tone: event.outcome === 'failure' ? 'bad' : 'neutral',
       }
     case 'verification.completed':
       return {
         id,
         at,
-        rawType: event.type,
-        title: event.outcome === 'success' ? 'Verification passed' : 'Verification failed',
-        body: asText(detail.summary ?? detail.verdict),
+        title:
+          event.outcome === 'success'
+            ? 'The build passed its checks'
+            : 'The checks found something to fix',
+        body: '',
         tone: event.outcome === 'success' ? 'good' : 'bad',
       }
     case 'task.stopped':
@@ -75,44 +78,32 @@ export function toActivity(event: AuditStreamEvent, index: number): Activity {
       return {
         id,
         at,
-        rawType: event.type,
-        title: `Run finished: ${asText(detail.outcome) || event.outcome || 'stopped'}`,
-        body: asText(detail.summary),
+        title: event.outcome === 'success' ? 'Build verified' : 'The build stopped',
+        body: '',
         tone: event.outcome === 'success' ? 'good' : 'bad',
       }
     default:
-      return {
-        id,
-        at,
-        rawType: event.type,
-        title: event.type,
-        body: Object.keys(detail).length ? JSON.stringify(detail) : '',
-        tone: event.outcome === 'denied' || event.outcome === 'failure' ? 'bad' : 'neutral',
-      }
+      // Unknown event types still pace the timeline without leaking their
+      // internal names.
+      return { id, at, title: 'Working…', body: '', tone: 'neutral' }
   }
 }
 
-function describeArgs(detail: Record<string, unknown>): string {
+/**
+ * The one detail worth showing: which files a change touched. File names are
+ * something a person recognises; commands, queries, and tool output are not
+ * product language, so they stay in the audit log.
+ */
+function describeWork(detail: Record<string, unknown>): string {
   const path = asText(detail.path)
   if (path) return path
-  const query = asText(detail.query)
-  if (query) return `for ${query}`
-  const command = asText(detail.command)
-  if (command) return command
   const args = detail.args
-  if (args && typeof args === 'object') {
+  if (args && typeof args === 'object' && !Array.isArray(args)) {
     const record = args as Record<string, unknown>
     if (typeof record.patch === 'string') {
       const targets = [...record.patch.matchAll(/^\+\+\+ b\/(.+)$/gm)].map((match) => match[1])
-      return targets.length ? targets.join(', ') : 'applied a patch'
+      return targets.length ? targets.join(', ') : ''
     }
-    return Object.entries(record)
-      .map(([key, value]) => `${key}: ${truncate(asText(value), 120)}`)
-      .join('  ')
   }
   return ''
-}
-
-export function truncate(text: string, limit: number): string {
-  return text.length <= limit ? text : `${text.slice(0, limit)}…`
 }

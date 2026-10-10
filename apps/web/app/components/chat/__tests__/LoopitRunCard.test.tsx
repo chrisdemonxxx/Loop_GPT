@@ -16,9 +16,9 @@ describe('LoopitRunCard', () => {
         <LoopitRunCard runId="run_abc123" />
       </QueryClientProvider>,
     )
-    expect(screen.getByText('Build')).toBeTruthy()
     const link = screen.getByRole('link', { name: 'Open build' })
     expect(link.getAttribute('href')).toBe('/build/?run=run_abc123')
-    expect(screen.getByText('run_abc123')).toBeTruthy()
+    // The internal run id is never rendered — the card goes by its title.
+    expect(screen.queryByText('run_abc123')).toBeNull()
   })
 })

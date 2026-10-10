@@ -4,6 +4,7 @@ import type {
   CheckpointView,
   RunCost,
   RunDetail,
+  RunSummary,
   StreamEvent,
   TaskDagView,
   TaskNodeView,
@@ -97,6 +98,26 @@ export function orderedDagNodes(dag: TaskDagView): TaskNodeView[] {
 
 export function isCompletedNode(node: TaskNodeView): boolean {
   return node.status === 'merged'
+}
+
+/**
+ * The name a run goes by: the brief's product-style title, or a cleaned
+ * prompt for runs that predate the brief. Never the raw request text.
+ */
+export function runTitle(run: Pick<RunSummary, 'title' | 'prompt'> | null | undefined): string {
+  const title = run?.title?.trim()
+  if (title) return title
+  return cleanPromptTitle(run?.prompt ?? '')
+}
+
+const FILLER = /^\s*(?:please\s+)?(?:just\s+)?(?:can you\s+|could you\s+|i want\s+|i need\s+|make me\s+|build me\s+|create me\s+|build\s+|make\s+|create\s+|design\s+)+/i
+
+/** First clause of a request without the "please just build me" scaffolding. */
+export function cleanPromptTitle(prompt: string): string {
+  const firstClause = prompt.trim().split(/[.!?\n]/)[0] ?? ''
+  const cleaned = firstClause.replace(FILLER, '').replace(/\s*[.!]+$/, '').trim()
+  if (!cleaned) return 'Untitled build'
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
 }
 
 export function formatTokens(cost: RunCost | null): string {

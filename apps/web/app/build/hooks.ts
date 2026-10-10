@@ -51,8 +51,9 @@ export function useBuildRun(runId: string) {
 export function useStartBuild() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (input: { prompt: string; maxIterations: number }) =>
-      startRun(input.prompt, { maxIterations: input.maxIterations }),
+    // Effort is elastic and decided by the engine's brief; the product UI
+    // sends only what the person typed.
+    mutationFn: (input: { prompt: string }) => startRun(input.prompt),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['loopit-runs'] }),
   })
 }

@@ -67,6 +67,20 @@ export function statusLabel(status: string | null | undefined): string {
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 
+/** What a builder action means in plain words. Shared by the run view's
+ *  approval cards and the chat run card so one action reads one way. */
+const GATE_ACTIONS: Record<string, string> = {
+  apply_patch: 'Loop wants to change the project files',
+  run_shell: 'Loop wants to run a command',
+  deploy: 'Loop wants to publish this build',
+  provision: 'Loop wants to set up a database table',
+}
+
+export function gateTitle(action: string | null | undefined): string {
+  const key = (action ?? '').trim()
+  return GATE_ACTIONS[key] ?? 'Loop needs your approval'
+}
+
 /** Date + time in the viewer's locale; passes unparseable input through. */
 export function formatWhen(iso: string | null | undefined): string {
   if (!iso) return ''

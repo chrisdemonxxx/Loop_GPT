@@ -38,10 +38,11 @@ export type {
   TaskNodeView,
 } from './api'
 
-export { toActivity, truncate } from './activity'
+export { toActivity } from './activity'
 export type { Activity } from './activity'
 
 export {
+  cleanPromptTitle,
   emptyRunUiState,
   extractCost,
   extractDag,
@@ -51,6 +52,7 @@ export {
   orderedDagNodes,
   pickPreviewFile,
   reduceRunEvent,
+  runTitle,
 } from './runState'
 export type { RunUiState } from './runState'
 

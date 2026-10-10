@@ -4,17 +4,17 @@ import { Suspense, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
 import RunView from './[runId]/RunView'
-import { Badge, EmptyState, LoadingState, SectionHeader, btnPrimary, cardCls, selectCls, textareaCls } from '@loop/ui'
-import { isServiceMissing, isUnreachable, toUserFacingError, type RunSummary } from '@loop/loopit-client'
+import { Badge, EmptyState, LoadingState, SectionHeader, btnPrimary, cardCls, textareaCls } from '@loop/ui'
+import { isServiceMissing, isUnreachable, runTitle, toUserFacingError, type RunSummary } from '@loop/loopit-client'
 import { AppPage } from '../components/AppPage'
 import { useBuildRuns, useStartBuild } from './hooks'
 import { ErrorNotice } from './shell'
 import { formatWhen, statusLabel, statusTone } from './status'
 
 const SAMPLES = [
-  'Build a customer intake form with an admin review table.',
-  'Create a landing page with pricing cards and a waitlist form.',
-  'Build a team task tracker with projects and owner-only settings.',
+  'A customer intake form with an admin review table.',
+  'A landing page with pricing cards and a waitlist form.',
+  'A team task tracker with projects.',
 ]
 
 export default function BuildPage() {
@@ -36,15 +36,16 @@ function BuildBoard() {
   const runs = useBuildRuns()
   const start = useStartBuild()
   const [prompt, setPrompt] = useState('')
-  const [effort, setEffort] = useState(12)
   const list = runs.data ?? []
 
+  // The engine owns everything past this box: it expands the request into a
+  // brief, sizes the effort itself, builds, and stops when it is done.
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
     const text = prompt.trim()
     if (!text || start.isPending) return
     try {
-      const created = await start.mutateAsync({ prompt: text, maxIterations: effort })
+      const created = await start.mutateAsync({ prompt: text })
       router.push(`/build/?run=${encodeURIComponent(created.run_id)}`)
     } catch {
       // The mutation records the error; the notice under the form renders it.
@@ -56,38 +57,22 @@ function BuildBoard() {
   const offline = listError ? isUnreachable(listError) || isServiceMissing(listError) : false
 
   return (
-    <AppPage title="Build" description="Describe an app. Loop builds, verifies, and previews it.">
+    <AppPage title="Build" description="Describe an app in your own words. Loop plans it, builds it, and verifies it.">
       <form onSubmit={(event) => { void onSubmit(event) }} className="space-y-3">
         <label className="block text-ui-xs text-[var(--ink-muted)]">
-          Describe what you want built
+          What should we build?
           <textarea
             className={`${textareaCls} mt-1`}
             rows={3}
             value={prompt}
-            placeholder="A customer intake form with an admin review table"
+            placeholder="A customer intake form with an admin review table — or just “build this”"
             disabled={start.isPending}
             onChange={(event) => setPrompt(event.target.value)}
           />
         </label>
-        <div className="flex flex-wrap items-center gap-3">
-          <button type="submit" className={btnPrimary} disabled={start.isPending || !prompt.trim()}>
-            {start.isPending ? 'Starting…' : 'Start build'}
-          </button>
-          <label className="flex items-center gap-2 text-ui-xs text-[var(--ink-muted)]">
-            Effort
-            <select
-              className={`${selectCls} py-1.5`}
-              value={effort}
-              disabled={start.isPending}
-              onChange={(event) => setEffort(Number(event.target.value))}
-            >
-              <option value={8}>Quick (8 iterations)</option>
-              <option value={12}>Normal (12 iterations)</option>
-              <option value={24}>Deep (24 iterations)</option>
-              <option value={40}>Max (40 iterations)</option>
-            </select>
-          </label>
-        </div>
+        <button type="submit" className={btnPrimary} disabled={start.isPending || !prompt.trim()}>
+          {start.isPending ? 'Starting…' : 'Start build'}
+        </button>
       </form>
 
       {start.isError && (
@@ -137,9 +122,10 @@ function RunRow({ run }: { run: RunSummary }) {
   return (
     <Link href={`/build/?run=${encodeURIComponent(run.run_id)}`} className={`block p-3.5 ${cardCls}`}>
       <div className="flex items-start justify-between gap-3">
-        <p className="text-ui-sm font-medium text-[var(--ink-primary)] line-clamp-2">{run.prompt || 'Untitled build'}</p>
+        <p className="text-ui-sm font-medium text-[var(--ink-primary)] line-clamp-2">{runTitle(run)}</p>
         <Badge tone={statusTone(run.status)}>{statusLabel(run.status)}</Badge>
       </div>
+      {run.summary && <p className="mt-1 line-clamp-1 text-ui-xs text-[var(--ink-muted)]">{run.summary}</p>}
       <p className="mt-1 text-ui-xs text-[var(--ink-muted)]">Created {formatWhen(run.started_at)}</p>
     </Link>
   )

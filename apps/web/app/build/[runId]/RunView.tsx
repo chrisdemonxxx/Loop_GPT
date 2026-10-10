@@ -10,14 +10,15 @@ import {
   extractCost,
   extractDag,
   extractGates,
-  formatTokens,
   isCompletedNode,
   isServiceMissing,
   isUnreachable,
   orderedDagNodes,
   pickPreviewFile,
   reduceRunEvent,
+  runTitle,
   toUserFacingError,
+  type Activity,
   type ApprovalGate,
   type CheckpointView,
   type StreamEvent,
@@ -28,7 +29,7 @@ import { AppPage } from '../../components/AppPage'
 import { CheckpointDialog, type CheckpointAction } from '../confirm'
 import { useBuildRun, useCheckpointAction, useGateDecision, usePreviewUrl, useRunStream } from '../hooks'
 import { ErrorNotice } from '../shell'
-import { formatWhen, isLiveStatus, statusLabel, statusTone } from '../status'
+import { formatWhen, gateTitle, isLiveStatus, statusLabel, statusTone } from '../status'
 
 /** Scripts only. allow-same-origin is omitted so the preview cannot read the app. */
 const PREVIEW_SANDBOX = 'allow-scripts'
@@ -89,9 +90,9 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
       onSuccess: (result) => {
         if (result && 'production_url' in result && result.production_url) {
           setDeployUrl(result.production_url)
-          toast.push('success', 'Deployed')
+          toast.push('success', 'Your app is live')
         } else {
-          toast.push('success', 'Checkpoint updated')
+          toast.push('success', 'Version saved')
         }
         setAction(null)
       },
@@ -109,7 +110,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   if (!runId || runId === '_') {
     return (
       <AppPage title="Build" back={BACK}>
-        <EmptyState title="Pick a build" body="Open a build from the board to see its tasks, gates, and preview." action={<Link href="/build" className={btnPrimary}>Back to builds</Link>} />
+        <EmptyState title="Pick a build" body="Open a build from the board to see its progress and preview." action={<Link href="/build" className={btnPrimary}>Back to builds</Link>} />
       </AppPage>
     )
   }
@@ -117,7 +118,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const fetchError = query.error
   const offline = fetchError ? isUnreachable(fetchError) || isServiceMissing(fetchError) : false
   const missing = fetchError instanceof ApiError && fetchError.status === 404 && !offline
-  const title = ui.run?.prompt || query.data?.prompt || 'Build'
+  const title = runTitle(ui.run ?? query.data)
   const startedAt = ui.run?.started_at || query.data?.started_at
 
   return (
@@ -131,7 +132,6 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
           {status && <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>}
           {live && <StatusDot state="working" />}
           {startedAt && <span>Created {formatWhen(startedAt)}</span>}
-          {ui.cost && <span>{formatTokens(ui.cost)} tokens</span>}
         </>
       )}
       actions={(
@@ -141,7 +141,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
           disabled={!verified || checkpointMutation.isPending}
           onClick={() => verified && setAction({ kind: 'deploy', checkpoint: verified })}
         >
-          Deploy
+          Publish
         </button>
       )}
     >
@@ -171,9 +171,13 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
       )}
 
       {deployUrl && (
-        <p className="mt-4 text-ui-sm text-[var(--ink-secondary)]" role="status">
-          Live URL: <a className="text-[var(--accent-text)] underline" href={deployUrl}>{deployUrl}</a>
-        </p>
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-[var(--accent-soft-border)] bg-[var(--accent-soft)] p-4" role="status">
+          <div className="min-w-0 flex-1">
+            <p className="text-ui-sm font-medium text-[var(--accent-text)]">Your app is live</p>
+            <p className="mt-0.5 text-ui-xs text-[var(--ink-secondary)]">Anyone with this link can open the app you just published.</p>
+          </div>
+          <a href={deployUrl} target="_blank" rel="noreferrer" className={btnPrimary}>Open app</a>
+        </div>
       )}
 
       <GateList gates={ui.gates} busy={gateMutation.isPending} onDecision={decideGate} />
@@ -199,11 +203,18 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
       <CheckpointDialog
         action={action}
         busy={checkpointMutation.isPending}
+        versionLabel={action ? versionLabel(ui.checkpoints, action.checkpoint) : null}
         onCancel={closeAction}
         onConfirm={(reason) => { if (action) runCheckpoint(action, reason) }}
       />
     </AppPage>
   )
+}
+
+/** "Version N" for a checkpoint, counted from the project's first snapshot. */
+function versionLabel(checkpoints: CheckpointView[], target: CheckpointView): string {
+  const index = checkpoints.findIndex((checkpoint) => checkpoint.checkpoint_id === target.checkpoint_id)
+  return `Version ${index >= 0 ? index + 1 : checkpoints.length}`
 }
 
 /** Same layout and order as the chat approval card (TurnActivity): Approve first. */
@@ -215,16 +226,19 @@ function GateList({ gates, busy, onDecision }: { gates: ApprovalGate[]; busy: bo
         <article key={gate.gate_id} className="rounded-xl border border-[var(--accent-soft-border)] bg-[var(--accent-soft)] p-4">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-ui-sm font-medium text-[var(--accent-text)]">Approval needed</h2>
-            {gate.destructive && <Badge tone="rose">Destructive</Badge>}
+            {gate.destructive && <Badge tone="rose">Cannot be undone</Badge>}
           </div>
-          <p className="mt-2 text-ui-sm text-[var(--ink-primary)]">{gate.action}</p>
-          <p className="mt-1 text-ui-sm text-[var(--ink-secondary)]">{gate.reason}</p>
+          <p className="mt-2 text-ui-sm text-[var(--ink-primary)]">{gateTitle(gate.action)}</p>
+          {gate.reason && <p className="mt-1 text-ui-sm text-[var(--ink-secondary)]">{gate.reason}</p>}
           {gate.args && (
-            <pre className="mt-3 overflow-auto rounded-lg bg-[var(--bg-sunken)] p-3 text-ui-xs text-[var(--ink-secondary)]">{JSON.stringify(gate.args, null, 2)}</pre>
+            <details className="mt-3">
+              <summary className="cursor-pointer text-ui-xs text-[var(--ink-muted)] hover:text-[var(--ink-secondary)]">Technical details</summary>
+              <pre className="mt-2 overflow-auto rounded-lg bg-[var(--bg-sunken)] p-3 text-ui-xs text-[var(--ink-secondary)]">{JSON.stringify(gate.args, null, 2)}</pre>
+            </details>
           )}
           <div className="mt-3 flex gap-2">
             <button type="button" className={`${btnPrimary} flex-1 sm:flex-none`} disabled={busy} onClick={() => onDecision(gate, true)}>Approve</button>
-            <button type="button" className={`${btnOutline} flex-1 sm:flex-none`} disabled={busy} onClick={() => onDecision(gate, false)}>Deny</button>
+            <button type="button" className={`${btnOutline} flex-1 sm:flex-none`} disabled={busy} onClick={() => onDecision(gate, false)}>Decline</button>
           </div>
         </article>
       ))}
@@ -232,60 +246,57 @@ function GateList({ gates, busy, onDecision }: { gates: ApprovalGate[]; busy: bo
   )
 }
 
+/** The build's plan, in the words the engine prepared for a person. */
 function TaskGraph({ dagGoal, nodes, showCompleted, onToggle }: { dagGoal: string | null; nodes: TaskNodeView[]; showCompleted: boolean; onToggle: () => void }) {
   const completed = nodes.filter(isCompletedNode)
   const visible = showCompleted ? nodes : nodes.filter((node) => !isCompletedNode(node))
   return (
     <section className={`${panelCls} p-4`}>
       <SectionHeader
-        title="Tasks"
+        title="What we're doing"
         count={nodes.length}
         action={completed.length > 0 ? (
-          <button type="button" className={btnGhost} onClick={onToggle}>{showCompleted ? 'Hide completed' : `Show ${completed.length} completed`}</button>
+          <button type="button" className={btnGhost} onClick={onToggle}>{showCompleted ? 'Hide finished steps' : `Show ${completed.length} finished`}</button>
         ) : undefined}
       />
-      {!nodes.length && <EmptyState title="No task graph yet" body="Tasks appear here once the planner publishes a graph." />}
+      {!nodes.length && <EmptyState title="Planning your build" body="The plan appears here once the builder has read your request." />}
       {dagGoal && <p className="mt-2 text-ui-sm text-[var(--ink-secondary)]">{dagGoal}</p>}
-      <div className="mt-3 space-y-2">
+      <ol className="mt-3 space-y-2">
         {visible.map((node) => (
-          <article key={node.id} className="rounded-lg border border-[var(--border-subtle)] p-3">
+          <li key={node.id} className="rounded-lg border border-[var(--border-subtle)] p-3">
             <div className="flex flex-wrap items-center gap-2">
-              <strong className="text-ui-sm font-medium text-[var(--ink-primary)] break-all">{node.id}</strong>
               <Badge tone={statusTone(node.status ?? 'pending')}>{statusLabel(node.status ?? 'pending')}</Badge>
-              {node.destructive && <Badge tone="rose">Destructive</Badge>}
+              {node.destructive && <Badge tone="rose">Needs your approval</Badge>}
             </div>
-            <p className="mt-1 text-ui-sm text-[var(--ink-secondary)]">{node.goal}</p>
-            <p className="mt-1 text-ui-xs text-[var(--ink-muted)]">
-              Parents: {node.dag_parents.length ? node.dag_parents.join(', ') : 'base checkpoint'}
-            </p>
+            <p className="mt-1.5 text-ui-sm text-[var(--ink-primary)]">{node.goal}</p>
             {node.destructive_reason && <p className="mt-1 text-ui-xs text-[var(--ink-muted)]">{node.destructive_reason}</p>}
-          </article>
+          </li>
         ))}
-      </div>
+      </ol>
     </section>
   )
 }
 
 function CheckpointList({ checkpoints, onAction }: { checkpoints: CheckpointView[]; onAction: (action: CheckpointAction) => void }) {
+  // Latest version first; each row carries its own number from the start.
+  const ordered = checkpoints.map((checkpoint, index) => ({ checkpoint, version: index + 1 })).reverse()
   return (
     <section className={`${panelCls} p-4`}>
-      <SectionHeader title="Checkpoints" count={checkpoints.length} />
-      {!checkpoints.length && <EmptyState title="No checkpoints yet" body="A green checkpoint can be deployed." />}
+      <SectionHeader title="Versions" count={checkpoints.length} />
+      {!checkpoints.length && <EmptyState title="No versions yet" body="The builder saves a version every time the app passes its checks." />}
       <div className="mt-3 space-y-3">
-        {checkpoints.map((checkpoint) => (
+        {ordered.map(({ checkpoint, version }) => (
           <article key={checkpoint.checkpoint_id} className="rounded-lg border border-[var(--border-subtle)] p-3">
             <div className="flex flex-wrap items-center gap-2">
-              <strong className="text-ui-sm font-medium text-[var(--ink-primary)] break-all">{checkpoint.label ?? checkpoint.checkpoint_id}</strong>
-              {checkpoint.live && <Badge tone="green">Live</Badge>}
+              <strong className="text-ui-sm font-medium text-[var(--ink-primary)]">Version {version}</strong>
+              {checkpoint.live && <Badge tone="green">Current</Badge>}
               {checkpoint.verified && <Badge tone="green">Verified</Badge>}
             </div>
-            <p className="mt-1 text-ui-xs text-[var(--ink-muted)]">
-              Parent {checkpoint.parent_id ?? 'root'} · {formatWhen(checkpoint.created_at)}
-            </p>
+            <p className="mt-1 text-ui-xs text-[var(--ink-muted)]">Saved {formatWhen(checkpoint.created_at)}</p>
             <div className="mt-2 flex flex-wrap gap-2">
-              <button type="button" className={btnGhost} disabled={!checkpoint.verified} onClick={() => onAction({ kind: 'rollback', checkpoint })}>Roll back</button>
-              <button type="button" className={btnGhost} onClick={() => onAction({ kind: 'fork', checkpoint })}>Fork</button>
-              <button type="button" className={btnPrimary} disabled={!checkpoint.verified} onClick={() => onAction({ kind: 'deploy', checkpoint })}>Deploy</button>
+              <button type="button" className={btnGhost} disabled={!checkpoint.verified} onClick={() => onAction({ kind: 'rollback', checkpoint })}>Roll back here</button>
+              <button type="button" className={btnGhost} onClick={() => onAction({ kind: 'fork', checkpoint })}>Save a copy</button>
+              <button type="button" className={btnPrimary} disabled={!checkpoint.verified} onClick={() => onAction({ kind: 'deploy', checkpoint })}>Publish</button>
             </div>
           </article>
         ))}
@@ -294,11 +305,11 @@ function CheckpointList({ checkpoints, onAction }: { checkpoints: CheckpointView
   )
 }
 
-function ActivityList({ activity, running }: { activity: { id: string; at: string; title: string; body: string; rawType: string; tone: string }[]; running: boolean }) {
+function ActivityList({ activity, running }: { activity: Activity[]; running: boolean }) {
   return (
     <section className={`${panelCls} p-4`}>
-      <SectionHeader title="Activity" />
-      {!activity.length && !running && <EmptyState title="No activity yet" body="Tool calls and verification results stream here." />}
+      <SectionHeader title="Progress" />
+      {!activity.length && !running && <EmptyState title="Nothing to report yet" body="Updates appear here while the builder works." />}
       <div className="mt-3 max-h-80 space-y-2 overflow-auto">
         {activity.map((item) => (
           <article key={item.id} className="border-l-2 border-[var(--border-strong)] pl-3">
@@ -306,8 +317,7 @@ function ActivityList({ activity, running }: { activity: { id: string; at: strin
               <strong className="text-ui-sm font-medium text-[var(--ink-primary)]">{item.title}</strong>
               <span className="text-3xs text-[var(--ink-muted)]">{item.at}</span>
             </div>
-            <p className="text-3xs text-[var(--ink-muted)]">{item.rawType}</p>
-            {item.body && <pre className="mt-1 whitespace-pre-wrap break-words text-ui-xs text-[var(--ink-secondary)]">{item.body.slice(0, 1200)}</pre>}
+            {item.body && <p className="mt-0.5 break-words text-ui-xs text-[var(--ink-muted)]">{item.body}</p>}
           </article>
         ))}
         {running && <LoadingState label="Waiting for the next update…" className="py-1" />}
@@ -345,9 +355,9 @@ function Preview({
           ))}
         </div>
       )}
-      {!files.length && <EmptyState title="No preview yet" body="The first verified page opens here." />}
+      {!files.length && <EmptyState title="No preview yet" body="The first page appears here once it is ready." />}
       {selected && !/\.html?$/i.test(selected) && (
-        <p className="mt-3 text-ui-xs text-[var(--ink-muted)]">Preview runs HTML pages. This file is not a page.</p>
+        <p className="mt-3 text-ui-xs text-[var(--ink-muted)]">Preview shows pages. Pick an HTML file to see it rendered.</p>
       )}
       {error && <p className="mt-3 text-ui-sm text-[var(--danger)]" role="alert">{error}</p>}
       {loading && <LoadingState label="Loading preview…" />}

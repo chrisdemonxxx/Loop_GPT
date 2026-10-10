@@ -1,27 +1,35 @@
-/** Map a Loop-IT run and its stream onto the bot run timeline feed. */
+/** Map a Loop-IT run and its stream onto the bot run timeline feed.
+ *  Product voice only: titles and plain sentences — no run ids, gate ids,
+ *  or event names reach the person reading the timeline. */
 import type { BotFeedEvent } from '../../lib/botSse'
-import { toActivity, type RunDetail, type StreamEvent } from '@loop/loopit-client'
+import { toActivity, runTitle, type ApprovalGate, type RunDetail, type StreamEvent } from '@loop/loopit-client'
+import { gateTitle, statusLabel } from '../../build/status'
+
+function gateLine(gate: ApprovalGate): string {
+  const sentence = gateTitle(gate.action)
+  if (gate.status === 'approved') return 'Approved — the step went ahead'
+  if (gate.status === 'rejected') return 'Declined — the step was stopped'
+  return gate.reason ? `${sentence} — ${gate.reason}` : sentence
+}
 
 export function loopitDetailToFeed(run: RunDetail | null | undefined): BotFeedEvent[] {
   if (!run) return []
   const events: BotFeedEvent[] = [{
     type: 'status',
-    message: run.summary ? `${run.status} — ${run.summary}` : String(run.status || 'unknown'),
+    message: run.summary ? `${statusLabel(run.status)} — ${run.summary}` : statusLabel(run.status),
   }]
   const gates = [...(run.gates ?? [])]
   if (run.gate && !gates.some((gate) => gate.gate_id === run.gate?.gate_id)) gates.push(run.gate)
   for (const gate of gates) {
-    events.push({
-      type: 'status',
-      message: `Gate ${gate.gate_id} (${gate.status || 'pending'}): ${gate.reason}`,
-    })
+    events.push({ type: 'status', message: gateLine(gate) })
   }
-  for (const checkpoint of run.checkpoints ?? []) {
+  const checkpoints = run.checkpoints ?? []
+  checkpoints.forEach((checkpoint, index) => {
     events.push({
       type: 'artifact',
-      artifact: { id: checkpoint.checkpoint_id, name: checkpoint.label || checkpoint.checkpoint_id, kind: 'file' },
+      artifact: { id: checkpoint.checkpoint_id, name: `Version ${index + 1}`, kind: 'file' },
     })
-  }
+  })
   return events
 }
 
@@ -34,11 +42,13 @@ export function loopitStreamToFeed(event: StreamEvent): BotFeedEvent | null {
     }
   }
   if (event.kind === 'error') return { type: 'error', message: event.message }
-  if (event.kind === 'gate') return { type: 'status', message: `Gate ${event.gate.gate_id}: ${event.gate.reason}` }
-  if (event.kind === 'run') return { type: 'status', message: `Run ${event.run_id} is ${event.status}` }
+  if (event.kind === 'gate') return { type: 'status', message: gateLine(event.gate) }
+  if (event.kind === 'run') {
+    const label = statusLabel(event.status)
+    return { type: 'status', message: event.summary ? `${label} — ${event.summary}` : `${runTitle(event)}: ${label}` }
+  }
   if (event.kind === 'checkpoints') {
-    const count = event.checkpoints.length
-    return { type: 'status', message: `${count} checkpoint${count === 1 ? '' : 's'}` }
+    return { type: 'status', message: `Saved version ${event.checkpoints.length}` }
   }
   return null
 }
