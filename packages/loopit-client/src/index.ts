@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import { createLoopitClient } from './api'
 
@@ -12,8 +12,8 @@ export {
   createTokenStore,
   parseExpiresAt,
   tokenNeedsRefresh,
-} from './token'
-export type { MintedToken, TokenStore, TokenStoreOptions } from './token'
+} from './authToken'
+export type { MintedToken, TokenStore, TokenStoreOptions } from './authToken'
 
 export { createLoopitClient, resolvePreviewUrl } from './api'
 export type {

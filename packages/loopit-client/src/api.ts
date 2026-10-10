@@ -1,7 +1,7 @@
-import type { TaskKind } from '@loop/loopit-contracts'
+﻿import type { TaskKind } from '@loop/loopit-contracts'
 
 import { ApiError } from './errors'
-import { LOOPIT_API_BASE, createTokenStore, type TokenStore, type TokenStoreOptions } from './token'
+import { LOOPIT_API_BASE, createTokenStore, type TokenStore, type TokenStoreOptions } from './authToken'
 
 export type RunStatus = 'running' | 'verified' | 'error' | string
 export type NodeStatus = 'pending' | 'running' | 'verifying' | 'blocked' | 'merged' | 'failed'
