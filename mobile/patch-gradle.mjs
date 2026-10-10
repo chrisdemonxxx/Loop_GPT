@@ -1,5 +1,7 @@
 import { createRequire } from 'node:module'
-const require = createRequire('C:/Users/chris/Desktop/Workspace/dev-projects/loop-gpt/mobile/node_modules/expo/package.json')
+// Anchor resolution to this script's directory (mobile/): a hardcoded absolute
+// path broke every non-Windows install, including CI's postinstall.
+const require = createRequire(new URL('.', import.meta.url))
 import fs from 'node:fs'
 import path from 'node:path'
 

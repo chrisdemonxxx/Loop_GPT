@@ -11,6 +11,13 @@ regexTarget = "secret"
 regexes = ['''^sk_(test|live)_localFixtureOnly$''']
 
 [[allowlists]]
+description = "Exact synthetic Stripe fixtures; fulfillment integration/replay tests forbid all external effects"
+condition = "AND"
+paths = ['''(^|/)backend/src/services/__tests__/paymentFulfillment\.(integration|replay)\.test\.ts$''']
+regexTarget = "secret"
+regexes = ['''^sk_(test|live)_(intFixtureOnly|replayFixtureOnly)$''']
+
+[[allowlists]]
 description = "Exact public Cloudflare beacon site ID already shipped in gateway HTML; not authentication"
 condition = "AND"
 paths = ['''(^|/)gateway/site/index\.html$''']

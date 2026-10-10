@@ -36,7 +36,11 @@ if (!existsSync(electronBinary)) {
   process.exit(1)
 }
 
-const child = spawn(electronBinary, ['.', '--smoke'], {
+// CI runners (GitHub-hosted containers) have no SUID chrome-sandbox helper;
+// Electron FATALs at startup there unless the sandbox is disabled for the run.
+const ciArgs = process.env.CI ? ['--no-sandbox', '--disable-dev-shm-usage'] : []
+
+const child = spawn(electronBinary, ['.', '--smoke', ...ciArgs], {
   cwd: APP,
   env: { ...process.env, LOOP_SMOKE: '1', LOOP_SMOKE_API: '1' },
   stdio: ['ignore', 'pipe', 'pipe'],
