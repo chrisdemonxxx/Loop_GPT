@@ -3,7 +3,7 @@ import type { Server } from 'http'
 import express from 'express'
 
 // The TTS upstreams are external (HF endpoint / Kokoro Space): stub the
-// transport and pin the route's contract â€” voice mapping, text cap, the
+// transport and pin the route's contract — voice mapping, text cap, the
 // Gradio submitâ†’SSEâ†’download chain, and error shapes.
 const providerRequest = vi.hoisted(() => vi.fn())
 vi.mock('../../services/providerHttp', () => ({ providerRequest }))
@@ -88,7 +88,7 @@ describe('POST /api/tts (Â§8-45)', () => {
     expect(JSON.parse(providerRequest.mock.calls[0][1].body).data[1]).toBe('af_heart')
   })
 
-  it('clamps speed to the 0.5â€“2 range', async () => {
+  it('clamps speed to the 0.5—2 range', async () => {
     mockSpaceSuccess()
     await post({ text: 'Hi', speed: 10 })
     expect(JSON.parse(providerRequest.mock.calls[0][1].body).data[2]).toBe(2)

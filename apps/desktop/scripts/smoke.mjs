@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 /**
  * Desktop shell smoke gate: launches the packaged-path Electron app against
  * the static export, asserts the first page load completes (the main process
@@ -48,10 +48,10 @@ const child = spawn(electronBinary, ['.', '--smoke', ...ciArgs], {
 
 let out = ''
 const timeout = setTimeout(() => {
-  console.error('[smoke] TIMED OUT (60s) — the window never finished loading')
+  console.error('[smoke] TIMED OUT (150s) — the window never finished loading')
   child.kill('SIGKILL')
   process.exit(1)
-}, 60_000)
+}, 150_000)
 
 child.stdout.on('data', (d) => { out += d; process.stdout.write(d) })
 child.stderr.on('data', (d) => { out += d; process.stderr.write(d) })

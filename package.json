@@ -14,5 +14,9 @@
     "desktop:web": "npm run dev:web -w apps/desktop",
     "desktop:smoke": "npm run smoke -w apps/desktop",
     "desktop:dist": "npm run build -w apps/web && npm run dist -w apps/desktop"
+  },
+  "overrides": {
+    "katex": "0.18.11",
+    "postcss": "^8.5.29"
   }
 }

@@ -45,7 +45,7 @@ const liveSteps: LiveStep[] = [
     kind: 'tool',
     text: 'read',
     ts: Date.now() - 2200,
-    tool: { name: 'read_file', args: { path: 'docs/ACCOUNTING.md' }, result: '## Ledger writesâ€¦', durationMs: 96 },
+    tool: { name: 'read_file', args: { path: 'docs/ACCOUNTING.md' }, result: '## Ledger writes…', durationMs: 96 },
   },
 ]
 
@@ -94,7 +94,7 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
-/** Nothing yet â€” the ChatWelcome hero with prompt starters. */
+/** Nothing yet — the ChatWelcome hero with prompt starters. */
 export const Empty: Story = {}
 
 /** A stored transcript with an assistant answer and its cited sources. */
@@ -106,13 +106,13 @@ export const Streaming: Story = {
     messages: stored,
     liveUser: { content: 'Which job reconciles the ledger?' },
     liveSteps,
-    liveAnswer: 'The daily reconciliation job runs at 02:15 UTC â€”',
+    liveAnswer: 'The daily reconciliation job runs at 02:15 UTC —',
     running: true,
-    statusMsg: 'Reading the settlement runbookâ€¦',
+    statusMsg: 'Reading the settlement runbook…',
   },
 }
 
-/** Extended thinking â€” the collapsible reasoning stream, open while unanswered. */
+/** Extended thinking — the collapsible reasoning stream, open while unanswered. */
 export const Thinking: Story = {
   args: {
     messages: stored,
@@ -124,7 +124,7 @@ export const Thinking: Story = {
   },
 }
 
-/** A failed turn â€” the inline activity card surfaces Retry. */
+/** A failed turn — the inline activity card surfaces Retry. */
 export const ErrorState: Story = {
   args: {
     messages: stored,
@@ -149,7 +149,7 @@ export const ErrorState: Story = {
   },
 }
 
-/** Messages queued behind the active run â€” nothing typed is dropped. */
+/** Messages queued behind the active run — nothing typed is dropped. */
 export const Queued: Story = {
   args: { messages: stored, liveUser: { content: 'And the cron expression?' }, running: true, statusMsg: 'working', queued },
 }

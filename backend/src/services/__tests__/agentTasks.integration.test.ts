@@ -1,6 +1,6 @@
 ﻿/**
  * Bot task queue integration: lease claim, guarded acks, retry/dead-letter
- * backoff, scheduled requeue, operator cancel, and lease heartbeat â€” against
+ * backoff, scheduled requeue, operator cancel, and lease heartbeat — against
  * the dedicated loop_foundation_test database (requires the bot_tasks
  * migration applied, same contract as the settlement suites).
  */
