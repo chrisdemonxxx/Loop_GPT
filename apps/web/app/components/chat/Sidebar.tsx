@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
+import { ConfirmDialog } from '@loop/ui'
 import { useI18n, locales, localeNames, type Locale } from '../../lib/i18n'
 import type { Conversation } from './types'
 import { BotSidebarSection } from './BotChrome'
@@ -431,44 +432,20 @@ export default function Sidebar({
 
       {/* Delete confirmation dialog — replaces the native confirm() (P1:
           browser chrome looked unbranded and broke the dark surface). */}
-      <AnimatePresence>
-        {confirmDeleteId && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[2px] p-4"
-            onClick={() => setConfirmDeleteId(null)}
-          >
-            <motion.div
-              role="alertdialog"
-              aria-modal="true"
-              aria-label="Delete session"
-              initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }}
-              transition={{ duration: 0.15, ease: 'easeOut' }}
-              className="glass-strong rounded-xl border border-white/[0.08] shadow-panel p-4 w-full max-w-xs"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="text-[14px] font-medium text-slate-100">Delete this session?</div>
-              <p className="mt-1 text-[12.5px] text-slate-500">This can&apos;t be undone.</p>
-              <div className="mt-4 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setConfirmDeleteId(null)}
-                  className="px-3 py-1.5 rounded-lg text-[12.5px] text-slate-300 hover:bg-white/[0.06] transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { onDeleteConversation(confirmDeleteId); setConfirmDeleteId(null) }}
-                  className="px-3 py-1.5 rounded-lg text-[12.5px] font-medium text-white bg-rose-500/90 hover:bg-rose-500 transition"
-                >
-                  Delete
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <ConfirmDialog
+        open={confirmDeleteId !== null}
+        tone="danger"
+        title="Delete this session?"
+        ariaLabel="Delete session"
+        body="This can't be undone."
+        confirmLabel="Delete"
+        onConfirm={() => {
+          const id = confirmDeleteId
+          if (id) onDeleteConversation(id)
+          setConfirmDeleteId(null)
+        }}
+        onCancel={() => setConfirmDeleteId(null)}
+      />
     </div>
   )
 }

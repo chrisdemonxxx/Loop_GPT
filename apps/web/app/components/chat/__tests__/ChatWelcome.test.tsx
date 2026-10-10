@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { EmptyState, ThinkingDots } from '../EmptyState'
+import { ChatWelcome, ThinkingDots } from '../ChatWelcome'
 
 /** Thinking pulse (audit P5): the pre-activity affordance in the assistant
  * turn — labeled, announced as status, with the animated dots (disabled
@@ -17,10 +17,10 @@ describe('ThinkingDots', () => {
   })
 })
 
-describe('EmptyState', () => {
+describe('ChatWelcome', () => {
   it('renders starter prompts and dispatches clicks', () => {
     const onStartPrompt = vi.fn()
-    render(<EmptyState onStartPrompt={onStartPrompt} />)
+    render(<ChatWelcome onStartPrompt={onStartPrompt} />)
     expect(screen.getByText(/how can I help you today\?/i)).toBeInTheDocument()
     const prompt = screen.getByText('Explain quantum computing like I’m 10')
     expect(prompt).toBeInTheDocument()

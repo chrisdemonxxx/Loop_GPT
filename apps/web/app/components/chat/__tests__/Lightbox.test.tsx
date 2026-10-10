@@ -52,7 +52,10 @@ describe('Lightbox', () => {
   it('closes on Escape and via the close button', () => {
     const onClose = vi.fn()
     render(<Lightbox images={images} onClose={onClose} />)
-    fireEvent.keyDown(window, { key: 'Escape' })
+    // Real keydowns originate at the focused element and reach the shared
+    // Dialog's document-level capture listener; a window-targeted synthetic
+    // event never propagates down to document.
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledOnce()
     fireEvent.click(screen.getByRole('button', { name: 'Close viewer' }))
     expect(onClose).toHaveBeenCalledTimes(2)

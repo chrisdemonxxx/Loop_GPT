@@ -38,10 +38,10 @@ export function EnqueueForm({
   return (
     <div className="glass rounded-2xl p-4 space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-sm font-medium text-slate-200"><Bot size={15} className="text-violet-400" /> {teach ? 'Teach the bot a task' : 'New task'}</div>
-        <div className="flex rounded-lg bg-slate-900/70 p-0.5 ring-1 ring-slate-700/60">
-          <button onClick={() => setMode('task')} className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${!teach ? 'bg-violet-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>Task</button>
-          <button onClick={() => setMode('teach')} className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition ${teach ? 'bg-violet-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>🎓 Teach</button>
+        <div className="flex items-center gap-2 text-sm font-medium text-[var(--ink-primary)]"><Bot size={15} className="text-[var(--accent-text)]" /> {teach ? 'Teach the bot a task' : 'New task'}</div>
+        <div className="flex rounded-lg bg-[var(--bg-tint)] p-0.5 ring-1 ring-[var(--border-subtle)]">
+          <button onClick={() => setMode('task')} className={`rounded-md px-2.5 py-1 text-2xs font-medium transition ${!teach ? 'bg-[var(--accent-fill)] text-white' : 'text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]'}`}>Task</button>
+          <button onClick={() => setMode('teach')} className={`rounded-md px-2.5 py-1 text-2xs font-medium transition ${teach ? 'bg-[var(--accent-fill)] text-white' : 'text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]'}`}>🎓 Teach</button>
         </div>
       </div>
       <textarea
@@ -49,24 +49,24 @@ export function EnqueueForm({
         placeholder={teach
           ? 'Describe the task you are about to demonstrate on the computer…'
           : 'Goal for the autonomous agent… (e.g. research, browse, build, teach)'}
-        className="w-full rounded-lg bg-slate-900/70 px-3 py-2 text-sm outline-none ring-1 ring-slate-700/60 focus:ring-violet-500/60"
+        className="w-full rounded-lg bg-[var(--bg-tint)] px-3 py-2 text-sm outline-none ring-1 ring-[var(--border-subtle)] focus:ring-[var(--accent)]"
       />
       {teach && (
-        <div className="rounded-lg bg-violet-500/10 px-3 py-1.5 text-[11px] text-violet-300/90">
+        <div className="rounded-lg bg-[var(--accent-soft)] px-3 py-1.5 text-2xs text-[var(--accent-text)]">
           The bot opens the live computer and waits. Take over, demonstrate the task, press Release — the bot watches the
           recording and writes it into a reusable Skill you can queue with one click.
         </div>
       )}
       {!teach && (
-        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400">
+        <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--ink-secondary)]">
           <label className="flex items-center gap-1.5">Every
-            <select value={schedule} onChange={(e) => setSchedule(e.target.value)} className="rounded bg-slate-900 px-2 py-1 ring-1 ring-slate-700/60">
+            <select value={schedule} onChange={(e) => setSchedule(e.target.value)} className="rounded bg-[var(--bg-tint)] px-2 py-1 ring-1 ring-[var(--border-subtle)]">
               <option value="">once</option><option value="30m">30m</option><option value="1h">1h</option>
               <option value="6h">6h</option><option value="1d">1d</option>
             </select>
           </label>
           <label className="flex items-center gap-1.5">Steps
-            <input type="number" min={1} max={64} value={maxSteps} onChange={(e) => setMaxSteps(Number(e.target.value))} className="w-14 rounded bg-slate-900 px-2 py-1 ring-1 ring-slate-700/60" />
+            <input type="number" min={1} max={64} value={maxSteps} onChange={(e) => setMaxSteps(Number(e.target.value))} className="w-14 rounded bg-[var(--bg-tint)] px-2 py-1 ring-1 ring-[var(--border-subtle)]" />
           </label>
           <label className={`flex items-center gap-1.5 ${computerAllowed ? '' : 'opacity-40'}`}>
             <input type="checkbox" checked={computer && computerAllowed} disabled={!computerAllowed} onChange={(e) => setComputer(e.target.checked)} />
@@ -74,13 +74,13 @@ export function EnqueueForm({
           </label>
           {computer && computerAllowed && (
             <label className="flex items-center gap-1.5">TTL min
-              <input type="number" min={5} max={240} value={ttl} onChange={(e) => setTtl(Number(e.target.value))} className="w-16 rounded bg-slate-900 px-2 py-1 ring-1 ring-slate-700/60" />
+              <input type="number" min={5} max={240} value={ttl} onChange={(e) => setTtl(Number(e.target.value))} className="w-16 rounded bg-[var(--bg-tint)] px-2 py-1 ring-1 ring-[var(--border-subtle)]" />
             </label>
           )}
-          {computerHint && <span className="text-[11px] text-slate-500">{computerHint}</span>}
+          {computerHint && <span className="text-2xs text-[var(--ink-muted)]">{computerHint}</span>}
         </div>
       )}
-      <button onClick={submit} disabled={busy || !goal.trim()} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-violet-600 to-sky-600 px-4 py-2 text-xs font-semibold text-white hover:from-violet-500 hover:to-sky-500 disabled:opacity-40">
+      <button onClick={submit} disabled={busy || !goal.trim()} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-[var(--accent-fill)] to-sky-600 px-4 py-2 text-xs font-semibold text-white hover:from-[var(--accent-fill-hover)] hover:to-sky-500 disabled:opacity-40">
         {busy ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />} {teach ? 'Start teach session' : 'Queue'}
       </button>
     </div>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { PackagePlus, Puzzle, Trash2 } from 'lucide-react'
 import { API_URL, authHeaders } from '../../lib/api'
-import { Badge, btnGhost, btnPrimary, EmptyState, inputCls, Toggle } from '../ui/primitives'
+import { Badge, btnGhost, btnPrimary, ConfirmDialog, EmptyState, inputCls, Toggle } from '../ui/primitives'
 
 interface PluginItem {
   id: string
@@ -39,6 +39,9 @@ export default function PluginsTab() {
   const [error, setError] = useState('')
   const [loadError, setLoadError] = useState('')
   const [ok, setOk] = useState('')
+  // Uninstall confirmation (replaces the native confirm()).
+  const [confirmUninstallId, setConfirmUninstallId] = useState<string | null>(null)
+  const [uninstallBusy, setUninstallBusy] = useState(false)
 
   const load = () =>
     fetch(`${API_URL}/api/agent/plugins`, { headers: authHeaders() })
@@ -73,10 +76,13 @@ export default function PluginsTab() {
   }
 
   const uninstall = async (id: string) => {
-    if (!confirm(`Uninstall plugin "${id}"? Its tools are removed.`)) return
-    const res = await fetch(`${API_URL}/api/agent/plugins/${id}`, { method: 'DELETE', headers: authHeaders() }).catch(() => null)
-    if (!res?.ok) { setError('Built-in or unknown plugin.'); return }
-    setError(''); load()
+    setUninstallBusy(true)
+    try {
+      const res = await fetch(`${API_URL}/api/agent/plugins/${id}`, { method: 'DELETE', headers: authHeaders() }).catch(() => null)
+      if (!res?.ok) { setError('Built-in or unknown plugin.'); return }
+      setError(''); load()
+      setConfirmUninstallId(null)
+    } finally { setUninstallBusy(false) }
   }
 
   if (loading && !loadError) return <p className="text-slate-600 text-sm">Loading…</p>
@@ -142,10 +148,10 @@ export default function PluginsTab() {
             <div className="flex items-center gap-2 shrink-0">
               {!p.builtin && (
                 <button
-                  onClick={() => uninstall(p.id)}
+                  onClick={() => setConfirmUninstallId(p.id)}
                   title="Uninstall plugin"
                   aria-label={`Uninstall ${p.name}`}
-                  className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-white/5 transition"
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-[var(--danger)] hover:bg-[var(--bg-hover)] transition"
                 ><Trash2 size={14} /></button>
               )}
               <Toggle on={p.enabled} onChange={(v) => toggle(p.id, v)} label={`Enable ${p.name}`} />
@@ -153,6 +159,20 @@ export default function PluginsTab() {
           </div>
         ))}
       </div>
+
+      {/* Uninstall confirmation — replaces the native confirm(). Title keeps
+          the original copy, including the plugin id. */}
+      <ConfirmDialog
+        open={confirmUninstallId !== null}
+        tone="danger"
+        title={`Uninstall plugin "${confirmUninstallId ?? ''}"?`}
+        body="Its tools are removed."
+        confirmLabel="Uninstall"
+        busyLabel="Working…"
+        busy={uninstallBusy}
+        onConfirm={() => { if (confirmUninstallId) void uninstall(confirmUninstallId) }}
+        onCancel={() => setConfirmUninstallId(null)}
+      />
     </div>
   )
 }

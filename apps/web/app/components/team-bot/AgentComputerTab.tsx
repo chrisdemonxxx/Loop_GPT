@@ -1,9 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { motion } from 'framer-motion'
 import { Monitor, Loader2, MousePointer2, Square, RefreshCw, Power, Maximize2, X, Circle, GraduationCap } from 'lucide-react'
 import { getBotBox, BotApiError, type BotBox } from '../../lib/bot'
+import { Dialog } from '@loop/ui'
 import type { TeachSession } from './useTeachSession'
 
 /**
@@ -11,10 +11,10 @@ import type { TeachSession } from './useTeachSession'
  *
  *  - embedded (Computer tab in the profile panel): small live screen with an
  *    ⤢ expand button — Grok's "create bot" panel view.
- *  - expanded (onExpand → fixed overlay): the screen enlarges to fill the
- *    window with a smooth transition; header carries the "⏺ Teach a task"
- *    pill and the collapse ✕ — Grok's full-desktop view. Teach simply starts
- *    recording the human's workflow inside the computer (one click).
+ *  - expanded (onExpand → shared Dialog, full-bleed): the screen enlarges to
+ *    fill the window; header carries the "⏺ Teach a task" pill and the
+ *    collapse ✕ — Grok's full-desktop view. Teach simply starts recording
+ *    the human's workflow inside the computer (one click). Escape collapses.
  */
 export function AgentComputerTab({
   session,
@@ -89,22 +89,22 @@ export function AgentComputerTab({
             {booting ? (
               <>
                 <LoadingDots />
-                <p className="text-[13px] text-slate-400">{box?.resumed === false ? 'Starting desktop' : 'Waking the bot computer…'}</p>
+                <p className="text-ui-sm text-[var(--ink-secondary)]">{box?.resumed === false ? 'Starting desktop' : 'Waking the bot computer…'}</p>
               </>
             ) : error ? (
               <>
-                <Monitor size={22} className="text-slate-600" />
-                <p className="text-[13px] text-rose-300/90 max-w-sm">{error}</p>
-                <button type="button" onClick={() => void boot()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] text-white bg-[var(--accent)] hover:bg-[var(--accent-hover)] transition">
-                  <Power size={12} /> Boot the computer
+                <Monitor size={22} className="text-[var(--ink-muted)]" aria-hidden />
+                <p className="text-ui-sm text-[var(--danger)] max-w-sm">{error}</p>
+                <button type="button" onClick={() => void boot()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
+                  <Power size={12} aria-hidden /> Boot the computer
                 </button>
               </>
             ) : (
               <>
-                <Monitor size={22} className="text-slate-600" />
-                <p className="text-[13px] text-slate-400">The computer is off.</p>
-                <button type="button" onClick={() => void boot()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] text-white bg-[var(--accent)] hover:bg-[var(--accent-hover)] transition">
-                  <Power size={12} /> Boot the computer
+                <Monitor size={22} className="text-[var(--ink-muted)]" aria-hidden />
+                <p className="text-ui-sm text-[var(--ink-secondary)]">The computer is off.</p>
+                <button type="button" onClick={() => void boot()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
+                  <Power size={12} aria-hidden /> Boot the computer
                 </button>
               </>
             )}
@@ -114,25 +114,25 @@ export function AgentComputerTab({
         {/* Teach overlays */}
         {session.phase === 'waiting' && (
           <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/85 to-transparent">
-            <div className="flex items-center gap-3 rounded-xl border border-amber-400/25 bg-amber-500/[0.08] px-3.5 py-2.5">
-              <MousePointer2 size={14} className="text-amber-300 shrink-0" />
+            <div className="flex items-center gap-3 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-overlay)] px-3.5 py-2.5">
+              <MousePointer2 size={14} className="text-[var(--warning)] shrink-0" aria-hidden />
               <div className="flex-1 min-w-0">
-                <p className="text-[12.5px] text-amber-100">Ready when you are — take over and show the bot how it&apos;s done.</p>
-                <p className="text-[11px] text-amber-200/60">It records your screen until you press Stop.</p>
+                <p className="text-ui-sm text-[var(--ink-primary)]">Ready when you are — take over and show the bot how it&apos;s done.</p>
+                <p className="text-2xs text-[var(--ink-muted)]">It records your screen until you press Stop.</p>
               </div>
-              <button type="button" onClick={() => void session.takeOver()} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium text-white bg-amber-600 hover:bg-amber-500 transition">
-                <MousePointer2 size={12} /> Take over
+              <button type="button" onClick={() => void session.takeOver()} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs font-medium text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
+                <MousePointer2 size={12} aria-hidden /> Take over
               </button>
             </div>
           </div>
         )}
         {session.phase === 'recording' && (
           <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/85 to-transparent">
-            <div className="flex items-center gap-3 rounded-xl border border-rose-400/25 bg-rose-500/[0.08] px-3.5 py-2.5">
-              <span className="w-2 h-2 rounded-full bg-rose-400 animate-pulse shrink-0" aria-hidden />
-              <p className="flex-1 text-[12.5px] text-rose-100">Recording — drive the computer; the bot is watching.</p>
-              <button type="button" onClick={() => void session.stop()} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium text-white bg-rose-600 hover:bg-rose-500 transition">
-                <Square size={11} /> Stop
+            <div className="flex items-center gap-3 rounded-xl border border-[var(--danger-soft-border)] bg-[var(--danger-soft)] px-3.5 py-2.5">
+              <span className="w-2 h-2 rounded-full bg-[var(--danger)] animate-pulse shrink-0" aria-hidden />
+              <p className="flex-1 text-ui-sm text-[var(--ink-primary)]">Recording — drive the computer; the bot is watching.</p>
+              <button type="button" onClick={() => void session.stop()} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs font-medium text-white bg-[var(--danger-strong)] hover:bg-[var(--danger-strong-hover)] transition">
+                <Square size={11} aria-hidden /> Stop
               </button>
             </div>
           </div>
@@ -140,57 +140,54 @@ export function AgentComputerTab({
       </div>
 
       {/* Status strip */}
-      <div className="flex items-center gap-2 px-3 py-2 border-t border-white/[0.06] text-[11px] text-slate-600 shrink-0">
-        <span className={`w-1.5 h-1.5 rounded-full ${box?.alive ? 'bg-emerald-400' : 'bg-slate-600'}`} aria-hidden />
+      <div className="flex items-center gap-2 px-3 py-2 border-t border-[var(--border-subtle)] text-2xs text-[var(--ink-muted)] shrink-0">
+        <span className={`w-1.5 h-1.5 rounded-full ${box?.alive ? 'bg-[var(--success)]' : 'bg-[var(--ink-muted)]'}`} aria-hidden />
         <span className="font-mono truncate">{box?.sandboxId ? `loop-bot-vm-${box.sandboxId.slice(0, 8)}` : 'loop-bot-vm'}</span>
-        <span className="text-slate-700">·</span>
+        <span className="opacity-50">·</span>
         <span>{box?.alive ? (box.resumed ? 'resumed' : 'always on') : booting ? 'booting…' : 'off'}</span>
-        <span className="ml-auto font-mono text-slate-700">{box?.workspaceDir || '/workspace'}</span>
-        <button type="button" onClick={() => void boot()} aria-label="Refresh the stream" className="p-1 rounded text-slate-500 hover:text-slate-300 hover:bg-white/[0.06] transition">
-          <RefreshCw size={12} />
+        <span className="ml-auto font-mono opacity-50">{box?.workspaceDir || '/workspace'}</span>
+        <button type="button" onClick={() => void boot()} aria-label="Refresh the stream" className="p-1 rounded text-[var(--ink-muted)] hover:text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition">
+          <RefreshCw size={12} aria-hidden />
         </button>
       </div>
     </>
   )
 
-  // ── Expanded: full-window overlay with teach pill + collapse ──────────────
+  // ── Expanded: full-window Dialog with teach pill + collapse ─────────────
   if (expanded) {
     return (
-      <motion.div
-        initial={{ opacity: 0, scale: 0.97 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.97 }}
-        transition={{ duration: 0.22, ease: 'easeOut' }}
-        className="fixed inset-0 z-50 flex flex-col bg-[#08080a]"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Loop Bot computer"
+      <Dialog
+        open
+        onClose={() => { onCollapse?.() }}
+        ariaLabel="Loop Bot computer"
+        scrimClassName="bg-[var(--bg-base)] !p-0"
+        panelClassName="w-full h-full rounded-none border-none bg-[var(--bg-base)] p-0 shadow-none outline-none flex flex-col"
       >
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.06] shrink-0">
-          <Monitor size={15} className="text-slate-400" />
-          <span className="text-[13px] font-medium text-slate-200">Loop Bot&apos;s computer</span>
+        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-subtle)] shrink-0">
+          <Monitor size={15} className="text-[var(--ink-muted)]" aria-hidden />
+          <span className="text-ui-sm font-medium text-[var(--ink-secondary)]">Loop Bot&apos;s computer</span>
           <div className="ml-auto flex items-center gap-2">
             <TeachPill session={session} onStart={startTeach} />
             <button
               type="button"
               onClick={onCollapse}
               aria-label="Shrink the computer view"
-              className="p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition"
+              className="p-2 rounded-lg text-[var(--ink-muted)] hover:text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition"
             >
-              <X size={16} />
+              <X size={16} aria-hidden />
             </button>
           </div>
         </div>
         {screen}
-      </motion.div>
+      </Dialog>
     )
   }
 
   // ── Embedded: small stream + expand button ─────────────────────────────────
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-white/[0.06] shrink-0">
-        <span className="text-[11.5px] text-slate-400 font-medium">Its screen — live</span>
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-subtle)] shrink-0">
+        <span className="text-ui-xs text-[var(--ink-secondary)] font-medium">Its screen — live</span>
         <div className="ml-auto flex items-center gap-1">
           <TeachPill session={session} onStart={startTeach} compact />
           {onExpand && (
@@ -199,9 +196,9 @@ export function AgentComputerTab({
               onClick={onExpand}
               aria-label="Enlarge the computer view"
               title="Enlarge"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition"
+              className="p-1.5 rounded-lg text-[var(--ink-muted)] hover:text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition"
             >
-              <Maximize2 size={13} />
+              <Maximize2 size={13} aria-hidden />
             </button>
           )}
         </div>
@@ -214,12 +211,12 @@ export function AgentComputerTab({
 /** The record-dot teach pill — one click starts recording, one click stops. */
 function TeachPill({ session, onStart, compact = false }: { session: TeachSession; onStart: () => void; compact?: boolean }) {
   const { phase, frames, error } = session
-  const base = compact ? 'px-2 py-1 text-[11px] gap-1' : 'px-3 py-1.5 text-[12.5px] gap-1.5'
+  const base = compact ? 'px-2 py-1 text-2xs gap-1' : 'px-3 py-1.5 text-ui-xs gap-1.5'
 
   if (phase === 'starting' || phase === 'waiting') {
     return (
-      <span className={`flex items-center rounded-lg font-medium text-rose-200 bg-rose-500/15 ring-1 ring-rose-400/25 ${base}`}>
-        <Loader2 size={compact ? 10 : 12} className="animate-spin" />
+      <span className={`flex items-center rounded-lg font-medium text-[var(--danger)] bg-[var(--danger-soft)] border border-[var(--danger-soft-border)] ${base}`}>
+        <Loader2 size={compact ? 10 : 12} className="animate-spin" aria-hidden />
         {phase === 'starting' ? 'Booting…' : 'Take over'}
       </span>
     )
@@ -229,31 +226,31 @@ function TeachPill({ session, onStart, compact = false }: { session: TeachSessio
       <button
         type="button"
         onClick={() => void session.stop()}
-        className={`flex items-center rounded-lg font-medium text-white bg-rose-600 hover:bg-rose-500 transition ${base}`}
+        className={`flex items-center rounded-lg font-medium text-white bg-[var(--danger-strong)] hover:bg-[var(--danger-strong-hover)] transition ${base}`}
         title="Stop — the bot converts the recording into a skill"
       >
-        <Square size={compact ? 9 : 11} className="fill-current" />
+        <Square size={compact ? 9 : 11} className="fill-current" aria-hidden />
         Stop{!compact && ` · ${frames}f`}
       </button>
     )
   }
   if (phase === 'distilling') {
     return (
-      <span className={`flex items-center rounded-lg font-medium text-[#e79d7f] bg-[#c96442]/15 ring-1 ring-[#c96442]/25 ${base}`}>
-        <Loader2 size={compact ? 10 : 12} className="animate-spin" /> Saving skill…
+      <span className={`flex items-center rounded-lg font-medium text-[var(--accent-text)] bg-[var(--accent-soft)] border border-[var(--accent-soft-border)] ${base}`}>
+        <Loader2 size={compact ? 10 : 12} className="animate-spin" aria-hidden /> Saving skill…
       </span>
     )
   }
   if (phase === 'done') {
     return (
-      <span className={`flex items-center rounded-lg font-medium text-emerald-200 bg-emerald-500/15 ring-1 ring-emerald-400/25 ${base}`}>
-        <GraduationCap size={compact ? 10 : 12} /> Skill saved
+      <span className={`flex items-center rounded-lg font-medium text-[var(--success)] bg-[var(--bg-tint)] border border-[var(--border-subtle)] ${base}`}>
+        <GraduationCap size={compact ? 10 : 12} aria-hidden /> Skill saved
       </span>
     )
   }
   if (phase === 'failed') {
     return (
-      <button type="button" onClick={session.reset} title={error} className={`flex items-center rounded-lg font-medium text-rose-200 bg-rose-500/15 ring-1 ring-rose-400/25 ${base}`}>
+      <button type="button" onClick={session.reset} title={error} className={`flex items-center rounded-lg font-medium text-[var(--danger)] bg-[var(--danger-soft)] border border-[var(--danger-soft-border)] ${base}`}>
         Retry
       </button>
     )
@@ -263,9 +260,9 @@ function TeachPill({ session, onStart, compact = false }: { session: TeachSessio
       type="button"
       onClick={onStart}
       title="Start recording — drive the computer through the task once and it becomes a skill"
-      className={`flex items-center rounded-lg font-medium text-slate-200 bg-white/[0.07] ring-1 ring-white/10 hover:bg-white/[0.12] transition ${base}`}
+      className={`flex items-center rounded-lg font-medium text-[var(--ink-secondary)] bg-[var(--bg-hover-strong)] border border-[var(--border-strong)] hover:bg-[var(--bg-hover)] transition ${base}`}
     >
-      <Circle size={compact ? 8 : 10} className="fill-rose-500 text-rose-500" />
+      <Circle size={compact ? 8 : 10} className="fill-[var(--danger)] text-[var(--danger)]" aria-hidden />
       Teach a task
     </button>
   )
@@ -278,7 +275,7 @@ function LoadingDots() {
       {[0, 1, 2].map((i) => (
         <span
           key={i}
-          className="w-2 h-2 rounded-full bg-slate-400 animate-bounce"
+          className="w-2 h-2 rounded-full bg-[var(--ink-muted)] animate-bounce"
           style={{ animationDelay: `${i * 0.15}s`, animationDuration: '0.9s' }}
         />
       ))}

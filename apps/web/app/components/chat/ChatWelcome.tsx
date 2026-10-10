@@ -12,8 +12,11 @@ const STARTER_PROMPTS = [
   'Draft a business plan for a SaaS startup',
 ] as const
 
-/** First-visit screen: greeting, slash/command hints, starter prompt cards. */
-export function EmptyState({ onStartPrompt }: { onStartPrompt?: (p: string) => void }) {
+/** First-visit screen: greeting, slash/command hints, starter prompt cards.
+ *  Renamed from EmptyState (UI pass): this is the chat welcome hero, not an
+ *  empty-library affordance — the shared `EmptyState` primitive in @loop/ui
+ *  owns that pattern. */
+export function ChatWelcome({ onStartPrompt }: { onStartPrompt?: (p: string) => void }) {
   return (
     <div className="flex flex-col items-center justify-start h-full max-w-[48rem] mx-auto text-center px-4 pt-8 sm:pt-14 pb-6">
       <motion.div
@@ -22,16 +25,16 @@ export function EmptyState({ onStartPrompt }: { onStartPrompt?: (p: string) => v
         transition={{ duration: 0.3 }}
         className="space-y-4"
       >
-        <div className="w-12 h-12 rounded-2xl surface flex items-center justify-center mx-auto shadow-[0_0_0_1px_rgba(201,100,66,0.25),0_10px_30px_-14px_rgba(201,100,66,0.55)]">
-          <Sparkles size={22} className="text-[#f0b39a]" />
+        <div className="w-12 h-12 rounded-2xl surface flex items-center justify-center mx-auto shadow-[0_0_0_1px_var(--accent-soft-border),0_10px_30px_-14px_var(--accent-glow)]">
+          <Sparkles size={22} className="text-[var(--accent-text)]" aria-hidden />
         </div>
-        <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight text-[#f4f4f6]">
+        <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight text-[var(--ink-primary)]">
           How can I help you today?
         </h1>
-        <p className="text-slate-300 text-[14px] max-w-sm mx-auto">
-          Type <span className="font-mono text-slate-300 bg-white/[0.06] px-1.5 py-0.5 rounded text-[13px]">/</span> for
-          deep research. <span className="font-mono text-slate-300 bg-white/[0.06] px-1.5 py-0.5 rounded text-[13px]">{modLabel()} K</span> for
-          commands. New here? <Link href="/onboarding" className="text-[#f0b39a] hover:underline">Take the 2-minute tour →</Link>
+        <p className="text-[var(--ink-secondary)] text-ui-base max-w-sm mx-auto">
+          Type <span className="font-mono bg-[var(--bg-hover)] px-1.5 py-0.5 rounded text-ui-sm">/</span> for
+          deep research. <span className="font-mono bg-[var(--bg-hover)] px-1.5 py-0.5 rounded text-ui-sm">{modLabel()} K</span> for
+          commands. New here? <Link href="/onboarding" className="text-[var(--accent-text)] hover:underline">Take the 2-minute tour →</Link>
         </p>
 
         {/* Starter prompt cards */}
@@ -41,7 +44,7 @@ export function EmptyState({ onStartPrompt }: { onStartPrompt?: (p: string) => v
               key={p}
               type="button"
               onClick={() => onStartPrompt?.(p)}
-              className="text-left px-4 py-3 rounded-2xl bg-white/[0.04] hover:bg-white/[0.07] border border-white/[0.09] hover:border-white/[0.16] transition text-[13px] text-slate-200 hover:text-slate-100 leading-relaxed"
+              className="text-left px-4 py-3 rounded-2xl bg-[var(--bg-tint)] hover:bg-[var(--bg-hover)] border border-[var(--border-subtle)] hover:border-[var(--border-strong)] transition text-ui-sm text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] leading-relaxed"
             >
               {p}
             </button>
@@ -63,12 +66,12 @@ export function ThinkingDots() {
         {[0, 150, 300].map((d) => (
           <span
             key={d}
-            className="w-1.5 h-1.5 rounded-full bg-[#c96442]/70 animate-bounce"
+            className="w-1.5 h-1.5 rounded-full bg-[var(--accent-fill)] animate-bounce"
             style={{ animationDelay: `${d}ms` }}
           />
         ))}
       </span>
-      <span className="text-[13px] text-slate-400 shimmer-text">Thinking…</span>
+      <span className="text-ui-sm text-[var(--ink-muted)] shimmer-text">Thinking…</span>
     </div>
   )
 }

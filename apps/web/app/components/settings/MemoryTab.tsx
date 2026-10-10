@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Brain, Check, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { API_URL, authHeaders } from '../../lib/api'
-import { Badge, btnGhost, btnPrimary, Card, EmptyState, inputCls, SearchInput, SectionHeader, Toggle } from '../ui/primitives'
+import { Badge, btnGhost, btnPrimary, Card, ConfirmDialog, EmptyState, inputCls, SearchInput, SectionHeader, Toggle } from '../ui/primitives'
 
 interface MemoryRow {
   id: string
@@ -37,6 +37,9 @@ export default function MemoryTab() {
   const [query, setQuery] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
+  // Reset-all confirmation (replaces the native confirm()).
+  const [confirmReset, setConfirmReset] = useState(false)
+  const [resetBusy, setResetBusy] = useState(false)
 
   const load = () =>
     fetch(`${API_URL}/api/memory`, { headers: authHeaders() })
@@ -90,9 +93,12 @@ export default function MemoryTab() {
   }
 
   const reset = async () => {
-    if (!confirm('Delete every memory? This cannot be undone.')) return
-    await fetch(`${API_URL}/api/memory/reset`, { method: 'POST', headers: authHeaders() }).catch(() => {})
-    load()
+    setResetBusy(true)
+    try {
+      await fetch(`${API_URL}/api/memory/reset`, { method: 'POST', headers: authHeaders() }).catch(() => {})
+      load()
+      setConfirmReset(false)
+    } finally { setResetBusy(false) }
   }
 
   const q = query.trim().toLowerCase()
@@ -246,9 +252,22 @@ export default function MemoryTab() {
 
       {rows.length > 0 && (
         <div className="flex justify-end pt-1">
-          <button onClick={reset} className={btnGhost + ' text-rose-400 hover:bg-rose-500/10'}><Trash2 size={13} /> Reset all</button>
+          <button onClick={() => setConfirmReset(true)} className={btnGhost + ' text-[var(--danger)] hover:bg-[var(--danger-soft)]'}><Trash2 size={13} /> Reset all</button>
         </div>
       )}
+
+      {/* Reset-all confirmation — replaces the native confirm(). */}
+      <ConfirmDialog
+        open={confirmReset}
+        tone="danger"
+        title="Delete every memory?"
+        body="This cannot be undone."
+        confirmLabel="Delete all"
+        busyLabel="Working…"
+        busy={resetBusy}
+        onConfirm={() => { void reset() }}
+        onCancel={() => setConfirmReset(false)}
+      />
     </div>
   )
 }

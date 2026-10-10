@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Blocks, ChevronLeft, FileCode2, Loader2, Plus, Save, Trash2 } from 'lucide-react'
 import { API_URL, authHeaders } from '../../lib/api'
-import { Badge, btnGhost, btnPrimary, Card, EmptyState, inputCls, SearchInput, SectionHeader, Toggle } from '../ui/primitives'
+import { Badge, btnGhost, btnPrimary, Card, ConfirmDialog, EmptyState, inputCls, SearchInput, SectionHeader, Toggle } from '../ui/primitives'
 
 interface SkillSummary { id: string; name: string; description: string; enabled: boolean; builtin?: boolean }
 interface SkillDetail extends SkillSummary { instructions: string; triggers: string[]; tools: string[]; source: string | null }
@@ -41,6 +41,9 @@ export default function SkillsTab() {
   const [loadError, setLoadError] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [busy, setBusy] = useState(false)
+  // Restore-version confirmation (replaces the native confirm()).
+  const [confirmRevert, setConfirmRevert] = useState<string | null>(null)
+  const [revertBusy, setRevertBusy] = useState(false)
 
   const load = () => fetch(`${API_URL}/api/agent/skills`, { headers: authHeaders() })
     .then(async (r) => {
@@ -64,13 +67,17 @@ export default function SkillsTab() {
   }
 
   const revert = async (version: string) => {
-    if (!detail || !confirm('Restore this version? The current version is snapshotted first.')) return
-    const res = await fetch(`${API_URL}/api/agent/skills/${detail.id}/revert`, {
-      method: 'POST', headers: authHeaders(), body: JSON.stringify({ version }),
-    }).catch(() => null)
-    if (!res?.ok) { setError('Could not revert.'); return }
-    await openDetail(detail.id)
-    load()
+    if (!detail) return
+    setRevertBusy(true)
+    try {
+      const res = await fetch(`${API_URL}/api/agent/skills/${detail.id}/revert`, {
+        method: 'POST', headers: authHeaders(), body: JSON.stringify({ version }),
+      }).catch(() => null)
+      if (!res?.ok) { setError('Could not revert.'); return }
+      await openDetail(detail.id)
+      load()
+      setConfirmRevert(null)
+    } finally { setRevertBusy(false) }
   }
 
   const toggle = async (id: string, enabled: boolean) => {
@@ -189,7 +196,7 @@ export default function SkillsTab() {
               <div key={v.version} className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-white/[0.06] bg-white/[0.02]">
                 <span className="text-[11.5px] text-slate-400 font-mono truncate">{v.version}</span>
                 <span className="text-[11px] text-slate-600 shrink-0">{Math.round(v.chars / 1024)} KB</span>
-                <button onClick={() => revert(v.version)} className="text-[11px] text-[#e79d7f] hover:underline shrink-0">Restore</button>
+                <button onClick={() => setConfirmRevert(v.version)} className="text-[11px] text-[var(--accent-text)] hover:underline shrink-0">Restore</button>
               </div>
             ))}
             <div className="flex justify-end pt-1">
@@ -197,6 +204,19 @@ export default function SkillsTab() {
             </div>
           </div>
         )}
+
+        {/* Restore-version confirmation — replaces the native confirm(). */}
+        <ConfirmDialog
+          open={confirmRevert !== null}
+          tone="danger"
+          title="Restore this version?"
+          body="The current version is snapshotted first."
+          confirmLabel="Restore"
+          busyLabel="Working…"
+          busy={revertBusy}
+          onConfirm={() => { if (confirmRevert) void revert(confirmRevert) }}
+          onCancel={() => setConfirmRevert(null)}
+        />
       </div>
     )
   }

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { API_URL, authHeaders, getStoredUser } from '../../lib/api'
 import { openOAuthPopup, oauthPopupNotice } from '../../lib/oauthPopup'
+import { Dialog } from '@loop/ui'
 import { Badge, btnGhost, btnPrimary, EmptyState, inputCls, SearchInput, SectionHeader, StatusDot } from '../ui/primitives'
 import { BrandMark } from '../connectors/BrandMark'
 
@@ -78,19 +79,6 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
       .catch(() => setLoadError('Could not load connectors.'))
       .finally(() => setLoaded(true))
   useEffect(() => { load() }, [])
-
-  // Escape dismisses only this credential sheet, not Agent settings.
-  useEffect(() => {
-    if (!marketType) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopPropagation()
-      setMarketType(null)
-    }
-    document.addEventListener('keydown', onKey, true)
-    return () => document.removeEventListener('keydown', onKey, true)
-  }, [marketType])
 
   const selected = data.types.find((t) => t.type === addType)
 
@@ -167,50 +155,48 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
   return (
     <div className="space-y-4 text-sm">
       {/* Directory hand-off (blueprint §9.4: "Browse connectors"). */}
-      <Link href="/customize/connectors/all" className="inline-flex items-center gap-1.5 text-[12px] text-[#e79d7f] hover:underline">
+      <Link href="/customize/connectors/all" className="inline-flex items-center gap-1.5 text-ui-xs text-[var(--accent-text)] hover:underline">
         <Globe size={12} /> Browse the full connector directory
       </Link>
 
       {/* Connected */}
       <SectionHeader title="Connected" count={data.configured.length} />
       {loaded && !loadError && data.configured.length === 0 && (
-        <p className="text-xs text-slate-600">Nothing connected yet</p>
+        <p className="text-xs text-[var(--ink-muted)]">Nothing connected yet</p>
       )}
       {loadError && (
-        <div className="text-xs text-rose-400 flex items-center gap-2">
+        <div className="text-xs text-[var(--danger)] flex items-center gap-2">
           <span>{loadError}</span>
-          <button type="button" onClick={() => load()} className="underline hover:text-rose-300">Retry</button>
+          <button type="button" onClick={() => load()} className="underline hover:text-[var(--danger)]">Retry</button>
         </div>
       )}
       {data.configured.map((c) => {
         const type = data.types.find((t) => t.type === c.type)
         const ok = c.lastTestOk !== false && c.enabled
         return (
-          <div key={c.id} className="px-3 py-2.5 rounded-xl border border-white/[0.06] bg-white/[0.02] flex items-center gap-3">
+          <div key={c.id} className="px-3 py-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] flex items-center gap-3">
             <Avatar name={c.name} />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-slate-100 truncate">{c.name}</span>
-                {c.account && <span className="text-[11px] text-slate-500 truncate">{c.account}</span>}
+                <span className="text-sm font-medium text-[var(--ink-primary)] truncate">{c.name}</span>
+                {c.account && <span className="text-2xs text-[var(--ink-muted)] truncate">{c.account}</span>}
               </div>
-              <div className="text-[11px] text-slate-500 mt-0.5">
+              <div className="text-2xs text-[var(--ink-muted)] mt-0.5">
                 {c.lastTestedAt ? `tested ${timeAgo(c.lastTestedAt)}` : 'not tested yet'}
-                {testMsg[c.id] && <span className={c.lastTestOk ? ' text-emerald-400' : ' text-rose-300'}> · {testMsg[c.id]}</span>}
+                {testMsg[c.id] && <span className={c.lastTestOk ? ' text-[var(--success)]' : ' text-[var(--danger)]'}> · {testMsg[c.id]}</span>}
               </div>
             </div>
-            <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full ${ok ? 'bg-emerald-400/10 text-emerald-300' : 'bg-amber-400/10 text-amber-200'}`}>
-              {ok ? 'Connected' : 'Needs attention'}
-            </span>
-            {type?.oauth && <span className="shrink-0 text-[10px] uppercase tracking-wide text-sky-300/80">OAuth</span>}
+            <Badge tone={ok ? 'green' : 'amber'}>{ok ? 'Connected' : 'Needs attention'}</Badge>
+            {type?.oauth && <span className="shrink-0 text-3xs uppercase tracking-wide text-sky-300/80">OAuth</span>}
             <button
               onClick={() => test(c.id)}
               disabled={testing === c.id}
-              className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] disabled:opacity-50"
+              className="shrink-0 p-1.5 rounded-lg text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] disabled:opacity-50"
               aria-label={`Test ${c.name}`}
             ><RefreshCw size={13} className={testing === c.id ? 'animate-spin' : ''} /></button>
             <button
               onClick={() => remove(c.id)}
-              className="shrink-0 px-2.5 py-1.5 rounded-lg text-[12px] text-slate-300 hover:text-rose-300 hover:bg-white/5 transition"
+              className="shrink-0 px-2.5 py-1.5 rounded-lg text-ui-xs text-[var(--ink-secondary)] hover:text-[var(--danger)] hover:bg-[var(--bg-hover)] transition"
             >Disconnect</button>
           </div>
         )
@@ -218,7 +204,7 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
 
       {/* Search */}
       <SearchInput value={query} onChange={setQuery} placeholder="Search connectors…" resultCount={q ? filtered.length : null} />
-      {error && <div className="text-xs text-rose-400">{error}</div>}
+      {error && <div className="text-xs text-[var(--danger)]">{error}</div>}
 
       {/* Available by category */}
       {categories.map(([cat, types]) => (
@@ -230,22 +216,22 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
             {types.map((t) => {
               const connected = configuredTypes.has(t.type)
               return (
-                <article key={t.type} className="h-[148px] flex flex-col rounded-xl border border-white/[0.07] bg-white/[0.025] p-3">
+                <article key={t.type} className="h-[148px] flex flex-col rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] p-3">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <Avatar name={t.name} />
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-medium text-slate-100">{t.name}</div>
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">{t.oauth ? 'OAuth' : 'API key'}</div>
+                      <div className="truncate text-ui-sm font-medium text-[var(--ink-primary)]">{t.name}</div>
+                      <div className="text-3xs uppercase tracking-wide text-[var(--ink-muted)]">{t.oauth ? 'OAuth' : 'API key'}</div>
                     </div>
                     {connected && <Badge tone="green">connected</Badge>}
                   </div>
-                  <p className="mt-2 text-[12px] text-slate-400 line-clamp-1">{t.description}</p>
+                  <p className="mt-2 text-ui-xs text-[var(--ink-secondary)] line-clamp-1">{t.description}</p>
                   <div className="mt-auto pt-2">
                     {t.oauth && OAUTH_LABEL[t.type] ? (
                       <button
                         onClick={() => startOAuth(t.type)}
                         disabled={oauthBusy === t.type}
-                        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[#c96442] text-white text-[12px] font-medium disabled:opacity-50"
+                        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[var(--accent-fill)] text-white text-ui-xs font-medium disabled:opacity-50"
                       >
                         {oauthBusy === t.type ? <Loader2 size={12} className="animate-spin" /> : null} Connect with {OAUTH_LABEL[t.type]}
                       </button>
@@ -253,7 +239,7 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
                       <button
                         type="button"
                         onClick={() => { setAddType(t.type); setFields({}); setError('') }}
-                        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-white/[0.08] text-slate-100 text-[12px] font-medium hover:bg-white/[0.12]"
+                        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[var(--bg-hover)] text-[var(--ink-primary)] text-ui-xs font-medium hover:bg-[var(--bg-hover-strong)]"
                       >
                         <Plus size={12} /> Add
                       </button>
@@ -265,13 +251,13 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
           </div>
         </div>
       ))}
-      {q && filtered.length === 0 && <p className="text-center text-xs text-slate-600 py-3">No connectors match “{query}”.</p>}
+      {q && filtered.length === 0 && <p className="text-center text-xs text-[var(--ink-muted)] py-3">No connectors match “{query}”.</p>}
 
-      {/* Credential modal */}
+      {/* Credential panel (inline) */}
       {selected && !selected.oauth && (
-        <div className="p-3.5 rounded-xl border border-dashed border-white/10 space-y-2 bg-white/[0.015]">
-          <div className="text-xs text-slate-300 font-medium flex items-center gap-1.5"><Avatar name={selected.name} /> Configure {selected.name}</div>
-          <p className="text-[11px] text-slate-500">The key is validated against {selected.name} before it is saved.</p>
+        <div className="p-3.5 rounded-xl border border-dashed border-[var(--border-subtle)] space-y-2 bg-[var(--bg-tint)]">
+          <div className="text-xs text-[var(--ink-secondary)] font-medium flex items-center gap-1.5"><Avatar name={selected.name} /> Configure {selected.name}</div>
+          <p className="text-2xs text-[var(--ink-muted)]">The key is validated against {selected.name} before it is saved.</p>
           {selected.fields.map((f) => (
             <input
               key={f.key}
@@ -283,7 +269,7 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
               aria-label={f.label}
             />
           ))}
-          {error && <div className="text-xs text-rose-400">{error}</div>}
+          {error && <div className="text-xs text-[var(--danger)]">{error}</div>}
           <div className="flex gap-2">
             <button onClick={add} disabled={addBusy} className={btnPrimary}>
               {addBusy ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />} Connect
@@ -297,35 +283,35 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
       <div className="pt-1">
         <button
           onClick={() => setShowMarketplace((v) => !v)}
-          className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.035] transition text-left"
+          className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] hover:bg-[var(--bg-hover)] transition text-left"
           aria-expanded={showMarketplace}
         >
-          <span className="flex items-center gap-2 text-sm text-slate-200"><Globe size={15} className="text-slate-500" /> Marketplace <span className="text-[11px] text-slate-600">{data.marketplace.length} more integrations</span></span>
-          <ChevronDown size={15} className={`text-slate-500 transition-transform ${showMarketplace ? 'rotate-180' : ''}`} />
+          <span className="flex items-center gap-2 text-sm text-[var(--ink-primary)]"><Globe size={15} className="text-[var(--ink-muted)]" /> Marketplace <span className="text-2xs text-[var(--ink-muted)]">{data.marketplace.length} more integrations</span></span>
+          <ChevronDown size={15} className={`text-[var(--ink-muted)] transition-transform ${showMarketplace ? 'rotate-180' : ''}`} />
         </button>
         {showMarketplace && (
           <div className="mt-2 space-y-2">
-            <p className="text-[11px] text-slate-500 leading-relaxed px-1">
-              These connect with <strong className="text-slate-400">your own OAuth app</strong> — create an app at the provider&apos;s developer console, paste its client ID/secret, and sign in. The connection is real and the agent can call the provider&apos;s API.
+            <p className="text-2xs text-[var(--ink-muted)] leading-relaxed px-1">
+              These connect with <strong className="text-[var(--ink-secondary)]">your own OAuth app</strong> — create an app at the provider&apos;s developer console, paste its client ID/secret, and sign in. The connection is real and the agent can call the provider&apos;s API.
             </p>
             {data.marketplace.map((m) => {
               const connected = configuredTypes.has(m.type)
               return (
-                <div key={m.type} className="p-3.5 rounded-xl border border-white/[0.06] bg-white/[0.02] flex items-center justify-between gap-3">
+                <div key={m.type} className="p-3.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <StatusDot state={connected ? 'ok' : 'idle'} />
                     <div className="min-w-0">
-                      <div className="text-sm text-slate-200">{m.name}</div>
-                      <div className="text-[11px] text-slate-500">{connected ? 'connected' : 'bring your own OAuth app'}</div>
+                      <div className="text-sm text-[var(--ink-primary)]">{m.name}</div>
+                      <div className="text-2xs text-[var(--ink-muted)]">{connected ? 'connected' : 'bring your own OAuth app'}</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     {m.docs && (
-                      <a href={m.docs} target="_blank" rel="noreferrer" className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-white/5" title={`${m.name} developer console`}><ExternalLink size={13} /></a>
+                      <a href={m.docs} target="_blank" rel="noreferrer" className="p-1.5 rounded-lg text-[var(--ink-muted)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover)]" title={`${m.name} developer console`}><ExternalLink size={13} /></a>
                     )}
                     <button
                       onClick={() => { setMarketType(m); setClientCreds({ clientId: '', clientSecret: '' }); setError('') }}
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] bg-white/[0.04] text-slate-200 hover:bg-white/[0.08] transition"
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-ui-xs bg-[var(--bg-hover)] text-[var(--ink-primary)] hover:bg-[var(--bg-hover-strong)] transition"
                     >{connected ? 'Reconnect' : 'Add to my apps'}</button>
                   </div>
                 </div>
@@ -336,21 +322,28 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
       </div>
 
       {/* Marketplace OAuth-credential modal */}
-      {marketType && (
-        <div data-settings-nested-dialog className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setMarketType(null)}>
-          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#131316] p-5 space-y-3 shadow-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={`Connect ${marketType.name}`}>
+      <Dialog
+        open={marketType !== null}
+        onClose={() => setMarketType(null)}
+        ariaLabel={marketType ? `Connect ${marketType.name}` : undefined}
+        size="md"
+        zIndex="z-[60]"
+        panelProps={{ 'data-settings-nested-dialog': 'true' }}
+      >
+        {marketType && (
+          <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-slate-100">Connect {marketType.name}</h3>
-              <button onClick={() => setMarketType(null)} className="p-1 rounded-lg text-slate-500 hover:text-slate-200" aria-label="Close"><X size={15} /></button>
+              <h3 className="text-ui-base font-semibold text-[var(--ink-primary)]">Connect {marketType.name}</h3>
+              <button onClick={() => setMarketType(null)} className="p-1 rounded-lg text-[var(--ink-muted)] hover:text-[var(--ink-primary)]" aria-label="Close"><X size={15} /></button>
             </div>
-            <p className="text-xs text-slate-500 leading-relaxed">
+            <p className="text-xs text-[var(--ink-muted)] leading-relaxed">
               Create an OAuth app in the {marketType.name} developer console
-              {marketType.docs && <> (<a href={marketType.docs} target="_blank" rel="noreferrer" className="text-[#e79d7f] hover:underline">open console <ExternalLink size={10} className="inline" /></a>)</>}
-              , add this redirect URL <code className="px-1 py-0.5 rounded bg-white/5 text-[10px]">{window.location.origin}/api/oauth-connector/callback</code>, then paste the app credentials.
+              {marketType.docs && <> (<a href={marketType.docs} target="_blank" rel="noreferrer" className="text-[var(--accent-text)] hover:underline">open console <ExternalLink size={10} className="inline" /></a>)</>}
+              , add this redirect URL <code className="px-1 py-0.5 rounded bg-[var(--bg-code)] text-3xs text-[var(--ink-primary)]">{window.location.origin}/api/oauth-connector/callback</code>, then paste the app credentials.
             </p>
             <input placeholder="Client ID" value={clientCreds.clientId} onChange={(e) => setClientCreds({ ...clientCreds, clientId: e.target.value })} className={inputCls} aria-label="OAuth client ID" />
             <input placeholder="Client secret" type="password" value={clientCreds.clientSecret} onChange={(e) => setClientCreds({ ...clientCreds, clientSecret: e.target.value })} className={inputCls} aria-label="OAuth client secret" />
-            {error && <div className="text-xs text-rose-400">{error}</div>}
+            {error && <div className="text-xs text-[var(--danger)]">{error}</div>}
             <div className="flex gap-2">
               <button
                 onClick={() => startOAuth(marketType.type, clientCreds).then((started) => { if (started) setMarketType(null) })}
@@ -362,19 +355,19 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
               <button onClick={() => setMarketType(null)} className={btnGhost}>Cancel</button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Dialog>
 
       {/* MCP servers are admin-only operator infrastructure (remote https). */}
       {mcpAdmin && (
       <div className="pt-1">
         <button
           onClick={() => setShowAdvanced((v) => !v)}
-          className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.035] transition text-left"
+          className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] hover:bg-[var(--bg-hover)] transition text-left"
           aria-expanded={showAdvanced}
         >
-          <span className="flex items-center gap-2 text-sm text-slate-200"><Cable size={15} className="text-slate-500" /> Advanced: MCP servers</span>
-          <ChevronDown size={15} className={`text-slate-500 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
+          <span className="flex items-center gap-2 text-sm text-[var(--ink-primary)]"><Cable size={15} className="text-[var(--ink-muted)]" /> Advanced: MCP servers</span>
+          <ChevronDown size={15} className={`text-[var(--ink-muted)] transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
         </button>
         {showAdvanced && <div className="mt-2"><McpSection /></div>}
       </div>
@@ -421,27 +414,27 @@ function McpSection() {
   return (
     <div className="space-y-2.5 text-sm">
       {loadError && (
-        <div className="text-xs text-rose-400 flex items-center gap-2 px-1">
+        <div className="text-xs text-[var(--danger)] flex items-center gap-2 px-1">
           <span>{loadError}</span>
-          <button type="button" onClick={() => load()} className="underline hover:text-rose-300">Retry</button>
+          <button type="button" onClick={() => load()} className="underline hover:text-[var(--danger)]">Retry</button>
         </div>
       )}
-      {error && <div className="text-xs text-rose-400 px-1">{error}</div>}
-      {loaded && !loadError && servers.length === 0 && <p className="text-[11px] text-slate-600 px-1">No MCP servers. Their tools become available to the agent once connected.</p>}
+      {error && <div className="text-xs text-[var(--danger)] px-1">{error}</div>}
+      {loaded && !loadError && servers.length === 0 && <p className="text-2xs text-[var(--ink-muted)] px-1">No MCP servers. Their tools become available to the agent once connected.</p>}
       {servers.map((s) => (
-        <div key={s.id} className="p-3 rounded-xl border border-white/[0.06] bg-white/[0.02] flex items-start justify-between gap-3">
+        <div key={s.id} className="p-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-[13px] text-slate-200">{s.name} <span className="text-[11px] text-slate-500">({s.transport})</span></div>
-            <div className="text-[11px] text-slate-500 truncate">{s.url}</div>
-            <div className={`text-[11px] ${s.runtime?.status === 'connected' ? 'text-emerald-400' : 'text-rose-400'}`}>
+            <div className="text-ui-sm text-[var(--ink-primary)]">{s.name} <span className="text-2xs text-[var(--ink-muted)]">({s.transport})</span></div>
+            <div className="text-2xs text-[var(--ink-muted)] truncate">{s.url}</div>
+            <div className={`text-2xs ${s.runtime?.status === 'connected' ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
               {s.runtime?.status === 'connected' ? `connected · ${s.runtime.tools.length} tools` : s.runtime?.error || 'not connected'}
             </div>
           </div>
-          <button onClick={() => remove(s.id)} className="text-[11px] text-slate-400 hover:text-rose-400 shrink-0 hover:underline">Remove</button>
+          <button onClick={() => remove(s.id)} className="text-2xs text-[var(--ink-secondary)] hover:text-[var(--danger)] shrink-0 hover:underline">Remove</button>
         </div>
       ))}
-      <div className="p-3.5 rounded-xl border border-dashed border-white/10 space-y-2 bg-white/[0.015]">
-        <div className="text-[11px] uppercase tracking-widest text-slate-500">Add server</div>
+      <div className="p-3.5 rounded-xl border border-dashed border-[var(--border-subtle)] space-y-2 bg-[var(--bg-tint)]">
+        <div className="text-2xs uppercase tracking-widest text-[var(--ink-muted)]">Add server</div>
         <input placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} aria-label="Server name" />
         <input placeholder="https://server/mcp" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} className={inputCls} aria-label="Server URL" />
         <button onClick={add} className={btnPrimary}><Plus size={14} /> Add server</button>

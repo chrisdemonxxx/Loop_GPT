@@ -6,7 +6,7 @@ import { motion } from 'framer-motion'
 import { X, FolderPlus, Trash2, Upload, Check, Database, MessageSquare, ChevronLeft, FileText, ExternalLink } from 'lucide-react'
 import { API_URL, authHeaders } from '../lib/api'
 import { useFocusTrap } from '@loop/ui'
-import { Badge, btnGhost, btnPrimary, inputCls } from './ui/primitives'
+import { Badge, btnGhost, btnPrimary, ConfirmDialog, inputCls } from './ui/primitives'
 
 export interface Project {
   id: string
@@ -67,6 +67,9 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
   const [seedFiles, setSeedFiles] = useState<File[]>([])
   const [seedMsg, setSeedMsg] = useState('')
   const [busy, setBusy] = useState(false)
+  // Delete confirmation (replaces the native confirm()).
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const dialogRef = useFocusTrap<HTMLDivElement>(!asPage)
 
   // Per-project knowledge upload.
@@ -182,11 +185,15 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
   }
 
   async function remove(id: string) {
-    if (!workspaceId || !confirm('Delete this project and its knowledge?')) return
-    const res = await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${id}`, { method: 'DELETE', headers: authHeaders() }).catch(() => null)
-    if (!res?.ok) return
-    if (activeProjectId === id) onSelect(null)
-    load()
+    if (!workspaceId) return
+    setDeleteBusy(true)
+    try {
+      const res = await fetch(`${API_URL}/api/workspaces/${workspaceId}/projects/${id}`, { method: 'DELETE', headers: authHeaders() }).catch(() => null)
+      if (!res?.ok) return
+      if (activeProjectId === id) onSelect(null)
+      setConfirmDeleteId(null)
+      load()
+    } finally { setDeleteBusy(false) }
   }
 
   async function ingest(id: string) {
@@ -429,7 +436,7 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
                         aria-label={`Open project detail for ${p.name}`}
                         className="p-1.5 rounded-lg text-slate-500 transition hover:text-slate-200 hover:bg-white/5"
                       ><ExternalLink size={13} /></Link>
-                      <button onClick={() => remove(p.id)} title="Delete project" aria-label="Delete project" className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-white/5 transition"><Trash2 size={13} /></button>
+                      <button onClick={() => setConfirmDeleteId(p.id)} title="Delete project" aria-label="Delete project" className="p-1.5 rounded-lg text-slate-500 hover:text-[var(--danger)] hover:bg-[var(--bg-hover)] transition"><Trash2 size={13} /></button>
                     </div>
                   </div>
                 </div>
@@ -478,6 +485,22 @@ export default function ProjectsPanel({ workspaceId, activeProjectId, onSelect, 
             )
           })}
         </div>
+
+        {/* Delete confirmation — replaces the native confirm(): the dialog
+            owns the scrim, focus trap, and Escape handling. Rendered inside
+            the panel's motion.div so scrim clicks stop before the outer
+            overlay's close-on-click. */}
+        <ConfirmDialog
+          open={confirmDeleteId !== null}
+          tone="danger"
+          title="Delete this project?"
+          body="Its knowledge will be deleted too."
+          confirmLabel="Delete"
+          busyLabel="Working…"
+          busy={deleteBusy}
+          onConfirm={() => { if (confirmDeleteId) void remove(confirmDeleteId) }}
+          onCancel={() => setConfirmDeleteId(null)}
+        />
       </motion.div>
     </div>
   )

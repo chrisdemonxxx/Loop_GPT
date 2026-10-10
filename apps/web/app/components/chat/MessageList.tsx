@@ -11,7 +11,7 @@ import { presentAssistantText, presentStatus, presentStreamError } from '../../l
 import Markdown from './Markdown'
 import type { LiveStep, Message, PendingApproval, QueuedMessage } from './types'
 import { MessageBubble } from './MessageBubble'
-import { EmptyState, ThinkingDots } from './EmptyState'
+import { ChatWelcome, ThinkingDots } from './ChatWelcome'
 import { ArtifactCard } from './ArtifactCard'
 import TurnActivity from './TurnActivity'
 
@@ -164,7 +164,7 @@ export default function MessageList({
         </div>
       )}
       {showEmpty ? (
-        <EmptyState onStartPrompt={onStartPrompt} />
+        <ChatWelcome onStartPrompt={onStartPrompt} />
       ) : (
         <div className="max-w-[48rem] mx-auto space-y-6">
           {virtualize ? (

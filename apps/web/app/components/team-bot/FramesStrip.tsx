@@ -37,15 +37,15 @@ export function FramesStrip({ artifacts, active }: { artifacts: ArtifactRef[]; a
   if (!rendered.length) return null
   return (
     <div className="mb-2">
-      <div className="mb-1 flex items-center gap-2 text-[11px] text-slate-500">
+      <div className="mb-1 flex items-center gap-2 text-2xs text-[var(--ink-muted)]">
         Agent frames (what it sees, newest last)
-        {active && <span className="relative flex h-1.5 w-1.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75"></span><span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-violet-500"></span></span>}
+        {active && <span className="relative flex h-1.5 w-1.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--accent-fill)] opacity-75"></span><span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[var(--accent-fill)]"></span></span>}
       </div>
       <div className="flex gap-2 overflow-x-auto pb-1">
         {rendered.map((a) => (
           <a key={a.id} href={frames[a.id]} target="_blank" rel="noreferrer" className="shrink-0">
             <img src={frames[a.id]} alt={a.name} title={a.name}
-              className="h-24 rounded-md ring-1 ring-slate-700/60 hover:ring-violet-500/70" />
+              className="h-24 rounded-md ring-1 ring-[var(--border-subtle)] hover:ring-[var(--accent)]" />
           </a>
         ))}
       </div>

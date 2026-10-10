@@ -56,7 +56,9 @@ describe('ShortcutSheet (BUG-5 regression)', () => {
     render(<ShortcutSheet />)
     fireEvent.keyDown(window, { key: '?' })
     await waitFor(() => expect(screen.getByText(/keyboard shortcuts/i)).toBeInTheDocument())
-    fireEvent.keyDown(window, { key: 'Escape' })
+    // The shared Dialog listens for Escape on document (capture); a
+    // window-targeted synthetic event never propagates down to it.
+    fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByText(/keyboard shortcuts/i)).not.toBeInTheDocument())
   })
 })

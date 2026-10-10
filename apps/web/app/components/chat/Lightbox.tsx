@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, ChevronLeft, ChevronRight, ZoomIn } from 'lucide-react'
+import { Dialog } from '@loop/ui'
 import type { ArtifactRef } from '../../lib/stream'
 import { artifactHref, useAuthedUrl } from './artifactUrl'
 
@@ -13,7 +14,8 @@ const MAX_SCALE = 4
  * Fullscreen image lightbox (audit P4): pinch/wheel/double-click zoom with
  * drag-to-pan when zoomed, next/prev navigation across the conversation's
  * images (buttons, arrow keys, horizontal swipe), swipe-down-to-close on
- * touch, and Escape/backdrop close. Images resolve through authed blob URLs.
+ * touch. Escape/backdrop close and focus trap come from the shared Dialog.
+ * Images resolve through authed blob URLs.
  */
 export default function Lightbox({
   images, startIndex = 0, onClose,
@@ -35,17 +37,17 @@ export default function Lightbox({
   const href = active ? artifactHref(active.url) : undefined
   const src = useAuthedUrl(href)
 
-  // Reset zoom on image switch; keyboard navigation + Escape.
+  // Reset zoom on image switch.
   useEffect(() => { setScale(1); setTx(0); setTy(0); setLoaded(false) }, [index])
+  // Arrow-key navigation (Escape is claimed by the Dialog's escape stack).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
       if (e.key === 'ArrowRight' && images.length > 1) setIndex((i) => (i + 1) % images.length)
       if (e.key === 'ArrowLeft' && images.length > 1) setIndex((i) => (i - 1 + images.length) % images.length)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [images.length, onClose])
+  }, [images.length])
 
   const zoomAround = (next: number) => {
     const clamped = Math.min(MAX_SCALE, Math.max(MIN_SCALE, next))
@@ -110,15 +112,16 @@ export default function Lightbox({
   // Portal to the body: mount-point transforms (panel slide-ins) would
   // otherwise become the containing block for this fixed overlay.
   return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Image viewer: ${active.name}`}
+    <Dialog
+      open
+      onClose={onClose}
+      ariaLabel={`Image viewer: ${active.name}`}
+      closeOnScrim
+      scrimClassName="bg-black/90 backdrop-blur-sm !p-0"
+      panelClassName="relative w-full h-full overflow-hidden rounded-none border-none bg-transparent p-0 shadow-none outline-none"
     >
       <div
-        className="relative flex items-center justify-center w-full h-full touch-none select-none overflow-hidden"
+        className="flex items-center justify-center w-full h-full touch-none select-none overflow-hidden"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -167,7 +170,7 @@ export default function Lightbox({
       <span className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 text-[11px] text-slate-400 bg-black/40 rounded-full px-3 py-1 pointer-events-none">
         <ZoomIn size={11} /> scroll or double-click to zoom · swipe down to close
       </span>
-    </div>,
+    </Dialog>,
     document.body,
   )
 }

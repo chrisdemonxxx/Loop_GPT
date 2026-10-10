@@ -113,18 +113,18 @@ describe('ProjectsPanel list, search, and create', () => {
   it('keeps a loaded list when a later refetch fails', async () => {
     const project = { id: 'p1', name: 'Keep me', instructions: 'notes', createdAt: '2026-05-01T00:00:00Z', updatedAt: '2026-05-02T00:00:00Z', _count: { knowledgeChunks: 1, conversations: 0 } }
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => [project] })
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     render(<ProjectsPanel {...props} activeProjectId="p1" />)
     expect(await screen.findByText('Keep me')).toBeInTheDocument()
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
       if (init?.method === 'DELETE') return Promise.resolve({ ok: true, json: async () => ({}) })
       return Promise.reject(new Error('offline'))
     })
+    // Delete now confirms through the shared dialog before firing the request.
     fireEvent.click(screen.getByRole('button', { name: 'Delete project' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
     expect(await screen.findByText('Could not load projects.')).toBeInTheDocument()
     expect(screen.getByText('Keep me')).toBeInTheDocument()
     expect(screen.queryByText('No projects yet')).not.toBeInTheDocument()
-    confirmSpy.mockRestore()
   })
 
   it('does not show an empty library when workspaceId is null, and does not fetch', async () => {
@@ -232,10 +232,11 @@ describe('ProjectsPanel list, search, and create', () => {
     render(<ProjectsPanel {...props} activeProjectId="p1" onSelect={onSelect} />)
     expect(await screen.findByText('Keep me')).toBeInTheDocument()
     fetchMock.mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'nope' }) })
+    // Delete now confirms through the shared dialog before firing the request.
     fireEvent.click(screen.getByRole('button', { name: 'Delete project' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
     await waitFor(() => expect(fetchMock.mock.calls.some((c) => (c[1] as RequestInit | undefined)?.method === 'DELETE')).toBe(true))
     expect(onSelect).not.toHaveBeenCalled()
     expect(screen.getByText('Keep me')).toBeInTheDocument()
-    confirmSpy.mockRestore()
   })
 })
