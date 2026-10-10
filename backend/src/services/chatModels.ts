@@ -14,7 +14,7 @@
  * Callers select a tier by id or alias; unknown values fall back to standard.
  */
 
-export type ChatTier = 'standard' | 'large' | 'vision'
+export type ChatTier = 'standard' | 'large' | 'vision' | 'glm5'
 
 export interface ChatModelSpec {
   /** Stable public id, used as the `model` value in API requests. */
@@ -41,6 +41,7 @@ export interface ChatTarget {
 
 const STANDARD_CONTEXT = Number(process.env.HF_CONTEXT_TOKENS) || 32_768
 const LARGE_CONTEXT = Number(process.env.HF_LARGE_CONTEXT_TOKENS) || 262_144
+const GLM_CONTEXT = Number(process.env.HF_GLM_CONTEXT_TOKENS) || 131_072
 
 /**
  * The two user-facing models. "Looper" is the product name for a tier; the
@@ -77,6 +78,19 @@ export const CHAT_MODELS: Record<ChatTier, ChatModelSpec> = {
     contextTokens: STANDARD_CONTEXT,
     aliases: ['loop-vision', 'qwen-vl'],
   },
+  glm5: {
+    id: 'loop-glm5',
+    tier: 'glm5',
+    label: 'Large Looper (GLM 5.3)',
+    description: 'The deliberate deep-reasoning tier. Best for long, hard, multi-step problems.',
+    contextTokens: GLM_CONTEXT,
+    aliases: ['glm5', 'glm', 'glm-5', 'glm-53', 'glm-5.3', 'loop-glm', 'loop-glm5'],
+  },
+}
+
+/** True when the GLM 5.3 deep-reasoning endpoint is configured. */
+export function glmModelEnabled(): boolean {
+  return !!process.env.HF_GLM_ENDPOINT_URL
 }
 
 /** True when the large endpoint is configured; otherwise it is hidden entirely. */
@@ -141,6 +155,7 @@ export function smartRouteTask(
  *  'vision' (shadowed to large by the alias table — see resolveChatTarget). */
 export function availableChatModels(): ChatModelSpec[] {
   const rows = [CHAT_MODELS.large, CHAT_MODELS.standard]
+  if (process.env.HF_GLM_ENDPOINT_URL) rows.splice(1, 0, CHAT_MODELS.glm5)
   if (process.env.HF_VISION_ENDPOINT_URL) rows.splice(1, 0, CHAT_MODELS.vision)
   return rows
 }
@@ -168,6 +183,10 @@ export function tierFor(model?: string | null): ChatTier {
     if (spec.aliases.some((a) => a.toLowerCase() === m)) return spec.tier
   }
   // Match on the configured upstream names too.
+  if (glmModelEnabled()) {
+    const glmUpstream = (process.env.HF_GLM_MODEL || '').toLowerCase()
+    if (glmUpstream && glmUpstream === m) return 'glm5'
+  }
   if (largeModelEnabled()) {
     const upstream = (process.env.HF_LARGE_MODEL || '').toLowerCase()
     if (upstream && upstream === m) return 'large'
@@ -187,6 +206,15 @@ export function resolveChatTarget(model?: string | null): ChatTarget {
   // none configured, the large tier (which sees images natively) serves it.
   if (tier === 'vision' && !process.env.HF_VISION_ENDPOINT_URL && largeModelEnabled()) {
     tier = 'large'
+  }
+
+  if (tier === 'glm5' && glmModelEnabled()) {
+    return {
+      tier: 'glm5',
+      model: process.env.HF_GLM_MODEL || 'glm',
+      baseUrl: toV1(process.env.HF_GLM_ENDPOINT_URL as string),
+      contextTokens: GLM_CONTEXT,
+    }
   }
 
   if (tier === 'large' && largeModelEnabled()) {
