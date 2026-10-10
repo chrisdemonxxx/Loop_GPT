@@ -200,6 +200,12 @@ class Validator {
     requireValid(this.bytes.toString('latin1', box.data + 8, box.data + 12) === type)
   }
 
+  private handlerType(box: Box): string {
+    this.full(box)
+    requireValid(box.end - box.data >= 24)
+    return this.bytes.toString('latin1', box.data + 8, box.data + 12)
+  }
+
   private dataReferences(box: Box): void {
     const dref = this.one(this.children(box, ['dref']), 'dref')
     this.full(dref)
@@ -555,6 +561,13 @@ class Validator {
     this.trackIds.add(id)
     const duration = version ? this.u64(tkhd.data + 28) : this.u32(tkhd.data + 20)
     requireValid(duration > 0 && duration <= movie.duration)
+    // Non-video tracks (audio, subtitle, hint…) legitimately have zero
+    // track-frame dimensions. Tolerate them instead of rejecting the whole
+    // artifact: providers that mux an audio track with the video (e.g.
+    // LightX2V/Wan2.2 outputs) were otherwise failing on the audio track's
+    // zero dims. Only 'vide' tracks continue through the video pipeline below.
+    const mdiaForType = this.children(this.one(children, 'mdia'), ['mdhd', 'hdlr', 'minf'])
+    if (this.handlerType(this.one(mdiaForType, 'hdlr')) !== 'vide') return duration
     const width = this.u32(tkhd.end - 8) / 65536
     const height = this.u32(tkhd.end - 4) / 65536
     requireValid(Number.isInteger(width) && width > 0 && width <= MAX_DIMENSION)
