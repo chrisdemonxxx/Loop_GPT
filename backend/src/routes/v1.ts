@@ -17,6 +17,7 @@ import { saveArtifact } from '../agent/artifacts'
 import { providerRequest } from '../services/providerHttp'
 import { prisma, hasDb } from '../services/prisma'
 import { authenticateApiKey, apiError, type ApiRequest } from '../middleware/apiAuth'
+import { gradioCallSpace } from '../agent/tools/gradio'
 import { createAccountedVideoJob, cancelAccountedVideoJob, VideoJobError } from '../services/accountedVideoJobs'
 import { videoQueueLimitProjection } from '../services/videoQueuePolicy'
 import {
@@ -536,6 +537,18 @@ router.post('/embeddings', authenticateApiKey, v1Json, asyncHandler(async (req: 
 async function generateOne(
   endpoint: string, prompt: string, lifetime: ReturnType<typeof providerLifetime>,
 ): Promise<string> {
+  // Gradio Spaces expose the media surface under /gradio_api, not the plain
+  // {inputs} contract — the agent tool detects and drives that flow via
+  // gradioCallSpace; the /v1 route uses the same detection (the wired image
+  // endpoint is a red-kit GLM-Image space, so this is the live path).
+  if (endpoint.includes('.hf.space')) {
+    const media = await gradioCallSpace(endpoint, prompt, {
+      mode: 'image', signal: lifetime.signal, timeoutMs: lifetime.remaining(),
+    })
+    if (!media.image || !media.image.length) throw new Error('Invalid image payload.')
+    return media.image.toString('base64')
+  }
+
   const upstream = await providerRequest(endpoint, {
     method: 'POST',
     headers: {
