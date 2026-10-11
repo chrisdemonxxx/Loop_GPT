@@ -91,18 +91,18 @@ async function seedBoxProfile(sandbox: Sandbox, userLabel: string, taskType: Box
     coding: [
       `mkdir -p /workspace/task-folders`,
       // terminal + editor + chrome, autostarted
-      `mkdir -p /home/user/.config/autostart && printf '[Desktop Entry]\\nType=Application\\nName=Terminal\\nExec=xfce4-terminal --working-directory=/workspace\\nX-GNOME-Autostart-enabled=true\\n' > /home/user/.config/autostart/terminal.desktop`,
+      `mkdir -p /home/user/.config/autostart && printf '[Desktop Entry]\\nType=Application\\nName=Terminal\\nExec=x-terminal-emulator --working-directory=/workspace\\nX-GNOME-Autostart-enabled=true\\n' > /home/user/.config/autostart/terminal.desktop`,
     ],
     research: [
       `mkdir -p /home/user/.config/autostart && printf '[Desktop Entry]\\nType=Application\\nName=Chrome\\nExec=google-chrome --start-maximized https://www.google.com\\nX-GNOME-Autostart-enabled=true\\n' > /home/user/.config/autostart/chrome.desktop`,
     ],
     ops: [
-      `mkdir -p /home/user/.config/autostart && printf '[Desktop Entry]\\nType=Application\\nName=Terminal\\nExec=xfce4-terminal --working-directory=/workspace\\nX-GNOME-Autostart-enabled=true\\n' > /home/user/.config/autostart/terminal.desktop`,
+      `mkdir -p /home/user/.config/autostart && printf '[Desktop Entry]\\nType=Application\\nName=Terminal\\nExec=x-terminal-emulator --working-directory=/workspace\\nX-GNOME-Autostart-enabled=true\\n' > /home/user/.config/autostart/terminal.desktop`,
       `mkdir -p /home/user/.config/autostart && printf '[Desktop Entry]\\nType=Application\\nName=Files\\nExec=thunar /workspace\\nX-GNOME-Autostart-enabled=true\\n' > /home/user/.config/autostart/files.desktop`,
     ],
     teach: [
       `mkdir -p /workspace/teach-sessions`,
-      `mkdir -p /home/user/.config/autostart && printf '[Desktop Entry]\\nType=Application\\nName=Terminal\\nExec=xfce4-terminal --working-directory=/workspace\\nX-GNOME-Autostart-enabled=true\\n' > /home/user/.config/autostart/terminal.desktop`,
+      `mkdir -p /home/user/.config/autostart && printf '[Desktop Entry]\\nType=Application\\nName=Terminal\\nExec=x-terminal-emulator --working-directory=/workspace\\nX-GNOME-Autostart-enabled=true\\n' > /home/user/.config/autostart/terminal.desktop`,
     ],
   }
   const cmds = packs[taskType] || packs.default
@@ -299,6 +299,12 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
       metadata: { loopGpt: 'bot-box', userId },
     })
 
+    // The SDK boots whatever session the template ships (its own hardcoded
+    // XFCE path); the GNOME template carries GNOME as the real desktop, so
+    // the session is swapped right after create(). Everything the SDK does
+    // afterwards — stream, screenshots, input — is desktop-agnostic.
+    if (template) await swapToGnomeSession(sandbox)
+
     await runInBox(sandbox, 'mkdir -p /workspace /home/user/Desktop')
     // A fresh box is empty; the user's files come back from the durable mirror
     // before any seeding writes anything, so a restore never clobbers a seed
@@ -359,6 +365,64 @@ export async function createBoxTaskFolder(userId: string, taskId: string, goal: 
   } catch {
     return '/workspace'
   }
+}
+
+/** Swap the SDK-started XFCE shim session for the template's real desktop.
+ *
+ *  The @e2b/desktop client starts and verifies XFCE at create() time, so the
+ *  image ships those binaries purely as the boot shim. Once create() has
+ *  returned, GNOME takes the display: gnome-session under a private D-Bus
+ *  session, gnome-shell on mutter's X11 backend with software GL (Xvfb has
+ *  no GPU). Best-effort and idempotent — a failed swap leaves the XFCE shim
+ *  running, which still streams and drives, so the box is degraded, not dead. */
+async function swapToGnomeSession(sandbox: Sandbox): Promise<void> {
+  const marker = '/tmp/.loop-gnome-session'
+  try {
+    const already = await sandbox.commands.run(`test -f ${marker}`, { timeoutMs: 5_000 }).catch(() => null)
+    if (already && (already.exitCode ?? 1) === 0) return
+  } catch { /* proceed */ }
+
+  const autostarts = [
+    // GNOME must never blank or lock: the bot and the operator watch this
+    // screen, and a black frame looks like a dead box.
+    `printf '[Desktop Entry]\\nType=Application\\nName=Loop GNOME settings\\nExec=sh -c "gsettings set org.gnome.desktop.session idle-delay 0; gsettings set org.gnome.desktop.screensaver lock-enabled false; gsettings set org.gnome.desktop.background picture-uri file:///usr/share/backgrounds/wallpaper.png"\\nX-GNOME-Autostart-enabled=true\\n' > /home/user/.config/autostart/loop-gnome-settings.desktop`,
+    `chown -R user:user /home/user/.config 2>/dev/null || true`,
+  ]
+  await runInBox(sandbox, autostarts.join(' && '))
+
+  const swap = [
+    'pkill -f xfce4-session 2>/dev/null; pkill -x xfwm4 2>/dev/null; pkill -x xfdesktop 2>/dev/null; true',
+    'sleep 1',
+    'cd /home/user && sudo -u user DISPLAY=:0 XDG_SESSION_TYPE=x11 XDG_CURRENT_DESKTOP=GNOME LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe dbus-run-session -- gnome-session --session=gnome > /tmp/gnome-session.log 2>&1 &',
+    `touch ${marker}`,
+  ].join('; ')
+  try {
+    const handle = await sandbox.commands.run(swap, { background: true, timeoutMs: 0 })
+    await handle.disconnect?.().catch(() => undefined)
+  } catch { /* fall through to the wait */ }
+
+  // Software-GL gnome-shell takes a while; give it a minute, then try the
+  // direct nested-shell path as a fallback before declaring the swap dead.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (let i = 0; i < 45; i += 1) {
+      try {
+        const r = await sandbox.commands.run('pgrep -x gnome-shell >/dev/null && pgrep -x mutter >/dev/null', { timeoutMs: 5_000 })
+        if ((r.exitCode ?? 1) === 0) {
+          console.info('[bot-box] GNOME session owns the display', { attempt })
+          return
+        }
+      } catch { /* keep waiting */ }
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+    }
+    try {
+      const handle = await sandbox.commands.run(
+        'cd /home/user && sudo -u user DISPLAY=:0 XDG_CURRENT_DESKTOP=GNOME LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe gnome-shell --x11 --replace > /tmp/gnome-shell.log 2>&1 &',
+        { background: true, timeoutMs: 0 },
+      )
+      await handle.disconnect?.().catch(() => undefined)
+    } catch { /* the next wait loop reports */ }
+  }
+  console.warn('[bot-box] GNOME session did not verify; the XFCE shim remains as the desktop')
 }
 
 /** Box health for the Computer tab. */
