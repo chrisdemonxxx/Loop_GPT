@@ -117,9 +117,12 @@ async function readVncUrls(sandbox: Sandbox): Promise<{ streamUrl: string; inter
     if (!/already running/i.test(String((error as any)?.message || error))) throw error
   }
   const authKey = sandbox.stream.getAuthKey()
+  // Same-origin noVNC URLs (our /novnc client + backend websockify proxy) —
+  // the E2B-hosted vnc.html is unreachable behind the app CSP.
+  const urls = buildVncUrls(String(sandbox.sandboxId), authKey)
   return {
-    streamUrl: sandbox.stream.getUrl({ viewOnly: true, authKey }),
-    interactiveUrl: sandbox.stream.getUrl({ viewOnly: false, authKey }),
+    streamUrl: urls.viewUrl,
+    interactiveUrl: urls.interactiveUrl,
     streamAuthKey: authKey,
   }
 }

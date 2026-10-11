@@ -7,6 +7,7 @@
  */
 import { randomUUID } from 'crypto'
 import { prisma } from './prisma'
+import { buildVncUrls } from './e2bDesktop'
 import type { AgentEvent } from '../agent/types'
 
 export interface BotRunView {
@@ -299,6 +300,14 @@ export async function getRunComputer(runId: string, scopeUserId?: string): Promi
       ...persisted,
       takeoverRequested: row.takeoverRequested && row.status === 'running',
       runStatus: row.status,
+    }
+    // URLs are DERIVED, never trusted from storage: rows written before the
+    // same-origin noVNC migration carry E2B-hosted vnc.html links that the
+    // app CSP blocks. When sandboxId + key exist, rebuild the /novnc URLs.
+    if (info.sandboxId && info.streamAuthKey) {
+      const urls = buildVncUrls(info.sandboxId, info.streamAuthKey)
+      info.viewUrl = urls.viewUrl
+      info.interactiveUrl = urls.interactiveUrl
     }
     runComputers.set(runId, info)
     return info

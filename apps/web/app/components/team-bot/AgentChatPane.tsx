@@ -15,12 +15,16 @@ export function AgentChatPane({
   sending,
   onSend,
   onWatch,
+  onTrace,
   onCancel,
 }: {
   tasks: BotTask[] | null
   sending: boolean
   onSend: (text: string) => Promise<void>
+  /** Active run → open the ONE computer surface (the bot's live screen). */
   onWatch: (taskId: string) => void
+  /** Finished run → open the run's written trace. */
+  onTrace: (taskId: string) => void
   onCancel: (taskId: string) => void
 }) {
   const [draft, setDraft] = useState('')
@@ -58,7 +62,7 @@ export function AgentChatPane({
           </div>
 
           {thread.map((task) => (
-            <Exchange key={task.id} task={task} onWatch={onWatch} onCancel={onCancel} />
+            <Exchange key={task.id} task={task} onWatch={onWatch} onTrace={onTrace} onCancel={onCancel} />
           ))}
 
           {sending && (
@@ -109,10 +113,11 @@ function Avatar() {
 
 /** One instruction exchange: user bubble (the goal) + bot bubble (the run). */
 function Exchange({
-  task, onWatch, onCancel,
+  task, onWatch, onTrace, onCancel,
 }: {
   task: BotTask
   onWatch: (taskId: string) => void
+  onTrace: (taskId: string) => void
   onCancel: (taskId: string) => void
 }) {
   const active = task.status === 'queued' || task.status === 'processing'
@@ -140,13 +145,23 @@ function Exchange({
             <span>{replyFor(task)}</span>
           </div>
           <div className="mt-2 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => onWatch(task.id)}
-              className="flex items-center gap-1 px-2 py-1 rounded-lg text-ui-xs bg-[var(--bg-hover)] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover-strong)] transition"
-            >
-              <Monitor size={11} /> {active ? 'Watch' : 'Trace'}
-            </button>
+            {active ? (
+              <button
+                type="button"
+                onClick={() => onWatch(task.id)}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-ui-xs bg-[var(--bg-hover)] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover-strong)] transition"
+              >
+                <Monitor size={11} /> Watch
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onTrace(task.id)}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-ui-xs bg-[var(--bg-hover)] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover-strong)] transition"
+              >
+                <Monitor size={11} /> Trace
+              </button>
+            )}
             {active && (
               <button
                 type="button"

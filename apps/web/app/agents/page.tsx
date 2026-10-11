@@ -32,7 +32,7 @@ export default function AgentsPage() {
   const router = useRouter()
   const queryClient = useQueryClient()
   const [user, setUser] = useState<any>(null)
-  const [watchTaskId, setWatchTaskId] = useState<string | null>(null)
+  const [traceTaskId, setTraceTaskId] = useState<string | null>(null)
   const [tab, setTab] = useState<'details' | 'library' | 'computer'>('details')
   const [computerExpanded, setComputerExpanded] = useState(false)
 
@@ -88,6 +88,14 @@ export default function AgentsPage() {
 
   const routines = useMemo(() => (tasks || []).filter((t) => t.kind === 'scheduled'), [tasks])
 
+  /** Grok parity: ONE computer surface. "Watch" opens it (embedded → full
+   *  window); the run attaches to this same box, so there is nothing else
+   *  to watch. "Trace" opens the run's written record. */
+  const openComputer = () => {
+    setTab('computer')
+    setComputerExpanded(true)
+  }
+
   const cancel = useMutation({
     mutationFn: (id: string) => cancelBotTask(id).catch(() => {}),
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] }) },
@@ -130,7 +138,8 @@ export default function AgentsPage() {
           tasks={tasks}
           sending={sendInstruction.isPending}
           onSend={async (text) => { await sendInstruction.mutateAsync(text) }}
-          onWatch={(id) => setWatchTaskId(id)}
+          onWatch={openComputer}
+          onTrace={(id) => setTraceTaskId(id)}
           onCancel={(id) => { cancel.mutate(id) }}
         />
 
@@ -183,7 +192,7 @@ export default function AgentsPage() {
                   ) : (
                     <div className="space-y-2">
                       {routines.map((t) => (
-                        <RoutineRow key={t.id} task={t} onCancel={(id) => { cancel.mutate(id) }} onWatch={() => setWatchTaskId(t.id)} />
+                        <RoutineRow key={t.id} task={t} onCancel={(id) => { cancel.mutate(id) }} onWatch={() => setTraceTaskId(t.id)} />
                       ))}
                     </div>
                   )}
@@ -230,7 +239,7 @@ export default function AgentsPage() {
         />
       )}
 
-      {watchTaskId && <RunViewer taskId={watchTaskId} onClose={() => setWatchTaskId(null)} />}
+      {traceTaskId && <RunViewer taskId={traceTaskId} onClose={() => setTraceTaskId(null)} />}
     </AppPage>
   )
 }

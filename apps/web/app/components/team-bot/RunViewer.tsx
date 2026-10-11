@@ -2,23 +2,24 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import {
-  X, Monitor, Loader2, AlertCircle, Terminal, Bot,
-} from 'lucide-react'
+import { X, Loader2, AlertCircle, Bot } from 'lucide-react'
 import { panelRight, sheetBottom } from '../../lib/motion'
 import { useRunStream } from './useRunStream'
 import { LineRender } from './LineRender'
-import { ComputerPane } from './ComputerPane'
 
 /**
- * team-bot run viewer (sand's composition root): live trace + the dedicated
- * computer's noVNC view with the takeover handshake. Right-dock on desktop,
- * bottom sheet on mobile — ONE shell mounted at a time (the old dual-mount
- * kept a hidden duplicate computer iframe streaming in the background).
+ * team-bot run trace viewer: the task's event timeline (thought → tool call →
+ * result → outcome), right-dock on desktop, bottom sheet on mobile.
+ *
+ * Grok-parity note: there is exactly ONE computer surface in the product —
+ * the profile panel's Computer tab (embedded) and its full-window expansion.
+ * The trace viewer deliberately has no Computer tab: a second noVNC surface
+ * per run was the "two layers" bug — two iframes, two auth keys, two states.
+ * "Watch" in the chat opens the single computer surface; this dock is the
+ * run's written record.
  */
 export default function RunViewer({ taskId, onClose }: { taskId: string; onClose: () => void }) {
-  const { task, runId, events, live, computer, setComputer, loadError } = useRunStream(taskId)
-  const [tab, setTab] = useState<'trace' | 'computer'>('trace')
+  const { task, events, live, loadError } = useRunStream(taskId)
 
   // Single shell: dock on ≥640px, sheet below — never both mounted.
   const [isDesktop, setIsDesktop] = useState(false)
@@ -41,27 +42,12 @@ export default function RunViewer({ taskId, onClose }: { taskId: string; onClose
           <div className="text-2xs text-[var(--ink-muted)] flex items-center gap-2">
             {live ? <span className="flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> running</span>
               : task?.runs?.[0] ? <span>{task.runs[0].status}</span> : null}
-            {computer?.minutes != null && <span>{computer.minutes} VM min</span>}
             {task?.kind === 'scheduled' && <span>every {task.schedule}</span>}
           </div>
         </div>
-        <button type="button" onClick={onClose} aria-label="Close run viewer" className="p-1.5 rounded-lg text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)]">
+        <button type="button" onClick={onClose} aria-label="Close trace viewer" className="p-1.5 rounded-lg text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)]">
           <X size={16} />
         </button>
-      </div>
-
-      {/* Tabs (computer only when one exists) */}
-      <div className="shrink-0 flex border-b border-[var(--border-subtle)] text-ui-xs">
-        {(['trace', ...(computer ? ['computer' as const] : [])] as const).map((id) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setTab(id as 'trace' | 'computer')}
-            className={`flex-1 py-2 capitalize transition ${tab === id ? 'text-[var(--ink-primary)] border-b-2 border-[var(--accent)]' : 'text-[var(--ink-muted)] hover:text-[var(--ink-secondary)]'}`}
-          >
-            {id === 'computer' ? <span className="inline-flex items-center gap-1"><Monitor size={11} /> Computer</span> : <span className="inline-flex items-center gap-1"><Terminal size={11} /> Trace</span>}
-          </button>
-        ))}
       </div>
 
       {loadError && (
@@ -70,11 +56,7 @@ export default function RunViewer({ taskId, onClose }: { taskId: string; onClose
         </div>
       )}
 
-      {tab === 'trace' && <LineRender events={events} attaching={!loadError} />}
-
-      {tab === 'computer' && computer && (
-        <ComputerPane runId={runId} computer={computer} setComputer={setComputer} />
-      )}
+      <LineRender events={events} attaching={!loadError} />
     </div>
   )
 

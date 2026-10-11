@@ -260,6 +260,11 @@ const server = app.listen(PORT, () => {
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`)
   console.log(`🌐 CORS enabled for: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`)
 })
+// Self-hosted noVNC data plane: the bot computer streams through this origin
+// (/api/bot/novnc/<sandboxId>/websockify) instead of iframing E2B's vnc.html —
+// the app CSP (default-src 'self') blocks every cross-origin iframe.
+import { attachNovncProxy } from './services/novncProxy'
+attachNovncProxy(server)
 server.on('error', (err) => {
   console.error('Server failed to start:', err instanceof Error ? err.message : err)
   process.exit(1)

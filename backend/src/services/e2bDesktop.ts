@@ -52,16 +52,16 @@ export function isE2BConfigured(): boolean {
   return !!process.env.E2B_API_KEY
 }
 
-/** Build the managed noVNC URLs from parts. The @e2b/desktop SDK constructs
- *  exactly this shape (vnc.html on the sandbox's 6080 ingress with the stream
- *  auth key as the `password` query param) — but only on the SDK instance that
- *  STARTED the stream, because the auth key and URL builder live in instance-
- *  local state. After a `Sandbox.connect` (backend restart, second process)
- *  that state is gone, so callers persist sandboxId + authKey at stream start
- *  and rebuild the URLs here. */
+/** Build the noVNC URLs from parts — SAME-ORIGIN paths against the app:
+ *  the vendored noVNC client (/novnc/vnc.html) talks to our backend's
+ *  websockify proxy (/api/bot/novnc/<sandboxId>/websockify), which pipes to
+ *  the sandbox's E2B ingress. The stream never leaves our origin, so the app
+ *  CSP (default-src 'self', no frame-src) no longer blocks it — the old
+ *  cross-origin iframes rendered "This content is blocked". The stream auth
+ *  key rides the URL as the RFB password, same as before. */
 export function buildVncUrls(sandboxId: string, streamAuthKey: string): { viewUrl: string; interactiveUrl: string } {
-  const domain = process.env.E2B_DOMAIN || 'e2b.app'
-  const base = `https://6080-${sandboxId}.${domain}/vnc.html?autoconnect=true&resize=scale&password=${encodeURIComponent(streamAuthKey)}`
+  const hostParam = process.env.NOVNC_HOST ? `&host=${encodeURIComponent(process.env.NOVNC_HOST)}` : ''
+  const base = `/novnc/vnc.html?autoconnect=true&resize=scale${hostParam}&path=${encodeURIComponent(`/api/bot/novnc/${sandboxId}/websockify`)}&password=${encodeURIComponent(streamAuthKey)}`
   return {
     viewUrl: `${base}&view_only=true`,
     interactiveUrl: `${base}&view_only=false`,
@@ -116,11 +116,14 @@ function wrapDesktop(desktop: any, owned: boolean): DesktopClient {
         if (!isStreamAlreadyRunning(error)) throw error
       }
       const authKey = desktop.stream.getAuthKey()
+      // Same-origin noVNC URLs (our /novnc client + backend websockify proxy),
+      // never the E2B-hosted vnc.html — see buildVncUrls for why.
+      const urls = buildVncUrls(client.sandboxId, authKey)
       return {
         sandboxId: client.sandboxId,
         streamAuthKey: authKey,
-        viewUrl: desktop.stream.getUrl({ viewOnly: true, authKey }),
-        interactiveUrl: desktop.stream.getUrl({ viewOnly: false, authKey }),
+        viewUrl: urls.viewUrl,
+        interactiveUrl: urls.interactiveUrl,
       }
     },
     async screenshot() {
