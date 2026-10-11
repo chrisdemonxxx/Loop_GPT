@@ -404,7 +404,7 @@ async function ensureGnomeInstalled(sandbox: Sandbox): Promise<boolean> {
   const install = await sandbox.commands.run(
     `sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ${GNOME_PACKAGES.join(' ')}`,
     { timeoutMs: 480_000 },
-  ).catch((error) => {
+  ).catch((error: unknown) => {
     console.warn('[bot-box] GNOME install failed', String(error))
     return null
   })
