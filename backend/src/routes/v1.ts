@@ -118,8 +118,10 @@ function modelCatalog() {
   }
   // Keep the raw upstream chat model addressable for backwards compatibility.
   entries.push({ id: chat, object: 'model', owned_by: 'loop-gpt', kind: 'chat', upstream: chat })
-  entries.push({ id: 'loop-image', object: 'model', owned_by: 'loop-gpt', kind: 'image', upstream: 'FLUX.1-dev' })
-  entries.push({ id: 'loop-video', object: 'model', owned_by: 'loop-gpt', kind: 'video', upstream: 'skyreels-v2-df-14b' })
+  // Media labels track the deployments the fleet router actually targets
+  // (verified live): the image Space for image work, MiniMax-H3 for video.
+  entries.push({ id: 'loop-image', object: 'model', owned_by: 'loop-gpt', kind: 'image', upstream: process.env.HF_IMAGE_MODEL || 'image-studio' })
+  entries.push({ id: 'loop-video', object: 'model', owned_by: 'loop-gpt', kind: 'video', upstream: 'minimax-h3' })
   entries.push({ id: 'loop-embed', object: 'model', owned_by: 'loop-gpt', kind: 'embedding', upstream: EMBED_UPSTREAM })
   return entries
 }

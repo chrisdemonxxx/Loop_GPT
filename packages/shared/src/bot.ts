@@ -46,10 +46,15 @@ export interface BotRun {
 
 export interface BotComputer {
   active: boolean
+  /** Why the stream is inactive: 'finished' (run ended, VM destroyed) or
+   *  'not-running' (run not in the running state). Null while active. */
+  reason?: 'finished' | 'not-running' | null
   sandboxId: string
   viewUrl: string | null
   interactiveUrl: string | null
   takeoverRequested: boolean
+  /** Server-reported auto-release window for takeover (ms). */
+  takeoverTimeoutMs?: number
   minutes: number | null
   startedAt: string | null
   endedAt: string | null

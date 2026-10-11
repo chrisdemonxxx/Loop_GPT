@@ -51,6 +51,12 @@ export function videoTaskName(referenceCount: number): string {
   return referenceCount > 0 ? 'i2av' : 't2av'
 }
 
+/** Metering/result label for the ACTIVE video transport (the old code
+ *  hardcoded 'skyreels-v2' even after MiniMax-H3 became the live model). */
+export function videoModelLabel(): string {
+  return videoTaskApi() ? 'minimax-h3' : 'skyreels-v2'
+}
+
 async function generateVideoFromTaskApi(prompt: string, images: string[], numFrames: number,
   width: number, height: number, endpoint: string, op: MediaOperation): Promise<Buffer> {
   const base = mediaUrl(endpoint).replace(/\/+$/, '')
@@ -169,6 +175,7 @@ export const generateVideoTool: ToolDefinition = {
       image_prompt: { type: 'string', description: 'Optional base64 reference image for img2video (identity anchor).' },
       reference_images: { type: 'array', items: { type: 'string' }, description: 'Optional base64 reference frames for ref2lock. The first anchors subject identity; extra frames are style/composition references.' },
       duration_seconds: { type: 'number', description: 'Video duration (2-10 seconds).', default: 4 },
+      num_frames: { type: 'number', description: 'Explicit frame count (24-241, MiniMax long-form). Wins over duration_seconds when set — the fleet router passes it for "N second" / long-video asks.', minimum: 24, maximum: 241 },
       fps: { type: 'number', description: 'Frames per second (12-30).', default: 24 },
       aspect_ratio: { type: 'string', enum: ['landscape', 'portrait', 'square', 'wide'], default: 'landscape' },
       lock_strength: { type: 'number', description: 'ref2lock: when a reference image is supplied and the person should appear in a NEW state (e.g. undressed), re-render the reference at this strength (0.45-0.7 keeps the face) before animating. Omit to animate the exact reference frame.' },
@@ -185,13 +192,19 @@ export const generateVideoTool: ToolDefinition = {
       // Per-modality prompt optimization (GAP-006), invisible by default.
       const promptMeta = await optimizePromptDetailed(rawPrompt, 'video').catch(() => ({ raw: rawPrompt, enhanced: rawPrompt, optimized: false }))
       const prompt = promptMeta.enhanced
-      reservation = await reserveDailyCredits(ctx.userId, 'video', 'skyreels-v2')
+      reservation = await reserveDailyCredits(ctx.userId, 'video', videoModelLabel())
       op.check()
       const dispatch = dailyDispatch(reservation.id, op.signal)
       const beforeDispatch = async () => { op.check(); await dispatch() }
       const duration = Math.max(2, Math.min(10, Number(args.duration_seconds) || 4))
       const fps = Math.max(12, Math.min(30, Number(args.fps) || 24))
-      const numFrames = Math.min(Math.round(duration * fps), 120)
+      // An explicit frame count (the fleet router's long-video hint) wins over
+      // duration×fps and may extend past the interactive 120-frame default up
+      // to the MiniMax ceiling (241 frames ≈ 10s at 24fps).
+      const explicitFrames = Number(args.num_frames)
+      const numFrames = Number.isFinite(explicitFrames)
+        ? Math.max(24, Math.min(241, Math.round(explicitFrames)))
+        : Math.min(Math.round(duration * fps), 120)
       const sizes: Record<string, [number, number]> = {
         landscape: [960, 544], portrait: [544, 960], square: [768, 768], wide: [1280, 720],
       }
@@ -233,7 +246,7 @@ export const generateVideoTool: ToolDefinition = {
       const buffer = await generateVideoFromEndpoint(prompt, refs,
         numFrames, fps, width, height, op, beforeDispatch)
       op.check()
-      await recordUsage(ctx.userId, 'video', { reservationId: reservation.id, model: 'skyreels-v2' })
+      await recordUsage(ctx.userId, 'video', { reservationId: reservation.id, model: videoModelLabel() })
       const safePrompt = prompt.slice(0, 40).replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '')
       const artifact = await saveArtifact(`video-${safePrompt}.mp4`, checkedMedia(buffer),
         { userId: ctx.userId, conversationId: ctx.conversationId })
@@ -241,8 +254,8 @@ export const generateVideoTool: ToolDefinition = {
       ctx.scratch.artifacts = ctx.scratch.artifacts || []
       ctx.scratch.artifacts.push(artifact)
       ctx.emit({ type: 'artifact', artifact })
-      return { content: `Generated a ${duration}-second video (${fps}fps, ${width}x${height}). Video is ready to view.`,
-        data: { artifact, duration, fps, frames: numFrames, model: 'skyreels-v2', prompt: promptMeta, referenceFrames: refs.length } }
+      return { content: `Generated a ${Math.round(numFrames / fps)}-second video (${fps}fps, ${width}x${height}). Video is ready to view.`,
+        data: { artifact, duration: Math.round(numFrames / fps), fps, frames: numFrames, model: videoModelLabel(), prompt: promptMeta, referenceFrames: refs.length } }
     } catch (error) {
       // Server-side diagnostics only: never leak provider/internal details
       // into the user-facing tool result (media transport security contract).

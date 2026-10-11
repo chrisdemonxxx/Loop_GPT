@@ -1,22 +1,68 @@
 # Media generation — architecture, wiring, and ref2lock
 
-**Status: live-verified 2026-09-23.** Image, text-video, reference-image video,
-vision, and ref2lock (identity-locked) image/video editing all run against
-production with the HF token in `HF_TOKEN`.
+**Status: live-verified 2026-09-23; fleet re-verified 2026-10-10.** Image,
+text-video, reference-image video, vision, and ref2lock (identity-locked)
+image/video editing all run against production with the HF token in `HF_TOKEN`.
 
-## Endpoints (all on the same Gradio Space)
+## Fleet routing (2026-10-10)
+
+Two pieces decide WHERE a media turn goes; the user never picks a model:
+
+1. **Deterministic dispatch** (`MEDIA_DIRECT_DISPATCH=true`, default on). A
+   turn pinning exactly one media tool (`/image` → `generate_image`, `/video`
+   → `generate_video`) executes the tool directly in
+   `backend/src/controllers/agentStream.ts` — the chat model is no longer a
+   mandatory hop that could answer prose instead of emitting a valid tool
+   call. The tool streams its own status/artifact events; the controller adds
+   `tool_call`/`tool_result`/`final` for UI parity.
+2. **The media router** (`backend/src/services/modelRouter/rules.ts`
+   `routeMediaTurn`) picks the deployment from the fleet registry
+   (`modelRouter/fleet.ts`):
+
+   | Turn | Target |
+   |---|---|
+   | `/video` no reference | MiniMax-H3 `t2av` |
+   | `/video` + reference image | MiniMax-H3 `i2av` |
+   | `/video` "N seconds" / "long" | MiniMax-H3 with raised `num_frames` (≤241 ≈ 10 s) |
+   | `/image` + reference + face/identity words | image Space edit (face options) |
+   | `/image` (+ reference) | image Space `i2i`/`t2i`; HF providers as last resort |
+
+**Verified 2026-10-10 (live probes, red-kit org):** the MiniMax-H3 LightX2V
+endpoint is **video-only** — its runner rejects image tasks
+(`Task 't2i' is not supported by this runner; expected one of: t2av, i2av,
+l2av, fl2av, ref2av`). The `/v1/images/generations` and `/v1/images/edits`
+routes exist in its OpenAPI but the deployed runner does not serve them.
+All image work belongs to the image Space (`HF_IMAGE_ENDPOINT_URL`, currently
+`red-kit-glm-image-pro.hf.space`; the ref2lock Chroma studio
+`red-kit/nsfw-media-studio` is the same lane when healthy).
+
+## Endpoints
 
 | Surface | Env | Space endpoint | Model |
 |---|---|---|---|
-| Image (text) | `HF_IMAGE_ENDPOINT_URL` | `/generate_image` | Chroma1-HD (uncensored 8.9B) |
-| Image **edit** (ref2lock) | `HF_IMAGE_ENDPOINT_URL` | `/edit_image` | Chroma1-HD img2img (shared weights) |
-| Video (text → image → video) | `HF_VIDEO_ENDPOINT_URL` | `/image_to_video` | Chroma1-HD + WAN 2.2 I2V 14B Lightning |
-| Video (from a start frame) | `HF_VIDEO_ENDPOINT_URL` | `/generate_video` | WAN 2.2 I2V 14B Lightning |
+| Image (text) | `HF_IMAGE_ENDPOINT_URL` | `/infer` (generic Gradio named-API) | GLM-Image-Pro / Chroma1-HD lane |
+| Image **edit** (img2img) | `HF_IMAGE_ENDPOINT_URL` | `/infer` (+ reference image) | shared weights |
+| Video (text → video) | `HF_VIDEO_ENDPOINT_URL` + `HF_VIDEO_API=lightx2v` | `/v1/tasks/video/` `t2av` | MiniMax-H3 |
+| Video (from a start frame) | same | `/v1/tasks/video/` `i2av` | MiniMax-H3 |
 | Vision | `HF_VISION_ENDPOINT_URL` + `HF_VISION_MODEL` | — | DeepSeek V4.1 Flash (H200×4) |
 | TTS | `HF_TTS_ENDPOINT_URL` (optional) | — | Kokoro-82M |
 
-The Space is `red-kit/nsfw-media-studio` (private, A100-large). The backend
-authenticates with `HF_TOKEN` on every call, including file downloads.
+The image Space authenticates with `HF_TOKEN` on every call, including file
+downloads; it scales to zero when idle, so the first call after idle can take
+1-4 minutes (wake + queue) while the transport retries the info fetch.
+
+## Video task API — LightX2V / MiniMax-H3 (wired 2026-09-29)
+
+A dedicated HF endpoint can serve video as an **async task API** instead of a
+Gradio call. Set:
+
+| Env | Value |
+|---|---|
+| `HF_VIDEO_ENDPOINT_URL` | the endpoint origin, e.g. `https://<id>.endpoints.huggingface.cloud` |
+| `HF_VIDEO_API` | `lightx2v` (any other value keeps the Gradio / `{inputs,parameters}` paths) |
+| `HF_VIDEO_SAVE_DIR` | optional; defaults to `/opt/LightX2V/save_results/server_cache/outputs` |
+
+Contract (probed live 2026-09-29, `Authorization: Bearer $HF_TOKEN`):
 
 ## Video task API — LightX2V / MiniMax-H3 (wired 2026-09-29)
 

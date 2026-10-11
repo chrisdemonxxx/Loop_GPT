@@ -2,16 +2,17 @@
 
 import { useRef, useState } from 'react'
 import { PanelLeft, FileDown, Sparkles, FlaskConical, Ghost, Sun, Moon, Monitor, MoreHorizontal, Keyboard } from 'lucide-react'
-import ModelSelector from '../ModelSelector'
 import { useMenuDismiss } from '../../lib/useMenuDismiss'
 import type { ThemeChoice } from '../../lib/theme'
 
-/** The top bar: sidebar toggle, session title, model selector, incognito,
- * export menu, Files/Research toggles, and the light/dark/system theme
- * switch (§8-35). Pure presentational; every behavior is delegated through
- * props. (Agent activity is inline per turn — no Activity panel toggle.) */
+/** The top bar: sidebar toggle, session title, the router's Auto chip,
+ * incognito, export menu, Files/Research toggles, and the light/dark/system
+ * theme switch (§8-35). Pure presentational; every behavior is delegated
+ * through props. (Agent activity is inline per turn — no Activity panel
+ * toggle. Model selection lives in the backend fleet router — each turn's
+ * choice rides the assistant message's auto chip.) */
 export default function ChatHeader({
-  sidebarOpen, convTitle, modelTier, onModelChange,
+  sidebarOpen, convTitle,
   incognito, onToggleIncognito,
   hasMessages, onExport,
   artifactCount, artifactsOpen, onToggleArtifacts,
@@ -22,8 +23,6 @@ export default function ChatHeader({
 }: {
   sidebarOpen: boolean
   convTitle?: string
-  modelTier: string
-  onModelChange: (id: string) => void
   incognito: boolean
   onToggleIncognito: () => void
   hasMessages: boolean
@@ -67,7 +66,12 @@ export default function ChatHeader({
         {convTitle || 'New session'}
       </span>
       <div className="flex items-center gap-1 shrink-0">
-        <ModelSelector value={modelTier} onChange={onModelChange} />
+        <span
+          title="The backend fleet router picks the right model for every turn — chat, image, or video"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/[0.07] bg-white/[0.03] text-[12px] text-slate-400 select-none"
+        >
+          <Sparkles size={11} className="text-[#e79d7f]" aria-hidden /> Auto
+        </span>
         <div className="relative" ref={moreRef}>
           <button
             type="button"

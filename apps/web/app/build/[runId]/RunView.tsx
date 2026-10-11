@@ -27,7 +27,7 @@ import {
 import { useToast } from '../../lib/toast'
 import { AppPage } from '../../components/AppPage'
 import { CheckpointDialog, type CheckpointAction } from '../confirm'
-import { useBuildRun, useCheckpointAction, useGateDecision, usePreviewUrl, useRunStream } from '../hooks'
+import { useBuildRun, useCheckpointAction, useFileContent, useGateDecision, usePreviewUrl, useRunStream } from '../hooks'
 import { ErrorNotice } from '../shell'
 import { formatWhen, gateTitle, isLiveStatus, statusLabel, statusTone } from '../status'
 
@@ -72,7 +72,10 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
 
   const status = ui.run?.status ?? query.data?.status
   const live = isLiveStatus(status)
-  useRunStream(runId, live, onStream)
+  // Always subscribed: for a live run the stream carries new events; for a
+  // finished run the engine replays the durable journal and closes, so the
+  // PROGRESS panel shows the full history instead of "Nothing to report yet".
+  useRunStream(runId, true, onStream)
 
   const projectId = ui.run?.project_id ?? query.data?.project_id ?? null
   const preview = usePreviewUrl(projectId, previewPath && /\.html?$/i.test(previewPath) ? previewPath : null)
@@ -174,8 +177,18 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
         <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-[var(--accent-soft-border)] bg-[var(--accent-soft)] p-4" role="status">
           <div className="min-w-0 flex-1">
             <p className="text-ui-sm font-medium text-[var(--accent-text)]">Your app is live</p>
-            <p className="mt-0.5 text-ui-xs text-[var(--ink-secondary)]">Anyone with this link can open the app you just published.</p>
+            <p className="mt-0.5 text-ui-xs text-[var(--ink-secondary)]">Anyone with this link can open the app you just published. The link stays valid for 30 days.</p>
           </div>
+          <button
+            type="button"
+            className={btnGhost}
+            onClick={() => {
+              const absolute = deployUrl.startsWith('http') ? deployUrl : `${window.location.origin}${deployUrl}`
+              void navigator.clipboard?.writeText(absolute).then(() => toast.push('success', 'Link copied'))
+            }}
+          >
+            Copy link
+          </button>
           <a href={deployUrl} target="_blank" rel="noreferrer" className={btnPrimary}>Open app</a>
         </div>
       )}
@@ -187,9 +200,19 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
           <div className="space-y-4 min-w-0">
             <TaskGraph dagGoal={ui.dag?.goal ?? null} nodes={nodes} showCompleted={showCompleted} onToggle={() => setShowCompleted((value) => !value)} />
             <CheckpointList checkpoints={ui.checkpoints} onAction={setAction} />
-            <ActivityList activity={ui.activity} running={live} />
+            <ActivityList
+              activity={ui.activity}
+              running={live}
+              outcome={status ? {
+                status,
+                summary: ui.run?.summary ?? null,
+                iterations: ui.cost?.iterations,
+                credits: ui.cost?.credits_spent,
+              } : null}
+            />
           </div>
           <Preview
+            runId={runId}
             files={ui.run?.files ?? []}
             selected={previewPath}
             onSelect={setPreviewPath}
@@ -305,11 +328,20 @@ function CheckpointList({ checkpoints, onAction }: { checkpoints: CheckpointView
   )
 }
 
-function ActivityList({ activity, running }: { activity: Activity[]; running: boolean }) {
+function ActivityList({ activity, running, outcome }: { activity: Activity[]; running: boolean; outcome: { status: string; summary: string | null; iterations?: number; credits?: number } | null }) {
   return (
     <section className={`${panelCls} p-4`}>
       <SectionHeader title="Progress" />
-      {!activity.length && !running && <EmptyState title="Nothing to report yet" body="Updates appear here while the builder works." />}
+      {outcome && !running && (
+        <div className={`mt-3 rounded-lg border p-3 ${outcome.status === 'verified' ? 'border-[var(--success-border,var(--border-strong))] bg-[var(--bg-tint)]' : 'border-[var(--border-subtle)] bg-[var(--bg-sunken)]'}`}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={statusTone(outcome.status)}>{statusLabel(outcome.status)}</Badge>
+            {outcome.iterations != null && <span className="text-3xs text-[var(--ink-muted)]">{outcome.iterations} iteration{outcome.iterations === 1 ? '' : 's'}</span>}
+          </div>
+          {outcome.summary && <p className="mt-1.5 text-ui-xs text-[var(--ink-secondary)]">{outcome.summary}</p>}
+        </div>
+      )}
+      {!activity.length && !running && !outcome && <EmptyState title="Nothing to report yet" body="Updates appear here while the builder works." />}
       <div className="mt-3 max-h-80 space-y-2 overflow-auto">
         {activity.map((item) => (
           <article key={item.id} className="border-l-2 border-[var(--border-strong)] pl-3">
@@ -327,8 +359,9 @@ function ActivityList({ activity, running }: { activity: Activity[]; running: bo
 }
 
 function Preview({
-  files, selected, onSelect, url, loading, error,
+  runId, files, selected, onSelect, url, loading, error,
 }: {
+  runId: string
   files: string[]
   selected: string | null
   onSelect: (path: string) => void
@@ -336,6 +369,8 @@ function Preview({
   loading: boolean
   error: string | null
 }) {
+  const isHtml = !!selected && /\.html?$/i.test(selected)
+  const fileQuery = useFileContent(runId, selected && !isHtml ? selected : null)
   return (
     <section className={`${panelCls} p-4 min-w-0`}>
       <SectionHeader title="Preview" />
@@ -356,18 +391,25 @@ function Preview({
         </div>
       )}
       {!files.length && <EmptyState title="No preview yet" body="The first page appears here once it is ready." />}
-      {selected && !/\.html?$/i.test(selected) && (
-        <p className="mt-3 text-ui-xs text-[var(--ink-muted)]">Preview shows pages. Pick an HTML file to see it rendered.</p>
+      {selected && !isHtml && (
+        <div className="mt-3">
+          <p className="text-2xs uppercase tracking-wide text-[var(--ink-muted)]">{selected} — read-only</p>
+          {fileQuery.isPending && <LoadingState label="Reading file…" />}
+          {fileQuery.isError && <p className="mt-2 text-ui-xs text-[var(--danger)]">{toUserFacingError(fileQuery.error).message}</p>}
+          {fileQuery.data != null && (
+            <pre className="mt-2 max-h-[70vh] overflow-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-sunken)] p-4 text-ui-xs leading-relaxed text-[var(--ink-secondary)] whitespace-pre-wrap break-words">{fileQuery.data}</pre>
+          )}
+        </div>
       )}
       {error && <p className="mt-3 text-ui-sm text-[var(--danger)]" role="alert">{error}</p>}
-      {loading && <LoadingState label="Loading preview…" />}
-      {url && (
+      {loading && isHtml && <LoadingState label="Loading preview…" />}
+      {isHtml && url && (
         <iframe
           title="Build preview"
           sandbox={PREVIEW_SANDBOX}
           referrerPolicy="no-referrer"
           src={url}
-          className="mt-3 h-[min(28rem,70dvh)] w-full rounded-xl border border-[var(--border-subtle)] bg-white"
+          className="mt-3 h-[70vh] w-full rounded-xl border border-[var(--border-subtle)] bg-white"
         />
       )}
     </section>

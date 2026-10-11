@@ -250,6 +250,8 @@ export interface RunComputerInfo {
   endedAt?: string
   minutes?: number
   takeoverRequested?: boolean
+  /** Run status as of the DB read (the worker owns lifecycle transitions). */
+  runStatus?: string
 }
 
 const runComputers = new Map<string, RunComputerInfo>()
@@ -271,21 +273,37 @@ export async function isRunTakeoverRequested(runId: string): Promise<boolean> {
   return !!row && row.status === 'running' && row.takeoverRequested
 }
 
-/** Admin/user side: read session metadata (live view first, then the row).
- *  Scoped callers only see their own runs' computers. */
+/** Admin/user side: read session metadata. Scoped callers only see their own
+ *  runs' computers.
+ *
+ *  The DB row is the ONLY cross-process truth: the worker process writes both
+ *  the session start (URLs) and the end-of-run marker (endedAt, minutes),
+ *  while this process (the API) mostly READS. An in-memory hit here can
+ *  therefore predate the worker's final write — the old bug returned
+ *  "active" plus URLs for a sandbox that was already destroyed, and the UI
+ *  framed a dead host (black screen). Always re-read the row; the in-memory
+ *  map is only a fallback for when the DB is unavailable. */
 export async function getRunComputer(runId: string, scopeUserId?: string): Promise<RunComputerInfo | undefined> {
   if (!await ownedRun(runId, scopeUserId)) return undefined
   const inMemory = runComputers.get(runId)
-  if (inMemory) return inMemory
-  if (!prisma) return undefined
+  if (!prisma) return inMemory
   try {
-    const row = await prisma.botRun.findUnique({ where: { id: runId }, select: { computer: true, takeoverRequested: true } })
-    if (!row) return undefined
-    const info = { ...((row.computer as RunComputerInfo) || {}), takeoverRequested: row.takeoverRequested }
+    const row = await prisma.botRun.findUnique({ where: { id: runId }, select: { computer: true, takeoverRequested: true, status: true } })
+    if (!row) return inMemory
+    const persisted = ((row.computer as RunComputerInfo) || {})
+    // Merge with the persisted row winning on every field it carries — the
+    // worker's writes land there last (session start AND end-of-run), so it
+    // is strictly fresher than anything this process cached.
+    const info: RunComputerInfo = {
+      ...inMemory,
+      ...persisted,
+      takeoverRequested: row.takeoverRequested && row.status === 'running',
+      runStatus: row.status,
+    }
     runComputers.set(runId, info)
     return info
   } catch {
-    return undefined
+    return inMemory
   }
 }
 

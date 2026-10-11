@@ -16,6 +16,12 @@ The active Railway project is `loop-gpt-owned-staging-20260917`. Services: `web`
 
 `NEXT_PUBLIC_API_URL` stays empty for the hosted UI so the browser calls `/api` on the same origin. Set it only when the API is on a different origin. The Expo app defaults to `https://api.loop-gpt.cyou` (`EXPO_PUBLIC_API_URL` overrides that).
 
+## Model fleet routing (Auto)
+
+The UI has no model picker — the backend fleet router (`backend/src/services/modelRouter/`) picks the deployment for every turn. Deterministic rules run first (research → flagship tier, image attachments → vision tier, heavy context/tools → flagship); a small fast router model ("JEV", e.g. a GLM-Flash deployment) arbitrates only the remaining ambiguous fast-tier turns and can never downgrade a rule's pick. Env: `ROUTER_ENDPOINT_URL`, `ROUTER_MODEL`, `ROUTER_API_KEY` (falls back to `HF_TOKEN`), `ROUTER_TIMEOUT_MS` — all optional; without them the rules alone decide.
+
+Media turns are dispatched deterministically too (`MEDIA_DIRECT_DISPATCH=true`): `/image` and `/video` execute the pinned tool directly, and the router picks the deployment per use case — MiniMax-H3 for video (verified video-only: `t2av`/`i2av`), the image Space for images (`t2i`/`i2i`), HF providers as the last resort. Each assistant message carries an `auto · <tier>` chip (public tier label only; upstream identity stays hidden per the guardrails). See [docs/MEDIA_GENERATION.md](docs/MEDIA_GENERATION.md).
+
 ## Canvas previews
 
 Model HTML is shown only inside an iframe with `sandbox="allow-scripts"` and no `allow-same-origin`. That gives the document an opaque origin, so a script in the preview cannot read the app's token.

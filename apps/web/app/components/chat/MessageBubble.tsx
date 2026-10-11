@@ -89,6 +89,17 @@ export function MessageBubble({
 
   const readable = message.role === 'assistant' ? presentAssistantText(message.content || '') : (message.content || '')
   const storedThoughts = message.metadata?.reasoning ? presentAssistantText(String(message.metadata.reasoning)) : ''
+  // Fleet-router provenance (auto chip): which deployment class the backend
+  // router sent this turn to. Public tier labels only — upstream identity
+  // never leaves the backend (guardrails).
+  const TIER_LABELS: Record<string, string> = {
+    standard: 'Small Looper', large: 'Large Looper', vision: 'Vision Looper', glm5: 'GLM 5.3 Looper',
+  }
+  const routedTier = typeof message.metadata?.tier === 'string' ? message.metadata.tier : null
+  const mediaTask = typeof message.metadata?.mediaTask === 'string' ? message.metadata.mediaTask : null
+  const autoChip = mediaTask
+    ? ({ t2i: 'auto · text-to-image', i2i: 'auto · image-to-image', t2v: 'auto · text-to-video', i2v: 'auto · image-to-video' } as Record<string, string>)[mediaTask] || `auto · ${mediaTask}`
+    : routedTier && TIER_LABELS[routedTier] ? `auto · ${TIER_LABELS[routedTier]}` : null
   const copy = () => {
     navigator.clipboard?.writeText(readable).then(() => {
       setCopied(true)
@@ -167,6 +178,13 @@ export function MessageBubble({
         <div className="flex items-center gap-2 text-[12px] text-slate-300">
           <span className="w-5 h-5 rounded-full shrink-0" style={{ background: author.color }} aria-hidden />
           <span className="font-medium">{author.name}</span>
+        </div>
+      )}
+      {autoChip && (
+        <div>
+          <span className="inline-flex items-center gap-1 rounded-full border border-white/[0.07] bg-white/[0.03] px-2 py-0.5 text-[10.5px] text-slate-500">
+            <Sparkles size={9} aria-hidden /> {autoChip}
+          </span>
         </div>
       )}
       {/* Stored extended thinking (§2.5): survives reloads via message metadata. */}

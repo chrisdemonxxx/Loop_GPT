@@ -6,6 +6,7 @@ import { MonitorPlay, MonitorOff, HandMetal, Loader2, Maximize2 } from 'lucide-r
 
 interface ComputerInfo {
   active: boolean
+  reason?: 'finished' | 'not-running' | null
   sandboxId: string
   viewUrl: string | null
   interactiveUrl: string | null
@@ -63,12 +64,19 @@ export function LiveComputerCard({
           </div>
         )}
         <div className="relative w-full overflow-hidden rounded-xl ring-1 ring-[var(--border-subtle)]" style={{ aspectRatio: '16 / 10' }}>
-          <iframe
-            src={(info.takeoverRequested && info.interactiveUrl) || info.viewUrl || ''}
-            className="absolute inset-0 h-full w-full bg-black"
-            referrerPolicy="no-referrer"
-            title="Bot computer live view"
-          />
+          {info.active && info.viewUrl ? (
+            <iframe
+              src={(info.takeoverRequested && info.interactiveUrl) || info.viewUrl}
+              className="absolute inset-0 h-full w-full bg-black"
+              referrerPolicy="no-referrer"
+              title="Bot computer live view"
+            />
+          ) : (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black text-2xs text-[var(--ink-muted)] px-6 text-center">
+              <MonitorOff size={18} aria-hidden />
+              <span>{info.active ? 'stream unavailable' : info.reason === 'not-running' ? 'This computer is not running.' : 'The run finished — its computer was shut down.'}</span>
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-3 text-2xs text-[var(--ink-muted)]">
           <span>A black desktop = nothing opened yet — check the agent frames for what it sees.</span>

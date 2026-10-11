@@ -80,15 +80,23 @@ export class ComputerSession {
       const info = await client.startStream()
       opts.emit({ type: 'status', message: 'Live stream up; preparing the desktop (screen wake + Chrome)…' })
       // Wake discipline: an idle desktop blanks into a black screen that reads
-      // as a failure — disable power management blanking, then open Chrome so
-      // the session starts on a meaningful workspace (Grok-style boot).
-      await client.runCommand('xset s off && xset -dpms 0 0').catch(() => { /* best effort */ })
+      // as a failure — disable the screensaver and DPMS power management, then
+      // open Chrome so the session starts on a meaningful workspace (Grok-style
+      // boot). X client commands need DISPLAY set (the E2B desktop runs X on
+      // :0); `xset -dpms` takes NO numeric arguments — the previous
+      // `xset -dpms 0 0` was malformed and silently no-oped, and failures were
+      // swallowed, which is exactly how deployments shipped black streams.
+      const wake = await client.runCommand('DISPLAY=:0 xset s off; DISPLAY=:0 xset s noblank; DISPLAY=:0 xset -dpms')
+        .catch((err) => ({ stdout: '', stderr: String(err), exitCode: 1 }))
+      if (wake.exitCode) {
+        opts.emit({ type: 'status', message: 'Screen wake command failed — the desktop may blank to black; continuing.' })
+      }
       try {
         await client.launch('google-chrome')
       } catch {
         opts.emit({ type: 'status', message: 'Chrome is not available in this image; continuing without it.' })
       }
-      const probe = await client.runCommand('xdpyinfo | grep -i dimensions').catch(() => ({ stdout: '', stderr: '', exitCode: 1 }))
+      const probe = await client.runCommand('DISPLAY=:0 xdpyinfo | grep -i dimensions').catch(() => ({ stdout: '', stderr: '', exitCode: 1 }))
       const screen = ComputerSession.parseScreenDimensions(probe.stdout)
       opts.emit({ type: 'status', message: `Desktop ready (${screen.width}x${screen.height}) — the agent is taking over.` })
       return new ComputerSession(client, info, opts, now(), screen, 0, undefined, ownsDesktop)

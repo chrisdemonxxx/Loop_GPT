@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import axios from 'axios'
 
-import { API_URL, authHeaders, getStoredUser, hasSession, logoutSession, getModelTier, setModelTier, type AgentMode } from '../lib/api'
+import { API_URL, authHeaders, getStoredUser, hasSession, logoutSession, setModelTier, type AgentMode } from '../lib/api'
 import { pushSettingsHash, readCurrentSettingsHash } from '../lib/settingsHash'
 import type { EffortValue } from '../components/chat/composer/EffortSelector'
 import { getDraft, setDraft, deleteDraft } from '../lib/drafts'
@@ -221,11 +221,12 @@ export default function ChatPage() {
   }, [])
 
   useEffect(() => {
-    const saved = getModelTier()
-    if (saved) { setModelTierState(saved); return }
-    // Default to the flagship Looper.
-    setModelTier('loop-large'); setModelTierState('loop-large')
-  }, [])
+    // Model selection is the backend fleet router's job (Auto-only UI): any
+    // saved pin from the old picker would silently override the router, so it
+    // is cleared once here.
+    setModelTier('')
+    setModelTierState('')
+  }, [setModelTier])
 
   // Side-anchored sign-in: unauthenticated visitors land IN the chat workspace
   // with the login/signup panel docked beside it — never routed to a login page.
@@ -963,8 +964,6 @@ export default function ChatPage() {
         <ChatHeader
           sidebarOpen={panels.sidebarOpen}
           convTitle={convTitle}
-          modelTier={modelTier}
-          onModelChange={(id) => { setModelTier(id); setModelTierState(id) }}
           incognito={incognito}
           onToggleIncognito={() => {
             const next = !incognito

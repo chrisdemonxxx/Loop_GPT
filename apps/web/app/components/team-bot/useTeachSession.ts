@@ -133,8 +133,15 @@ export function useTeachSession(onSkillReady?: () => void, botId?: string | null
 
   const takeOver = useCallback(async () => {
     if (!runId) return
-    await setBotTakeover(runId, true).catch(() => {})
-    setComputer((cur) => (cur ? { ...cur, takeoverRequested: true } : cur))
+    try {
+      await setBotTakeover(runId, true)
+      // Only flip local state after the server confirms — the old code set it
+      // unconditionally, so a 409 (run already finished) desynced the UI into
+      // a phantom "you're driving" state over a dead VM.
+      setComputer((cur) => (cur ? { ...cur, takeoverRequested: true } : cur))
+    } catch (err: any) {
+      setError(err?.message || 'Takeover failed — the session may already be over.')
+    }
   }, [runId])
 
   /** Stop = Release: the operator hands the computer back, the bot distills
@@ -142,7 +149,9 @@ export function useTeachSession(onSkillReady?: () => void, botId?: string | null
   const stop = useCallback(async () => {
     if (!runId) return
     setPhase('distilling')
-    await setBotTakeover(runId, false).catch(() => {})
+    try {
+      await setBotTakeover(runId, false)
+    } catch { /* the run may already be over — the distillation poll resolves it */ }
     setComputer((cur) => (cur ? { ...cur, takeoverRequested: false } : cur))
   }, [runId])
 

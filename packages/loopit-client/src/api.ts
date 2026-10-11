@@ -174,7 +174,11 @@ export function createLoopitClient(options: LoopitClientOptions = {}): LoopitCli
       body: JSON.stringify({
         prompt,
         project_id: runOptions.projectId ?? null,
-        max_iterations: runOptions.maxIterations ?? 12,
+        // Only pin an iteration budget when the caller explicitly asks for one.
+        // The engine sizes its budget from the brief's complexity (8/14/24/40);
+        // a hardcoded low cap starved medium builds into budget_exceeded
+        // ("Failed" badge) before they could finish.
+        ...(runOptions.maxIterations != null ? { max_iterations: runOptions.maxIterations } : {}),
       }),
     }),
     deployProject: async (projectId, checkpointId, reason) => {

@@ -59,7 +59,8 @@ describe('ComputerSession.start (Grok-style boot sequence)', () => {
     const { events, opts } = makeOpts({ createDesktopFn })
     const session = await ComputerSession.start(opts)
     expect(calls).toEqual([
-      'startStream', 'cmd:xset', 'launch:google-chrome', 'cmd:xdpyinfo',
+      // X client commands run with DISPLAY=:0 (wake + geometry probe).
+      'startStream', 'cmd:DISPLAY=:0', 'launch:google-chrome', 'cmd:DISPLAY=:0',
     ])
     expect(session.screen).toEqual({ width: 1280, height: 800 })
     const statuses = events.filter((e) => e.type === 'status').map((e) => e.message)

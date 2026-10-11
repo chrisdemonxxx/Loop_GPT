@@ -39,8 +39,7 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   { cmd: '/export', label: 'Export chat', hint: 'Download as Markdown', kind: 'action', section: 'Session' },
   { cmd: '/screenshot', label: 'Screenshot', hint: 'Capture the screen into the chat', kind: 'action', section: 'Session' },
 
-  // Help
-  { cmd: '/model', label: 'Model', hint: 'Open the model picker', kind: 'action', section: 'Help' },
+  // Help (the model picker is gone: the backend fleet router picks per turn.)
   { cmd: '/settings', label: 'Settings', hint: 'Open settings', kind: 'action', section: 'Help' },
   { cmd: '/help', label: 'Shortcuts', hint: 'Show keyboard shortcuts', kind: 'action', section: 'Help' },
 ]

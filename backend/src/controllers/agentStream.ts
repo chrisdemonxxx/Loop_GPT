@@ -30,6 +30,7 @@ import { createRun, appendEvent, finishRun } from '../services/runReplay'
 import { randomUUID } from 'crypto'
 import type { AgentEvent, ChatMessage, ContentPart, ToolContext } from '../agent/types'
 import { resolveHostedModelRequest } from '../services/hostedModelRequest'
+import { routeChatTurn, routeMediaTurn } from '../services/modelRouter/route'
 import { resolveVisionTarget, visionModelEnabled } from '../services/chatModels'
 import { clearApproval } from '../agent/approvalStore'
 import { sanitizeMetadata, detectExtractionAttempt, EXTRACTION_DEFENSE_PROMPT } from '../agent/guardrails'
@@ -159,6 +160,25 @@ export async function streamAgentRun(req: Request, res: Response) {
   let target: ReturnType<typeof resolveHostedModelRequest>
   try { target = resolveHostedModelRequest(req.body, { contentLength: String(req.body?.content || '').length, mode: req.body?.mode, hasImage: !!(req.body?.attachmentId || req.body?.attachmentIds?.length), toolNames: req.body?.toolNames }) }
   catch { return res.status(400).json({ code: 'HOSTED_MODEL_REQUIRED', error: 'Invalid hosted model selection or unsupported provider override' }) }
+  /** Router provenance for the UI's auto chip (tier id is a public label —
+   *  upstream identity stays hidden per guardrails; sanitizeMetadata keeps it). */
+  let routerMeta: { decidedBy: 'pin' | 'rule' | 'jev'; tier?: string; reason?: string } = { decidedBy: 'pin' }
+  if (!req.body?.model) {
+    // No pin → the fleet router decides: deterministic rules first (free,
+    // instant), the small router model (JEV) only for ambiguous fast-tier
+    // turns. Any router failure keeps the rule-based default.
+    try {
+      const decision = await routeChatTurn({
+        prompt: String(req.body?.content || ''),
+        mode: req.body?.mode || 'agent',
+        hasImage: !!(req.body?.attachmentId || req.body?.attachmentIds?.length),
+        toolNames: Array.isArray(req.body?.toolNames) ? req.body.toolNames : [],
+        contentLength: String(req.body?.content || '').length,
+      })
+      target = { provider: 'huggingface', model: decision.target.model, baseUrl: decision.target.baseUrl, apiKey: undefined }
+      routerMeta = { decidedBy: decision.decidedBy, tier: decision.target.tier, reason: decision.reason }
+    } catch { /* fail-open: the sync smart-route target from above still stands */ }
+  }
   // Clear any stale approvals from a previous turn in this conversation.
   clearApproval(conversationId, userId)
   const input = streamInput.safeParse(req.body)
@@ -515,23 +535,59 @@ export async function streamAgentRun(req: Request, res: Response) {
           .catch(() => researchRun.fail())
         await run
       } else {
-        await runAgent({
-          messages,
-          provider,
-          model: model || '',
-          apiKey,
-          baseUrl,
-          toolNames: selectedNames,
-          systemPrompt,
-          style: req.body?.style || undefined,
-          autoApprove: input.data.autoApprove === true,
-          stepMode: input.data.stepMode === true,
-          useMemory: input.data.incognito !== true,
-          /** Extended-thinking override (audit §8-26). */
-          thinking: input.data.thinking,
-          ctx: authorizedCtx,
-          beforeDispatch,
-        })
+        // Deterministic media dispatch (GAP router): a turn pinning EXACTLY
+        // one media tool (/image → generate_image, /video → generate_video)
+        // executes the tool directly. The old path asked the chat model to
+        // emit a valid tool call and hoped — prose replies and malformed JSON
+        // read as "image generation is broken". The tool streams its own
+        // status/artifact events; we add tool_call/tool_result/final for UI
+        // parity, and the fleet router picks the deployment (MiniMax video,
+        // image Space, provider fallback).
+        const directMediaTool = mode === 'agent' && process.env.MEDIA_DIRECT_DISPATCH !== 'false' && selectedNames.length === 1
+          ? reviewed.find((tool) => (tool.name === 'generate_image' || tool.name === 'generate_video') && tool.name === selectedNames[0])
+          : undefined
+        if (directMediaTool) {
+          const mediaPrompt = content || raw || ''
+          const route = routeMediaTurn({
+            tool: directMediaTool.name as 'generate_image' | 'generate_video',
+            hasReference: images.length > 0,
+            prompt: mediaPrompt,
+          })
+          const mediaArgs: Record<string, any> = { prompt: mediaPrompt }
+          if (directMediaTool.name === 'generate_video') {
+            if (route?.numFrames) mediaArgs.num_frames = route.numFrames
+          } else if (route) {
+            mediaArgs.face_lock = route.faceLock
+            mediaArgs.strength = route.strength
+          }
+          authorizedCtx.emit({ type: 'status', message: route ? `Routing: ${route.reason}` : 'Routing: provider chain' })
+          authorizedCtx.emit({ type: 'tool_call', step: 0, name: directMediaTool.name, args: { prompt: mediaPrompt.slice(0, 160) }, source: directMediaTool.source })
+          const result = await directMediaTool.handler(mediaArgs, authorizedCtx)
+          capturingCtx.emit({ type: 'tool_result', step: 0, name: directMediaTool.name, content: result.content, data: result.data, isError: result.isError })
+          capturingCtx.emit({
+            type: 'final',
+            content: result.isError ? `⚠️ ${result.content}` : result.content,
+            metadata: { directDispatch: true, tool: directMediaTool.name, mediaTarget: route?.target, mediaTask: route?.task },
+          })
+        } else {
+          await runAgent({
+            messages,
+            provider,
+            model: model || '',
+            apiKey,
+            baseUrl,
+            toolNames: selectedNames,
+            systemPrompt,
+            style: req.body?.style || undefined,
+            autoApprove: input.data.autoApprove === true,
+            stepMode: input.data.stepMode === true,
+            useMemory: input.data.incognito !== true,
+            /** Extended-thinking override (audit §8-26). */
+            thinking: input.data.thinking,
+            ctx: authorizedCtx,
+            beforeDispatch,
+          })
+        }
       }
 
       // Capture successful work even if assistant persistence fails. Tool media
@@ -549,6 +605,9 @@ export async function streamAgentRun(req: Request, res: Response) {
         // Redact model/provider from client-facing metadata (guardrails).
         metadata: sanitizeMetadata({
           ...finalMetadata, artifacts, provider, model, prompt: promptMeta,
+          // Router provenance for the UI's auto chip (public tier id only —
+          // upstream identity stays hidden; sanitizeMetadata keeps tier fields).
+          routedBy: routerMeta.decidedBy, tier: routerMeta.tier,
           // Extended-thinking (§2.5): keep the reasoning chain on the message
           // so the collapsible "Thoughts" block survives reloads.
           ...(reasoningCapture ? { reasoning: reasoningCapture } : {}),

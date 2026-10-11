@@ -90,12 +90,19 @@ model User {
 
 /// Persistent computer box for one user. The worker reconnects with
 /// Sandbox.connect instead of cold-booting a second billed VM.
+/// The noVNC stream credentials are persisted too: they are SDK-instance-
+/// local once started, so after a process restart Sandbox.connect can no
+/// longer read them from the SDK — the row is the only place they survive.
 model BotBox {
-  userId    String   @id
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sandboxId String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  userId          String    @id
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sandboxId       String
+  streamAuthKey   String?
+  streamUrl       String?
+  interactiveUrl  String?
+  streamStartedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 }
 
 /// A named agent the user chats with. The primary row is "Loop Bot".

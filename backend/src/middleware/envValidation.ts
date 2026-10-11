@@ -51,6 +51,21 @@ const envSchema = z.object({
   
   // Image API
   IMAGE_API_URL: z.string().url().optional(),
+
+  // Fleet model router (JEV): a small, fast OpenAI-compatible deployment that
+  // arbitrates ambiguous chat turns between the rule-based default and the
+  // heavy tiers. Unset = deterministic rules only (fail-open).
+  ROUTER_ENDPOINT_URL: z.string().url().optional(),
+  ROUTER_MODEL: z.string().optional(),
+  ROUTER_API_KEY: z.string().optional(),
+  ROUTER_TIMEOUT_MS: z.string().regex(/^\d+$/).optional(),
+  // Deterministic media dispatch: a single pinned media tool (/image, /video)
+  // executes directly instead of relying on the chat model to emit a valid
+  // tool call. Set 'false' to restore the LLM-dispatch path.
+  MEDIA_DIRECT_DISPATCH: z.string().optional(),
+  // MiniMax-H3 (LightX2V) dedicated endpoint — video tasks (t2av/i2av). The
+  // URL is also accepted via HF_VIDEO_ENDPOINT_URL/VIDEO_API_URL.
+  MINIMAX_ENDPOINT_URL: z.string().url().optional(),
   
   // Dev mode
   ENABLE_DEV_MODE: z.string().optional(),

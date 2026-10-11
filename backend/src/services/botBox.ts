@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { isE2BConfigured } from './e2bDesktop'
+import { buildVncUrls, isE2BConfigured } from './e2bDesktop'
 import { prisma } from './prisma'
 
 type Sandbox = any
@@ -107,27 +107,38 @@ async function seedBoxProfile(sandbox: Sandbox, userLabel: string, taskType: Box
   if (cmds.length > 0) await runInBox(sandbox, cmds.join(' && '))
 }
 
-async function readVncUrls(sandbox: Sandbox): Promise<{ streamUrl: string; interactiveUrl: string | null }> {
+async function readVncUrls(sandbox: Sandbox): Promise<{ streamUrl: string; interactiveUrl: string | null; streamAuthKey: string | null }> {
   // The @e2b/desktop sandbox exposes a managed noVNC stream.
   try {
     await sandbox.stream.start({ requireAuth: true })
-    const authKey = sandbox.stream.getAuthKey()
-    return {
-      streamUrl: sandbox.stream.getUrl({ viewOnly: true, authKey }),
-      interactiveUrl: sandbox.stream.getUrl({ viewOnly: false, authKey }),
-    }
-  } catch {
-    // Stream already up (box resume) — rebuild the URLs from the auth key.
-    try {
-      const authKey = sandbox.stream.getAuthKey()
-      return {
-        streamUrl: sandbox.stream.getUrl({ viewOnly: true, authKey }),
-        interactiveUrl: sandbox.stream.getUrl({ viewOnly: false, authKey }),
-      }
-    } catch {
-      return { streamUrl: '', interactiveUrl: null }
-    }
+  } catch (error) {
+    // Stream already up (box resume / second attach) — keep going and read
+    // the auth key from this SDK instance's state.
+    if (!/already running/i.test(String((error as any)?.message || error))) throw error
   }
+  const authKey = sandbox.stream.getAuthKey()
+  return {
+    streamUrl: sandbox.stream.getUrl({ viewOnly: true, authKey }),
+    interactiveUrl: sandbox.stream.getUrl({ viewOnly: false, authKey }),
+    streamAuthKey: authKey,
+  }
+}
+
+/** Persist the stream credentials next to the box row so ANY process (after
+ *  a restart, the API vs the worker) can rebuild the noVNC URLs — the SDK
+ *  forgets them the moment the instance that started the stream dies. */
+async function rememberBoxStream(userId: string, sandboxId: string, stream: { streamUrl: string; interactiveUrl: string | null; streamAuthKey: string | null }): Promise<void> {
+  if (!prisma) return
+  await prisma.botBox.update({
+    where: { userId },
+    data: {
+      sandboxId,
+      streamAuthKey: stream.streamAuthKey,
+      streamUrl: stream.streamUrl || null,
+      interactiveUrl: stream.interactiveUrl,
+      streamStartedAt: stream.streamUrl ? new Date() : null,
+    },
+  }).catch(() => undefined)
 }
 
 /**
@@ -153,14 +164,30 @@ async function rememberBox(userId: string, sandboxId: string): Promise<void> {
   }).catch(() => undefined)
 }
 
-/** Reconnect a box recorded in the database. A dead id falls through to a fresh boot. */
-async function connectPersistedBox(userId: string): Promise<Sandbox | null> {
+interface PersistedStream {
+  streamUrl: string
+  interactiveUrl: string | null
+}
+
+/** Reconnect a box recorded in the database. A dead id falls through to a
+ *  fresh boot. Also returns the persisted stream URLs: the reconnected SDK
+ *  instance never owned the stream, so it cannot rebuild them itself. */
+async function connectPersistedBox(userId: string): Promise<{ sandbox: Sandbox; stream: PersistedStream | null } | null> {
   if (!prisma) return null
   const row = await prisma.botBox.findUnique({ where: { userId } }).catch(() => null)
   if (!row?.sandboxId) return null
   try {
     const { Sandbox } = await import('@e2b/desktop')
-    return await Sandbox.connect(row.sandboxId)
+    const sandbox = await Sandbox.connect(row.sandboxId)
+    let stream: PersistedStream | null = null
+    if (row.streamAuthKey) {
+      // Strongest path: rebuild fresh URLs from the persisted auth key.
+      const urls = buildVncUrls(row.sandboxId, row.streamAuthKey)
+      stream = { streamUrl: urls.viewUrl, interactiveUrl: urls.interactiveUrl }
+    } else if (row.streamUrl) {
+      stream = { streamUrl: row.streamUrl, interactiveUrl: row.interactiveUrl }
+    }
+    return { sandbox, stream }
   } catch {
     return null
   }
@@ -178,11 +205,12 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
         // Touch to keep alive; resume if paused. Timeout stays inside the daily budget.
         await existing.sandbox.setTimeout(timeoutMs)
         existing.lastTouchedAt = Date.now()
-        const { streamUrl, interactiveUrl } = await readVncUrls(existing.sandbox)
+        const stream = await readVncUrls(existing.sandbox)
+        await rememberBoxStream(userId, existing.sandboxId, stream)
         return {
           sandboxId: existing.sandboxId,
-          streamUrl,
-          interactiveUrl,
+          streamUrl: stream.streamUrl,
+          interactiveUrl: stream.interactiveUrl,
           resumed: true,
           ageMinutes: Math.max(0, Math.round((Date.now() - existing.createdAt) / 60_000)),
           taskType,
@@ -196,15 +224,28 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
     const connected = await connectPersistedBox(userId)
     if (connected) {
       try {
-        await connected.setTimeout(timeoutMs)
+        await connected.sandbox.setTimeout(timeoutMs)
         const state: BoxState = {
-          sandboxId: connected.sandboxId,
-          sandbox: connected,
+          sandboxId: connected.sandbox.sandboxId,
+          sandbox: connected.sandbox,
           createdAt: Date.now(),
           lastTouchedAt: Date.now(),
         }
         liveBoxes.set(userId, state)
-        const { streamUrl, interactiveUrl } = await readVncUrls(connected)
+        // The reconnected SDK instance never owned the stream — it cannot
+        // rebuild the URLs itself. Use the credentials persisted at boot; only
+        // if they are missing (pre-migration row) do we ask the SDK, whose
+        // answer may legitimately be empty until the stream is restarted.
+        let streamUrl = connected.stream?.streamUrl || ''
+        let interactiveUrl = connected.stream?.interactiveUrl || null
+        if (!streamUrl) {
+          try {
+            const stream = await readVncUrls(connected.sandbox)
+            streamUrl = stream.streamUrl
+            interactiveUrl = stream.interactiveUrl
+            await rememberBoxStream(userId, state.sandboxId, stream)
+          } catch { /* stream state unknown to this instance — stays empty */ }
+        }
         return {
           sandboxId: state.sandboxId,
           streamUrl,
@@ -243,12 +284,13 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
     liveBoxes.set(userId, state)
     await rememberBox(userId, sandbox.sandboxId)
 
-    const { streamUrl, interactiveUrl } = await readVncUrls(sandbox)
+    const stream = await readVncUrls(sandbox)
+    await rememberBoxStream(userId, sandbox.sandboxId, stream)
     console.info('[bot-box] booted persistent box', { userId, sandboxId: sandbox.sandboxId, taskType })
     return {
       sandboxId: sandbox.sandboxId,
-      streamUrl,
-      interactiveUrl,
+      streamUrl: stream.streamUrl,
+      interactiveUrl: stream.interactiveUrl,
       resumed: false,
       ageMinutes: 0,
       taskType,

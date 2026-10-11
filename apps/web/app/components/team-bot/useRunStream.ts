@@ -48,9 +48,16 @@ export function useRunStream(taskId: string) {
     return () => { cancelled = true; stop?.() }
   }, [taskId])
 
-  // Refresh computer metadata while the run is live (minutes tick up).
+  // Refresh computer metadata while the run is live (minutes tick up), and
+  // once more when it ends: the worker destroys the dedicated VM at run end,
+  // so the last fetch flips active→false and the pane swaps from a dead
+  // iframe (black screen) to the honest offline state.
   useEffect(() => {
-    if (!runId || !live || !computer) return
+    if (!runId || !computer) return
+    if (!live) {
+      void getBotComputer(runId).then((comp) => { if (comp?.sandboxId) setComputer(comp) }).catch(() => undefined)
+      return
+    }
     const t = setInterval(async () => {
       const comp = await getBotComputer(runId).catch(() => null)
       if (comp?.sandboxId) setComputer(comp)

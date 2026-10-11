@@ -4,9 +4,11 @@ import { parseCommand, SLASH_COMMANDS, filterCommands, fuzzyMatch, SLASH_SECTION
 describe('slash-command registry', () => {
   it('has the full Claude/Copilot-style command set', () => {
     const cmds = SLASH_COMMANDS.map((c) => c.cmd)
-    for (const c of ['/new', '/undo', '/retry', '/stop', '/export', '/screenshot', '/model', '/settings', '/help',
+    for (const c of ['/new', '/undo', '/retry', '/stop', '/export', '/screenshot', '/settings', '/help',
       '/chat', '/agent', '/research', '/image', '/video', '/create', '/memory']) expect(cmds).toContain(c)
-    expect(SLASH_COMMANDS.length).toBeGreaterThanOrEqual(16)
+    // '/model' was retired with the picker: the backend fleet router (Auto) picks per turn.
+    expect(cmds).not.toContain('/model')
+    expect(SLASH_COMMANDS.length).toBeGreaterThanOrEqual(15)
   })
 
   it('covers the extended feature surfaces (skills/projects/connectors/plugins) in sections', () => {

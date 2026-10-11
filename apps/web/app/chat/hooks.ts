@@ -1020,7 +1020,9 @@ export function useChatStream() {
 
       await runAgentStream(convId, {
         content: sendContent, attachmentIds, mode: sendMode,
-        model: modelTier || undefined,
+        // Auto-only: the backend fleet router picks the model for every turn
+        // (rules + the small router model). The UI no longer pins a tier.
+        model: undefined,
         toolNames: commandTools || (selectedTools ? Array.from(selectedTools) : undefined),
         autoApprove: runMode === 'accept' || runMode === 'auto',
         stepMode: runMode === 'step',

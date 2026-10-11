@@ -166,12 +166,19 @@ router.get('/runs/:runId/computer', asyncHandler(async (req, res) => {
   const { getRunComputer } = await import('../services/botRuns')
   const info = await getRunComputer(req.params.runId, (req as any).userId)
   if (!info || !info.sandboxId) return res.status(404).json({ error: 'No computer session for this run' })
+  // A dedicated VM is destroyed when its run ends; "active" must reflect the
+  // run lifecycle, not just the presence of URLs — otherwise the UI frames a
+  // dead host and renders a black screen under a pulsing LIVE badge.
+  const running = info.runStatus ? info.runStatus === 'running' : !info.endedAt
+  const active = !info.endedAt && running
   res.json({
-    active: !info.endedAt,
+    active,
+    reason: active ? null : (info.endedAt ? 'finished' : 'not-running'),
     sandboxId: info.sandboxId,
     viewUrl: info.viewUrl || null,
     interactiveUrl: info.takeoverRequested ? info.interactiveUrl || null : null,
     takeoverRequested: info.takeoverRequested === true,
+    takeoverTimeoutMs: Number(process.env.BOT_TAKEOVER_TIMEOUT_MS) || 30 * 60_000,
     minutes: info.minutes ?? null,
     startedAt: info.startedAt || null,
     endedAt: info.endedAt || null,

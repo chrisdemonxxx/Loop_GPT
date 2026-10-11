@@ -7,6 +7,7 @@ import {
   createPreviewUrl,
   deployProject,
   forkCheckpoint,
+  getFile,
   getRun,
   listRuns,
   rejectGate,
@@ -96,6 +97,16 @@ export function usePreviewUrl(projectId: string | null, path: string | null) {
     queryKey: ['loopit-preview', projectId, path],
     queryFn: () => createPreviewUrl(projectId as string, path as string),
     enabled: typeof window !== 'undefined' && !!projectId && !!path,
+    retry: false,
+  })
+}
+
+/** Read one workspace file's text (read-only code view for the preview tabs). */
+export function useFileContent(runId: string, path: string | null) {
+  return useQuery<string>({
+    queryKey: ['loopit-file', runId, path],
+    queryFn: () => getFile(runId, path as string),
+    enabled: typeof window !== 'undefined' && !!runId && runId !== '_' && !!path,
     retry: false,
   })
 }
