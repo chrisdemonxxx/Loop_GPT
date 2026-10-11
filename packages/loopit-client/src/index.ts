@@ -33,6 +33,7 @@ export type {
   RunStatus,
   RunStreamEvent,
   RunSummary,
+  RunTier,
   StreamEvent,
   TaskDagView,
   TaskNodeView,
@@ -64,6 +65,9 @@ export const getHealth = client.getHealth
 export const listRuns = client.listRuns
 export const getRun = client.getRun
 export const startRun = client.startRun
+export const sendRunMessage = client.sendRunMessage
+export const cancelRun = client.cancelRun
+export const execCommand = client.execCommand
 export const deployProject = client.deployProject
 export const approveGate = client.approveGate
 export const rejectGate = client.rejectGate

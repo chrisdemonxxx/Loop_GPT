@@ -70,6 +70,7 @@ export interface RunSummary {
   summary: string
   credits_spent: number
   stack?: string
+  tier?: RunTier
   dag?: TaskDagView | null
   task_dag?: TaskDagView | null
   gates?: ApprovalGate[]
@@ -119,13 +120,18 @@ export interface LoopitClientOptions extends TokenStoreOptions {
   baseUrl?: string
 }
 
+export type RunTier = 'quick' | 'standard' | 'deep' | 'max'
+
 export interface LoopitClient {
   getToken: TokenStore['getToken']
   clearToken: TokenStore['clear']
   getHealth: () => Promise<Health>
   listRuns: () => Promise<RunSummary[]>
   getRun: (runId: string) => Promise<RunDetail>
-  startRun: (prompt: string, options?: { projectId?: string | null; maxIterations?: number }) => Promise<RunSummary>
+  startRun: (prompt: string, options?: { projectId?: string | null; maxIterations?: number; tier?: RunTier }) => Promise<RunSummary>
+  sendRunMessage: (runId: string, message: string) => Promise<{ queued: boolean }>
+  cancelRun: (runId: string) => Promise<{ cancelled: boolean }>
+  execCommand: (projectId: string, command: string, timeoutSeconds?: number) => Promise<{ command: string; exit_code: number; stdout: string; stderr: string; duration_seconds: number; truncated: boolean }>
   deployProject: (projectId: string, checkpointId: string, reason: string) => Promise<{ production_url: string; status: string }>
   approveGate: (runId: string, gateId: string, reason: string) => Promise<void>
   rejectGate: (runId: string, gateId: string, reason: string) => Promise<void>
@@ -179,7 +185,19 @@ export function createLoopitClient(options: LoopitClientOptions = {}): LoopitCli
         // a hardcoded low cap starved medium builds into budget_exceeded
         // ("Failed" badge) before they could finish.
         ...(runOptions.maxIterations != null ? { max_iterations: runOptions.maxIterations } : {}),
+        ...(runOptions.tier ? { tier: runOptions.tier } : {}),
       }),
+    }),
+    sendRunMessage: (runId, message) => apiFetch<{ queued: boolean }>(`/runs/${encodeURIComponent(runId)}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ message }),
+    }),
+    cancelRun: (runId) => apiFetch<{ cancelled: boolean }>(`/runs/${encodeURIComponent(runId)}/cancel`, {
+      method: 'POST',
+    }),
+    execCommand: (projectId, command, timeoutSeconds) => apiFetch<{ command: string; exit_code: number; stdout: string; stderr: string; duration_seconds: number; truncated: boolean }>(`/projects/${encodeURIComponent(projectId)}/exec`, {
+      method: 'POST',
+      body: JSON.stringify({ command, ...(timeoutSeconds != null ? { timeout_seconds: timeoutSeconds } : {}) }),
     }),
     deployProject: async (projectId, checkpointId, reason) => {
       const body = await apiFetch<{ production_url: string; status: string }>(`/projects/${encodeURIComponent(projectId)}/deploy`, {

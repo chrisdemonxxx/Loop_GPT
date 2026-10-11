@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import {
   AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, FileCode2,
-  FileText, Loader2, Monitor, Rocket, RotateCw, ShieldCheck, Smartphone, Sparkles, X,
+  FileText, Loader2, Monitor, Play, Rocket, RotateCw, Send, ShieldCheck, Smartphone, Sparkles, Square, Terminal, X,
 } from 'lucide-react'
-import { Badge, EmptyState, LoadingState, SectionHeader, StatusDot, btnGhost, btnOutline, btnPrimary, panelCls } from '@loop/ui'
+import { Badge, EmptyState, LoadingState, SectionHeader, StatusDot, btnGhost, btnOutline, btnPrimary, panelCls, textareaCls } from '@loop/ui'
 import {
   ApiError,
   emptyRunUiState,
@@ -25,13 +25,18 @@ import {
   type Activity,
   type ApprovalGate,
   type CheckpointView,
+  type RunSummary,
+  type RunTier,
   type StreamEvent,
   type TaskNodeView,
 } from '@loop/loopit-client'
 import { useToast } from '../../lib/toast'
 import { AppPage } from '../../components/AppPage'
 import { CheckpointDialog, type CheckpointAction } from '../confirm'
-import { useBuildRun, useCheckpointAction, useFileContent, useGateDecision, usePreviewUrl, useRunStream } from '../hooks'
+import {
+  useBuildRun, useCancelRun, useCheckpointAction, useExecCommand, useFileContent, useGateDecision,
+  usePreviewUrl, useRunStream, useSendRunMessage, useStartBuild,
+} from '../hooks'
 import { ErrorNotice } from '../shell'
 import { formatWhen, gateTitle, isLiveStatus, statusLabel, statusTone } from '../status'
 
@@ -42,6 +47,7 @@ const BACK = { href: '/build', label: 'All builds' }
 
 export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const params = useParams()
+  const router = useRouter()
   const raw = runIdProp ?? params?.runId
   const runId = typeof raw === 'string' ? raw : ''
   const query = useBuildRun(runId)
@@ -53,7 +59,13 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [codePath, setCodePath] = useState<string | null>(null)
   const [previewEpoch, setPreviewEpoch] = useState(0)
+  const [messages, setMessages] = useState<{ id: string; role: 'user' | 'system'; text: string; at: string }[]>([])
+  const [terminalOpen, setTerminalOpen] = useState(false)
+  const composerRef = useRef<HTMLTextAreaElement>(null)
   const reloadTimer = useRef<number | null>(null)
+
+  const sendMessage = useSendRunMessage(runId)
+  const cancel = useCancelRun(runId)
 
   useEffect(() => {
     const detail = query.data
@@ -104,6 +116,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
 
   const checkpointMutation = useCheckpointAction(runId, projectId)
   const gateMutation = useGateDecision(runId)
+  const exec = useExecCommand(projectId)
   const closeAction = useCallback(() => setAction(null), [])
 
   const runCheckpoint = (pending: CheckpointAction, reason: string) => {
@@ -127,6 +140,25 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
       onError: (cause) => toast.push('error', toUserFacingError(cause).message),
     })
   }
+
+  const handleSendMessage = (text: string) => {
+    const trimmed = text.trim()
+    if (!trimmed || sendMessage.isPending) return
+    setMessages((prev) => [...prev, { id: `${Date.now()}-user`, role: 'user', text: trimmed, at: new Date().toISOString() }])
+    sendMessage.mutate(trimmed, {
+      onError: (cause) => toast.push('error', toUserFacingError(cause).message),
+    })
+  }
+
+  const handleCancel = () => {
+    if (!live || cancel.isPending) return
+    cancel.mutate(undefined, {
+      onSuccess: () => toast.push('info', 'Build stopped'),
+      onError: (cause) => toast.push('error', toUserFacingError(cause).message),
+    })
+  }
+
+  const terminalFailed = ['error', 'failed', 'budget_exceeded', 'stalled', 'cancelled', 'canceled'].includes(status?.toLowerCase() ?? '')
 
   if (!runId || runId === '_') {
     return (
@@ -152,6 +184,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
       meta={(
         <>
           {status && <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>}
+          {ui.run?.tier && <Badge tone="neutral">{ui.run.tier}</Badge>}
           {live && <StatusDot state="working" />}
           {startedAt && <Elapsed since={startedAt} live={!!live} />}
           {ui.cost?.credits_spent != null && ui.cost.credits_spent > 0 && (
@@ -160,14 +193,37 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
         </>
       )}
       actions={(
-        <button
-          type="button"
-          className={btnPrimary}
-          disabled={!verified || checkpointMutation.isPending}
-          onClick={() => verified && setAction({ kind: 'deploy', checkpoint: verified })}
-        >
-          <Rocket size={13} className="mr-1.5 inline" />Publish
-        </button>
+        <div className="flex items-center gap-2">
+          {live ? (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--danger-soft-border)] bg-[var(--danger-soft)] px-3 py-1.5 text-ui-xs font-medium text-[var(--danger)] hover:bg-[var(--danger-soft-hover)] transition"
+              disabled={cancel.isPending}
+              onClick={handleCancel}
+            >
+              <Square size={11} className="fill-current" /> Stop
+            </button>
+          ) : terminalFailed ? (
+            <>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-hover-strong)] px-3 py-1.5 text-ui-xs font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition"
+                onClick={() => { composerRef.current?.focus() }}
+              >
+                <Play size={12} /> Continue
+              </button>
+              <RetryButton run={ui.run ?? query.data} />
+            </>
+          ) : null}
+          <button
+            type="button"
+            className={btnPrimary}
+            disabled={!verified || checkpointMutation.isPending}
+            onClick={() => verified && setAction({ kind: 'deploy', checkpoint: verified })}
+          >
+            <Rocket size={13} className="mr-1.5 inline" />Publish
+          </button>
+        </div>
       )}
     >
       {query.isPending && <LoadingState variant="card" label="Loading build" />}
@@ -254,6 +310,16 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
               live={!!live}
             />
           </div>
+          <RunWorkspace
+            runId={runId}
+            projectId={projectId}
+            messages={messages}
+            onSendMessage={handleSendMessage}
+            sendBusy={sendMessage.isPending}
+            terminalOpen={terminalOpen}
+            onToggleTerminal={() => setTerminalOpen((v) => !v)}
+            composerRef={composerRef}
+          />
         </>
       )}
 
@@ -593,6 +659,210 @@ function PreviewWorkspace({
         {codePath && <CodeDrawer runId={runId} path={codePath} onClose={onCloseCode} />}
       </div>
     </section>
+  )
+}
+
+/** Start a follow-up run with the same prompt and project, keeping the workspace. */
+function RetryButton({ run }: { run: RunSummary | null | undefined }) {
+  const router = useRouter()
+  const start = useStartBuild()
+  if (!run) return null
+  return (
+    <button
+      type="button"
+      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-hover-strong)] px-3 py-1.5 text-ui-xs font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition"
+      disabled={start.isPending}
+      onClick={async () => {
+        try {
+          const created = await start.mutateAsync({ prompt: run.prompt, tier: run.tier })
+          router.push(`/build/?run=${encodeURIComponent(created.run_id)}`)
+        } catch { /* error surfaces via start.error */ }
+      }}
+    >
+      <RotateCw size={12} /> Retry
+    </button>
+  )
+}
+
+/** Replit-style bottom workspace: Chat (always-on) and Terminal tabs. */
+function RunWorkspace({
+  runId, projectId, messages, onSendMessage, sendBusy, terminalOpen, onToggleTerminal, composerRef,
+}: {
+  runId: string
+  projectId: string | null
+  messages: { id: string; role: 'user' | 'system'; text: string; at: string }[]
+  onSendMessage: (text: string) => void
+  sendBusy: boolean
+  terminalOpen: boolean
+  onToggleTerminal: () => void
+  composerRef: React.RefObject<HTMLTextAreaElement | null>
+}) {
+  return (
+    <section className={`${panelCls} mt-4 overflow-hidden flex flex-col`}>
+      <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-3 py-2 shrink-0">
+        <RunWorkspaceTab active={!terminalOpen} onClick={() => { if (terminalOpen) onToggleTerminal() }} icon={Send} label="Chat" />
+        <RunWorkspaceTab active={terminalOpen} onClick={() => { if (!terminalOpen) onToggleTerminal() }} icon={Terminal} label="Terminal" />
+      </div>
+      <div className="min-h-[220px] max-h-[40vh] flex flex-col">
+        {terminalOpen ? (
+          <RunTerminal projectId={projectId} />
+        ) : (
+          <RunChat messages={messages} onSend={onSendMessage} busy={sendBusy} composerRef={composerRef} />
+        )}
+      </div>
+    </section>
+  )
+}
+
+function RunWorkspaceTab({ active, onClick, icon: Icon, label }: { active: boolean; onClick: () => void; icon: typeof Send; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-2xs font-medium transition ${
+        active ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]' : 'text-[var(--ink-muted)] hover:bg-[var(--bg-hover)]'
+      }`}
+    >
+      <Icon size={11} /> {label}
+    </button>
+  )
+}
+
+function RunChat({ messages, onSend, busy, composerRef }: {
+  messages: { id: string; role: 'user' | 'system'; text: string; at: string }[]
+  onSend: (text: string) => void
+  busy: boolean
+  composerRef: React.RefObject<HTMLTextAreaElement | null>
+}) {
+  const [text, setText] = useState('')
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [messages.length])
+
+  const submit = () => {
+    if (!text.trim() || busy) return
+    onSend(text)
+    setText('')
+  }
+
+  return (
+    <div className="flex flex-1 min-h-0 flex-col">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto p-3 space-y-3">
+        {messages.length === 0 && (
+          <p className="text-2xs text-[var(--ink-muted)]">Steer the builder while it runs, or continue after it stops.</p>
+        )}
+        {messages.map((m) => (
+          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[80%] rounded-xl px-3 py-2 text-ui-xs ${
+              m.role === 'user' ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]' : 'bg-[var(--bg-sunken)] text-[var(--ink-secondary)]'
+            }`}>
+              {m.text}
+            </div>
+          </div>
+        ))}
+        {busy && (
+          <div className="flex justify-start">
+            <div className="rounded-xl bg-[var(--bg-sunken)] px-3 py-2 text-ui-xs text-[var(--ink-muted)] flex items-center gap-2">
+              <Loader2 size={11} className="animate-spin" /> Sending…
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="border-t border-[var(--border-subtle)] p-3 shrink-0">
+        <div className="flex items-end gap-2">
+          <textarea
+            ref={composerRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
+            placeholder="Tell the builder what to change…"
+            rows={1}
+            className={`${textareaCls} min-h-[40px] max-h-32 flex-1 resize-none py-2.5`}
+          />
+          <button
+            type="button"
+            onClick={submit}
+            disabled={busy || !text.trim()}
+            className="mb-0.5 inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-fill)] px-3 py-2 text-ui-xs font-medium text-white hover:bg-[var(--accent-fill-hover)] disabled:opacity-50 transition"
+          >
+            <Send size={12} /> Send
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RunTerminal({ projectId }: { projectId: string | null }) {
+  const exec = useExecCommand(projectId)
+  const [command, setCommand] = useState('')
+  const [history, setHistory] = useState<{ id: string; command: string; stdout: string; stderr: string; exitCode: number; duration: number }[]>([])
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [history.length, exec.isPending])
+
+  const run = () => {
+    const trimmed = command.trim()
+    if (!trimmed || exec.isPending || !projectId) return
+    setCommand('')
+    exec.mutate({ command: trimmed, timeoutSeconds: 60 }, {
+      onSuccess: (result) => setHistory((prev) => [...prev, {
+        id: `${Date.now()}`,
+        command: result.command,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exit_code,
+        duration: result.duration_seconds,
+      }]),
+    })
+  }
+
+  return (
+    <div className="flex flex-1 min-h-0 flex-col">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto bg-black p-3 font-mono text-2xs">
+        {history.length === 0 && <p className="text-[var(--ink-muted)]">Run shell commands in your project workspace. Same machine the builder uses.</p>}
+        {history.map((h) => (
+          <div key={h.id} className="mb-3">
+            <div className="flex items-center gap-2 text-[var(--accent-text)]">
+              <span className="text-[var(--success)]">$</span>
+              <span>{h.command}</span>
+              <span className="ml-auto text-[var(--ink-muted)]">{h.duration.toFixed(2)}s</span>
+            </div>
+            {h.stdout && <pre className="mt-1 whitespace-pre-wrap text-[var(--ink-secondary)]">{h.stdout}</pre>}
+            {h.stderr && <pre className="mt-1 whitespace-pre-wrap text-[var(--danger)]">{h.stderr}</pre>}
+            <div className={`mt-1 text-3xs ${h.exitCode === 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>exit {h.exitCode}</div>
+          </div>
+        ))}
+        {exec.isPending && <p className="text-[var(--ink-muted)] flex items-center gap-2"><Loader2 size={11} className="animate-spin" /> Running…</p>}
+      </div>
+      <div className="border-t border-[var(--border-subtle)] p-3 shrink-0 bg-[var(--bg-base)]">
+        <div className="flex items-center gap-2">
+          <span className="text-[var(--success)] font-mono text-ui-xs">$</span>
+          <input
+            value={command}
+            onChange={(e) => setCommand(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') run() }}
+            placeholder="Type a command and press Enter"
+            disabled={exec.isPending}
+            className="flex-1 bg-transparent text-ui-xs text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] focus:outline-none font-mono"
+          />
+          <button
+            type="button"
+            onClick={run}
+            disabled={exec.isPending || !command.trim()}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-fill)] px-3 py-1.5 text-ui-xs font-medium text-white hover:bg-[var(--accent-fill-hover)] disabled:opacity-50 transition"
+          >
+            Run
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 

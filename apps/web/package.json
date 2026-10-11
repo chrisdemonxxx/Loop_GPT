@@ -22,6 +22,7 @@
     "@loop/loopit-contracts": "*",
     "@loop/shared": "*",
     "@loop/ui": "*",
+    "@novnc/novnc": "^1.7.0",
     "@sentry/browser": "^8.47.0",
     "@tanstack/react-query": "^5.17.0",
     "@tanstack/react-virtual": "^3.14.13",

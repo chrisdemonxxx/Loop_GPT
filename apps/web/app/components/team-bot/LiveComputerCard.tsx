@@ -3,6 +3,7 @@
 /** The hero: live noVNC view of the dedicated VM with a session HUD
  *  (LIVE pulse, sandbox, minutes, takeover countdown) and drive controls. */
 import { MonitorPlay, MonitorOff, HandMetal, Loader2, Maximize2 } from 'lucide-react'
+import { BotScreen } from './BotScreen'
 
 interface ComputerInfo {
   active: boolean
@@ -65,11 +66,9 @@ export function LiveComputerCard({
         )}
         <div className="relative w-full overflow-hidden rounded-xl ring-1 ring-[var(--border-subtle)]" style={{ aspectRatio: '16 / 10' }}>
           {info.active && info.viewUrl ? (
-            <iframe
-              src={(info.takeoverRequested && info.interactiveUrl) || info.viewUrl}
-              className="absolute inset-0 h-full w-full bg-black"
-              referrerPolicy="no-referrer"
-              title="Bot computer live view"
+            <BotScreen
+              url={(info.takeoverRequested && info.interactiveUrl) || info.viewUrl}
+              interactive={info.takeoverRequested}
             />
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black text-2xs text-[var(--ink-muted)] px-6 text-center">

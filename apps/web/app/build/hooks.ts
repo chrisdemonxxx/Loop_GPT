@@ -4,14 +4,17 @@ import { useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   approveGate,
+  cancelRun,
   createPreviewUrl,
   deployProject,
+  execCommand,
   forkCheckpoint,
   getFile,
   getRun,
   listRuns,
   rejectGate,
   rollbackCheckpoint,
+  sendRunMessage,
   startRun,
   streamRunEvents,
   toUserFacingError,
@@ -19,6 +22,7 @@ import {
   type CheckpointView,
   type RunDetail,
   type RunSummary,
+  type RunTier,
   type StreamEvent,
 } from '@loop/loopit-client'
 import { isLiveStatus } from './status'
@@ -54,8 +58,31 @@ export function useStartBuild() {
   return useMutation({
     // Effort is elastic and decided by the engine's brief; the product UI
     // sends only what the person typed.
-    mutationFn: (input: { prompt: string }) => startRun(input.prompt),
+    mutationFn: (input: { prompt: string; tier?: RunTier }) => startRun(input.prompt, { tier: input.tier }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['loopit-runs'] }),
+  })
+}
+
+export function useSendRunMessage(runId: string) {
+  return useMutation({
+    mutationFn: (message: string) => sendRunMessage(runId, message),
+  })
+}
+
+export function useCancelRun(runId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => cancelRun(runId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['loopit-run', runId] }),
+  })
+}
+
+export function useExecCommand(projectId: string | null) {
+  return useMutation({
+    mutationFn: (input: { command: string; timeoutSeconds?: number }) => {
+      if (!projectId) throw new Error('No project')
+      return execCommand(projectId, input.command, input.timeoutSeconds)
+    },
   })
 }
 
