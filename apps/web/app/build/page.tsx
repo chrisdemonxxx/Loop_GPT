@@ -10,7 +10,6 @@ import { AppPage } from '../components/AppPage'
 import { useBuildRuns, useStartBuild } from './hooks'
 import { ErrorNotice } from './shell'
 import { formatWhen, statusLabel, statusTone } from './status'
-import type { RunTier } from '@loop/loopit-client'
 
 const SAMPLES = [
   'A customer intake form with an admin review table.',
@@ -37,7 +36,6 @@ function BuildBoard() {
   const runs = useBuildRuns()
   const start = useStartBuild()
   const [prompt, setPrompt] = useState('')
-  const [tier, setTier] = useState<RunTier>('standard')
   const list = runs.data ?? []
 
   // The engine owns everything past this box: it expands the request into a
@@ -47,7 +45,7 @@ function BuildBoard() {
     const text = prompt.trim()
     if (!text || start.isPending) return
     try {
-      const created = await start.mutateAsync({ prompt: text, tier })
+      const created = await start.mutateAsync({ prompt: text })
       router.push(`/build/?run=${encodeURIComponent(created.run_id)}`)
     } catch {
       // The mutation records the error; the notice under the form renders it.
@@ -85,11 +83,8 @@ function BuildBoard() {
             </button>
           ))}
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <TierSelect value={tier} onChange={setTier} />
-            <p className="text-2xs text-[var(--ink-muted)]">Plans, builds, verifies and previews — then publishes with one click. ⌘/Ctrl+Enter to start.</p>
-          </div>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-2xs text-[var(--ink-muted)]">Plans, builds, verifies and previews — then publishes with one click. ⌘/Ctrl+Enter to start.</p>
           <button type="submit" className={btnPrimary} disabled={start.isPending || !prompt.trim()}>
             {start.isPending ? 'Starting…' : 'Start build'}
           </button>
@@ -149,37 +144,5 @@ function RunRow({ run }: { run: RunSummary }) {
       {run.summary && <p className="mt-1 line-clamp-1 text-ui-xs text-[var(--ink-muted)]">{run.summary}</p>}
       <p className="mt-1 text-ui-xs text-[var(--ink-muted)]">Created {formatWhen(run.started_at)}</p>
     </Link>
-  )
-}
-
-const TIER_LABELS: Record<RunTier, string> = {
-  quick: 'Quick',
-  standard: 'Standard',
-  deep: 'Deep',
-  max: 'Max',
-}
-
-const TIER_HINTS: Record<RunTier, string> = {
-  quick: '8 iters — small edits, fixes',
-  standard: '14 iters — most apps',
-  deep: '24 iters — complex flows',
-  max: '40 iters — big refactors',
-}
-
-function TierSelect({ value, onChange }: { value: RunTier; onChange: (tier: RunTier) => void }) {
-  return (
-    <div className="flex items-center gap-2">
-      <label htmlFor="tier" className="text-2xs text-[var(--ink-muted)]">Effort</label>
-      <select
-        id="tier"
-        value={value}
-        onChange={(e) => onChange(e.target.value as RunTier)}
-        className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-2 py-1 text-2xs text-[var(--ink-secondary)] focus:border-[var(--accent-soft-border)] focus:outline-none"
-      >
-        {(Object.keys(TIER_LABELS) as RunTier[]).map((tier) => (
-          <option key={tier} value={tier}>{TIER_LABELS[tier]} — {TIER_HINTS[tier]}</option>
-        ))}
-      </select>
-    </div>
   )
 }

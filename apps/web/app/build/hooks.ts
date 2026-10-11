@@ -22,7 +22,6 @@ import {
   type CheckpointView,
   type RunDetail,
   type RunSummary,
-  type RunTier,
   type StreamEvent,
 } from '@loop/loopit-client'
 import { isLiveStatus } from './status'
@@ -57,8 +56,8 @@ export function useStartBuild() {
   const queryClient = useQueryClient()
   return useMutation({
     // Effort is elastic and decided by the engine's brief; the product UI
-    // sends only what the person typed.
-    mutationFn: (input: { prompt: string; tier?: RunTier }) => startRun(input.prompt, { tier: input.tier }),
+    // sends only what the person typed — no preset budget or iteration cap.
+    mutationFn: (input: { prompt: string }) => startRun(input.prompt),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['loopit-runs'] }),
   })
 }

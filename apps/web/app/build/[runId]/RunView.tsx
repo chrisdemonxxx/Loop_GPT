@@ -26,7 +26,6 @@ import {
   type ApprovalGate,
   type CheckpointView,
   type RunSummary,
-  type RunTier,
   type StreamEvent,
   type TaskNodeView,
 } from '@loop/loopit-client'
@@ -184,7 +183,6 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
       meta={(
         <>
           {status && <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>}
-          {ui.run?.tier && <Badge tone="neutral">{ui.run.tier}</Badge>}
           {live && <StatusDot state="working" />}
           {startedAt && <Elapsed since={startedAt} live={!!live} />}
           {ui.cost?.credits_spent != null && ui.cost.credits_spent > 0 && (
@@ -674,7 +672,7 @@ function RetryButton({ run }: { run: RunSummary | null | undefined }) {
       disabled={start.isPending}
       onClick={async () => {
         try {
-          const created = await start.mutateAsync({ prompt: run.prompt, tier: run.tier })
+          const created = await start.mutateAsync({ prompt: run.prompt })
           router.push(`/build/?run=${encodeURIComponent(created.run_id)}`)
         } catch { /* error surfaces via start.error */ }
       }}
