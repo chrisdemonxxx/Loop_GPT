@@ -91,6 +91,33 @@ function attachSkill(task: { userId: string | null; skillId: string | null }, na
   return { names: merged, systemPrompt: prompt }
 }
 
+/** The named bot's identity + remembered notes, injected for its runs so a
+ *  bot answers as itself and keeps what it learned between sessions. */
+async function attachBotIdentity(
+  task: { userId: string | null; botId: string | null },
+  names: string[],
+  systemPrompt: string,
+): Promise<{ names: string[]; systemPrompt: string }> {
+  if (!task.userId || !task.botId) return { names, systemPrompt }
+  let persona = ''
+  try {
+    const { prisma } = await import('./prisma')
+    const bot = prisma
+      ? await prisma.bot.findFirst({ where: { id: task.botId, ownerId: task.userId }, select: { name: true, persona: true } })
+      : null
+    if (bot) persona = `You are "${bot.name}"${bot.persona ? ` — ${bot.persona}` : ''}. Answer as this teammate, in its voice.`
+  } catch { /* persona is a nice-to-have, never a run blocker */ }
+  const { botMemoryPromptSection } = await import('./botMemory')
+  const memory = botMemoryPromptSection(task.userId, task.botId)
+  const parts = [persona, memory].filter(Boolean)
+  if (!parts.length) return { names, systemPrompt }
+  const merged = names.includes('remember_fact') ? names : [...names, 'remember_fact']
+  return {
+    names: merged,
+    systemPrompt: `${systemPrompt}\n\nBOT IDENTITY\n${parts.join('\n\n')}`,
+  }
+}
+
 export interface BotIdentity { userId: string; workspaceId: string; conversationId: string }
 
 let identityPromise: Promise<BotIdentity> | undefined
@@ -306,6 +333,9 @@ export async function executeBotTask(
     let systemPrompt = computer ? `${BOT_SYSTEM_PROMPT}\n\n${COMPUTER_SYSTEM_ADDENDUM}` : BOT_SYSTEM_PROMPT
     const attached = attachSkill(task, runNames, systemPrompt)
     if (attached) { runNames = attached.names; systemPrompt = attached.systemPrompt }
+    const identified = await attachBotIdentity(task, runNames, systemPrompt)
+    runNames = identified.names
+    systemPrompt = identified.systemPrompt
     if (skillTool && !runNames.includes('create_skill')) runNames = [...runNames, 'create_skill']
     const authorizedCtx = await authorizeRunContext(ctx, identity.workspaceId, grantedTools)
     run.emit({ type: 'run', runId: run.runId } as AgentEvent)
@@ -409,6 +439,12 @@ export async function executeBotTask(
       }),
     })
     await run.complete({ content: finalContent, artifacts, usage })
+    // The task wrote files into the box; flush the workspace to the durable
+    // mirror now so a box death before the next idle sync costs nothing.
+    if (computer && task.userId) {
+      const { syncUserBoxNow } = await import('./botBox')
+      await syncUserBoxNow(task.userId).catch(() => undefined)
+    }
     const ack = await completeAgentTask(claim)
     return ack === 'succeeded' ? 'succeeded' : 'lease_lost'
   } catch (error: any) {

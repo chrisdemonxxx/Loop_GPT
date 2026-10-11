@@ -43,6 +43,13 @@ router.post('/', asyncHandler(async (req, res) => {
       defaultTools: Array.isArray(body.defaultTools) ? body.defaultTools.map(String) : undefined,
       cloudComputer: body.cloudComputer === true,
     }, await userName(userId))
+    // A new teammate gets a home in the one computer right away; if the box
+    // is asleep the boot path seeds every home anyway.
+    const botId = (created as any)?.bot?.id
+    if (botId) {
+      const { seedBotHomeNow } = await import('../services/botBox')
+      void seedBotHomeNow(userId, botId, String(body.name || 'bot')).catch(() => undefined)
+    }
     res.status(201).json(created)
   } catch (error) { return fail(res, error) }
 }))

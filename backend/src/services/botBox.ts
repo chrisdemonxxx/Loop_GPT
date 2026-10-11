@@ -1,6 +1,8 @@
 import crypto from 'node:crypto'
 import { buildVncUrls, isE2BConfigured } from './e2bDesktop'
 import { prisma } from './prisma'
+import { readBotMemory } from './botMemory'
+import { restoreWorkspaceIn, syncWorkspaceOut, syncWorkspaceThrottled } from './workspaceSync'
 
 type Sandbox = any
 
@@ -107,6 +109,27 @@ async function seedBoxProfile(sandbox: Sandbox, userLabel: string, taskType: Box
   if (cmds.length > 0) await runInBox(sandbox, cmds.join(' && '))
 }
 
+/** Every bot gets a home inside the one computer, and every bot sees the
+ *  shared dir — "multiple agents deployed inside it, files stay with them".
+ *  Idempotent: homes are created only when absent, and a bot's MEMORY.md is
+ *  seeded from the durable mirror without overwriting notes it wrote itself. */
+async function seedBotHomes(sandbox: Sandbox, userId: string): Promise<void> {
+  if (!prisma) return
+  try {
+    const bots = await prisma.bot.findMany({ where: { ownerId: userId }, select: { id: true, name: true } })
+    await runInBox(sandbox, `mkdir -p /workspace/agents /workspace/shared`)
+    for (const bot of bots) {
+      const home = `/workspace/agents/${bot.id}`
+      const mirror = readBotMemory(userId, bot.id)
+      await runInBox(sandbox, [
+        `mkdir -p ${quote(home)}`,
+        `[ -f ${quote(`${home}/README.md`)} ] || printf '# %s\\nHome of bot %s. Files here persist; /workspace/shared is visible to every bot.\\n' ${quote(bot.name)} ${quote(bot.id)} > ${quote(`${home}/README.md`)}`,
+        ...(mirror ? [`[ -f ${quote(`${home}/MEMORY.md`)} ] || printf '%s\\n' ${quote(mirror)} > ${quote(`${home}/MEMORY.md`)}`] : []),
+      ].join(' && '))
+    }
+  } catch { /* home seeding is best-effort, never a boot blocker */ }
+}
+
 async function readVncUrls(sandbox: Sandbox): Promise<{ streamUrl: string; interactiveUrl: string | null; streamAuthKey: string | null }> {
   // The @e2b/desktop sandbox exposes a managed noVNC stream.
   try {
@@ -208,6 +231,7 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
         // Touch to keep alive; resume if paused. Timeout stays inside the daily budget.
         await existing.sandbox.setTimeout(timeoutMs)
         existing.lastTouchedAt = Date.now()
+        syncWorkspaceThrottled(existing.sandbox, userId)
         const stream = await readVncUrls(existing.sandbox)
         await rememberBoxStream(userId, existing.sandboxId, stream)
         return {
@@ -276,7 +300,13 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
     })
 
     await runInBox(sandbox, 'mkdir -p /workspace /home/user/Desktop')
+    // A fresh box is empty; the user's files come back from the durable mirror
+    // before any seeding writes anything, so a restore never clobbers a seed
+    // and a seed never clobbers a restored file.
+    const restored = await restoreWorkspaceIn(sandbox, userId)
     await seedBoxProfile(sandbox, userLabel, taskType)
+    await seedBotHomes(sandbox, userId)
+    if (restored) console.info('[bot-box] workspace restored from durable mirror', { userId })
 
     const state: BoxState = {
       sandboxId: sandbox.sandboxId,
@@ -344,10 +374,35 @@ export async function getUserBoxStatus(userId: string): Promise<{ alive: boolean
   }
 }
 
-/** Graceful shutdown (deploys / restarts). */
+/** Graceful shutdown (deploys / restarts): sync every workspace out first —
+ *  a deploy must never cost the user their files. */
 export async function killAllBoxes(): Promise<void> {
-  for (const [, state] of liveBoxes) {
+  for (const [userId, state] of liveBoxes) {
+    try { await syncWorkspaceOut(state.sandbox, userId) } catch { /* best effort */ }
     try { await state.sandbox.kill() } catch { /* best effort */ }
   }
   liveBoxes.clear()
+}
+
+/** Force a workspace sync for a live box (called when a task finishes, so the
+ *  durable mirror is never more than one task stale). */
+export async function syncUserBoxNow(userId: string): Promise<void> {
+  const live = liveBoxes.get(userId)
+  if (live) await syncWorkspaceOut(live.sandbox, userId)
+}
+
+/** Seed a home for one bot inside the user's live box (called when a bot is
+ *  created while the box is up; the boot path seeds all of them). */
+export async function seedBotHomeNow(userId: string, botId: string, botName: string): Promise<void> {
+  const live = liveBoxes.get(userId)
+  if (!live) return
+  try {
+    const home = `/workspace/agents/${botId}`
+    const mirror = readBotMemory(userId, botId)
+    await runInBox(live.sandbox, [
+      `mkdir -p ${quote(home)} /workspace/shared`,
+      `[ -f ${quote(`${home}/README.md`)} ] || printf '# %s\\nHome of bot %s. Files here persist; /workspace/shared is visible to every bot.\\n' ${quote(botName)} ${quote(botId)} > ${quote(`${home}/README.md`)}`,
+      ...(mirror ? [`[ -f ${quote(`${home}/MEMORY.md`)} ] || printf '%s\\n' ${quote(mirror)} > ${quote(`${home}/MEMORY.md`)}`] : []),
+    ].join(' && '))
+  } catch { /* best effort */ }
 }

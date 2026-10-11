@@ -17,7 +17,7 @@ import { generateStyleTool } from './tools/generateStyle'
 import { speakTool } from './tools/speakText'
 import { ocrTool } from './tools/ocr'
 import { executeCodeTool } from './tools/executeCode'
-import { createSkillTool, createCustomToolTool } from './tools/metaTools'
+import { createSkillTool, createCustomToolTool, rememberFactTool } from './tools/metaTools'
 import { pluginRegistry } from './plugins/pluginLoader'
 import { connectorRegistry } from './connectors/connectorRegistry'
 import { customToolRegistry } from './customTools'
@@ -46,6 +46,9 @@ const BUILTIN_TOOLS = [
 
 export function registerBuiltinTools() {
   for (const tool of BUILTIN_TOOLS) toolRegistry.register(tool)
+  // Bot-scoped memory is granted explicitly by the bot runner (it needs a
+  // named bot in context), not offered to every chat by default.
+  toolRegistry.register(rememberFactTool)
 }
 
 /** Names of the always-available built-in tools (used as the default toolset). */

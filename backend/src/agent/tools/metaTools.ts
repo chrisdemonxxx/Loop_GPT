@@ -8,6 +8,7 @@ import { randomUUID } from 'crypto'
 import { createUserSkill } from '../skills/skillLoader'
 import { buildCustomTool, customToolRegistry, CustomToolError } from '../customTools'
 import { configStore } from '../configStore'
+import { appendBotMemory } from '../../services/botMemory'
 import type { ToolDefinition } from '../types'
 
 function asStringArray(v: any): string[] | undefined {
@@ -51,6 +52,33 @@ export const createSkillTool: ToolDefinition = {
       content: `Created and enabled the skill "${skill.name}"${skill.triggers?.length ? ` (activates on: ${skill.triggers.join(', ')})` : ''}. It will apply automatically when relevant.`,
       data: { skill },
     }
+  },
+}
+
+/** Keep one durable note for later sessions. Only granted to named-bot runs:
+ *  the note lands in that bot's own memory file, which is what makes a bot —
+ *  not the whole account — get smarter over time. */
+export const rememberFactTool: ToolDefinition = {
+  name: 'remember_fact',
+  source: 'builtin',
+  description:
+    'Save one short fact to your long-term memory when you learn something that will matter in a later session (a preference, a decision, an account detail, a procedure that worked). One sentence; write it for your future self.',
+  parameters: {
+    type: 'object',
+    properties: {
+      fact: { type: 'string', description: 'One sentence to remember, e.g. "Acme only signs annual plans; Dana approves them."' },
+    },
+    required: ['fact'],
+  },
+  async handler(args, ctx) {
+    const fact = String(args.fact || '').trim()
+    if (!fact) return { content: 'Error: nothing to remember.', isError: true }
+    const botId = typeof ctx?.scratch?.botId === 'string' ? ctx.scratch.botId : null
+    if (!ctx?.userId || !botId) return { content: 'Error: memory is only available to a named bot.', isError: true }
+    const ok = appendBotMemory(ctx.userId, botId, fact)
+    return ok
+      ? { content: 'Noted — I will remember that next time.' }
+      : { content: 'Error: the memory store is unavailable right now.', isError: true }
   },
 }
 

@@ -196,6 +196,102 @@ router.post('/runs/:runId/takeover', asyncHandler(async (req, res) => {
   res.json({ takeoverRequested: takeover, interactiveUrl: takeover ? info?.interactiveUrl || null : null })
 }))
 
+/** GET /api/bot/routines — YOUR recurring jobs (bot + skill + schedule) with run history. */
+router.get('/routines', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { listRoutines } = await import('../services/routines')
+  res.json({ routines: await listRoutines((req as any).userId) })
+}))
+
+/** POST /api/bot/routines { goal, schedule, skillId?, botId? } — create one. */
+router.post('/routines', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { createRoutine } = await import('../services/routines')
+  const body = req.body || {}
+  const goal = String(body.goal || '').trim()
+  const schedule = String(body.schedule || '')
+  if (!goal || !/^\d+[mhd]$/.test(schedule)) {
+    return res.status(400).json({ error: 'A routine needs a goal and a schedule like 30m, 6h, or 1d', code: 'invalid_request' })
+  }
+  try {
+    const routine = await createRoutine((req as any).userId, {
+      goal,
+      schedule,
+      ...(typeof body.skillId === 'string' && body.skillId ? { skillId: body.skillId } : {}),
+      ...(typeof body.botId === 'string' && body.botId ? { botId: body.botId } : {}),
+    })
+    res.status(201).json({ routine })
+  } catch (error) {
+    return botError(res, error)
+  }
+}))
+
+/** PATCH /api/bot/routines/:id { paused } — pause/resume. */
+router.patch('/routines/:id', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { setRoutinePaused } = await import('../services/routines')
+  const routine = await setRoutinePaused((req as any).userId, req.params.id, req.body?.paused === true)
+  if (!routine) return res.status(404).json({ error: 'Routine not found' })
+  res.json({ routine })
+}))
+
+/** DELETE /api/bot/routines/:id — cancel it for good. */
+router.delete('/routines/:id', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { deleteRoutine } = await import('../services/routines')
+  const ok = await deleteRoutine((req as any).userId, req.params.id)
+  if (!ok) return res.status(404).json({ error: 'Routine not found or already finished' })
+  res.json({ ok: true })
+}))
+
+/** GET /api/bot/computer/files?path= — list a directory in YOUR box. */
+router.get('/computer/files', asyncHandler(async (req, res) => {
+  const { listBoxFiles, BoxFilesError } = await import('../services/boxFiles')
+  try {
+    const entries = await listBoxFiles((req as any).userId, typeof req.query.path === 'string' ? req.query.path : '/workspace')
+    res.json({ entries })
+  } catch (error) {
+    if (error instanceof BoxFilesError) return res.status(error.code === 'no_box' ? 409 : error.code === 'bad_path' ? 400 : 404).json({ error: error.message, code: error.code })
+    throw error
+  }
+}))
+
+/** GET /api/bot/computer/file?path= — read a text file from YOUR box. */
+router.get('/computer/file', asyncHandler(async (req, res) => {
+  const { readBoxFile, BoxFilesError } = await import('../services/boxFiles')
+  try {
+    const body = await readBoxFile((req as any).userId, String(req.query.path || ''))
+    res.json(body)
+  } catch (error) {
+    if (error instanceof BoxFilesError) return res.status(error.code === 'no_box' ? 409 : error.code === 'bad_path' ? 400 : error.code === 'too_large' ? 413 : 404).json({ error: error.message, code: error.code })
+    throw error
+  }
+}))
+
+/** PUT /api/bot/computer/file { path, content } — write a text file into YOUR box. */
+router.put('/computer/file', express.json({ limit: '4mb' }), asyncHandler(async (req, res) => {
+  const { writeBoxFile, BoxFilesError } = await import('../services/boxFiles')
+  try {
+    const result = await writeBoxFile((req as any).userId, String(req.body?.path || ''), String(req.body?.content ?? ''))
+    res.json(result)
+  } catch (error) {
+    if (error instanceof BoxFilesError) return res.status(error.code === 'no_box' ? 409 : error.code === 'bad_path' ? 400 : error.code === 'too_large' ? 413 : 404).json({ error: error.message, code: error.code })
+    throw error
+  }
+}))
+
+/** DELETE /api/bot/computer/file?path= — remove a file or directory from YOUR box. */
+router.delete('/computer/file', asyncHandler(async (req, res) => {
+  const { deleteBoxPath, BoxFilesError } = await import('../services/boxFiles')
+  try {
+    await deleteBoxPath((req as any).userId, String(req.query.path || ''))
+    res.json({ ok: true })
+  } catch (error) {
+    if (error instanceof BoxFilesError) return res.status(error.code === 'no_box' ? 409 : error.code === 'bad_path' ? 400 : 404).json({ error: error.message, code: error.code })
+    throw error
+  }
+}))
+
 /** GET /api/bot/computer - YOUR persistent box (Grok parity): the always-on
  *  computer that exists independent of any task. Boots or resumes it on
  *  demand and returns the live stream; per-task runs attach to this same VM.
