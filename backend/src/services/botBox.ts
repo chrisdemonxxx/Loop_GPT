@@ -367,14 +367,56 @@ export async function createBoxTaskFolder(userId: string, taskId: string, goal: 
   }
 }
 
-/** Swap the SDK-started XFCE shim session for the template's real desktop.
+/** Swap the SDK-started XFCE shim session for a real GNOME desktop.
  *
- *  The @e2b/desktop client starts and verifies XFCE at create() time, so the
- *  image ships those binaries purely as the boot shim. Once create() has
- *  returned, GNOME takes the display: gnome-session under a private D-Bus
- *  session, gnome-shell on mutter's X11 backend with software GL (Xvfb has
- *  no GPU). Best-effort and idempotent — a failed swap leaves the XFCE shim
- *  running, which still streams and drives, so the box is degraded, not dead. */
+ *  Why GNOME is installed in the box and not in the template: E2B's build
+ *  pipeline accepted GNOME packages at build time (dpkg '^ii' verified in
+ *  the build log) and then dropped exactly that layer during its optimize /
+ *  snapshot phase — three rebuilds proved it. Installing into the live box
+ *  on first boot takes ~2-4 minutes once per box lifetime and nothing can
+ *  prune it afterwards. The SDK's create() still boots the XFCE shim first;
+ *  everything it does afterwards — stream, screenshots, input — is
+ *  desktop-agnostic, so once GNOME owns the display the swap is invisible
+ *  to the SDK.
+ *
+ *  Best-effort and idempotent: a failed swap leaves the XFCE shim running,
+ *  which still streams and drives, so the box is degraded, not dead. */
+const GNOME_PACKAGES = [
+  'gnome-session',
+  'gnome-shell',
+  'mutter',
+  'gnome-terminal',
+  'nautilus',
+  'gnome-backgrounds',
+  'adwaita-icon-theme-full',
+  'gnome-themes-extra',
+  'dbus-x11',
+  'mesa-utils',
+  'libgl1-mesa-dri',
+]
+
+async function ensureGnomeInstalled(sandbox: Sandbox): Promise<boolean> {
+  try {
+    const present = await sandbox.commands.run('test -x /usr/bin/gnome-shell -a -x /usr/bin/gnome-session', { timeoutMs: 10_000 })
+    if ((present.exitCode ?? 1) === 0) return true
+  } catch { /* fall through to install */ }
+  console.info('[bot-box] installing GNOME into the live box (first boot)')
+  const install = await sandbox.commands.run(
+    `sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ${GNOME_PACKAGES.join(' ')}`,
+    { timeoutMs: 480_000 },
+  ).catch((error) => {
+    console.warn('[bot-box] GNOME install failed', String(error))
+    return null
+  })
+  if (!install || (install.exitCode ?? 1) !== 0) return false
+  try {
+    const verify = await sandbox.commands.run('test -x /usr/bin/gnome-shell -a -x /usr/bin/gnome-session', { timeoutMs: 10_000 })
+    return (verify.exitCode ?? 1) === 0
+  } catch {
+    return false
+  }
+}
+
 async function swapToGnomeSession(sandbox: Sandbox): Promise<void> {
   const marker = '/tmp/.loop-gnome-session'
   try {
@@ -382,10 +424,15 @@ async function swapToGnomeSession(sandbox: Sandbox): Promise<void> {
     if (already && (already.exitCode ?? 1) === 0) return
   } catch { /* proceed */ }
 
+  if (!(await ensureGnomeInstalled(sandbox))) {
+    console.warn('[bot-box] GNOME unavailable; the XFCE shim remains as the desktop')
+    return
+  }
+
   const autostarts = [
     // GNOME must never blank or lock: the bot and the operator watch this
     // screen, and a black frame looks like a dead box.
-    `printf '[Desktop Entry]\\nType=Application\\nName=Loop GNOME settings\\nExec=sh -c "gsettings set org.gnome.desktop.session idle-delay 0; gsettings set org.gnome.desktop.screensaver lock-enabled false; gsettings set org.gnome.desktop.background picture-uri file:///usr/share/backgrounds/wallpaper.png"\\nX-GNOME-Autostart-enabled=true\\n' > /home/user/.config/autostart/loop-gnome-settings.desktop`,
+    `printf '[Desktop Entry]\\nType=Application\\nName=Loop GNOME settings\\nExec=sh -c "gsettings set org.gnome.desktop.session idle-delay 0; gsettings set org.gnome.desktop.screensaver lock-enabled false"\\nX-GNOME-Autostart-enabled=true\\n' > /home/user/.config/autostart/loop-gnome-settings.desktop`,
     `chown -R user:user /home/user/.config 2>/dev/null || true`,
   ]
   await runInBox(sandbox, autostarts.join(' && '))
@@ -393,7 +440,7 @@ async function swapToGnomeSession(sandbox: Sandbox): Promise<void> {
   const swap = [
     'pkill -f xfce4-session 2>/dev/null; pkill -x xfwm4 2>/dev/null; pkill -x xfdesktop 2>/dev/null; true',
     'sleep 1',
-    'cd /home/user && sudo -u user DISPLAY=:0 XDG_SESSION_TYPE=x11 XDG_CURRENT_DESKTOP=GNOME LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe dbus-run-session -- gnome-session --session=gnome > /tmp/gnome-session.log 2>&1 &',
+    'cd /home/user && sudo -u user DISPLAY=:0 XDG_SESSION_TYPE=x11 XDG_CURRENT_DESKTOP=GNOME LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe /usr/bin/dbus-run-session -- /usr/bin/gnome-session --session=gnome > /tmp/gnome-session.log 2>&1 &',
     `touch ${marker}`,
   ].join('; ')
   try {
@@ -401,26 +448,37 @@ async function swapToGnomeSession(sandbox: Sandbox): Promise<void> {
     await handle.disconnect?.().catch(() => undefined)
   } catch { /* fall through to the wait */ }
 
-  // Software-GL gnome-shell takes a while; give it a minute, then try the
-  // direct nested-shell path as a fallback before declaring the swap dead.
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    for (let i = 0; i < 45; i += 1) {
-      try {
-        const r = await sandbox.commands.run('pgrep -x gnome-shell >/dev/null && pgrep -x mutter >/dev/null', { timeoutMs: 5_000 })
-        if ((r.exitCode ?? 1) === 0) {
-          console.info('[bot-box] GNOME session owns the display', { attempt })
-          return
-        }
-      } catch { /* keep waiting */ }
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-    }
+  // Success check is gnome-shell alone: in nested X11 mode mutter lives
+  // inside the shell process as a library, so a separate mutter process
+  // never appears. gnome-session gets a short window (without systemd's
+  // user manager it usually cannot come up), then the nested shell, which
+  // is the reliable path under Xvfb.
+  for (let i = 0; i < 20; i += 1) {
     try {
-      const handle = await sandbox.commands.run(
-        'cd /home/user && sudo -u user DISPLAY=:0 XDG_CURRENT_DESKTOP=GNOME LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe gnome-shell --x11 --replace > /tmp/gnome-shell.log 2>&1 &',
-        { background: true, timeoutMs: 0 },
-      )
-      await handle.disconnect?.().catch(() => undefined)
-    } catch { /* the next wait loop reports */ }
+      const r = await sandbox.commands.run('pgrep -x gnome-shell >/dev/null', { timeoutMs: 5_000 })
+      if ((r.exitCode ?? 1) === 0) {
+        console.info('[bot-box] GNOME session owns the display')
+        return
+      }
+    } catch { /* keep waiting */ }
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+  }
+  try {
+    const handle = await sandbox.commands.run(
+      'cd /home/user && sudo -u user DISPLAY=:0 XDG_CURRENT_DESKTOP=GNOME LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe /usr/bin/gnome-shell --x11 --replace > /tmp/gnome-shell.log 2>&1 &',
+      { background: true, timeoutMs: 0 },
+    )
+    await handle.disconnect?.().catch(() => undefined)
+  } catch { /* the next wait loop reports */ }
+  for (let i = 0; i < 45; i += 1) {
+    try {
+      const r = await sandbox.commands.run('pgrep -x gnome-shell >/dev/null', { timeoutMs: 5_000 })
+      if ((r.exitCode ?? 1) === 0) {
+        console.info('[bot-box] GNOME shell owns the display (nested mode)')
+        return
+      }
+    } catch { /* keep waiting */ }
+    await new Promise((resolve) => setTimeout(resolve, 1000))
   }
   console.warn('[bot-box] GNOME session did not verify; the XFCE shim remains as the desktop')
 }

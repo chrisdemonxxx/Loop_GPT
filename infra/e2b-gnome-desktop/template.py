@@ -39,19 +39,6 @@ template = (
             "xfce4-session",
             "xfwm4",
             "xfdesktop4",
-            # The actual desktop: GNOME shell on mutter's X11 backend.
-            "gnome-session",
-            "gnome-shell",
-            "mutter",
-            "gnome-terminal",
-            "nautilus",
-            "gnome-backgrounds",
-            "adwaita-icon-theme-full",
-            "gnome-themes-extra",
-            "dbus-x11",
-            # Software GL so gnome-shell runs under Xvfb.
-            "mesa-utils",
-            "libgl1-mesa-dri",
             "util-linux",
             "sudo",
             "curl",
@@ -65,15 +52,19 @@ template = (
             "net-tools",
             "netcat",
             "x11-apps",
-            "libreoffice",
             "xpdf",
-            "gedit",
             "galculator",
             "software-properties-common",
             "apt-transport-https",
             "libgtk-3-bin",
         ]
     )
+    # NOTE: GNOME is deliberately NOT installed here. E2B's optimize/snapshot
+    # phase drops the GNOME layer from the final image (verified across three
+    # rebuilds — the build log shows the packages installed and the booted
+    # sandbox lacks them). botBox installs GNOME into the live box on first
+    # boot instead (~2-4 min once per box lifetime, nothing can prune it).
+    .apt_install(["libreoffice", "gedit"])
     .pip_install("numpy")
     # NoVNC and websockify — identical to the upstream recipe; the stream
     # path does not care which compositor owns the display.
