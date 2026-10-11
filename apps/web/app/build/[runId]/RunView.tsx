@@ -1,8 +1,12 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
+import {
+  AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, FileCode2,
+  FileText, Loader2, Monitor, Rocket, RotateCw, ShieldCheck, Smartphone, Sparkles, X,
+} from 'lucide-react'
 import { Badge, EmptyState, LoadingState, SectionHeader, StatusDot, btnGhost, btnOutline, btnPrimary, panelCls } from '@loop/ui'
 import {
   ApiError,
@@ -47,6 +51,9 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const [action, setAction] = useState<CheckpointAction | null>(null)
   const [deployUrl, setDeployUrl] = useState<string | null>(null)
   const [previewPath, setPreviewPath] = useState<string | null>(null)
+  const [codePath, setCodePath] = useState<string | null>(null)
+  const [previewEpoch, setPreviewEpoch] = useState(0)
+  const reloadTimer = useRef<number | null>(null)
 
   useEffect(() => {
     const detail = query.data
@@ -62,13 +69,24 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
     setPreviewPath((current) => current ?? pickPreviewFile(detail.files) ?? null)
   }, [query.data])
 
+  /** The preview re-renders when the builder touches files — debounced so a
+   *  patch storm reloads once, not per patch. */
+  const pokePreviewReload = useCallback(() => {
+    if (reloadTimer.current) window.clearTimeout(reloadTimer.current)
+    reloadTimer.current = window.setTimeout(() => setPreviewEpoch((n) => n + 1), 1500)
+  }, [])
+
   const onStream = useCallback((event: StreamEvent) => {
     setUi((prev) => reduceRunEvent(prev, event))
     if (event.kind === 'run') {
       const next = pickPreviewFile(event.files)
       if (next) setPreviewPath((current) => current ?? next)
+      pokePreviewReload()
     }
-  }, [])
+    if (event.kind === 'audit' && event.type === 'tool.called' && event.outcome === 'success') {
+      pokePreviewReload()
+    }
+  }, [pokePreviewReload])
 
   const status = ui.run?.status ?? query.data?.status
   const live = isLiveStatus(status)
@@ -123,10 +141,11 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const missing = fetchError instanceof ApiError && fetchError.status === 404 && !offline
   const title = runTitle(ui.run ?? query.data)
   const startedAt = ui.run?.started_at || query.data?.started_at
+  const files = ui.run?.files ?? []
 
   return (
     <AppPage
-      width="wide"
+      width="fill"
       back={BACK}
       title={title}
       documentTitle="Build"
@@ -134,7 +153,10 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
         <>
           {status && <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>}
           {live && <StatusDot state="working" />}
-          {startedAt && <span>Created {formatWhen(startedAt)}</span>}
+          {startedAt && <Elapsed since={startedAt} live={!!live} />}
+          {ui.cost?.credits_spent != null && ui.cost.credits_spent > 0 && (
+            <span>{ui.cost.credits_spent.toFixed(3)} credits</span>
+          )}
         </>
       )}
       actions={(
@@ -144,7 +166,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
           disabled={!verified || checkpointMutation.isPending}
           onClick={() => verified && setAction({ kind: 'deploy', checkpoint: verified })}
         >
-          Publish
+          <Rocket size={13} className="mr-1.5 inline" />Publish
         </button>
       )}
     >
@@ -196,31 +218,43 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
       <GateList gates={ui.gates} busy={gateMutation.isPending} onDecision={decideGate} />
 
       {!query.isPending && !fetchError && (
-        <div className="mt-6 grid gap-4 lg:grid-cols-[22rem_minmax(0,1fr)]">
-          <div className="space-y-4 min-w-0">
-            <TaskGraph dagGoal={ui.dag?.goal ?? null} nodes={nodes} showCompleted={showCompleted} onToggle={() => setShowCompleted((value) => !value)} />
-            <CheckpointList checkpoints={ui.checkpoints} onAction={setAction} />
-            <ActivityList
-              activity={ui.activity}
-              running={live}
-              outcome={status ? {
-                status,
-                summary: ui.run?.summary ?? null,
-                iterations: ui.cost?.iterations,
-                credits: ui.cost?.credits_spent,
-              } : null}
+        <>
+          {status && <StatusStepper status={status} />}
+          <div className="mt-4 grid gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
+            <div className="space-y-4 min-w-0 order-2 xl:order-1">
+              <TaskGraph dagGoal={ui.dag?.goal ?? null} nodes={nodes} showCompleted={showCompleted} onToggle={() => setShowCompleted((value) => !value)} />
+              <ActivityTimeline
+                activity={ui.activity}
+                running={!!live}
+                outcome={status ? {
+                  status,
+                  summary: ui.run?.summary ?? null,
+                  iterations: ui.cost?.iterations,
+                  credits: ui.cost?.credits_spent,
+                } : null}
+              />
+              <CheckpointList checkpoints={ui.checkpoints} onAction={setAction} />
+            </div>
+            <PreviewWorkspace
+              className="order-1 xl:order-2"
+              runId={runId}
+              files={files}
+              selected={previewPath}
+              onSelect={(path) => {
+                if (/\.html?$/i.test(path)) { setPreviewPath(path); setCodePath(null) }
+                else setCodePath(path)
+              }}
+              codePath={codePath}
+              onCloseCode={() => setCodePath(null)}
+              url={preview.data ?? null}
+              epoch={previewEpoch}
+              onReload={() => setPreviewEpoch((n) => n + 1)}
+              loading={preview.isFetching}
+              error={preview.isError ? toUserFacingError(preview.error).message : null}
+              live={!!live}
             />
           </div>
-          <Preview
-            runId={runId}
-            files={ui.run?.files ?? []}
-            selected={previewPath}
-            onSelect={setPreviewPath}
-            url={preview.data ?? null}
-            loading={preview.isFetching}
-            error={preview.isError ? toUserFacingError(preview.error).message : null}
-          />
-        </div>
+        </>
       )}
 
       <CheckpointDialog
@@ -238,6 +272,57 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
 function versionLabel(checkpoints: CheckpointView[], target: CheckpointView): string {
   const index = checkpoints.findIndex((checkpoint) => checkpoint.checkpoint_id === target.checkpoint_id)
   return `Version ${index >= 0 ? index + 1 : checkpoints.length}`
+}
+
+/** Ticking elapsed timer next to the status badge ("3m 12s"). */
+function Elapsed({ since, live }: { since: string; live: boolean }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!live) return
+    const t = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(t)
+  }, [live])
+  const start = new Date(since).getTime()
+  if (Number.isNaN(start)) return <span>Created {formatWhen(since)}</span>
+  const seconds = Math.max(0, Math.floor((now - start) / 1000))
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return <span className="tabular-nums">{m > 0 ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`}</span>
+}
+
+/** Planning → Building → Verifying → Done, as a compact stepper. */
+function StatusStepper({ status }: { status: string }) {
+  const value = status.toLowerCase()
+  const failed = ['error', 'failed', 'budget_exceeded', 'stalled', 'cancelled', 'canceled'].includes(value)
+  const stage =
+    value === 'planning' ? 0
+    : ['verified', 'merged', 'deployed', 'completed', 'success'].includes(value) ? 3
+    : ['verifying', 'checkpointing', 'deploying'].includes(value) ? 2
+    : 1
+  const steps = ['Planning', 'Building', 'Verifying', 'Done']
+  return (
+    <ol className="mt-4 flex items-center gap-1.5" aria-label="Build stage">
+      {steps.map((label, index) => {
+        const done = index < stage || (!failed && stage === 3 && index <= 3)
+        const current = !failed && index === stage && stage !== 3
+        const broke = failed && index === Math.min(stage, 2)
+        return (
+          <li key={label} className="flex items-center gap-1.5">
+            <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-2xs font-medium ${
+              broke ? 'bg-[var(--danger-soft)] text-[var(--danger)]'
+              : current ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]'
+              : done ? 'text-[var(--success)]'
+              : 'text-[var(--ink-muted)]'
+            }`}>
+              {done ? <CheckCircle2 size={11} /> : broke ? <AlertTriangle size={11} /> : current ? <Loader2 size={11} className="animate-spin" /> : <span className="w-[11px] h-[11px] rounded-full border border-current opacity-40 inline-block" />}
+              {label}
+            </span>
+            {index < steps.length - 1 && <ChevronRight size={11} className="text-[var(--ink-muted)] opacity-50" />}
+          </li>
+        )
+      })}
+    </ol>
+  )
 }
 
 /** Same layout and order as the chat approval card (TurnActivity): Approve first. */
@@ -328,7 +413,25 @@ function CheckpointList({ checkpoints, onAction }: { checkpoints: CheckpointView
   )
 }
 
-function ActivityList({ activity, running, outcome }: { activity: Activity[]; running: boolean; outcome: { status: string; summary: string | null; iterations?: number; credits?: number } | null }) {
+/** Classify an activity row for its timeline icon, from the event's words. */
+function activityIcon(item: Activity): { Icon: typeof FileText; cls: string } {
+  const text = `${item.title} ${item.body ?? ''}`.toLowerCase()
+  if (/fail|error|reject|stall|denied|crash/.test(text)) return { Icon: AlertTriangle, cls: 'text-[var(--danger)]' }
+  if (/verif|check|test|lint|typecheck|smoke/.test(text)) return { Icon: ShieldCheck, cls: 'text-[var(--success)]' }
+  if (/patch|created|modified|wrote|applied|edit/.test(text)) return { Icon: FileCode2, cls: 'text-[var(--accent-text)]' }
+  if (/read|search|scan|look/.test(text)) return { Icon: FileText, cls: 'text-[var(--ink-muted)]' }
+  if (/model|think|brief|plan/.test(text)) return { Icon: Sparkles, cls: 'text-[var(--accent-text)]' }
+  if (/deploy|publish|live/.test(text)) return { Icon: Rocket, cls: 'text-[var(--success)]' }
+  return { Icon: ChevronRight, cls: 'text-[var(--ink-muted)]' }
+}
+
+function ActivityTimeline({ activity, running, outcome }: { activity: Activity[]; running: boolean; outcome: { status: string; summary: string | null; iterations?: number; credits?: number } | null }) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el && running) el.scrollTop = el.scrollHeight
+  }, [activity.length, running])
+
   return (
     <section className={`${panelCls} p-4`}>
       <SectionHeader title="Progress" />
@@ -336,82 +439,182 @@ function ActivityList({ activity, running, outcome }: { activity: Activity[]; ru
         <div className={`mt-3 rounded-lg border p-3 ${outcome.status === 'verified' ? 'border-[var(--success-border,var(--border-strong))] bg-[var(--bg-tint)]' : 'border-[var(--border-subtle)] bg-[var(--bg-sunken)]'}`}>
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={statusTone(outcome.status)}>{statusLabel(outcome.status)}</Badge>
-            {outcome.iterations != null && <span className="text-3xs text-[var(--ink-muted)]">{outcome.iterations} iteration{outcome.iterations === 1 ? '' : 's'}</span>}
+            {outcome.iterations != null && <span className="text-3xs text-[var(--ink-muted)]">{outcome.iterations} recovery iteration{outcome.iterations === 1 ? '' : 's'}</span>}
+            {outcome.credits != null && outcome.credits > 0 && <span className="text-3xs text-[var(--ink-muted)]">{outcome.credits.toFixed(3)} credits</span>}
           </div>
           {outcome.summary && <p className="mt-1.5 text-ui-xs text-[var(--ink-secondary)]">{outcome.summary}</p>}
         </div>
       )}
       {!activity.length && !running && !outcome && <EmptyState title="Nothing to report yet" body="Updates appear here while the builder works." />}
-      <div className="mt-3 max-h-80 space-y-2 overflow-auto">
-        {activity.map((item) => (
-          <article key={item.id} className="border-l-2 border-[var(--border-strong)] pl-3">
-            <div className="flex items-baseline justify-between gap-2">
-              <strong className="text-ui-sm font-medium text-[var(--ink-primary)]">{item.title}</strong>
-              <span className="text-3xs text-[var(--ink-muted)]">{item.at}</span>
-            </div>
-            {item.body && <p className="mt-0.5 break-words text-ui-xs text-[var(--ink-muted)]">{item.body}</p>}
-          </article>
-        ))}
-        {running && <LoadingState label="Waiting for the next update…" className="py-1" />}
+      <div ref={scrollRef} className="mt-3 max-h-96 space-y-0.5 overflow-auto">
+        {activity.map((item) => {
+          const { Icon, cls } = activityIcon(item)
+          return (
+            <article key={item.id} className="flex gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-[var(--bg-hover)] transition">
+              <Icon size={13} className={`mt-0.5 shrink-0 ${cls}`} aria-hidden />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline justify-between gap-2">
+                  <strong className="text-ui-xs font-medium text-[var(--ink-primary)] truncate">{item.title}</strong>
+                  <span className="text-3xs text-[var(--ink-muted)] shrink-0">{item.at}</span>
+                </div>
+                {item.body && <p className="mt-0.5 break-words text-2xs text-[var(--ink-muted)] line-clamp-2">{item.body}</p>}
+              </div>
+            </article>
+          )
+        })}
+        {running && (
+          <div className="flex items-center gap-2.5 px-1.5 py-2 text-ui-xs text-[var(--ink-secondary)]">
+            <Loader2 size={13} className="animate-spin text-[var(--accent-text)]" aria-hidden />
+            Working…
+          </div>
+        )}
       </div>
     </section>
   )
 }
 
-function Preview({
-  runId, files, selected, onSelect, url, loading, error,
+/** The hero: a browser-chrome workspace around the live preview. */
+function PreviewWorkspace({
+  runId, files, selected, onSelect, codePath, onCloseCode, url, epoch, onReload, loading, error, live, className = '',
 }: {
   runId: string
   files: string[]
   selected: string | null
   onSelect: (path: string) => void
+  codePath: string | null
+  onCloseCode: () => void
   url: string | null
+  epoch: number
+  onReload: () => void
   loading: boolean
   error: string | null
+  live: boolean
+  className?: string
 }) {
-  const isHtml = !!selected && /\.html?$/i.test(selected)
-  const fileQuery = useFileContent(runId, selected && !isHtml ? selected : null)
+  const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop')
+  const [filesOpen, setFilesOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!filesOpen) return
+    const close = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setFilesOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [filesOpen])
+
   return (
-    <section className={`${panelCls} p-4 min-w-0`}>
-      <SectionHeader title="Preview" />
-      {!!files.length && (
-        <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Preview file">
-          {files.map((path) => (
-            <button
-              key={path}
-              type="button"
-              aria-pressed={path === selected}
-              title={path}
-              className={`${path === selected ? btnPrimary : btnGhost} max-w-full`}
-              onClick={() => onSelect(path)}
-            >
-              <span className="truncate">{path}</span>
-            </button>
-          ))}
+    <section className={`${panelCls} overflow-hidden flex flex-col min-w-0 min-h-[78vh] ${className}`}>
+      {/* Browser chrome */}
+      <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[var(--border-subtle)] shrink-0">
+        <span className="flex items-center gap-1.5 mr-1 shrink-0" aria-hidden>
+          <i className="w-2.5 h-2.5 rounded-full bg-[var(--danger)] opacity-70 block" />
+          <i className="w-2.5 h-2.5 rounded-full bg-[var(--warning)] opacity-70 block" />
+          <i className="w-2.5 h-2.5 rounded-full bg-[var(--success)] opacity-70 block" />
+        </span>
+        <div className="flex-1 min-w-0 flex items-center gap-1.5 rounded-lg bg-[var(--bg-sunken)] border border-[var(--border-subtle)] px-2.5 py-1.5 text-ui-xs text-[var(--ink-secondary)]">
+          {live ? <Loader2 size={11} className="animate-spin shrink-0 text-[var(--accent-text)]" aria-hidden /> : <Monitor size={11} className="shrink-0" aria-hidden />}
+          <span className="truncate font-mono text-2xs">{selected || 'preview'}</span>
         </div>
-      )}
-      {!files.length && <EmptyState title="No preview yet" body="The first page appears here once it is ready." />}
-      {selected && !isHtml && (
-        <div className="mt-3">
-          <p className="text-2xs uppercase tracking-wide text-[var(--ink-muted)]">{selected} — read-only</p>
-          {fileQuery.isPending && <LoadingState label="Reading file…" />}
-          {fileQuery.isError && <p className="mt-2 text-ui-xs text-[var(--danger)]">{toUserFacingError(fileQuery.error).message}</p>}
-          {fileQuery.data != null && (
-            <pre className="mt-2 max-h-[70vh] overflow-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-sunken)] p-4 text-ui-xs leading-relaxed text-[var(--ink-secondary)] whitespace-pre-wrap break-words">{fileQuery.data}</pre>
+        {!!files.length && (
+          <div className="relative shrink-0" ref={menuRef}>
+            <button type="button" className={btnGhost} onClick={() => setFilesOpen((v) => !v)} aria-expanded={filesOpen}>
+              <FileCode2 size={12} className="mr-1 inline" />Files ({files.length})<ChevronDown size={11} className="ml-1 inline" />
+            </button>
+            {filesOpen && (
+              <div className="absolute right-0 z-20 mt-1 max-h-72 w-64 overflow-auto rounded-xl border border-[var(--border-strong)] bg-[var(--bg-overlay)] p-1.5 shadow-panel">
+                {files.map((path) => (
+                  <button
+                    key={path}
+                    type="button"
+                    onClick={() => { onSelect(path); setFilesOpen(false) }}
+                    className={`w-full truncate rounded-lg px-2.5 py-1.5 text-left font-mono text-2xs transition ${path === selected || path === codePath ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]' : 'text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)]'}`}
+                  >
+                    {path}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => setDevice('desktop')}
+          aria-pressed={device === 'desktop'}
+          title="Desktop width"
+          className={`p-1.5 rounded-lg transition shrink-0 ${device === 'desktop' ? 'text-[var(--accent-text)] bg-[var(--accent-soft)]' : 'text-[var(--ink-muted)] hover:bg-[var(--bg-hover)]'}`}
+        >
+          <Monitor size={13} aria-hidden />
+        </button>
+        <button
+          type="button"
+          onClick={() => setDevice('mobile')}
+          aria-pressed={device === 'mobile'}
+          title="Mobile width"
+          className={`p-1.5 rounded-lg transition shrink-0 ${device === 'mobile' ? 'text-[var(--accent-text)] bg-[var(--accent-soft)]' : 'text-[var(--ink-muted)] hover:bg-[var(--bg-hover)]'}`}
+        >
+          <Smartphone size={13} aria-hidden />
+        </button>
+        <button type="button" onClick={onReload} title="Reload preview" className="p-1.5 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] transition shrink-0">
+          <RotateCw size={13} aria-hidden />
+        </button>
+        {url && (
+          <a href={url} target="_blank" rel="noreferrer" title="Open in a new tab" className="p-1.5 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] transition shrink-0">
+            <ExternalLink size={13} aria-hidden />
+          </a>
+        )}
+      </div>
+
+      {/* Stage */}
+      <div className="relative flex-1 min-h-0 bg-[var(--bg-sunken)] flex justify-center">
+        <div className="h-full w-full transition-[max-width] duration-300" style={{ maxWidth: device === 'mobile' ? 390 : undefined }}>
+          {error && <p className="m-3 text-ui-sm text-[var(--danger)]" role="alert">{error}</p>}
+          {!error && loading && !url && <LoadingState label="Loading preview…" />}
+          {!error && !url && !loading && (
+            <EmptyState
+              title={live ? 'Building the first page' : 'No preview yet'}
+              body={live ? 'The preview appears here as soon as the builder writes the page.' : 'The first page appears here once it is ready.'}
+            />
+          )}
+          {url && (
+            <iframe
+              key={`${url}:${epoch}`}
+              title="Build preview"
+              sandbox={PREVIEW_SANDBOX}
+              referrerPolicy="no-referrer"
+              src={url}
+              className="h-full w-full border-0 bg-white"
+            />
           )}
         </div>
-      )}
-      {error && <p className="mt-3 text-ui-sm text-[var(--danger)]" role="alert">{error}</p>}
-      {loading && isHtml && <LoadingState label="Loading preview…" />}
-      {isHtml && url && (
-        <iframe
-          title="Build preview"
-          sandbox={PREVIEW_SANDBOX}
-          referrerPolicy="no-referrer"
-          src={url}
-          className="mt-3 h-[70vh] w-full rounded-xl border border-[var(--border-subtle)] bg-white"
-        />
-      )}
+
+        {/* Code drawer (non-HTML files) */}
+        {codePath && <CodeDrawer runId={runId} path={codePath} onClose={onCloseCode} />}
+      </div>
     </section>
+  )
+}
+
+/** A slide-over code viewer so source files never replace the live preview. */
+function CodeDrawer({ runId, path, onClose }: { runId: string; path: string; onClose: () => void }) {
+  const fileQuery = useFileContent(runId, path)
+  return (
+    <div className="absolute inset-y-0 right-0 w-full sm:w-[440px] max-w-full flex flex-col border-l border-[var(--border-subtle)] bg-[var(--bg-base)] shadow-panel">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-subtle)] shrink-0">
+        <FileCode2 size={13} className="text-[var(--accent-text)] shrink-0" aria-hidden />
+        <span className="flex-1 min-w-0 truncate font-mono text-ui-xs text-[var(--ink-primary)]">{path}</span>
+        <button type="button" onClick={onClose} aria-label="Close file" className="p-1 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] transition">
+          <X size={14} aria-hidden />
+        </button>
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto">
+        {fileQuery.isPending && <LoadingState label="Reading file…" />}
+        {fileQuery.isError && <p className="m-3 text-ui-xs text-[var(--danger)]">{toUserFacingError(fileQuery.error).message}</p>}
+        {fileQuery.data != null && (
+          <pre className="p-4 text-2xs leading-relaxed text-[var(--ink-secondary)] whitespace-pre-wrap break-words font-mono">{fileQuery.data}</pre>
+        )}
+      </div>
+    </div>
   )
 }

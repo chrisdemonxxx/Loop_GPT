@@ -58,21 +58,37 @@ function BuildBoard() {
 
   return (
     <AppPage title="Build" description="Describe an app in your own words. Loop plans it, builds it, and verifies it.">
-      <form onSubmit={(event) => { void onSubmit(event) }} className="space-y-3">
+      <form onSubmit={(event) => { void onSubmit(event) }} className={`${cardCls} p-4 space-y-3`}>
         <label className="block text-ui-xs text-[var(--ink-muted)]">
           What should we build?
           <textarea
-            className={`${textareaCls} mt-1`}
+            className={`${textareaCls} mt-1.5`}
             rows={3}
             value={prompt}
             placeholder="A customer intake form with an admin review table — or just “build this”"
             disabled={start.isPending}
             onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void onSubmit(event as unknown as FormEvent) } }}
           />
         </label>
-        <button type="submit" className={btnPrimary} disabled={start.isPending || !prompt.trim()}>
-          {start.isPending ? 'Starting…' : 'Start build'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {SAMPLES.map((sample) => (
+            <button
+              key={sample}
+              type="button"
+              onClick={() => setPrompt(sample)}
+              className="rounded-full border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-3 py-1 text-2xs text-[var(--ink-secondary)] hover:border-[var(--accent-soft-border)] hover:text-[var(--accent-text)] transition"
+            >
+              {sample}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-2xs text-[var(--ink-muted)]">Plans, builds, verifies and previews — then publishes with one click. ⌘/Ctrl+Enter to start.</p>
+          <button type="submit" className={btnPrimary} disabled={start.isPending || !prompt.trim()}>
+            {start.isPending ? 'Starting…' : 'Start build'}
+          </button>
+        </div>
       </form>
 
       {start.isError && (

@@ -77,13 +77,7 @@ export function AgentComputerTab({
       {/* Screen */}
       <div className="relative flex-1 min-h-0 bg-black">
         {shownUrl ? (
-          <iframe
-            key={shownUrl}
-            src={shownUrl}
-            title="Loop Bot computer"
-            className="absolute inset-0 w-full h-full border-0"
-            allow="clipboard-read; clipboard-write"
-          />
+          <StreamFrame key={shownUrl} url={shownUrl} />
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 text-center px-6">
             {booting ? (
@@ -280,5 +274,81 @@ function LoadingDots() {
         />
       ))}
     </div>
+  )
+}
+
+/**
+ * The noVNC stream iframe with a load watchdog. A cold-resumed box or a
+ * mid-deploy restart makes the first load race the stream coming up; the raw
+ * browser error page ("refused to connect", white, looks broken) must never
+ * be what the operator sees. If the frame has not loaded within the watchdog
+ * window we cover it with a dark "connecting" veil and reload it ourselves
+ * every few seconds until it answers — then the veil lifts and stays lifted.
+ */
+function StreamFrame({ url }: { url: string }) {
+  const [attempt, setAttempt] = useState(0)
+  const [loaded, setLoaded] = useState(false)
+  const [veiled, setVeiled] = useState(false)
+  const retriesRef = useRef(0)
+
+  // New stream URL → reset the handshake state.
+  useEffect(() => {
+    setAttempt(0)
+    setLoaded(false)
+    setVeiled(false)
+    retriesRef.current = 0
+  }, [url])
+
+  // Watchdog: veil + auto-reload until the frame answers (or we give the
+  // operator a manual retry after a string of misses).
+  useEffect(() => {
+    if (loaded) return
+    const arm = window.setTimeout(() => setVeiled(true), 5000)
+    return () => window.clearTimeout(arm)
+  }, [attempt, loaded])
+
+  useEffect(() => {
+    if (!veiled || loaded || retriesRef.current >= 12) return
+    const retry = window.setTimeout(() => {
+      retriesRef.current += 1
+      setAttempt((n) => n + 1)
+    }, 4000)
+    return () => window.clearTimeout(retry)
+  }, [veiled, loaded, attempt])
+
+  return (
+    <>
+      <iframe
+        key={`${url}#${attempt}`}
+        src={url}
+        title="Loop Bot computer"
+        className="absolute inset-0 w-full h-full border-0"
+        allow="clipboard-read; clipboard-write"
+        onLoad={() => { setLoaded(true); setVeiled(false) }}
+      />
+      {veiled && !loaded && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-[var(--bg-base)] text-center px-6">
+          {retriesRef.current >= 12 ? (
+            <>
+              <Monitor size={22} className="text-[var(--ink-muted)]" aria-hidden />
+              <p className="text-ui-sm text-[var(--ink-secondary)]">The screen is taking longer than usual to wake.</p>
+              <button
+                type="button"
+                onClick={() => { retriesRef.current = 0; setAttempt((n) => n + 1) }}
+                className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition"
+              >
+                <RefreshCw size={12} aria-hidden /> Reconnect
+              </button>
+            </>
+          ) : (
+            <>
+              <LoadingDots />
+              <p className="text-ui-sm text-[var(--ink-secondary)]">Connecting to the computer…</p>
+              <p className="text-2xs text-[var(--ink-muted)]">Waking the stream; this takes a few seconds after a resume.</p>
+            </>
+          )}
+        </div>
+      )}
+    </>
   )
 }
