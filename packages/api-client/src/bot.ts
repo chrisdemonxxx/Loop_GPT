@@ -73,6 +73,51 @@ export const setBotTakeover = (runId: string, takeover: boolean) =>
 
 export const getBotQuota = () => req<BotQuota>('GET', '/api/bot/quota')
 
+// ── Box files — the operator and the bot share one filesystem ───────────────
+
+export interface BoxFileEntry { name: string; path: string; type: 'file' | 'dir'; size: number }
+
+export const listBoxFiles = (path = '/workspace') =>
+  req<{ entries: BoxFileEntry[] }>('GET', `/api/bot/computer/files?path=${encodeURIComponent(path)}`)
+
+export const readBoxFile = (path: string) =>
+  req<{ content: string; truncated: boolean; size: number }>('GET', `/api/bot/computer/file?path=${encodeURIComponent(path)}`)
+
+export const writeBoxFile = (path: string, content: string) =>
+  req<{ size: number }>('PUT', '/api/bot/computer/file', { path, content })
+
+export const deleteBoxFile = (path: string) =>
+  req<{ ok: boolean }>('DELETE', `/api/bot/computer/file?path=${encodeURIComponent(path)}`)
+
+// ── Routines — recurring jobs (bot + skill + schedule) ──────────────────────
+
+export interface RoutineRun { id: string; status: string; error: string | null; startedAt: string | null; completedAt: string | null }
+
+export interface BotRoutine {
+  id: string
+  goal: string
+  schedule: string
+  skillId: string | null
+  botId: string | null
+  status: string
+  paused: boolean
+  nextRunAt: string | null
+  createdAt: string
+  runs: RoutineRun[]
+}
+
+export const getBotMemory = (botId: string) => req<{ memory: string }>('GET', `/api/bot/memory?botId=${encodeURIComponent(botId)}`)
+
+export const listBotRoutines = () => req<{ routines: BotRoutine[] }>('GET', '/api/bot/routines')
+
+export const createBotRoutine = (input: { goal: string; schedule: string; skillId?: string; botId?: string }) =>
+  req<{ routine: BotRoutine }>('POST', '/api/bot/routines', input)
+
+export const setBotRoutinePaused = (id: string, paused: boolean) =>
+  req<{ routine: BotRoutine }>('PATCH', `/api/bot/routines/${id}`, { paused })
+
+export const deleteBotRoutine = (id: string) => req<{ ok: boolean }>('DELETE', `/api/bot/routines/${id}`)
+
 export const listBotSkills = (botId?: string) =>
   req<{ skills: BotSkillRef[] }>('GET', `/api/bot/skills${botId ? `?botId=${encodeURIComponent(botId)}` : ''}`)
 export const deleteBotSkill = (id: string) => req<{ ok: true }>('DELETE', `/api/bot/skills/${id}`)

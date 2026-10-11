@@ -196,6 +196,15 @@ router.post('/runs/:runId/takeover', asyncHandler(async (req, res) => {
   res.json({ takeoverRequested: takeover, interactiveUrl: takeover ? info?.interactiveUrl || null : null })
 }))
 
+/** GET /api/bot/memory?botId= — one bot's remembered notes (its long-term
+ *  memory file, mirrored from the box). */
+router.get('/memory', asyncHandler(async (req, res) => {
+  const { readBotMemory } = await import('../services/botMemory')
+  const botId = typeof req.query.botId === 'string' ? req.query.botId : ''
+  if (!botId) return res.status(400).json({ error: 'botId is required', code: 'invalid_request' })
+  res.json({ memory: readBotMemory((req as any).userId, botId) })
+}))
+
 /** GET /api/bot/routines — YOUR recurring jobs (bot + skill + schedule) with run history. */
 router.get('/routines', asyncHandler(async (req, res) => {
   if (!hasDb || !prisma) return noDb(res)

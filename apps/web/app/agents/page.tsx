@@ -3,18 +3,22 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Bot, Loader2, Sparkles, Trash2, Clock, Monitor, Square,
+  Bot, Loader2, Sparkles, Trash2, Clock, Monitor, Square, Pause, Play, Plus,
 } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   enqueueBotTask, listBotTasks, cancelBotTask, getBotQuota, listBotSkills, deleteBotSkill,
+  listBotRoutines, createBotRoutine, setBotRoutinePaused, deleteBotRoutine,
   BOT_STATUS_LABEL, BOT_STATUS_TONE,
-  type BotTask, type BotQuota, type BotSkillRef,
+  type BotRoutine, type BotTask, type BotQuota, type BotSkillRef,
 } from '../lib/bot'
 import { getStoredUser } from '../lib/api'
+import { getBotMemory } from '../lib/bot'
+import { listNamedBots } from '../lib/namedBots'
 import RunViewer from '../components/team-bot/RunViewer'
 import { AgentComputerTab } from '../components/team-bot/AgentComputerTab'
 import { AgentChatPane } from '../components/team-bot/AgentChatPane'
+import { BotFilesPanel } from '../components/team-bot/BotFilesPanel'
 import { useTeachSession } from '../components/team-bot/useTeachSession'
 import { AppPage } from '../components/AppPage'
 
@@ -33,7 +37,7 @@ export default function AgentsPage() {
   const queryClient = useQueryClient()
   const [user, setUser] = useState<any>(null)
   const [traceTaskId, setTraceTaskId] = useState<string | null>(null)
-  const [tab, setTab] = useState<'details' | 'library' | 'computer'>('details')
+  const [tab, setTab] = useState<'details' | 'library' | 'computer' | 'files'>('details')
   const [computerExpanded, setComputerExpanded] = useState(false)
 
   useEffect(() => {
@@ -69,9 +73,33 @@ export default function AgentsPage() {
   })
   const skills = skillsQuery.data?.skills ?? null
 
+  const routinesQuery = useQuery<{ routines: BotRoutine[] }>({
+    queryKey: ['bot', 'routines'],
+    queryFn: () => listBotRoutines(),
+    enabled: typeof window !== 'undefined' && !!user,
+    retry: false,
+    refetchInterval: 15_000,
+  })
+  const routineRows = routinesQuery.data?.routines ?? null
+
+  /** The primary bot's long-term memory — what it kept from earlier sessions. */
+  const memoryQuery = useQuery<{ memory: string } | null>({
+    queryKey: ['bot', 'memory'],
+    queryFn: async () => {
+      const { bots } = await listNamedBots().catch(() => ({ bots: [] as Array<{ id: string; isPrimary: boolean }> }))
+      const primary = bots.find((bot) => bot.isPrimary) ?? bots[0]
+      if (!primary) return null
+      return getBotMemory(primary.id)
+    },
+    enabled: typeof window !== 'undefined' && !!user,
+    retry: false,
+  })
+  const botMemory = memoryQuery.data?.memory ?? ''
+
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] })
     void queryClient.invalidateQueries({ queryKey: ['bot', 'skills'] })
+    void queryClient.invalidateQueries({ queryKey: ['bot', 'routines'] })
   }
 
   const teach = useTeachSession(refresh)
@@ -154,7 +182,7 @@ export default function AgentsPage() {
           </div>
 
           <div className="flex gap-1 px-4 shrink-0">
-            {(['details', 'library', 'computer'] as const).map((id) => (
+            {(['details', 'library', 'computer', 'files'] as const).map((id) => (
               <button
                 key={id}
                 type="button"
@@ -183,16 +211,28 @@ export default function AgentsPage() {
                       : `${quota.remaining ?? 0} of ${quota.cap ?? 0} computer minutes left today.`}
                   </p>
                 )}
+                {botMemory && (
+                  <div>
+                    <h3 className="text-2xs uppercase tracking-widest text-[var(--ink-muted)] font-medium mb-1.5">Memory</h3>
+                    <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] p-2.5">
+                      <p className="whitespace-pre-wrap text-2xs leading-relaxed text-[var(--ink-secondary)]">{botMemory}</p>
+                      <p className="mt-1.5 text-3xs text-[var(--ink-muted)]">Kept from earlier sessions; the bot updates it as it learns.</p>
+                    </div>
+                  </div>
+                )}
                 <div>
                   <h3 className="text-2xs uppercase tracking-widest text-[var(--ink-muted)] font-medium mb-2">Routines</h3>
-                  {routines.length === 0 ? (
-                    <p className="text-ui-sm text-[var(--ink-muted)] leading-relaxed">
-                      Routines are recurring tasks this Bot runs on a schedule. Ask it in chat to set one up.
+                  <RoutineComposer skills={skills ?? []} onCreated={refresh} />
+                  {routineRows === null ? (
+                    <div className="mt-2 text-ui-xs text-[var(--ink-muted)] flex items-center gap-2"><Loader2 size={12} className="animate-spin" aria-hidden /> Loading routines…</div>
+                  ) : routineRows.length === 0 ? (
+                    <p className="mt-2 text-ui-sm text-[var(--ink-muted)] leading-relaxed">
+                      Nothing on a schedule yet. A routine pairs this Bot with a skill on an interval — teach a skill in the Computer, then put it on a routine.
                     </p>
                   ) : (
-                    <div className="space-y-2">
-                      {routines.map((t) => (
-                        <RoutineRow key={t.id} task={t} onCancel={(id) => { cancel.mutate(id) }} onWatch={() => setTraceTaskId(t.id)} />
+                    <div className="mt-2 space-y-2">
+                      {routineRows.map((r) => (
+                        <RoutineCard key={r.id} routine={r} onChanged={refresh} />
                       ))}
                     </div>
                   )}
@@ -226,6 +266,12 @@ export default function AgentsPage() {
                 <AgentComputerTab session={teach} onExpand={() => setComputerExpanded(true)} />
               </div>
             )}
+
+            {tab === 'files' && (
+              <div className="h-[52vh] min-h-0">
+                <BotFilesPanel />
+              </div>
+            )}
           </div>
         </aside>
       </div>
@@ -244,33 +290,112 @@ export default function AgentsPage() {
   )
 }
 
-// ── Routine row ──────────────────────────────────────────────────────────────
+// ── Routine composer + card ──────────────────────────────────────────────────
 
-function RoutineRow({ task, onCancel, onWatch }: { task: BotTask; onCancel: (id: string) => void; onWatch: () => void }) {
-  const tone = BOT_STATUS_TONE[task.status]
-  const active = task.status === 'queued' || task.status === 'processing'
-  return (
-    <div className="flex items-center gap-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-3 py-2.5">
-      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-        tone === 'accent' ? 'bg-[var(--accent-fill)] animate-pulse' : tone === 'green' ? 'bg-[var(--success)]' : tone === 'rose' ? 'bg-[var(--danger)]' : 'bg-[var(--ink-muted)]'
-      }`} aria-hidden />
-      <div className="min-w-0 flex-1">
-        <div className="text-ui-sm text-[var(--ink-primary)] truncate">{task.goal}</div>
-        <div className="text-2xs text-[var(--ink-muted)] flex items-center gap-1.5 mt-0.5">
-          <Clock size={10} aria-hidden /> every {task.schedule} · {BOT_STATUS_LABEL[task.status]}
-        </div>
-      </div>
-      <button type="button" onClick={onWatch} className="p-1.5 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] transition" aria-label="Open trace">
-        <Monitor size={13} aria-hidden />
+const SCHEDULE_OPTIONS = [
+  { value: '30m', label: 'every 30 min' },
+  { value: '2h', label: 'every 2 hours' },
+  { value: '6h', label: 'every 6 hours' },
+  { value: '1d', label: 'daily' },
+  { value: '7d', label: 'weekly' },
+]
+
+function RoutineComposer({ skills, onCreated }: { skills: BotSkillRef[]; onCreated: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [goal, setGoal] = useState('')
+  const [schedule, setSchedule] = useState('1d')
+  const [skillId, setSkillId] = useState('')
+  const create = useMutation({
+    mutationFn: () => createBotRoutine({ goal: goal.trim(), schedule, ...(skillId ? { skillId } : {}) }),
+    onSuccess: () => { setGoal(''); setSkillId(''); setOpen(false); onCreated() },
+  })
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-2.5 py-1.5 text-ui-xs text-[var(--ink-secondary)] hover:border-[var(--accent-soft-border)] hover:text-[var(--accent-text)] transition">
+        <Plus size={11} aria-hidden /> New routine
       </button>
-      {active && (
-        <button type="button" onClick={() => onCancel(task.id)} className="p-1.5 rounded-lg text-[var(--ink-muted)] hover:text-[var(--danger)] hover:bg-[var(--bg-hover)] transition" aria-label="Cancel">
-          <Square size={11} aria-hidden />
+    )
+  }
+  return (
+    <form
+      className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] p-2.5 space-y-2"
+      onSubmit={(e) => { e.preventDefault(); if (goal.trim() && !create.isPending) create.mutate() }}
+    >
+      <textarea
+        value={goal}
+        onChange={(e) => setGoal(e.target.value)}
+        rows={2}
+        placeholder="What should the bot do on a schedule? e.g. Check the deploy status and post a summary here."
+        className="w-full resize-none rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-2.5 py-1.5 text-ui-xs text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] focus:border-[var(--accent-soft-border)] focus:outline-none"
+      />
+      <div className="flex items-center gap-2">
+        <select value={schedule} onChange={(e) => setSchedule(e.target.value)} className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-2 py-1 text-2xs text-[var(--ink-secondary)] focus:outline-none">
+          {SCHEDULE_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+        </select>
+        <select value={skillId} onChange={(e) => setSkillId(e.target.value)} className="flex-1 min-w-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-2 py-1 text-2xs text-[var(--ink-secondary)] focus:outline-none">
+          <option value="">No attached skill</option>
+          {skills.map((skill) => <option key={skill.id} value={skill.id}>{skill.name}</option>)}
+        </select>
+      </div>
+      <div className="flex items-center justify-end gap-2">
+        <button type="button" onClick={() => setOpen(false)} className="px-2.5 py-1 text-2xs text-[var(--ink-muted)] hover:text-[var(--ink-secondary)]">Cancel</button>
+        <button type="submit" disabled={!goal.trim() || create.isPending} className="rounded-lg bg-[var(--accent-fill)] px-2.5 py-1 text-2xs font-medium text-white hover:bg-[var(--accent-fill-hover)] disabled:opacity-40 transition">
+          {create.isPending ? 'Creating…' : 'Create routine'}
         </button>
+      </div>
+      {create.isError && <p className="text-2xs text-[var(--danger)]">{(create.error as any)?.message || 'Could not create the routine.'}</p>}
+    </form>
+  )
+}
+
+function RoutineCard({ routine, onChanged }: { routine: BotRoutine; onChanged: () => void }) {
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const pause = useMutation({ mutationFn: () => setBotRoutinePaused(routine.id, !routine.paused), onSuccess: onChanged })
+  const remove = useMutation({ mutationFn: () => deleteBotRoutine(routine.id), onSuccess: onChanged })
+  const lastRun = routine.runs[0] ?? null
+
+  return (
+    <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-3 py-2.5">
+      <div className="flex items-center gap-2.5">
+        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${routine.paused ? 'bg-[var(--ink-muted)]' : 'bg-[var(--success)] animate-pulse'}`} aria-hidden />
+        <div className="min-w-0 flex-1">
+          <div className="text-ui-sm text-[var(--ink-primary)] truncate">{routine.goal}</div>
+          <div className="text-2xs text-[var(--ink-muted)] flex items-center gap-1.5 mt-0.5 flex-wrap">
+            <Clock size={10} aria-hidden /> every {routine.schedule}
+            {routine.skillId && <span className="rounded bg-[var(--bg-hover-strong)] px-1 py-0.5 font-mono text-3xs">{routine.skillId}</span>}
+            <span>{routine.paused ? 'paused' : routine.nextRunAt ? `next ${new Date(routine.nextRunAt).toLocaleString()}` : ''}</span>
+          </div>
+        </div>
+        <button type="button" onClick={() => pause.mutate()} disabled={pause.isPending} className="p-1.5 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] transition" aria-label={routine.paused ? 'Resume' : 'Pause'}>
+          {routine.paused ? <Play size={12} aria-hidden /> : <Pause size={12} aria-hidden />}
+        </button>
+        <button type="button" onClick={() => remove.mutate()} disabled={remove.isPending} className="p-1.5 rounded-lg text-[var(--ink-muted)] hover:text-[var(--danger)] hover:bg-[var(--bg-hover)] transition" aria-label="Delete routine">
+          <Trash2 size={12} aria-hidden />
+        </button>
+      </div>
+      {lastRun && (
+        <button type="button" onClick={() => setHistoryOpen((v) => !v)} className="mt-1.5 text-3xs text-[var(--ink-muted)] hover:text-[var(--ink-secondary)]">
+          {historyOpen ? 'Hide' : 'Show'} history — last run {lastRun.status}{lastRun.completedAt ? ` ${new Date(lastRun.completedAt).toLocaleString()}` : ''}
+        </button>
+      )}
+      {historyOpen && (
+        <ol className="mt-2 space-y-1 border-t border-[var(--border-subtle)] pt-2">
+          {routine.runs.map((run) => (
+            <li key={run.id} className="flex items-center gap-2 text-3xs">
+              <span className={`w-1 h-1 rounded-full ${run.status === 'succeeded' ? 'bg-[var(--success)]' : run.status === 'failed' ? 'bg-[var(--danger)]' : 'bg-[var(--accent-fill)]'}`} aria-hidden />
+              <span className="text-[var(--ink-secondary)]">{run.status}</span>
+              <span className="text-[var(--ink-muted)]">{run.startedAt ? new Date(run.startedAt).toLocaleString() : ''}</span>
+              {run.error && <span className="truncate text-[var(--danger)]">{run.error}</span>}
+            </li>
+          ))}
+        </ol>
       )}
     </div>
   )
 }
+
+// ── Skill card ────────────────────────────────────────────────────────────────
 
 // ── Skill card ────────────────────────────────────────────────────────────────
 
