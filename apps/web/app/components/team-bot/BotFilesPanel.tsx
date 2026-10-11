@@ -161,7 +161,7 @@ export function BotFilesPanel() {
             <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
               <FolderOpen size={18} className="text-[var(--ink-muted)]" aria-hidden />
               <p className="text-2xs text-[var(--ink-muted)] leading-relaxed">
-                Pick a file to view or edit it.<br />Changes land on the bot's computer immediately.
+                Pick a file to view or edit it.<br />Changes land on the bot&apos;s computer immediately.
               </p>
             </div>
           )}
