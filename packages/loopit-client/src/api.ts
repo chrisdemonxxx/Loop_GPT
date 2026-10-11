@@ -97,6 +97,7 @@ export interface GateStreamEvent { kind: 'gate'; gate: ApprovalGate }
 export interface CheckpointsStreamEvent { kind: 'checkpoints'; checkpoints: CheckpointView[] }
 export interface CostStreamEvent { kind: 'cost'; cost: RunCost }
 export interface ErrorStreamEvent { kind: 'error'; message: string }
+export interface ChatStreamEvent { kind: 'chat'; role: 'user' | 'assistant'; text: string }
 
 export type StreamEvent =
   | AuditStreamEvent
@@ -105,6 +106,7 @@ export type StreamEvent =
   | GateStreamEvent
   | CheckpointsStreamEvent
   | CostStreamEvent
+  | ChatStreamEvent
   | ErrorStreamEvent
 
 export interface Health {

@@ -44,6 +44,10 @@ const PREVIEW_SANDBOX = 'allow-scripts'
 
 const BACK = { href: '/build', label: 'All builds' }
 
+/** One bubble in the run's chat pane. `pending` marks an optimistic user
+ *  bubble waiting for the stream's journaled echo to confirm it landed. */
+type ChatMessage = { id: string; role: 'user' | 'assistant' | 'system'; text: string; at: string; pending?: boolean }
+
 export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const params = useParams()
   const router = useRouter()
@@ -58,9 +62,10 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [codePath, setCodePath] = useState<string | null>(null)
   const [previewEpoch, setPreviewEpoch] = useState(0)
-  const [messages, setMessages] = useState<{ id: string; role: 'user' | 'system'; text: string; at: string }[]>([])
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [terminalOpen, setTerminalOpen] = useState(false)
   const composerRef = useRef<HTMLTextAreaElement>(null)
+  const seenSeqRef = useRef<Set<number>>(new Set())
   const reloadTimer = useRef<number | null>(null)
 
   const sendMessage = useSendRunMessage(runId)
@@ -88,7 +93,29 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   }, [])
 
   const onStream = useCallback((event: StreamEvent) => {
+    // Journal replay (reload) and reconnects re-send events with their durable
+    // sequence number; applying one twice would double a chat bubble.
+    const seq = (event as { _seq?: unknown })._seq
+    if (typeof seq === 'number') {
+      if (seenSeqRef.current.has(seq)) return
+      seenSeqRef.current.add(seq)
+    }
     setUi((prev) => reduceRunEvent(prev, event))
+    if (event.kind === 'chat') {
+      const chat = event
+      setMessages((prev) => {
+        if (chat.role === 'user') {
+          // The steering echo resolves the optimistic bubble posted on send.
+          const pending = prev.findIndex((m) => m.pending && m.role === 'user' && m.text === chat.text)
+          if (pending >= 0) {
+            const next = [...prev]
+            next[pending] = { ...next[pending], pending: false }
+            return next
+          }
+        }
+        return [...prev, { id: `chat-${seq ?? prev.length}-${chat.role}`, role: chat.role, text: chat.text, at: new Date().toISOString() }]
+      })
+    }
     if (event.kind === 'run') {
       const next = pickPreviewFile(event.files)
       if (next) setPreviewPath((current) => current ?? next)
@@ -143,7 +170,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const handleSendMessage = (text: string) => {
     const trimmed = text.trim()
     if (!trimmed || sendMessage.isPending) return
-    setMessages((prev) => [...prev, { id: `${Date.now()}-user`, role: 'user', text: trimmed, at: new Date().toISOString() }])
+    setMessages((prev) => [...prev, { id: `${Date.now()}-user`, role: 'user', text: trimmed, at: new Date().toISOString(), pending: true }])
     sendMessage.mutate(trimmed, {
       onError: (cause) => toast.push('error', toUserFacingError(cause).message),
     })
@@ -660,6 +687,36 @@ function PreviewWorkspace({
   )
 }
 
+/** The builder's turn, rendered from the raw model text. A JSON tool call
+ *  becomes a compact action card; anything else renders as written. */
+function AssistantTurn({ text }: { text: string }) {
+  const call = parseToolTurn(text)
+  if (!call) return <span className="whitespace-pre-wrap break-words">{text}</span>
+  return (
+    <div className="flex items-center gap-2 font-mono">
+      <FileCode2 size={11} className="shrink-0 text-[var(--accent-text)]" aria-hidden />
+      <span className="font-medium text-[var(--accent-text)]">{call.tool}</span>
+      {call.detail && <span className="truncate text-[var(--ink-muted)]">{call.detail}</span>}
+    </div>
+  )
+}
+
+function parseToolTurn(text: string): { tool: string; detail: string | null } | null {
+  try {
+    const parsed = JSON.parse(text) as { tool?: unknown; args?: Record<string, unknown> }
+    if (!parsed || typeof parsed.tool !== 'string') return null
+    const args = parsed.args ?? {}
+    const detail =
+      typeof args.path === 'string' ? args.path
+      : typeof args.query === 'string' ? `"${args.query}"`
+      : typeof args.patch === 'string' ? `${args.patch.split('\n').length} lines`
+      : null
+    return { tool: parsed.tool, detail }
+  } catch {
+    return null
+  }
+}
+
 /** Start a follow-up run with the same prompt and project, keeping the workspace. */
 function RetryButton({ run }: { run: RunSummary | null | undefined }) {
   const router = useRouter()
@@ -688,7 +745,7 @@ function RunWorkspace({
 }: {
   runId: string
   projectId: string | null
-  messages: { id: string; role: 'user' | 'system'; text: string; at: string }[]
+  messages: ChatMessage[]
   onSendMessage: (text: string) => void
   sendBusy: boolean
   terminalOpen: boolean
@@ -727,7 +784,7 @@ function RunWorkspaceTab({ active, onClick, icon: Icon, label }: { active: boole
 }
 
 function RunChat({ messages, onSend, busy, composerRef }: {
-  messages: { id: string; role: 'user' | 'system'; text: string; at: string }[]
+  messages: ChatMessage[]
   onSend: (text: string) => void
   busy: boolean
   composerRef: React.RefObject<HTMLTextAreaElement | null>
@@ -755,9 +812,11 @@ function RunChat({ messages, onSend, busy, composerRef }: {
         {messages.map((m) => (
           <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[80%] rounded-xl px-3 py-2 text-ui-xs ${
-              m.role === 'user' ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]' : 'bg-[var(--bg-sunken)] text-[var(--ink-secondary)]'
+              m.role === 'user'
+                ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]' + (m.pending ? ' opacity-60' : '')
+                : 'bg-[var(--bg-sunken)] text-[var(--ink-secondary)]'
             }`}>
-              {m.text}
+              {m.role === 'assistant' ? <AssistantTurn text={m.text} /> : m.text}
             </div>
           </div>
         ))}
