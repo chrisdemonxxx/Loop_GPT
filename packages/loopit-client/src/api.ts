@@ -98,6 +98,7 @@ export interface CheckpointsStreamEvent { kind: 'checkpoints'; checkpoints: Chec
 export interface CostStreamEvent { kind: 'cost'; cost: RunCost }
 export interface ErrorStreamEvent { kind: 'error'; message: string }
 export interface ChatStreamEvent { kind: 'chat'; role: 'user' | 'assistant'; text: string }
+export interface ChatChunkStreamEvent { kind: 'chat_chunk'; text: string }
 
 export type StreamEvent =
   | AuditStreamEvent
@@ -107,6 +108,7 @@ export type StreamEvent =
   | CheckpointsStreamEvent
   | CostStreamEvent
   | ChatStreamEvent
+  | ChatChunkStreamEvent
   | ErrorStreamEvent
 
 export interface Health {

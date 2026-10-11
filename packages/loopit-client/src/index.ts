@@ -19,6 +19,7 @@ export { createLoopitClient, resolvePreviewUrl } from './api'
 export type {
   ApprovalGate,
   AuditStreamEvent,
+  ChatChunkStreamEvent,
   ChatStreamEvent,
   CheckpointView,
   CostStreamEvent,

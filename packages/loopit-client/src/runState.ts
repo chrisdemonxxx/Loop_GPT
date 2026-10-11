@@ -73,8 +73,9 @@ export function reduceRunEvent(state: RunUiState, event: StreamEvent): RunUiStat
   }
   if (event.kind === 'checkpoints') return { ...state, checkpoints: event.checkpoints }
   if (event.kind === 'cost') return { ...state, cost: event.cost }
-  // Chat turns are consumed by the run's chat pane, not the run reducer.
-  if (event.kind === 'chat') return state
+  // Chat turns and token chunks are consumed by the run's chat pane, not the
+  // run reducer.
+  if (event.kind === 'chat' || event.kind === 'chat_chunk') return state
   return { ...state, error: event.message }
 }
 

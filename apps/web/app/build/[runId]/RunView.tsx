@@ -63,6 +63,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const [codePath, setCodePath] = useState<string | null>(null)
   const [previewEpoch, setPreviewEpoch] = useState(0)
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [streamingText, setStreamingText] = useState<string | null>(null)
   const [terminalOpen, setTerminalOpen] = useState(false)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const seenSeqRef = useRef<Set<number>>(new Set())
@@ -101,8 +102,13 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
       seenSeqRef.current.add(seq)
     }
     setUi((prev) => reduceRunEvent(prev, event))
+    if (event.kind === 'chat_chunk') {
+      const chunk = event.text
+      setStreamingText((prev) => (prev ?? '') + chunk)
+    }
     if (event.kind === 'chat') {
       const chat = event
+      if (chat.role === 'assistant') setStreamingText(null)
       setMessages((prev) => {
         if (chat.role === 'user') {
           // The steering echo resolves the optimistic bubble posted on send.
@@ -180,6 +186,19 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
     if (!live || cancel.isPending) return
     cancel.mutate(undefined, {
       onSuccess: () => toast.push('info', 'Build stopped'),
+      onError: (cause) => toast.push('error', toUserFacingError(cause).message),
+    })
+  }
+
+  const startBuild = useStartBuild()
+
+  /** Edit-and-resend: any earlier instruction can become the prompt of a new
+   *  run against the same project, so a wrong turn is corrected by resending
+   *  rather than by layering a patch on top of it. */
+  const handleResend = (text: string) => {
+    if (startBuild.isPending || !projectId) return
+    startBuild.mutate({ prompt: text }, {
+      onSuccess: (created) => router.push(`/build/?run=${encodeURIComponent(created.run_id)}`),
       onError: (cause) => toast.push('error', toUserFacingError(cause).message),
     })
   }
@@ -339,7 +358,9 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
             runId={runId}
             projectId={projectId}
             messages={messages}
+            streamingText={streamingText}
             onSendMessage={handleSendMessage}
+            onResend={handleResend}
             sendBusy={sendMessage.isPending}
             terminalOpen={terminalOpen}
             onToggleTerminal={() => setTerminalOpen((v) => !v)}
@@ -690,28 +711,41 @@ function PreviewWorkspace({
 /** The builder's turn, rendered from the raw model text. A JSON tool call
  *  becomes a compact action card; anything else renders as written. */
 function AssistantTurn({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false)
   const call = parseToolTurn(text)
   if (!call) return <span className="whitespace-pre-wrap break-words">{text}</span>
   return (
-    <div className="flex items-center gap-2 font-mono">
-      <FileCode2 size={11} className="shrink-0 text-[var(--accent-text)]" aria-hidden />
-      <span className="font-medium text-[var(--accent-text)]">{call.tool}</span>
-      {call.detail && <span className="truncate text-[var(--ink-muted)]">{call.detail}</span>}
+    <div>
+      <button
+        type="button"
+        onClick={() => call.expandable && setExpanded((v) => !v)}
+        className={`flex w-full items-center gap-2 font-mono text-left ${call.expandable ? 'cursor-pointer' : 'cursor-default'}`}
+        aria-expanded={call.expandable ? expanded : undefined}
+      >
+        <FileCode2 size={11} className="shrink-0 text-[var(--accent-text)]" aria-hidden />
+        <span className="font-medium text-[var(--accent-text)]">{call.tool}</span>
+        {call.detail && <span className="truncate text-[var(--ink-muted)]">{call.detail}</span>}
+        {call.expandable && <ChevronDown size={10} className={`ml-auto shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} aria-hidden />}
+      </button>
+      {expanded && call.full && (
+        <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-[var(--bg-base)] p-2 text-3xs leading-relaxed text-[var(--ink-secondary)] whitespace-pre-wrap break-words">{call.full}</pre>
+      )}
     </div>
   )
 }
 
-function parseToolTurn(text: string): { tool: string; detail: string | null } | null {
+function parseToolTurn(text: string): { tool: string; detail: string | null; full: string | null; expandable: boolean } | null {
   try {
     const parsed = JSON.parse(text) as { tool?: unknown; args?: Record<string, unknown> }
     if (!parsed || typeof parsed.tool !== 'string') return null
     const args = parsed.args ?? {}
+    const patch = typeof args.patch === 'string' ? args.patch : null
     const detail =
       typeof args.path === 'string' ? args.path
       : typeof args.query === 'string' ? `"${args.query}"`
-      : typeof args.patch === 'string' ? `${args.patch.split('\n').length} lines`
+      : patch ? `${patch.split('\n').length} lines`
       : null
-    return { tool: parsed.tool, detail }
+    return { tool: parsed.tool, detail, full: patch, expandable: patch != null }
   } catch {
     return null
   }
@@ -741,12 +775,14 @@ function RetryButton({ run }: { run: RunSummary | null | undefined }) {
 
 /** Replit-style bottom workspace: Chat (always-on) and Terminal tabs. */
 function RunWorkspace({
-  runId, projectId, messages, onSendMessage, sendBusy, terminalOpen, onToggleTerminal, composerRef,
+  runId, projectId, messages, streamingText, onSendMessage, onResend, sendBusy, terminalOpen, onToggleTerminal, composerRef,
 }: {
   runId: string
   projectId: string | null
   messages: ChatMessage[]
+  streamingText: string | null
   onSendMessage: (text: string) => void
+  onResend: (text: string) => void
   sendBusy: boolean
   terminalOpen: boolean
   onToggleTerminal: () => void
@@ -762,7 +798,7 @@ function RunWorkspace({
         {terminalOpen ? (
           <RunTerminal projectId={projectId} />
         ) : (
-          <RunChat messages={messages} onSend={onSendMessage} busy={sendBusy} composerRef={composerRef} />
+          <RunChat messages={messages} streamingText={streamingText} onSend={onSendMessage} onResend={onResend} busy={sendBusy} composerRef={composerRef} />
         )}
       </div>
     </section>
@@ -783,9 +819,11 @@ function RunWorkspaceTab({ active, onClick, icon: Icon, label }: { active: boole
   )
 }
 
-function RunChat({ messages, onSend, busy, composerRef }: {
+function RunChat({ messages, streamingText, onSend, onResend, busy, composerRef }: {
   messages: ChatMessage[]
+  streamingText: string | null
   onSend: (text: string) => void
+  onResend: (text: string) => void
   busy: boolean
   composerRef: React.RefObject<HTMLTextAreaElement | null>
 }) {
@@ -810,16 +848,36 @@ function RunChat({ messages, onSend, busy, composerRef }: {
           <p className="text-2xs text-[var(--ink-muted)]">Steer the builder while it runs, or continue after it stops.</p>
         )}
         {messages.map((m) => (
-          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+          <div key={m.id} className={`group flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[80%] rounded-xl px-3 py-2 text-ui-xs ${
               m.role === 'user'
                 ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]' + (m.pending ? ' opacity-60' : '')
                 : 'bg-[var(--bg-sunken)] text-[var(--ink-secondary)]'
             }`}>
-              {m.role === 'assistant' ? <AssistantTurn text={m.text} /> : m.text}
+              {m.role === 'assistant' ? <AssistantTurn text={m.text} /> : (
+                <span className="whitespace-pre-wrap break-words">{m.text}</span>
+              )}
+              {m.role === 'user' && (
+                <button
+                  type="button"
+                  onClick={() => onResend(m.text)}
+                  title="Resend this instruction as a new run on the same project"
+                  className="mt-1 hidden items-center gap-1 text-3xs text-[var(--accent-text)] opacity-80 hover:opacity-100 group-hover:flex"
+                >
+                  <RotateCw size={9} /> Resend
+                </button>
+              )}
             </div>
           </div>
         ))}
+        {streamingText != null && streamingText !== '' && (
+          <div className="flex justify-start">
+            <div className="max-w-[80%] rounded-xl bg-[var(--bg-sunken)] px-3 py-2 text-ui-xs text-[var(--ink-secondary)]">
+              <span className="whitespace-pre-wrap break-words font-mono">{streamingText}</span>
+              <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse bg-[var(--accent-text)] align-text-bottom" aria-hidden />
+            </div>
+          </div>
+        )}
         {busy && (
           <div className="flex justify-start">
             <div className="rounded-xl bg-[var(--bg-sunken)] px-3 py-2 text-ui-xs text-[var(--ink-muted)] flex items-center gap-2">
