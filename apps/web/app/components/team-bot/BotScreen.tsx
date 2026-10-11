@@ -47,7 +47,10 @@ export function BotScreen({ url, interactive = false }: BotScreenProps) {
 
     async function connect() {
       if (!containerRef.current) return
-      const RFB = (await import('@novnc/novnc/core/rfb')).default
+      // The package's exports field only exposes the root specifier, and the
+      // module touches `window` at import time — hence dynamic import inside
+      // the effect (never during SSR) and never a deep subpath.
+      const RFB = (await import('@novnc/novnc')).default
       if (cancelled) return
 
       const { wsUrl, password, viewOnly } = parseVncUrl(url)

@@ -1,4 +1,9 @@
-declare module '@novnc/novnc/core/rfb' {
+/**
+ * The @novnc/novnc package ships no type declarations and its exports field
+ * only exposes the root specifier, so the module declaration targets the
+ * bare import — deep subpaths like core/rfb are not resolvable.
+ */
+declare module '@novnc/novnc' {
   export interface RFBOptions {
     shared?: boolean
     viewOnly?: boolean
