@@ -99,8 +99,10 @@ export async function listBoxFiles(userId: string, dirPath: string): Promise<Box
 
 /** Read a text file (capped); larger files are reported, not truncated silently. */
 export async function readBoxFile(userId: string, filePath: string): Promise<{ content: string; truncated: boolean; size: number }> {
-  const sandbox = await liveSandboxOrThrow(userId)
+  const sandbox = liveSandboxOrThrow(userId)
   const file = jailWorkspacePath(filePath)
+  const isSymlink = await sandbox.commands.run(`test -L ${quote(file)}`, { timeoutMs: 5_000 })
+  if ((isSymlink.exitCode ?? 1) === 0) throw new BoxFilesError('Symlinks are not resolved — use the real path the link points at.', 'bad_path')
   const sizeResult = await runInBox(sandbox, `stat -c %s ${quote(file)} 2>/dev/null || echo -1`)
   const size = Number(String(sizeResult?.stdout || '-1').trim())
   if (size < 0) throw new BoxFilesError('File not found', 'not_found')
@@ -121,6 +123,8 @@ export async function readBoxFile(userId: string, filePath: string): Promise<{ c
 export async function writeBoxFile(userId: string, filePath: string, content: string): Promise<{ size: number }> {
   const sandbox = await liveSandboxOrThrow(userId)
   const file = jailWorkspacePath(filePath)
+  const isSymlink = await sandbox.commands.run(`test -L ${quote(file)}`, { timeoutMs: 5_000 })
+  if ((isSymlink.exitCode ?? 1) === 0) throw new BoxFilesError('Symlinks are not resolved through this interface.', 'bad_path')
   const data = Buffer.from(String(content ?? ''), 'utf-8')
   if (data.length > MAX_WRITE_BYTES) throw new BoxFilesError(`Content is ${data.length} bytes — the inline editor caps at ${MAX_WRITE_BYTES}`, 'too_large')
   await runInBox(sandbox, `mkdir -p ${quote(file.split('/').slice(0, -1).join('/') || WORKSPACE_ROOT)}`)
@@ -141,6 +145,8 @@ export async function deleteBoxPath(userId: string, targetPath: string): Promise
   const sandbox = await liveSandboxOrThrow(userId)
   const target = jailWorkspacePath(targetPath)
   if (target === WORKSPACE_ROOT) throw new BoxFilesError('The workspace root cannot be deleted', 'bad_path')
+  const isSymlink = await sandbox.commands.run(`test -L ${quote(target)}`, { timeoutMs: 5_000 })
+  if ((isSymlink.exitCode ?? 1) === 0) throw new BoxFilesError('Symlinks are not resolved through this interface.', 'bad_path')
   const result = await runInBox(sandbox, `rm -rf -- ${quote(target)} && echo gone || echo missing`)
   if (!String(result?.stdout || '').includes('gone')) throw new BoxFilesError('Path not found', 'not_found')
 }
