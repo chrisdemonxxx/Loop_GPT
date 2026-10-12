@@ -99,7 +99,7 @@ export async function listBoxFiles(userId: string, dirPath: string): Promise<Box
 
 /** Read a text file (capped); larger files are reported, not truncated silently. */
 export async function readBoxFile(userId: string, filePath: string): Promise<{ content: string; truncated: boolean; size: number }> {
-  const sandbox = liveSandboxOrThrow(userId)
+  const sandbox = await liveSandboxOrThrow(userId)
   const file = jailWorkspacePath(filePath)
   const isSymlink = await sandbox.commands.run(`test -L ${quote(file)}`, { timeoutMs: 5_000 })
   if ((isSymlink.exitCode ?? 1) === 0) throw new BoxFilesError('Symlinks are not resolved — use the real path the link points at.', 'bad_path')
