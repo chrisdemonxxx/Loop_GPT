@@ -303,7 +303,7 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
     // XFCE path); the GNOME template carries GNOME as the real desktop, so
     // the session is swapped right after create(). Everything the SDK does
     // afterwards — stream, screenshots, input — is desktop-agnostic.
-    if (template) await swapToGnomeSession(sandbox)
+    if (template) swapToGnomeSession(sandbox).catch((err: unknown) => console.warn('[bot-box] GNOME swap in background failed', String(err)))
 
     await runInBox(sandbox, 'mkdir -p /workspace /home/user/Desktop')
     // A fresh box is empty; the user's files come back from the durable mirror
