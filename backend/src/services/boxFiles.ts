@@ -9,7 +9,7 @@
  * Every path is jailed to /workspace: the jail is what makes an operator-
  * supplied path safe to hand to a shell and to the SDK's file calls.
  */
-import { getLiveUserBox } from './botBox'
+import { attachUserBoxFromDB } from './botBox'
 
 type Sandbox = any
 
@@ -54,10 +54,15 @@ export function jailWorkspacePath(input: string): string {
   return joined.replace(/\/+$/, '') || WORKSPACE_ROOT
 }
 
-function liveSandboxOrThrow(userId: string): Sandbox {
-  const live = getLiveUserBox(userId)
-  if (!live) throw new BoxFilesError('The computer is not running — open it first.', 'no_box')
-  return live.sandbox
+async function liveSandboxOrThrow(userId: string): Promise<Sandbox> {
+  const sandboxId = await attachUserBoxFromDB(userId)
+  if (!sandboxId) throw new BoxFilesError('The computer is not running — open it first.', 'no_box')
+  try {
+    const { Sandbox } = await import('@e2b/desktop')
+    return await Sandbox.connect(sandboxId)
+  } catch {
+    throw new BoxFilesError('Could not connect to the computer.', 'io')
+  }
 }
 
 function quote(s: string): string {
@@ -70,7 +75,7 @@ async function runInBox(sandbox: Sandbox, cmd: string, timeoutMs = 30_000) {
 
 /** List one directory, sorted dirs-first then name. */
 export async function listBoxFiles(userId: string, dirPath: string): Promise<BoxFileEntry[]> {
-  const sandbox = liveSandboxOrThrow(userId)
+  const sandbox = await liveSandboxOrThrow(userId)
   const dir = jailWorkspacePath(dirPath || WORKSPACE_ROOT)
   const result = await runInBox(
     sandbox,
@@ -94,7 +99,7 @@ export async function listBoxFiles(userId: string, dirPath: string): Promise<Box
 
 /** Read a text file (capped); larger files are reported, not truncated silently. */
 export async function readBoxFile(userId: string, filePath: string): Promise<{ content: string; truncated: boolean; size: number }> {
-  const sandbox = liveSandboxOrThrow(userId)
+  const sandbox = await liveSandboxOrThrow(userId)
   const file = jailWorkspacePath(filePath)
   const sizeResult = await runInBox(sandbox, `stat -c %s ${quote(file)} 2>/dev/null || echo -1`)
   const size = Number(String(sizeResult?.stdout || '-1').trim())
@@ -114,7 +119,7 @@ export async function readBoxFile(userId: string, filePath: string): Promise<{ c
 
 /** Write a text file (capped), creating parent directories. */
 export async function writeBoxFile(userId: string, filePath: string, content: string): Promise<{ size: number }> {
-  const sandbox = liveSandboxOrThrow(userId)
+  const sandbox = await liveSandboxOrThrow(userId)
   const file = jailWorkspacePath(filePath)
   const data = Buffer.from(String(content ?? ''), 'utf-8')
   if (data.length > MAX_WRITE_BYTES) throw new BoxFilesError(`Content is ${data.length} bytes — the inline editor caps at ${MAX_WRITE_BYTES}`, 'too_large')
@@ -133,7 +138,7 @@ export async function writeBoxFile(userId: string, filePath: string, content: st
 
 /** Delete a file or (recursively) a directory inside the workspace. */
 export async function deleteBoxPath(userId: string, targetPath: string): Promise<void> {
-  const sandbox = liveSandboxOrThrow(userId)
+  const sandbox = await liveSandboxOrThrow(userId)
   const target = jailWorkspacePath(targetPath)
   if (target === WORKSPACE_ROOT) throw new BoxFilesError('The workspace root cannot be deleted', 'bad_path')
   const result = await runInBox(sandbox, `rm -rf -- ${quote(target)} && echo gone || echo missing`)

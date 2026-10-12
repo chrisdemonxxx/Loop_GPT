@@ -21,8 +21,8 @@ import { DailyCreditError, captureDailyReservation, cleanupDailyReservation, dai
 import { sanitizeMetadata } from '../agent/guardrails'
 import { startRun, setRunComputer, isRunTakeoverRequested } from './botRuns'
 import { ComputerSession } from './computerSession'
-import { E2BDesktopError, attachDesktop } from './e2bDesktop'
-import { getLiveUserBox, createBoxTaskFolder } from './botBox'
+import { E2BDesktopError, attachDesktop, wrapDesktop } from './e2bDesktop'
+import { attachUserBoxFromDB, createBoxTaskFolder } from './botBox'
 import { COMPUTER_TOOLS, COMPUTER_TOOL_NAMES } from '../agent/tools/computerTools'
 import { builtinToolNames } from '../agent'
 import { saveArtifact } from '../agent/artifacts'
@@ -284,8 +284,8 @@ export async function executeBotTask(
       // box is down (or E2B limits force isolation).
       let existingDesktop: import('./e2bDesktop').DesktopClient | undefined
       try {
-        const box = getLiveUserBox(identity.userId)
-        if (box) existingDesktop = await attachDesktop(box.sandboxId)
+        const sandboxId = await attachUserBoxFromDB(identity.userId)
+        if (sandboxId) existingDesktop = await attachDesktop(sandboxId)
       } catch {
         existingDesktop = undefined // fall back to a fresh dedicated VM
       }

@@ -345,10 +345,49 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
   }
 }
 
-/** The live sandbox handle for a user's box (if any) — used by botRunner to attach task runs. */
-export function getLiveUserBox(userId: string): { sandbox: Sandbox; sandboxId: string } | null {
-  const s = liveBoxes.get(userId)
-  return s ? { sandbox: s.sandbox, sandboxId: s.sandboxId } : null
+export async function attachUserBoxFromDB(userId: string): Promise<string | null> {
+  if (!prisma) return null
+  try {
+    const row = await prisma.botBox.findUnique({ where: { userId }, select: { sandboxId: true } })
+    if (!row?.sandboxId) return null
+    return row.sandboxId
+  } catch {
+    return null
+  }
+}
+
+/** Sync the workspace for all active user boxes in the DB, then kill them.
+ *  Called only at shutdown from a SIGTERM handler, so a single monolithic
+ *  failure does not leave boxes alive; every sync/kill is best-effort
+ *  individually. */
+export async function syncAndKillAllBoxes(): Promise<void> {
+  if (!prisma) return
+  const rows = await prisma.botBox.findMany({ where: { sandboxId: { not: '' } }, select: { userId: true, sandboxId: true } }).catch(() => [])
+  for (const row of rows) {
+    if (!row.sandboxId) continue
+    try {
+      const { Sandbox } = await import('@e2b/desktop')
+      const sandbox = await Sandbox.connect(row.sandboxId)
+      try { await syncWorkspaceOut(sandbox, row.userId) } catch { /* best effort */ }
+      try { await sandbox.kill() } catch { /* best effort */ }
+    } catch { /* best effort — the provider will reap TTL anyway */ }
+  }
+}
+
+// ─── Graceful-shutdown handler for when the process gets SIGTERM ─────────────
+if (typeof process !== 'undefined' && process.on) {
+  let shuttingDown = false
+  process.on('SIGTERM', () => {
+    if (shuttingDown) return
+    shuttingDown = true
+    ;(async () => {
+      console.info('[bot-box] SIGTERM received — syncing and killing all active user boxes')
+      await syncAndKillAllBoxes()
+      process.exit(0)
+    })().catch(() => process.exit(1))
+  })
+  // uncleaned exit on SIGINT is intentional: interactive dev stop is not a
+  // production path and must not hold the process.
 }
 
 /** Create (and remember) a per-task folder inside the user's box workspace. */
@@ -509,19 +548,23 @@ export async function killAllBoxes(): Promise<void> {
 /** Force a workspace sync for a live box (called when a task finishes, so the
  *  durable mirror is never more than one task stale). */
 export async function syncUserBoxNow(userId: string): Promise<void> {
-  const live = liveBoxes.get(userId)
-  if (live) await syncWorkspaceOut(live.sandbox, userId)
+  const sandboxId = await attachUserBoxFromDB(userId)
+  if (sandboxId) {
+    const sandbox = await (await import('@e2b/desktop')).Sandbox.connect(sandboxId)
+    await syncWorkspaceOut(sandbox, userId)
+  }
 }
 
 /** Seed a home for one bot inside the user's live box (called when a bot is
  *  created while the box is up; the boot path seeds all of them). */
 export async function seedBotHomeNow(userId: string, botId: string, botName: string): Promise<void> {
-  const live = liveBoxes.get(userId)
-  if (!live) return
+  const sandboxId = await attachUserBoxFromDB(userId)
+  if (!sandboxId) return
+  const sandbox = await (await import('@e2b/desktop')).Sandbox.connect(sandboxId)
   try {
     const home = `/workspace/agents/${botId}`
     const mirror = readBotMemory(userId, botId)
-    await runInBox(live.sandbox, [
+    await runInBox(sandbox, [
       `mkdir -p ${quote(home)} /workspace/shared`,
       `[ -f ${quote(`${home}/README.md`)} ] || printf '# %s\\nHome of bot %s. Files here persist; /workspace/shared is visible to every bot.\\n' ${quote(botName)} ${quote(botId)} > ${quote(`${home}/README.md`)}`,
       ...(mirror ? [`[ -f ${quote(`${home}/MEMORY.md`)} ] || printf '%s\\n' ${quote(mirror)} > ${quote(`${home}/MEMORY.md`)}`] : []),

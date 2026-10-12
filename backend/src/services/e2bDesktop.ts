@@ -155,6 +155,8 @@ function wrapDesktop(desktop: any, owned: boolean): DesktopClient {
   return client
 }
 
+export { wrapDesktop }
+
 /** Attach to a RUNNING desktop sandbox by id (the user's persistent box).
  *  Returns a client whose kill() detaches instead of terminating. */
 export async function attachDesktop(sandboxId: string): Promise<DesktopClient> {
