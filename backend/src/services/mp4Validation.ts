@@ -85,6 +85,7 @@ class Validator {
   private nalCount = 0
   private readonly occupied: Span[] = []
   private readonly trackIds = new Set<number>()
+  private hasVideo = false
 
   constructor(private readonly bytes: Buffer) {}
 
@@ -568,6 +569,7 @@ class Validator {
     // zero dims. Only 'vide' tracks continue through the video pipeline below.
     const mdiaForType = this.children(this.one(children, 'mdia'), ['mdhd', 'hdlr', 'minf'])
     if (this.handlerType(this.one(mdiaForType, 'hdlr')) !== 'vide') return duration
+    this.hasVideo = true
     const width = this.u32(tkhd.end - 8) / 65536
     const height = this.u32(tkhd.end - 4) / 65536
     requireValid(Number.isInteger(width) && width > 0 && width <= MAX_DIMENSION)
@@ -612,6 +614,7 @@ class Validator {
     if (metadata) this.metadata(metadata)
     let longest = 0
     for (const track of tracks) longest = Math.max(longest, this.track(track, movie, mdats))
+    requireValid(this.hasVideo)
     requireValid(longest === movie.duration)
     this.occupied.sort((a, b) => a.start - b.start)
     for (let i = 1; i < this.occupied.length; i++) {
