@@ -48,6 +48,8 @@ const BACK = { href: '/build', label: 'All builds' }
  *  bubble waiting for the stream's journaled echo to confirm it landed. */
 type ChatMessage = { id: string; role: 'user' | 'assistant' | 'system'; text: string; at: string; pending?: boolean }
 
+type TerminalEntry = { id: string; command: string; stdout: string; stderr: string; exitCode: number; duration: number }
+
 export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const params = useParams()
   const router = useRouter()
@@ -64,6 +66,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const [previewEpoch, setPreviewEpoch] = useState(0)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streamingText, setStreamingText] = useState<string | null>(null)
+  const [terminalHistory, setTerminalHistory] = useState<TerminalEntry[]>([])
   const [terminalOpen, setTerminalOpen] = useState(false)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const seenSeqRef = useRef<Set<number>>(new Set())
@@ -359,6 +362,8 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
             projectId={projectId}
             messages={messages}
             streamingText={streamingText}
+            terminalHistory={terminalHistory}
+            onSetTerminalHistory={setTerminalHistory}
             onSendMessage={handleSendMessage}
             onResend={handleResend}
             sendBusy={sendMessage.isPending}
@@ -754,6 +759,7 @@ function parseToolTurn(text: string): { tool: string; detail: string | null; ful
 /** Start a follow-up run with the same prompt and project, keeping the workspace. */
 function RetryButton({ run }: { run: RunSummary | null | undefined }) {
   const router = useRouter()
+  const toast = useToast()
   const start = useStartBuild()
   if (!run) return null
   return (
@@ -765,7 +771,7 @@ function RetryButton({ run }: { run: RunSummary | null | undefined }) {
         try {
           const created = await start.mutateAsync({ prompt: run.prompt })
           router.push(`/build/?run=${encodeURIComponent(created.run_id)}`)
-        } catch { /* error surfaces via start.error */ }
+        } catch (cause) { toast.push('error', toUserFacingError(cause).message) }
       }}
     >
       <RotateCw size={12} /> Retry
@@ -775,12 +781,14 @@ function RetryButton({ run }: { run: RunSummary | null | undefined }) {
 
 /** Replit-style bottom workspace: Chat (always-on) and Terminal tabs. */
 function RunWorkspace({
-  runId, projectId, messages, streamingText, onSendMessage, onResend, sendBusy, terminalOpen, onToggleTerminal, composerRef,
+  runId, projectId, messages, streamingText, terminalHistory, onSetTerminalHistory, onSendMessage, onResend, sendBusy, terminalOpen, onToggleTerminal, composerRef,
 }: {
   runId: string
   projectId: string | null
   messages: ChatMessage[]
   streamingText: string | null
+  terminalHistory: TerminalEntry[]
+  onSetTerminalHistory: React.Dispatch<React.SetStateAction<TerminalEntry[]>>
   onSendMessage: (text: string) => void
   onResend: (text: string) => void
   sendBusy: boolean
@@ -796,7 +804,7 @@ function RunWorkspace({
       </div>
       <div className="min-h-[220px] max-h-[40vh] flex flex-col">
         {terminalOpen ? (
-          <RunTerminal projectId={projectId} />
+          <RunTerminal projectId={projectId} history={terminalHistory} onHistoryChange={onSetTerminalHistory} />
         ) : (
           <RunChat messages={messages} streamingText={streamingText} onSend={onSendMessage} onResend={onResend} busy={sendBusy} composerRef={composerRef} />
         )}
@@ -911,10 +919,9 @@ function RunChat({ messages, streamingText, onSend, onResend, busy, composerRef 
   )
 }
 
-function RunTerminal({ projectId }: { projectId: string | null }) {
+function RunTerminal({ projectId, history, onHistoryChange }: { projectId: string | null; history: TerminalEntry[]; onHistoryChange: React.Dispatch<React.SetStateAction<TerminalEntry[]>> }) {
   const exec = useExecCommand(projectId)
   const [command, setCommand] = useState('')
-  const [history, setHistory] = useState<{ id: string; command: string; stdout: string; stderr: string; exitCode: number; duration: number }[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -927,7 +934,7 @@ function RunTerminal({ projectId }: { projectId: string | null }) {
     if (!trimmed || exec.isPending || !projectId) return
     setCommand('')
     exec.mutate({ command: trimmed, timeoutSeconds: 60 }, {
-      onSuccess: (result) => setHistory((prev) => [...prev, {
+      onSuccess: (result) => onHistoryChange((prev) => [...prev, {
         id: `${Date.now()}`,
         command: result.command,
         stdout: result.stdout,
