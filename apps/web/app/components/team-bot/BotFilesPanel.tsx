@@ -67,6 +67,14 @@ export function BotFilesPanel() {
   }
 
   const upload = async (file: File) => {
+    // Only text files — a binary blob converted with file.text() silently
+    // mangles every non-UTF8 byte on the bot's computer, which is worse than
+    // rejecting the upload with a clear error.
+    const safe = /\.(txt|md|js|ts|jsx|tsx|html|css|json|xml|yaml|yml|py|sh|rb|go|rs|java|c|cpp|h|svg|env|cfg|ini|toml)$/i
+    if (!safe.test(file.name)) {
+      toast.push('error', `“${file.name}” looks like a binary or unsupported file — only text files can be edited inline.`)
+      return
+    }
     setBusy(true)
     try {
       const text = await file.text()

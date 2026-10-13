@@ -24,6 +24,12 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     headers: authHeaders(),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
+  if (res.status === 401) {
+    const { clearAuth } = await import('./api')
+    clearAuth()
+    if (typeof window !== 'undefined') window.location.href = '/login'
+    throw new BotApiError(401, 'expired', 'Session expired.')
+  }
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new BotApiError(res.status, data?.code || 'error', data?.error || `Request failed (${res.status})`)
   return data as T

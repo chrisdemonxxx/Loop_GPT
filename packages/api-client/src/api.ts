@@ -144,6 +144,11 @@ export async function apiFetch<T = any>(path: string, init: RequestInit = {}): P
     credentials: init.credentials ?? 'include',
     headers: { ...authHeaders(!(init.body instanceof FormData)), ...(init.headers || {}) },
   })
+  if (res.status === 401) {
+    clearAuth();
+    if (typeof window !== 'undefined') window.location.href = '/login';
+    throw new Error('Session expired.')
+  }
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error((data as any)?.error || `Request failed (${res.status})`)
   return data as T
