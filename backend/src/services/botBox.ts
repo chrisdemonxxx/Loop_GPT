@@ -374,6 +374,37 @@ export async function syncAndKillAllBoxes(): Promise<void> {
   }
 }
 
+/** Every 5 minutes, kill stale bot boxes whose keep-alive window expired.
+ *  A sandbox that hasn't been touched for >2 hours is either dead on the
+ *  provider side (TTL) or orphaned by a crashed connection — either way
+ *  its sandboxId should be cleared so the next boot creates a fresh one
+ *  instead of trying to connect (and failing silently, which produces a
+ *  5s delay per idle request while the SDK times out). */
+export async function reapOrphanBoxes(): Promise<void> {
+  if (!prisma) return
+  try {
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60_000)
+    const stale = await prisma.botBox.findMany({
+      where: { sandboxId: { not: '' }, updatedAt: { lt: twoHoursAgo } },
+      select: { userId: true, sandboxId: true },
+    })
+    for (const row of stale) {
+      if (!row.sandboxId) continue
+      try {
+        const { Sandbox } = await import('@e2b/desktop')
+        const handle = await Sandbox.connect(row.sandboxId)
+        await handle.kill().catch(() => undefined)
+        await prisma!.botBox.update({ where: { userId: row.userId }, data: { sandboxId: '' } }).catch(() => undefined)
+        console.info('[bot-box] reaped stale sandbox', { userId: row.userId, sandboxId: row.sandboxId })
+      } catch {
+        // The sandbox is already dead (provider TTL), so the DB row is already
+        // stale; clear the pointer to unblock the next cold-boot.
+        await prisma!.botBox.update({ where: { userId: row.userId }, data: { sandboxId: '' } }).catch(() => undefined)
+      }
+    }
+  } catch { /* best effort */ }
+}
+
 // ─── Graceful-shutdown handler for when the process gets SIGTERM ─────────────
 if (typeof process !== 'undefined' && process.on) {
   let shuttingDown = false

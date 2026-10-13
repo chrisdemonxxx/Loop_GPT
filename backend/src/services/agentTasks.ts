@@ -309,7 +309,9 @@ export async function completeAgentTask(claim: AgentTaskClaim): Promise<'succeed
     SET "status" = CASE WHEN ${intervalMs}::bigint IS NULL THEN 'succeeded' ELSE 'queued' END,
         "attempts" = CASE WHEN ${intervalMs}::bigint IS NULL THEN "attempts" ELSE 0 END,
         "nextAttemptAt" = CASE WHEN ${intervalMs}::bigint IS NULL THEN "nextAttemptAt"
-          ELSE clock_timestamp() + (${intervalMs} * interval '1 millisecond') END,
+                                -- Skip paused routines (PAUSED_AT = 2099-12-31): they stay paused.
+                                WHEN "nextAttemptAt" >= '2099-01-01'::timestamptz THEN "nextAttemptAt"
+                                ELSE clock_timestamp() + (${intervalMs} * interval '1 millisecond') END,
         "cancelRequested" = false, "lastErrorCode" = NULL, "lastError" = NULL,
         "leaseToken" = NULL, "leaseExpiresAt" = NULL, "updatedAt" = clock_timestamp()
     WHERE "id" = ${claim.taskId} AND "status" = 'processing'

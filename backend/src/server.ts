@@ -265,6 +265,15 @@ const server = app.listen(PORT, () => {
 // the app CSP (default-src 'self') blocks every cross-origin iframe.
 import { attachNovncProxy } from './services/novncProxy'
 attachNovncProxy(server)
+// Orphan E2B sandbox reaper: every 5 minutes, sweep for boxes whose metadata
+// tag says they're ours but whose sandboxId no longer appears in any live DB
+// row — kill them so billing stops on VMs nobody tracks anymore.
+setInterval(async () => {
+  try {
+    const { reapOrphanBoxes } = await import('./services/botBox')
+    await reapOrphanBoxes()
+  } catch { /* best effort — next tick retries */ }
+}, 5 * 60_000)
 server.on('error', (err) => {
   console.error('Server failed to start:', err instanceof Error ? err.message : err)
   process.exit(1)

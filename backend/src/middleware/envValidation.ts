@@ -70,6 +70,16 @@ const envSchema = z.object({
   // Dev mode
   ENABLE_DEV_MODE: z.string().optional(),
 
+  // Computer / E2B — must be set for the bot computer to work.
+  E2B_API_KEY: z.string().regex(/^e2b_/, 'E2B_API_KEY must start with e2b_').optional(),
+  E2B_DESKTOP_TEMPLATE: z.string().optional(),
+
+  // Stripe billing
+  STRIPE_SECRET_KEY: z.string().regex(/^sk_/, 'STRIPE_SECRET_KEY must start with sk_').optional(),
+
+  // Outbound email
+  SMTP_HOST: z.string().optional(),
+
   // Sandboxing / proxies
   SANDBOX_PROVIDER: z.string().optional(),
   MCP_ALLOW_STDIO: z.string().optional(),
