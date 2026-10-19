@@ -6,6 +6,7 @@ import { reserveDailyCredits, dailyDispatch, cleanupDailyReservation, DailyCredi
 import { optimizePromptDetailed } from '../../services/promptOptimizer'
 import { gradioCallSpace } from './gradio'
 import type { ToolDefinition } from '../types'
+import { isAdultEdition } from '../../services/edition'
 
 /** Shared by synchronous tools and durable jobs. The configured origin is the
  * only credential recipient; CDN URLs (including signed queries) are anonymous.
@@ -230,8 +231,16 @@ export const generateVideoTool: ToolDefinition = {
         ctx.emit({ type: 'status', message: `Locking the reference identity (strength ${lock.toFixed(2)})…` })
         try {
           const editEndpoint = mediaUrl(process.env.HF_IMAGE_ENDPOINT_URL || process.env.HF_VIDEO_ENDPOINT_URL || '')
+          // Exact face transplant needs the user's consent attestation (from the
+          // request body, never the model) and is off in the adult edition.
+          const faceSwap = !isAdultEdition() && ctx.scratch?.faceLockConsent === true
+          if (!faceSwap) {
+            ctx.emit({ type: 'status', message: isAdultEdition()
+              ? 'Exact face-lock is unavailable here; using a softer reference match.'
+              : 'Exact face-lock needs your confirmation that you are the person in the photo or have their consent; using a softer reference match.' })
+          }
           const edited = await gradioCallSpace(editEndpoint, prompt, {
-            imageBase64: refs[0], mode: 'edit', strength: lock, faceSwap: true,
+            imageBase64: refs[0], mode: 'edit', strength: lock, faceSwap,
             signal: op.signal, timeoutMs: op.remaining(300000),
           })
           if (edited.image) {

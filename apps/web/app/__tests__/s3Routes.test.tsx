@@ -50,7 +50,7 @@ describe('S3 route group 2 (CONTRACT_S3_ROUTES)', () => {
     // our real plan ids, current marked (arrives async with /me)
     await waitFor(() => expect(screen.getByRole('region', { name: /Free plan/ })).toHaveTextContent(/current/))
     expect(screen.getByRole('region', { name: /Pro plan/ })).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: /Gold plan/ })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: /Max plan/ })).toBeInTheDocument()
     // frozen truth + voucher path to the billing panel
     await waitFor(() => expect(screen.getByRole('note')).toHaveTextContent(/not enabled yet/i))
     expect(screen.getByRole('link', { name: /Billing/ })).toHaveAttribute('href', '/customize#settings/billing')

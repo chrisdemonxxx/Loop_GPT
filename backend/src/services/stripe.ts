@@ -107,6 +107,7 @@ export function verifyPaymentIngress(body: unknown, signature: unknown): Payment
 /** Map a plan name to its configured Stripe price id. */
 export function priceForPlan(plan: string): string | null {
   if (plan === 'pro') return process.env.STRIPE_PRICE_PRO || null
+  if (plan === 'max') return process.env.STRIPE_PRICE_MAX || process.env.STRIPE_PRICE_GOLD || null
   if (plan === 'gold') return process.env.STRIPE_PRICE_GOLD || null
   return null
 }
@@ -128,6 +129,7 @@ export function publicConfig() {
     publishableKey: enabled ? process.env.STRIPE_PUBLISHABLE_KEY || null : null,
     plans: {
       pro: enabled && !!process.env.STRIPE_PRICE_PRO,
+      max: enabled && !!(process.env.STRIPE_PRICE_MAX || process.env.STRIPE_PRICE_GOLD),
       gold: enabled && !!process.env.STRIPE_PRICE_GOLD,
     },
     apiPlans: {

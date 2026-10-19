@@ -12,6 +12,7 @@ import { useDictation } from '../lib/voice'
 import { buildBranchView, type BranchVersionInfo } from '../lib/branch'
 import type { Project } from '../components/ProjectsPanel'
 import type { Conversation, Message, LiveStep, PendingApproval } from '../components/chat/types'
+import { consumeFaceLockConsent } from '../lib/faceLockConsent'
 // ---------------------------------------------------------------------------
 // Panels: sidebar / activity / artifacts + responsive desktop detection
 // ---------------------------------------------------------------------------
@@ -1026,6 +1027,7 @@ export function useChatStream() {
         toolNames: commandTools || (selectedTools ? Array.from(selectedTools) : undefined),
         autoApprove: runMode === 'accept' || runMode === 'auto',
         stepMode: runMode === 'step',
+        faceLockConsent: consumeFaceLockConsent(),
         incognito,
         projectId,
       // Explicit capability overrides — only present when chosen (§8-25/26).

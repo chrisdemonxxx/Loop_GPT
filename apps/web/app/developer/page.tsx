@@ -7,7 +7,15 @@ import { apiFetch, getStoredUser } from '../lib/api'
 import { AppPage } from '../components/AppPage'
 import { Badge, EmptyState, FieldError, LoadingState, StatCard, btnGhost, btnPrimary, inputCls, panelCls } from '@loop/ui'
 
-interface ApiKeyRow { id: string; name: string; prefix: string; lastUsedAt: string | null; createdAt: string }
+interface ApiKeyRow {
+  id: string
+  name: string
+  prefix: string
+  spendCapUsd?: number | null
+  concurrencyLimit?: number | null
+  lastUsedAt: string | null
+  createdAt: string
+}
 interface Overview {
   balanceUsd: number
   planName: string | null
@@ -30,6 +38,9 @@ export default function DeveloperPage() {
   const [newKeyName, setNewKeyName] = useState('')
   const [issued, setIssued] = useState<{ id: string; key: string } | null>(null)
   const [copied, setCopied] = useState(false)
+  const [editingKeyId, setEditingKeyId] = useState<string | null>(null)
+  const [capInput, setCapInput] = useState('')
+  const [concInput, setConcInput] = useState('')
 
   const createKey = useMutation({
     mutationFn: (name: string | undefined) =>
@@ -46,6 +57,32 @@ export default function DeveloperPage() {
     mutationFn: (id: string) => apiFetch(`/api/developer/keys/${id}`, { method: 'DELETE' }).catch(() => {}),
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['developer', 'overview'] }) },
   })
+
+  const updateKeyLimits = useMutation({
+    mutationFn: ({ id, spendCapUsd, concurrencyLimit }: { id: string; spendCapUsd: number | null; concurrencyLimit: number | null }) =>
+      apiFetch(`/api/developer/keys/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ spendCapUsd, concurrencyLimit }),
+      }),
+    onSuccess: () => {
+      setEditingKeyId(null)
+      void queryClient.invalidateQueries({ queryKey: ['developer', 'overview'] })
+    },
+  })
+
+  const startEditLimits = (k: ApiKeyRow) => {
+    setEditingKeyId(k.id)
+    setCapInput(k.spendCapUsd != null ? String(k.spendCapUsd) : '')
+    setConcInput(k.concurrencyLimit != null ? String(k.concurrencyLimit) : '')
+  }
+
+  const saveEditLimits = (id: string) => {
+    const trimmedCap = capInput.trim()
+    const trimmedConc = concInput.trim()
+    const spendCapUsd = trimmedCap ? Number(trimmedCap) : null
+    const concurrencyLimit = trimmedConc ? Math.round(Number(trimmedConc)) : null
+    updateKeyLimits.mutate({ id, spendCapUsd, concurrencyLimit })
+  }
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault()
@@ -106,12 +143,62 @@ export default function DeveloperPage() {
             <div className="mt-3 space-y-1">
               {ov.keys.length === 0 && <EmptyState title="No keys yet" />}
               {ov.keys.map((k) => (
-                <div key={k.id} className="flex items-center justify-between gap-3 py-1.5 border-b border-[var(--border-subtle)] last:border-0">
-                  <div className="min-w-0">
-                    <div className="text-ui-sm text-[var(--ink-primary)] font-medium">{k.name || 'Untitled'} <span className="text-[var(--ink-muted)] font-mono text-2xs">· {k.prefix}…</span></div>
-                    <div className="text-2xs text-[var(--ink-muted)]">{k.lastUsedAt ? `Last used ${new Date(k.lastUsedAt).toLocaleDateString()}` : 'Never used'}</div>
+                <div key={k.id} className="py-2 border-b border-[var(--border-subtle)] last:border-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-ui-sm text-[var(--ink-primary)] font-medium">
+                        {k.name || 'Untitled'} <span className="text-[var(--ink-muted)] font-mono text-2xs">· {k.prefix}…</span>
+                      </div>
+                      <div className="text-2xs text-[var(--ink-muted)] flex flex-wrap items-center gap-2">
+                        <span>{k.lastUsedAt ? `Last used ${new Date(k.lastUsedAt).toLocaleDateString()}` : 'Never used'}</span>
+                        <span>· Cap: {k.spendCapUsd != null ? `$${k.spendCapUsd.toFixed(2)}/30d` : 'Unlimited'}</span>
+                        <span>· Concurrency: {k.concurrencyLimit != null ? k.concurrencyLimit : 'Default'}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => (editingKeyId === k.id ? setEditingKeyId(null) : startEditLimits(k))}
+                        className="text-2xs text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] underline"
+                      >
+                        {editingKeyId === k.id ? 'Cancel' : 'Limits'}
+                      </button>
+                      <button type="button" onClick={() => revokeKey.mutate(k.id)} className="text-[var(--ink-muted)] hover:text-[var(--danger)] shrink-0" aria-label={`Revoke ${k.name || k.prefix}`}><Trash2 size={13} aria-hidden /></button>
+                    </div>
                   </div>
-                  <button type="button" onClick={() => revokeKey.mutate(k.id)} className="text-[var(--ink-muted)] hover:text-[var(--danger)] shrink-0" aria-label={`Revoke ${k.name || k.prefix}`}><Trash2 size={13} aria-hidden /></button>
+                  {editingKeyId === k.id && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--border-subtle)]">
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        value={capInput}
+                        onChange={(e) => setCapInput(e.target.value)}
+                        placeholder="30d cap USD (blank = none)"
+                        aria-label="30-day spend cap USD"
+                        className={`${inputCls} max-w-[180px] text-ui-xs`}
+                      />
+                      <input
+                        type="number"
+                        step="1"
+                        min="1"
+                        max="1000"
+                        value={concInput}
+                        onChange={(e) => setConcInput(e.target.value)}
+                        placeholder="Max concurrent (blank = none)"
+                        aria-label="Max concurrent requests"
+                        className={`${inputCls} max-w-[190px] text-ui-xs`}
+                      />
+                      <button
+                        type="button"
+                        disabled={updateKeyLimits.isPending}
+                        onClick={() => saveEditLimits(k.id)}
+                        className={`${btnPrimary} text-ui-xs py-1 px-2.5`}
+                      >
+                        Save limits
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

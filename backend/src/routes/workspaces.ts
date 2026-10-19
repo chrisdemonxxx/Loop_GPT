@@ -2,6 +2,7 @@ import express from 'express'
 import { z } from 'zod'
 import { authenticateToken } from './auth'
 import { changeMembership, createWorkspace, ensurePersonalWorkspace, requireMembership, workspaceDb, WorkspaceError, workspaceName } from '../services/workspaces'
+import { getWorkspaceWallet, setWorkspaceMemberSpendCap } from '../services/workspaceWallet'
 import { connectionCatalog, connectionInput, connectionSummary, connectionVersion, deleteConnection, saveConnection } from '../services/workspaceConnections'
 import { workspaceConnectionTools } from '../services/workspaceTools'
 
@@ -32,6 +33,16 @@ router.get('/', handle(async (req, res) => {
   res.json({ workspaces: rows.slice(0, 100).map(({ role, workspace }) => ({ ...workspace, role })), nextCursor: rows.length > 100 ? rows[99].workspace.id : null })
 }))
 
+router.get('/wallet', handle(async (req, res) => {
+  const wallet = await getWorkspaceWallet(actor(req))
+  res.json({
+    ...wallet,
+    subCreditsMicros: wallet.subCreditsMicros.toString(),
+    rolloverMicros: wallet.rolloverMicros.toString(),
+    totalAvailableMicros: wallet.totalAvailableMicros.toString(),
+  })
+}))
+
 router.post('/personal', handle(async (req, res) => {
   z.object({}).strict().parse(req.body ?? {})
   res.json({ workspace: await ensurePersonalWorkspace(actor(req)) })
@@ -40,6 +51,16 @@ router.post('/personal', handle(async (req, res) => {
 router.post('/', handle(async (req, res) => {
   const { name } = z.object({ name: workspaceName }).strict().parse(req.body)
   res.status(201).json({ workspace: await createWorkspace(actor(req), name) })
+}))
+
+router.get('/:workspaceId/wallet', handle(async (req, res) => {
+  const wallet = await getWorkspaceWallet(actor(req), req.params.workspaceId)
+  res.json({
+    ...wallet,
+    subCreditsMicros: wallet.subCreditsMicros.toString(),
+    rolloverMicros: wallet.rolloverMicros.toString(),
+    totalAvailableMicros: wallet.totalAvailableMicros.toString(),
+  })
 }))
 
 router.get('/:workspaceId/connections/catalog', handle(async (req, res) => {
@@ -89,6 +110,12 @@ router.patch('/:workspaceId/members/:userId', handle(async (req, res) => {
   const { role } = z.object({ role: z.enum(['editor', 'viewer']) }).strict().parse(req.body)
   await changeMembership(actor(req), req.params.workspaceId, req.params.userId, role)
   res.status(204).end()
+}))
+
+router.patch('/:workspaceId/members/:userId/spend-cap', handle(async (req, res) => {
+  const { spendCapUsd } = z.object({ spendCapUsd: z.number().min(0.01).max(1_000_000).nullable() }).strict().parse(req.body)
+  const result = await setWorkspaceMemberSpendCap(actor(req), req.params.workspaceId, req.params.userId, spendCapUsd)
+  res.json(result)
 }))
 
 router.delete('/:workspaceId/members/:userId', handle(async (req, res) => {

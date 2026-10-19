@@ -20,6 +20,7 @@ import { authenticateApiKey, apiError, type ApiRequest } from '../middleware/api
 import { gradioCallSpace } from '../agent/tools/gradio'
 import { createAccountedVideoJob, cancelAccountedVideoJob, VideoJobError } from '../services/accountedVideoJobs'
 import { videoQueueLimitProjection } from '../services/videoQueuePolicy'
+import { isAdultEdition } from '../services/edition'
 import {
   grossCostMicros,
   netCostMicros,
@@ -83,8 +84,9 @@ function paidRequest(req: ApiRequest, res: express.Response) {
       // Never log provider exception text, credentials, prompts, or raw bodies.
       console.error('api_paid_request_failed', { reservationId: owner.id, code, completedUnits })
       if (req.aborted || res.destroyed) return
-      const status = accountingFailed ? 503 : code === 'insufficient_quota' ? 402 : code === 'invalid_request' || code === 'invalid_amount' ? 400 : code === 'unavailable' ? 503 : 502
-      const safeMessage = status === 402 ? 'Insufficient prepaid credit for this request.' : status === 400 ? 'Invalid request or cost limit exceeded.' : status === 503 ? 'API accounting is temporarily unavailable.' : message
+      const keyLimited = code === 'key_spend_cap_exceeded' || code === 'key_concurrency_exceeded'
+      const status = accountingFailed ? 503 : keyLimited ? 429 : code === 'insufficient_quota' ? 402 : code === 'invalid_request' || code === 'invalid_amount' ? 400 : code === 'unavailable' ? 503 : 502
+      const safeMessage = status === 429 ? (code === 'key_spend_cap_exceeded' ? 'This API key has reached its spend cap.' : 'This API key has too many requests in flight. Retry shortly.') : status === 402 ? 'Insufficient prepaid credit for this request.' : status === 400 ? 'Invalid request or cost limit exceeded.' : status === 503 ? 'API accounting is temporarily unavailable.' : message
       if (res.headersSent) {
         res.write(`data: ${JSON.stringify({ error: { message: safeMessage, type: 'api_error', code } })}\n\n`)
         return res.end()
@@ -537,7 +539,10 @@ router.post('/embeddings', authenticateApiKey, v1Json, asyncHandler(async (req: 
  * upstream did no billable work. Such failures retain the hold for reconciliation.
  */
 async function generateOne(
-  endpoint: string, prompt: string, lifetime: ReturnType<typeof providerLifetime>,
+  endpoint: string,
+  prompt: string,
+  lifetime: ReturnType<typeof providerLifetime>,
+  opts: { imagePrompt?: string; strength?: number; faceLock?: boolean } = {},
 ): Promise<string> {
   // Gradio Spaces expose the media surface under /gradio_api, not the plain
   // {inputs} contract — the agent tool detects and drives that flow via
@@ -545,7 +550,12 @@ async function generateOne(
   // endpoint is a red-kit GLM-Image space, so this is the live path).
   if (endpoint.includes('.hf.space')) {
     const media = await gradioCallSpace(endpoint, prompt, {
-      mode: 'image', signal: lifetime.signal, timeoutMs: lifetime.remaining(),
+      imageBase64: opts.imagePrompt,
+      mode: opts.imagePrompt ? 'edit' : 'image',
+      strength: opts.strength ?? 0.6,
+      faceSwap: opts.imagePrompt ? opts.faceLock === true : undefined,
+      signal: lifetime.signal,
+      timeoutMs: lifetime.remaining(),
     })
     if (!media.image || !media.image.length) throw new Error('Invalid image payload.')
     return media.image.toString('base64')
@@ -587,9 +597,17 @@ const imageSchema = z.object({
   n: z.number().int().min(1).max(4).optional(),
   size: z.string().optional(),
   response_format: z.enum(['b64_json', 'url']).optional(),
+  /** Optional base64 or data-URI reference image for img2img / face-lock. */
+  image_prompt: z.string().min(16).max(16 * 1024 * 1024).optional(),
+  /** Exact face transplant from image_prompt onto the generated image. Requires consent_attestation: true. */
+  face_lock: z.boolean().optional(),
+  /** Caller attestation that they are the person in image_prompt or have that person's explicit consent. */
+  consent_attestation: z.boolean().optional(),
+  /** Reference strength (0.1–1.0) when image_prompt is supplied. */
+  strength: z.number().min(0.1).max(1).optional(),
 })
 
-/** POST /v1/images/generations — text-to-image. */
+/** POST /v1/images/generations — text-to-image and reference-guided generation. */
 router.post('/images/generations', authenticateApiKey, v1Json, asyncHandler(async (req: ApiRequest, res) => {
   const parsed = imageSchema.safeParse(req.body)
   if (!parsed.success) {
@@ -602,7 +620,25 @@ router.post('/images/generations', authenticateApiKey, v1Json, asyncHandler(asyn
     )
   }
   const ctx = req.api!
-  const { prompt, n = 1, response_format = 'url' } = parsed.data
+  const { prompt, n = 1, response_format = 'url', image_prompt, face_lock, consent_attestation, strength } = parsed.data
+
+  if (face_lock === true) {
+    if (isAdultEdition()) {
+      return apiError(res, 400, 'Exact face-lock is disabled in this edition.', 'invalid_request_error', 'face_lock_unavailable')
+    }
+    if (!image_prompt) {
+      return apiError(res, 400, 'image_prompt is required when face_lock is enabled.', 'invalid_request_error', 'missing_reference_image')
+    }
+    if (consent_attestation !== true) {
+      return apiError(
+        res,
+        400,
+        'consent_attestation: true is required when face_lock is enabled (confirming you are the subject or have their explicit consent).',
+        'invalid_request_error',
+        'consent_required'
+      )
+    }
+  }
 
   const endpoint = (process.env.HF_IMAGE_ENDPOINT_URL || '').replace(/\/+$/, '')
   if (!endpoint) {
@@ -624,7 +660,7 @@ router.post('/images/generations', authenticateApiKey, v1Json, asyncHandler(asyn
     for (let i = 0; i < n; i++) {
       lifetime.remaining()
       paid.startWork()
-      images.push({ b64: await generateOne(endpoint, prompt, lifetime) })
+      images.push({ b64: await generateOne(endpoint, prompt, lifetime, { imagePrompt: image_prompt, strength, faceLock: face_lock === true }) })
     }
     lifetime.remaining()
 
@@ -676,6 +712,9 @@ router.post('/videos/generations', authenticateApiKey, v1Json, asyncHandler(asyn
   } catch (error) {
     const limit = videoQueueLimitProjection(error)
     if (limit) return apiError(res, limit.status, limit.message, 'api_error', limit.code)
+    if (error instanceof ApiBillingError && (error.code === 'key_spend_cap_exceeded' || error.code === 'key_concurrency_exceeded')) {
+      return apiError(res, 429, error.code === 'key_spend_cap_exceeded' ? 'This API key has reached its spend cap.' : 'This API key has too many requests in flight. Retry shortly.', 'api_error', error.code)
+    }
     const status = error instanceof ApiBillingError && error.code === 'insufficient_quota' ? 402 :
       error instanceof VideoJobError && error.code === 'invalid_request' ? 400 : 503
     return apiError(res, status, status === 402 ? 'Insufficient prepaid credit.' : status === 400 ? 'Invalid video request.' : 'Video billing is temporarily unavailable.',

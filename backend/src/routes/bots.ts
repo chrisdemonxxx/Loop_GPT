@@ -3,13 +3,13 @@
  * Mounted at /api/bots. Every row is owner-scoped.
  */
 import express from 'express'
-import { authenticateToken } from './auth'
+import { authenticateTokenOrApiKey } from '../middleware/apiAuth'
 import { asyncHandler } from '../middleware/errorLogger'
 import { hasDb, prisma } from '../services/prisma'
 import { BotError, createBot, createGroup, deleteBot, listBots, openBotThread, updateBot } from '../services/bots'
 
 const router = express.Router()
-router.use(authenticateToken)
+router.use(authenticateTokenOrApiKey)
 
 function fail(res: express.Response, error: unknown) {
   if (error instanceof BotError) {

@@ -6,6 +6,8 @@ const LEGAL_PAGES = [
   { href: '/terms', label: 'Terms of Service' },
   { href: '/cookies', label: 'Cookie Policy' },
   { href: '/acceptable-use', label: 'Acceptable Use' },
+  { href: '/refunds', label: 'Refund Policy' },
+  { href: '/takedown', label: 'DMCA & NCII Takedown' },
 ]
 
 export default function LegalLayout({

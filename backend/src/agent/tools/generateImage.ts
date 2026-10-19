@@ -7,6 +7,7 @@ import { recordUsage } from '../../services/billing'
 import { reserveDailyCredits, dailyDispatch, cleanupDailyReservation, DailyCreditError } from '../../services/dailyReservations'
 import { optimizePromptDetailed } from '../../services/promptOptimizer'
 import type { ToolDefinition } from '../types'
+import { isAdultEdition } from '../../services/edition'
 
 async function imageResponse(response: Awaited<ReturnType<typeof providerRequest>>, op: MediaOperation): Promise<Buffer> {
   op.check()
@@ -141,8 +142,17 @@ export const generateImageTool: ToolDefinition = {
       const promptMeta = await optimizePromptDetailed(rawPrompt, 'image').catch(() => ({ raw: rawPrompt, enhanced: rawPrompt, optimized: false }))
       const prompt = promptMeta.enhanced
       const parsedStrength = args.strength == null ? 0.6 : Number(args.strength)
-      // ref2lock exact-face transplant (on by default when a reference exists).
-      const faceLock = args.face_lock !== false
+      // ref2lock exact-face transplant. Requires the user's consent attestation
+      // (set from the request body, never by the model) and is hard-disabled in
+      // the adult edition. Without consent the softer img2img match is used.
+      const wantsFaceLock = args.face_lock !== false
+      const faceLockAllowed = !isAdultEdition() && ctx.scratch?.faceLockConsent === true
+      const faceLock = wantsFaceLock && faceLockAllowed
+      if (imagePrompt && wantsFaceLock && !faceLock) {
+        ctx.emit({ type: 'status', message: isAdultEdition()
+          ? 'Exact face-lock is unavailable here; using a softer reference match.'
+          : 'Exact face-lock needs your confirmation that you are the person in the photo or have their consent; using a softer reference match.' })
+      }
       // Sharp default: text-to-image the prompt, then transplant the face.
       // scene_lock=true keeps the reference composition (img2img) instead.
       const sceneLock = args.scene_lock === true

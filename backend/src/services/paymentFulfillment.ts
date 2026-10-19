@@ -126,7 +126,7 @@ async function applyEvent(tx: Tx, event: Stripe.Event): Promise<void> {
     const plan = str(meta.plan)
     const user = await tx.user.findUnique({ where: { id: userId }, select: { id: true } })
     if (!user) throw new Error('checkout user missing')
-    if (plan !== 'pro' && plan !== 'gold') throw new Error('unknown chat plan')
+    if (plan !== 'pro' && plan !== 'max' && plan !== 'gold') throw new Error('unknown chat plan')
     await tx.user.update({
       where: { id: userId },
       data: {

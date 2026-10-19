@@ -41,7 +41,7 @@ function scopePredicate(scope?: TaskScope) {
 /** Per-plan daily dedicated-computer budget (VM minutes). The free tier gets
  *  a 5-minute daily teaser so every user can taste the computer (product
  *  decision 2026-10-05); pro/gold are the working budgets. */
-export const BOT_VM_MINUTES_PER_DAY: Record<string, number> = { free: 5, pro: 30, gold: 120 }
+export const BOT_VM_MINUTES_PER_DAY: Record<string, number> = { free: 5, pro: 30, max: 120, gold: 120 }
 
 export const AGENT_TASK_MAX_ATTEMPTS = 3
 

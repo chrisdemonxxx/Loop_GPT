@@ -342,7 +342,7 @@ describe('environment-driven feature gates', () => {
     vi.stubEnv('STRIPE_CHECKOUT_ENABLED', 'true'); vi.stubEnv('STRIPE_FULFILLMENT_ENABLED', 'true')
     expect(payments.publicConfig()).toEqual({
       enabled: true, checkoutEnabled: true, fulfillmentEnabled: true, fulfillmentImplemented: true,
-      publishableKey: 'pk_test_localFixtureOnly', plans: { pro: true, gold: true },
+      publishableKey: 'pk_test_localFixtureOnly', plans: { pro: true, max: true, gold: true },
       apiPlans: { developer: true, growth: true, scale: true }, topUps: true,
     })
   })

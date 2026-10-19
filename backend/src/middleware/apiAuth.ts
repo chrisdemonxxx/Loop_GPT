@@ -111,3 +111,24 @@ export function requireBalance(req: ApiRequest, res: Response, next: NextFunctio
   }
   next()
 }
+
+/**
+ * Dual auth middleware: when the request carries a `Bearer sk-loop-…` API key,
+ * authenticates via `authenticateApiKey` (enforcing per-key RPM rate limits)
+ * and populates both `req.api` and `(req as any).userId`. Otherwise delegates
+ * to session JWT/cookie authentication (`authenticateToken`).
+ */
+export const authenticateTokenOrApiKey = asyncHandler(async (req: ApiRequest, res: Response, next: NextFunction) => {
+  const header = req.headers.authorization || ''
+  const raw = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
+  if (raw && looksLikeApiKey(raw)) {
+    return authenticateApiKey(req, res, (err?: any) => {
+      if (err) return next(err)
+      if (req.api?.userId) (req as any).userId = req.api.userId
+      next()
+    })
+  }
+  const { authenticateToken } = await import('../routes/auth')
+  return authenticateToken(req, res, next)
+})
+

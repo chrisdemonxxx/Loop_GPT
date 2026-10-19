@@ -8,12 +8,12 @@
  * (B4, enforced at enqueue) and model work against daily credits (kind 'bot').
  */
 import express from 'express'
-import { authenticateToken } from './auth'
+import { authenticateTokenOrApiKey } from '../middleware/apiAuth'
 import { asyncHandler } from '../middleware/errorLogger'
 import { hasDb, prisma } from '../services/prisma'
 
 const router = express.Router()
-router.use(authenticateToken)
+router.use(authenticateTokenOrApiKey)
 
 const noDb = (res: express.Response) => res.status(503).json({ error: 'Loop Bot requires a database.' })
 

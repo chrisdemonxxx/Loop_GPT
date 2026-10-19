@@ -55,6 +55,12 @@ model User {
   // Prepaid balance in micro-USD (1_000_000 = $1) so token costs stay exact
   // integers. Credits never expire; top-ups add, usage debits.
   apiBalanceMicros BigInt   @default(0)
+  /// Subscription credit bucket in micro-USD (expires at cycle end; spent first before rollover apiBalanceMicros).
+  subCreditsMicros BigInt   @default(0)
+  subCreditsExpireAt DateTime?
+  /// Age verification timestamp and provider for Adult Edition (VerifyMy).
+  ageVerifiedAt    DateTime?
+  ageVerificationProvider String?
   /// null | 'developer' | 'growth' | 'scale' — monthly plan granting a usage discount.
   apiPlan          String?
   apiSubId         String?
@@ -83,6 +89,8 @@ model User {
   agentTasks    AgentTask[]
   bots          Bot[]
   botBox        BotBox?
+  batchJobs     BatchJob[]
+  abuseReports  AbuseReport[]
 
   @@index([role])
   @@index([plan])
@@ -141,11 +149,20 @@ model ApiKey {
   keyHash    String    @unique
   prefix     String // e.g. "sk-loop-a1b2c3" for display
   revoked    Boolean   @default(false)
+  /// Rolling 30-day spend cap in micro-USD (captured plus in-flight). Null = no per-key cap.
+  spendCapMicros BigInt?
+  /// Max simultaneously in-flight (reserved/dispatched/unknown) requests. Null = no per-key limit.
+  concurrencyLimit Int?
+  /// Optional outbound webhook endpoint for async job completion events.
+  webhookUrl String?
+  /// HMAC-SHA256 signing secret for outbound webhook deliveries.
+  webhookSecret String?
   lastUsedAt DateTime?
   createdAt  DateTime  @default(now())
 
   usage ApiUsage[]
   reservations ApiReservation[]
+  batchJobs BatchJob[]
 
   @@unique([id, userId])
   @@index([userId])
@@ -798,6 +815,13 @@ model Workspace {
   personalOwner User? @relation("PersonalWorkspace", fields: [personalOwnerId], references: [id], onDelete: Cascade)
   /// Loop-IT org this workspace is linked to. Null until linked.
   loopitOrgId String?
+  /// Unified workspace USD wallet (rollover prepaid balance + expiring subscription credits).
+  walletMicros BigInt @default(0)
+  subCreditsMicros BigInt @default(0)
+  subCreditsExpireAt DateTime?
+  plan String @default("free")
+  stripeCustomerId String?
+  stripeSubId String?
   createdAt DateTime @default(now())
   members WorkspaceMember[]
   connections WorkspaceConnection[]
@@ -816,6 +840,8 @@ model WorkspaceMember {
   workspaceId String
   userId String
   role WorkspaceRole
+  /// Optional rolling 30-day spend cap for this member in micro-USD.
+  spendCapMicros BigInt?
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
@@ -869,4 +895,54 @@ model PrivateFile {
 
   @@index([userId, createdAt])
   @@index([conversationId])
+}
+
+/// OpenAI-compatible Batch API job (`/v1/batches`). Processes JSONL requests asynchronously at 50% discount.
+model BatchJob {
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKeyId         String?
+  apiKey           ApiKey?   @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  endpoint         String    @default("/v1/chat/completions")
+  completionWindow String    @default("24h")
+  status           String    @default("validating") // validating | in_progress | completed | failed | cancelled
+  totalCount       Int       @default(0)
+  completedCount   Int       @default(0)
+  failedCount      Int       @default(0)
+  requestsJson     Json      @default("[]")
+  resultsJson      Json?
+  error            String?
+  costMicros       BigInt    @default(0)
+  reservationId    String?
+  metadata         Json?
+  createdAt        DateTime  @default(now())
+  startedAt        DateTime?
+  completedAt      DateTime?
+  cancelledAt      DateTime?
+  expiresAt        DateTime
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+/// NCII / CSAM / Abuse report queue with 48-hour SLA tracking.
+model AbuseReport {
+  id             String    @id @default(cuid())
+  reporterUserId String?
+  reporter       User?     @relation(fields: [reporterUserId], references: [id], onDelete: SetNull)
+  reporterEmail  String?
+  category       String    // 'ncii' | 'csam' | 'impersonation' | 'violence' | 'other'
+  targetType     String    // 'file' | 'conversation' | 'share_link' | 'url' | 'user'
+  targetId       String
+  reason         String    @db.Text
+  status         String    @default("open") // open | reviewing | actioned | dismissed
+  slaDueAt       DateTime
+  resolvedAt     DateTime?
+  resolutionNote String?   @db.Text
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status, slaDueAt])
+  @@index([targetType, targetId])
 }

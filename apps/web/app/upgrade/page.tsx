@@ -24,14 +24,14 @@ const PLANS: PlanCard[] = [
     features: ['More credits every day', 'Video generation', 'Priority access to new models', 'Everything in Free'],
   },
   {
-    id: 'gold', name: 'Gold', price: '$100', period: 'per month',
+    id: 'max', name: 'Max', price: '$100', period: 'per month',
     features: ['The largest credit allowance', 'Highest-priority generation queue', 'Early access features', 'Everything in Pro'],
   },
 ]
 
 /**
  * Plans (blueprint §9.7 → contract team/CONTRACT_S3_ROUTES.md). The tier
- * structure is real (free/pro/gold are the live plan ids); checkout is FROZEN
+ * structure is real (free/pro/max are the live plan ids); checkout is FROZEN
  * at the billing service (`enabled:false`, verified RELEASE_P1) — this page
  * shows that truth instead of a fake payment step. Vouchers ARE real
  * (`POST /api/account/redeem`).
@@ -97,7 +97,7 @@ export default function UpgradePage() {
         <>
           <div className="mt-5 grid gap-3 max-md:grid-cols-1 md:grid-cols-3">
             {PLANS.map((plan) => {
-              const current = me?.plan === plan.id
+              const current = me?.plan === plan.id || (plan.id === 'max' && me?.plan === 'gold')
               return (
                 <section
                   key={plan.id}

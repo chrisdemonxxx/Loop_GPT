@@ -6,7 +6,7 @@ export const MAX_API_MICROS = BigInt(Number.MAX_SAFE_INTEGER)
 export const MAX_API_COUNT = 2_147_483_647
 
 export class ApiBillingError extends Error {
-  constructor(public readonly code: 'invalid_amount' | 'invalid_request' | 'unavailable' | 'insufficient_quota' | 'conflict' | 'invalid_owner' | 'lease_lost' | 'settlement_exhausted') {
+  constructor(public readonly code: 'invalid_amount' | 'invalid_request' | 'unavailable' | 'insufficient_quota' | 'conflict' | 'invalid_owner' | 'lease_lost' | 'settlement_exhausted' | 'key_spend_cap_exceeded' | 'key_concurrency_exceeded') {
     super(`API accounting: ${code}`)
     this.name = 'ApiBillingError'
   }
@@ -52,6 +52,9 @@ export async function apiTransaction<T>(work: (tx: Prisma.TransactionClient) => 
     }
   }
 }
+
+/** Rolling window for the optional per-key spend cap. */
+export const KEY_SPEND_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 
 export interface ReservationOwner { id: string; userId: string; apiKeyId?: string | null }
 export interface ReserveApiInput extends ReservationOwner {
@@ -110,6 +113,27 @@ export async function reserveApiBalanceTx(tx: Prisma.TransactionClient, input: R
     if (input.apiKeyId) {
       const key = await tx.apiKey.findFirst({ where: { id: input.apiKeyId, userId: input.userId, revoked: false } })
       if (!key) throw new ApiBillingError('invalid_owner')
+      const hasConcurrencyLimit = key.concurrencyLimit != null
+      const hasSpendCap = key.spendCapMicros != null
+      if (hasConcurrencyLimit || hasSpendCap) {
+        // Serialise reservations per key so concurrent requests cannot both pass the check.
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${'apikey-limits:' + key.id}))`
+        if (hasConcurrencyLimit) {
+          const inFlight = await tx.apiReservation.count({
+            where: { apiKeyId: key.id, state: { in: ['reserved', 'dispatched', 'unknown'] } },
+          })
+          if (inFlight >= key.concurrencyLimit!) throw new ApiBillingError('key_concurrency_exceeded')
+        }
+        if (hasSpendCap) {
+          const since = new Date(Date.now() - KEY_SPEND_WINDOW_MS)
+          const [captured, held] = await Promise.all([
+            tx.apiReservation.aggregate({ _sum: { capturedMicros: true }, where: { apiKeyId: key.id, state: 'captured', createdAt: { gte: since } } }),
+            tx.apiReservation.aggregate({ _sum: { amountMicros: true }, where: { apiKeyId: key.id, state: { in: ['reserved', 'dispatched', 'unknown'] }, createdAt: { gte: since } } }),
+          ])
+          const spent = (captured._sum.capturedMicros ?? 0n) + (held._sum.amountMicros ?? 0n)
+          if (spent + amount > key.spendCapMicros!) throw new ApiBillingError('key_spend_cap_exceeded')
+        }
+      }
     } else if (input.apiKeyId === '') throw new ApiBillingError('invalid_owner')
     const changed = await tx.user.updateMany({
       where: { id: input.userId, apiBalanceMicros: { gte: amount } },

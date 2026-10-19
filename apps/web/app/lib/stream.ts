@@ -84,6 +84,9 @@ export interface StreamBody {
   autoApprove?: boolean
   /** "Ask first": pause for approval before every tool call. */
   stepMode?: boolean
+  /** The user confirmed the person in an attached photo is them, or that they
+   *  have that person's consent. Required server-side for exact face-lock. */
+  faceLockConsent?: boolean
   /** Incognito: no sidebar entry, no memory read/write, excluded from synthesis. */
   incognito?: boolean
   projectId?: string
@@ -135,7 +138,7 @@ export async function runAgentStream(
   // /api/agent/:id/stream and rejects BYOK fields (provider/model/apiKey) and
   // server file paths (imagePath). Send only the hosted contract, including the
   // attachmentId so image attachments actually reach the vision path.
-  const safeBody: { content: string; mode: string; attachmentId?: string; attachmentIds?: string[]; toolNames?: string[]; autoApprove?: boolean; stepMode?: boolean; incognito?: boolean; projectId?: string; model?: string; webSearch?: boolean; thinking?: boolean | 'low' | 'medium' | 'high' | 'xhigh'; parentMessageId?: string | null; regenerateOf?: string; connectionIds?: string[]; workspaceId?: string; botId?: string; skipUserPersist?: boolean } = {
+  const safeBody: { content: string; mode: string; attachmentId?: string; attachmentIds?: string[]; toolNames?: string[]; autoApprove?: boolean; stepMode?: boolean; faceLockConsent?: boolean; incognito?: boolean; projectId?: string; model?: string; webSearch?: boolean; thinking?: boolean | 'low' | 'medium' | 'high' | 'xhigh'; parentMessageId?: string | null; regenerateOf?: string; connectionIds?: string[]; workspaceId?: string; botId?: string; skipUserPersist?: boolean } = {
     content: body.content,
     mode: body.mode || 'chat',
   }
@@ -146,6 +149,7 @@ export async function runAgentStream(
   if (body.toolNames?.length) safeBody.toolNames = body.toolNames
   if (body.autoApprove) safeBody.autoApprove = true
   if (body.stepMode) safeBody.stepMode = true
+  if (body.faceLockConsent) safeBody.faceLockConsent = true
   if (body.incognito) safeBody.incognito = true
   if (body.projectId) safeBody.projectId = body.projectId
   // Explicit per-run capability overrides (§8-25/26): only present when

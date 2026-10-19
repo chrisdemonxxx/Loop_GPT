@@ -24,7 +24,7 @@ interface Account {
   totpEnabled?: boolean
 }
 
-interface BillingConfig { enabled: boolean; plans: { pro: boolean; gold: boolean } }
+interface BillingConfig { enabled: boolean; plans: { pro: boolean; max?: boolean; gold: boolean } }
 
 export default function AccountPage() {
   const queryClient = useQueryClient()
@@ -278,7 +278,7 @@ export default function AccountPage() {
           </div>
 
           {/* Upgrade CTA */}
-          {acct && !acct.unlimited && acct.plan !== 'pro' && acct.plan !== 'gold' && (
+          {acct && !acct.unlimited && acct.plan !== 'pro' && acct.plan !== 'max' && acct.plan !== 'gold' && (
             <div className="glass rounded-2xl p-5 flex items-center justify-between">
               <div>
                 <div className="text-[var(--ink-primary)] font-medium">Upgrade to Pro</div>

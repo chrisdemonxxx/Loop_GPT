@@ -14,6 +14,7 @@ import { RunSettings } from './composer/RunSettings'
 import type { EffortValue } from './composer/EffortSelector'
 import { SendButton } from './composer/SendButton'
 import { modKey } from '../../lib/platformKey'
+import { useFaceLockConsent } from '../../lib/faceLockConsent'
 
 export type RunMode = 'auto' | 'plan' | 'step' | 'accept'
 
@@ -111,6 +112,9 @@ export default function Composer({
   const dragDepth = useRef(0)
   const { t } = useI18n()
   const canScreenshot = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia
+  const [faceLockConsent, setFaceLockConsent] = useFaceLockConsent()
+  const hasImageAttachment = attachments.some((a) => a.kind === 'image')
+  useEffect(() => { if (!hasImageAttachment) setFaceLockConsent(false) }, [hasImageAttachment, setFaceLockConsent])
 
   // ── Dictation (STT) ───────────────────────────────────────────────────────
   const { supported: micSupported, recording, elapsed, start: startDictation, stop: stopDictation } = useDictation({
@@ -301,6 +305,19 @@ export default function Composer({
               onRetry={onRetryAttachment}
             />
           </div>
+        )}
+        {hasImageAttachment && (
+          <label className="flex items-start gap-2 px-3 pt-2 text-[12px] text-slate-400">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={faceLockConsent}
+              onChange={(e) => setFaceLockConsent(e.target.checked)}
+            />
+            <span>
+              Match the exact face in this photo. I confirm it is me, or I have that person&apos;s consent.
+            </span>
+          </label>
         )}
         <textarea
           ref={textRef}

@@ -52,9 +52,64 @@ export async function listApiKeys(userId: string) {
   const keys = await prisma.apiKey.findMany({
     where: { userId, revoked: false },
     orderBy: { createdAt: 'desc' },
-    select: { id: true, name: true, prefix: true, lastUsedAt: true, createdAt: true },
+    select: {
+      id: true,
+      name: true,
+      prefix: true,
+      lastUsedAt: true,
+      createdAt: true,
+      spendCapMicros: true,
+      concurrencyLimit: true,
+      webhookUrl: true,
+    },
   })
-  return keys.map((k) => ({ ...k, masked: maskKey(k.prefix) }))
+  return keys.map(({ spendCapMicros, ...k }) => ({
+    ...k,
+    masked: maskKey(k.prefix),
+    spendCapUsd: spendCapMicros === null ? null : Number(spendCapMicros) / 1_000_000,
+    webhookUrl: k.webhookUrl ?? null,
+  }))
+}
+
+export interface KeyLimitsInput {
+  /** Rolling 30-day cap in USD; null clears it; undefined leaves it unchanged. */
+  spendCapUsd?: number | null
+  /** Max in-flight requests; null clears it; undefined leaves it unchanged. */
+  concurrencyLimit?: number | null
+  /** Optional HTTPS webhook URL for async job events; null clears it. */
+  webhookUrl?: string | null
+  /** Optional webhook signing secret; if omitted when setting a new webhookUrl, one is generated. */
+  webhookSecret?: string | null
+}
+
+/** Set or clear a key's per-key limits or webhook configuration. Returns false when the key isn't the caller's. */
+export async function updateApiKeyLimits(userId: string, id: string, limits: KeyLimitsInput): Promise<boolean> {
+  if (!hasDb || !prisma) return false
+  const data: {
+    spendCapMicros?: bigint | null
+    concurrencyLimit?: number | null
+    webhookUrl?: string | null
+    webhookSecret?: string | null
+  } = {}
+  if (limits.spendCapUsd !== undefined) {
+    data.spendCapMicros = limits.spendCapUsd === null ? null : BigInt(Math.round(limits.spendCapUsd * 1_000_000))
+  }
+  if (limits.concurrencyLimit !== undefined) data.concurrencyLimit = limits.concurrencyLimit
+  if (limits.webhookUrl !== undefined) {
+    data.webhookUrl = limits.webhookUrl
+    if (limits.webhookUrl === null) {
+      data.webhookSecret = null
+    } else if (limits.webhookSecret !== undefined) {
+      data.webhookSecret = limits.webhookSecret
+    } else {
+      data.webhookSecret = `whsec_${crypto.randomBytes(24).toString('hex')}`
+    }
+  } else if (limits.webhookSecret !== undefined) {
+    data.webhookSecret = limits.webhookSecret
+  }
+  if (!Object.keys(data).length) return true
+  const result = await prisma.apiKey.updateMany({ where: { id, userId, revoked: false }, data })
+  return result.count > 0
 }
 
 export async function revokeApiKey(userId: string, id: string): Promise<boolean> {

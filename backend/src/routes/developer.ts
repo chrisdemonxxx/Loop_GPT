@@ -7,7 +7,7 @@ import { asyncHandler } from '../middleware/errorLogger'
 import { z } from 'zod'
 import { authenticateToken } from './auth'
 import { prisma, hasDb } from '../services/prisma'
-import { createApiKey, listApiKeys, revokeApiKey } from '../services/apiKeys'
+import { createApiKey, listApiKeys, revokeApiKey, updateApiKeyLimits } from '../services/apiKeys'
 import {
   API_PLANS,
   MICROS_PER_USD,
@@ -127,6 +127,23 @@ router.post('/keys', authenticateToken, asyncHandler(async (req, res) => {
 router.get('/keys', authenticateToken, asyncHandler(async (req, res) => {
   if (!requireDb(res)) return
   res.json(await listApiKeys((req as any).userId))
+}))
+
+const limitsSchema = z.object({
+  spendCapUsd: z.number().min(0.01).max(1_000_000).nullable().optional(),
+  concurrencyLimit: z.number().int().min(1).max(1000).nullable().optional(),
+  webhookUrl: z.string().url().max(2048).refine((u) => u.startsWith('https://'), { message: 'webhookUrl must use https://' }).nullable().optional(),
+  webhookSecret: z.string().min(16).max(256).nullable().optional(),
+}).strict()
+
+/** PATCH /api/developer/keys/:id: set or clear per-key spend cap / concurrency limit / webhook URL. */
+router.patch('/keys/:id', authenticateToken, asyncHandler(async (req, res) => {
+  if (!requireDb(res)) return
+  const parsed = limitsSchema.safeParse(req.body || {})
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid key settings. spendCapUsd must be 0.01 to 1,000,000, concurrencyLimit 1 to 1000, and webhookUrl a valid https:// URL (or null to clear).' })
+  const ok = await updateApiKeyLimits((req as any).userId, req.params.id, parsed.data)
+  if (!ok) return res.status(404).json({ error: 'Key not found.' })
+  res.json({ ok: true })
 }))
 
 /** DELETE /api/developer/keys/:id — revoke. */

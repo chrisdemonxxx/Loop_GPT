@@ -64,6 +64,10 @@ import { stylesRouter } from './routes/styles'
 import { memoryRouter } from './routes/memory'
 import { oauthConnectorRouter } from './routes/oauthConnector'
 import loopitRoutes from './routes/loopit'
+import batchesRoutes from './routes/batches'
+import buildV1Routes from './routes/buildV1'
+import abuseRoutes from './routes/abuse'
+import altBillingRoutes from './routes/altBilling'
 
 
 // Register reviewed built-ins; legacy shared extensions are not bootstrapped.
@@ -119,7 +123,9 @@ app.use('/api/memory', express.json({ limit: '1mb' }), rateLimiter(10 * 1000, 50
 app.use('/api', versionRouter)
 
 // Readiness for deploy health checks: database + private storage.
+// Mounted at both /ready (direct backend) and /api/ready (same-origin web proxy).
 app.get('/ready', asyncHandler(readinessHandler()))
+app.get('/api/ready', asyncHandler(readinessHandler()))
 app.get('/metrics', asyncHandler(metricsHandler))
 
 // App JSON bodies are small. /v1 parses its own (large, for base64 media
@@ -180,11 +186,17 @@ app.use('/api/telemetry', telemetryRoutes)
 app.use('/api/share', rateLimiter(15 * 60 * 1000, 100), shareRouter) // unauthenticated; token-gated transcript reads
 app.use('/api/account', accountRoutes)
 app.use('/api/billing', billingRoutes)
+app.use('/api/billing', altBillingRoutes)
+app.use('/api/abuse', abuseRoutes)
 app.use('/api/tts', express.json({ limit: '256kb' }), rateLimiter(10 * 1000, 20), ttsRouter)
 app.use('/api/media', mediaRoutes)
 app.use('/api/developer', developerRoutes)
 // Public developer API. Deliberately NOT behind the global /api IP rate limiter —
 // it enforces its own per-key, per-plan limits in middleware/apiAuth.
+app.use('/v1/bot', express.json({ limit: '4mb' }), botRoutes)
+app.use('/v1/bots', express.json({ limit: '4mb' }), namedBotRoutes)
+app.use('/v1/batches', batchesRoutes)
+app.use('/v1/build', buildV1Routes)
 app.use('/v1', v1Routes)
 
 // Root route

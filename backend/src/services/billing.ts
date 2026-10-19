@@ -20,6 +20,9 @@ export type UsageKind = 'chat' | 'agent' | 'research' | 'image' | 'video' | 'bot
 export const PLAN_LIMITS: Record<string, { credits: number; imageCredits: number }> = {
   free: { credits: 30, imageCredits: 5 },
   pro: { credits: 1000, imageCredits: 100 },
+  /** Max — $100/mo premium tier. 5× Pro. */
+  max: { credits: 5000, imageCredits: 500 },
+  /** Gold — legacy T1 team tier, kept for backward compat with existing users/vouchers. */
   gold: { credits: 5000, imageCredits: 500 },
 }
 
