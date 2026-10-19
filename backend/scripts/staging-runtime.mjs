@@ -157,6 +157,8 @@ async function main() {
   process.on('SIGINT', () => shutdown())
   await storage.checkPrivateStorageReadiness(0, env)
   if (stopping) return
+  await childProcess('preflight', 'node_modules/prisma/build/index.js', ['migrate', 'deploy'])
+  if (stopping) return
   await childProcess('preflight', 'node_modules/prisma/build/index.js', ['migrate', 'status'])
   if (stopping) return
 
