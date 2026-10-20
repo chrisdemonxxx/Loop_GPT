@@ -365,6 +365,8 @@ router.post('/computer/wake', asyncHandler(async (req, res) => {
     }
     return res.status(502).json({ error: `Could not boot the bot computer: ${msg}`, code: 'provider' })
   }
+  // Metering must never wipe a successful boot — a thrown quota used to return
+  // 402 with no stream URLs even when the box was already alive.
   await recordInteractiveVmMinutes(userId).catch(() => undefined)
   const status = await getUserBoxStatus(userId)
   res.json({

@@ -62,18 +62,26 @@ export function AgentComputerTab({
       const b = await wakeBotComputer(taskType)
       setBox(b)
     } catch (err: any) {
-      if (err instanceof BotApiError && err.status === 404) {
-        // Wake route not deployed yet — fall back to legacy GET boot once.
+      if (err instanceof BotApiError && (err.status === 404 || err.status === 402)) {
+        // 404: wake not deployed yet. 402: quota exhausted but an already-alive
+        // box may still stream — fall back to status GET.
         try {
           const b = await getBotBox(taskType)
-          setBox(b)
-          return
+          if (b?.viewUrl || b?.interactiveUrl || b?.alive) {
+            setBox(b)
+            if (err.status === 402) {
+              setError('Daily computer minutes are used up — showing the existing desktop if it is still awake.')
+            }
+            return
+          }
         } catch (fallbackErr: any) {
           err = fallbackErr
         }
       }
       if (err instanceof BotApiError && err.status === 404) {
         setError('This backend does not have persistent boxes yet — the deployment is still rolling out. Retry in a minute.')
+      } else if (err instanceof BotApiError && err.status === 402) {
+        setError(err.message || "Today's dedicated-computer budget is used up. It resets with your daily credits.")
       } else if (err instanceof BotApiError && (err.status === 503 || /E2B/i.test(err.message || ''))) {
         setError('The computer provider is not configured on this deployment (E2B_API_KEY missing).')
       } else {

@@ -14,9 +14,17 @@ const INTERACTIVE_GOAL = '__interactive_computer__'
  *  time since the previous settle on the standing interactive BotRun. */
 export async function recordInteractiveVmMinutes(userId: string): Promise<void> {
   if (!hasDb || !prisma) return
-  // Enforce plan/quota before billing (throws forbidden/quota).
-  const { remainingVmMinutes } = await import('./agentTasks')
-  await remainingVmMinutes(userId)
+  // Soft quota check: never fail a successful wake/resume. If the day's
+  // minutes are spent, skip billing and let the already-booted box stream.
+  const { remainingVmMinutes, AgentTaskError } = await import('./agentTasks')
+  try {
+    await remainingVmMinutes(userId)
+  } catch (err) {
+    if (err instanceof AgentTaskError && (err.code === 'quota' || err.code === 'forbidden')) {
+      return
+    }
+    throw err
+  }
 
   const now = new Date()
   let task = await prisma.agentTask.findFirst({

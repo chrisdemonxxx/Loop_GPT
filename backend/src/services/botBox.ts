@@ -177,12 +177,22 @@ async function rememberBoxStream(userId: string, sandboxId: string, stream: { st
  */
 const pendingBoots = new Map<string, Promise<BoxSpec>>()
 
-/** Daily VM-minute budget, clamped to the provider's idle cap. Throws when the plan or quota forbids a computer. */
-async function boxTimeoutMs(userId: string): Promise<number> {
-  const { remainingVmMinutes } = await import('./agentTasks')
-  const remaining = await remainingVmMinutes(userId)
-  if (!Number.isFinite(remaining) || remaining >= 24 * 60) return BOX_IDLE_TTL_MS
-  return Math.min(BOX_IDLE_TTL_MS, Math.max(60_000, Math.floor(remaining) * 60_000))
+/** Daily VM-minute budget → sandbox idle timeout.
+ *  Soft mode (resume/reconnect): never throw on quota — return a short keepalive
+ *  so an already-alive box can still stream when today's minutes are spent.
+ *  Hard mode (cold boot): throws forbidden/quota like remainingVmMinutes. */
+async function boxTimeoutMs(userId: string, mode: 'soft' | 'hard' = 'hard'): Promise<number> {
+  const { remainingVmMinutes, AgentTaskError } = await import('./agentTasks')
+  try {
+    const remaining = await remainingVmMinutes(userId)
+    if (!Number.isFinite(remaining) || remaining >= 24 * 60) return BOX_IDLE_TTL_MS
+    return Math.min(BOX_IDLE_TTL_MS, Math.max(60_000, Math.floor(remaining) * 60_000))
+  } catch (err) {
+    if (mode === 'soft' && err instanceof AgentTaskError && (err.code === 'quota' || err.code === 'forbidden')) {
+      return 60_000
+    }
+    throw err
+  }
 }
 
 async function rememberBox(userId: string, sandboxId: string): Promise<void> {
@@ -228,10 +238,11 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
   if (pending) return pending
 
   const boot = (async (): Promise<BoxSpec> => {
-    const timeoutMs = await boxTimeoutMs(userId)
     const existing = liveBoxes.get(userId)
     if (existing) {
       try {
+        // Resume path: soft quota — do not 402 an already-live desktop.
+        const timeoutMs = await boxTimeoutMs(userId, 'soft')
         // Touch to keep alive; resume if paused. Timeout stays inside the daily budget.
         await existing.sandbox.setTimeout(timeoutMs)
         existing.lastTouchedAt = Date.now()
@@ -255,6 +266,8 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
     const connected = await connectPersistedBox(userId)
     if (connected) {
       try {
+        // Reconnect path: soft quota — allow streaming an existing sandbox.
+        const timeoutMs = await boxTimeoutMs(userId, 'soft')
         await connected.sandbox.setTimeout(timeoutMs)
         const state: BoxState = {
           sandboxId: connected.sandbox.sandboxId,
@@ -294,6 +307,9 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
     if (!isE2BConfigured()) {
       throw new Error('E2B is not configured on this deployment — the bot cannot boot its computer.')
     }
+
+    // Cold boot: hard quota — refuse new VMs when today's minutes are spent.
+    const timeoutMs = await boxTimeoutMs(userId, 'hard')
 
     const template = desktopTemplateId()
     if (!template) {
