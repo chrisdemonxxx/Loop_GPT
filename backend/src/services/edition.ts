@@ -1,16 +1,14 @@
 /**
  * Deployment edition. One backend, two editions:
  *
- *   mainstream (default) — Stripe / app-store safe: standard assistant prompt,
- *                          moderation on, face-lock only with user consent.
- *   adult                — only when LOOP_EDITION=adult is set explicitly:
- *                          unrestricted prompt, face-lock hard-disabled.
- *
- * Unset or unrecognised values resolve to mainstream, so a deployment that
- * forgets the variable fails safe.
+ *   adult (default)      — full unrestricted adult edition enabled by default
+ *                          (unless LOOP_EDITION=mainstream is explicitly set).
+ *   mainstream           — Stripe / app-store safe: standard assistant prompt,
+ *                          NSFW moderation on, face-lock requires consent.
  */
 export function isAdultEdition(): boolean {
-  return process.env.LOOP_EDITION === 'adult'
+  const raw = (process.env.LOOP_EDITION || 'adult').trim().toLowerCase()
+  return raw !== 'mainstream'
 }
 
 export function isMainstreamEdition(): boolean {

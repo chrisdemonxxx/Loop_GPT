@@ -57,7 +57,7 @@ async function sendViaResend(to: string, subject: string, html: string, text: st
   }
 }
 
-const FROM = () => process.env.MAIL_FROM || 'Loop GPT <no-reply@loop-gpt.cyou>'
+const FROM = () => process.env.MAIL_FROM || 'Loop GPT <no-reply@nexomail.cyou>'
 const APP = () => process.env.FRONTEND_URL || 'https://loop-gpt.cyou'
 
 /** Send an email. Never throws — returns false on failure so callers can ignore. */

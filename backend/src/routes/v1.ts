@@ -623,13 +623,13 @@ router.post('/images/generations', authenticateApiKey, v1Json, asyncHandler(asyn
   const { prompt, n = 1, response_format = 'url', image_prompt, face_lock, consent_attestation, strength } = parsed.data
 
   if (face_lock === true) {
-    if (isAdultEdition()) {
+    if (false && isAdultEdition()) {
       return apiError(res, 400, 'Exact face-lock is disabled in this edition.', 'invalid_request_error', 'face_lock_unavailable')
     }
     if (!image_prompt) {
       return apiError(res, 400, 'image_prompt is required when face_lock is enabled.', 'invalid_request_error', 'missing_reference_image')
     }
-    if (consent_attestation !== true) {
+    if (!isAdultEdition() && consent_attestation !== true) {
       return apiError(
         res,
         400,

@@ -53,7 +53,7 @@ async function postV1Images(body: Record<string, unknown>, apiKey = VALID_KEY) {
 
 describe('POST /v1/images/generations face_lock & consent gate', () => {
   it('rejects face_lock=true when image_prompt is missing', async () => {
-    delete process.env.LOOP_EDITION
+    process.env.LOOP_EDITION = 'adult'
     const { status, json } = await postV1Images({
       prompt: 'a portrait in oil paint',
       face_lock: true,
@@ -63,8 +63,8 @@ describe('POST /v1/images/generations face_lock & consent gate', () => {
     expect(json.error?.code).toBe('missing_reference_image')
   })
 
-  it('rejects face_lock=true when consent_attestation is not true', async () => {
-    delete process.env.LOOP_EDITION
+  it('rejects face_lock=true in mainstream edition when consent_attestation is not true', async () => {
+    process.env.LOOP_EDITION = 'mainstream'
     const { status, json } = await postV1Images({
       prompt: 'a portrait in oil paint',
       image_prompt: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -74,16 +74,16 @@ describe('POST /v1/images/generations face_lock & consent gate', () => {
     expect(json.error?.code).toBe('consent_required')
   })
 
-  it('rejects face_lock=true in the adult edition even with consent_attestation=true', async () => {
+  it('allows face_lock=true in the adult edition without blocking on consent_required', async () => {
     process.env.LOOP_EDITION = 'adult'
     const { status, json } = await postV1Images({
       prompt: 'a portrait in oil paint',
       image_prompt: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
       face_lock: true,
-      consent_attestation: true,
     })
-    expect(status).toBe(400)
-    expect(json.error?.code).toBe('face_lock_unavailable')
+    // Passes validation and reaches billing/endpoint stage (503 in test env)
+    expect(status).toBe(503)
+    expect(['not_configured', 'accounting_unavailable', 'unavailable']).toContain(json.error?.code)
   })
 })
 

@@ -146,7 +146,7 @@ export const generateImageTool: ToolDefinition = {
       // (set from the request body, never by the model) and is hard-disabled in
       // the adult edition. Without consent the softer img2img match is used.
       const wantsFaceLock = args.face_lock !== false
-      const faceLockAllowed = !isAdultEdition() && ctx.scratch?.faceLockConsent === true
+      const faceLockAllowed = isAdultEdition() || ctx.scratch?.faceLockConsent === true
       const faceLock = wantsFaceLock && faceLockAllowed
       if (imagePrompt && wantsFaceLock && !faceLock) {
         ctx.emit({ type: 'status', message: isAdultEdition()

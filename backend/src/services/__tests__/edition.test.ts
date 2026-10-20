@@ -14,25 +14,26 @@ afterEach(() => {
 })
 
 describe('edition', () => {
-  it('defaults to mainstream when unset (fail-safe)', () => {
+  it('defaults to adult when unset', () => {
     delete process.env.LOOP_EDITION
+    expect(isAdultEdition()).toBe(true)
+    expect(isMainstreamEdition()).toBe(false)
+  })
+
+  it('switches to mainstream only when explicitly set to "mainstream"', () => {
+    process.env.LOOP_EDITION = 'mainstream'
     expect(isAdultEdition()).toBe(false)
     expect(isMainstreamEdition()).toBe(true)
   })
 
-  it('treats unrecognised values as mainstream', () => {
-    process.env.LOOP_EDITION = 'ADULT '
-    expect(isAdultEdition()).toBe(false)
-  })
-
-  it('is adult only when explicitly set to "adult"', () => {
+  it('is adult when explicitly set to "adult"', () => {
     process.env.LOOP_EDITION = 'adult'
     expect(isAdultEdition()).toBe(true)
     expect(isMainstreamEdition()).toBe(false)
   })
 
   it('mainstream prompt forbids explicit content; adult prompt allows it', () => {
-    delete process.env.LOOP_EDITION
+    process.env.LOOP_EDITION = 'mainstream'
     const mainstream = getBaseSystemPrompt()
     expect(mainstream).toContain('Do not generate explicitly pornographic')
     expect(mainstream).not.toContain('erotic fiction')
@@ -42,9 +43,8 @@ describe('edition', () => {
   })
 
   it('keeps the three absolute limits in both editions', () => {
-    for (const edition of [undefined, 'adult']) {
-      if (edition) process.env.LOOP_EDITION = edition
-      else delete process.env.LOOP_EDITION
+    for (const edition of ['mainstream', 'adult']) {
+      process.env.LOOP_EDITION = edition
       const prompt = getBaseSystemPrompt()
       expect(prompt).toContain('real or fictional minors')
       expect(prompt).toContain('mass casualties')

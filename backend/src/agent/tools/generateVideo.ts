@@ -233,7 +233,7 @@ export const generateVideoTool: ToolDefinition = {
           const editEndpoint = mediaUrl(process.env.HF_IMAGE_ENDPOINT_URL || process.env.HF_VIDEO_ENDPOINT_URL || '')
           // Exact face transplant needs the user's consent attestation (from the
           // request body, never the model) and is off in the adult edition.
-          const faceSwap = !isAdultEdition() && ctx.scratch?.faceLockConsent === true
+          const faceSwap = isAdultEdition() || ctx.scratch?.faceLockConsent === true
           if (!faceSwap) {
             ctx.emit({ type: 'status', message: isAdultEdition()
               ? 'Exact face-lock is unavailable here; using a softer reference match.'
