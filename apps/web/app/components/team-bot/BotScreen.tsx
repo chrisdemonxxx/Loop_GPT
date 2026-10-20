@@ -196,7 +196,7 @@ export function BotScreen({ url, interactive = false }: BotScreenProps) {
       <div ref={containerRef} className="absolute inset-0 w-full h-full" />
       {showOverlay && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-[var(--bg-base)] text-center px-6">
-          {retriesExhausted || status === 'error' ? (
+          {retriesExhausted ? (
             <>
               <Monitor size={22} className="text-[var(--danger)]" aria-hidden />
               <p className="text-ui-sm text-[var(--danger)] max-w-sm">{error || securityErrorRef.current || 'Could not connect to the computer.'}</p>
