@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUp, Bot, Loader2, Monitor, Square, GraduationCap } from 'lucide-react'
-import { BOT_STATUS_LABEL, type BotTask } from '../../lib/bot'
+import { ArrowUp, Bot, Clock, Loader2, Monitor, Square, GraduationCap } from 'lucide-react'
+import { BOT_STATUS_LABEL, type BotQuota, type BotSkillRef, type BotTask } from '../../lib/bot'
 
 /**
  * The Grok Bot chat pane: the ONLY way to instruct the agent. A message sent
@@ -13,24 +13,33 @@ import { BOT_STATUS_LABEL, type BotTask } from '../../lib/bot'
 export function AgentChatPane({
   tasks,
   sending,
+  sendError,
+  quota,
+  suggestedSkills,
   onSend,
   onWatch,
   onTrace,
   onCancel,
+  onDismissSuggestions,
 }: {
   tasks: BotTask[] | null
   sending: boolean
+  sendError?: string
+  quota?: BotQuota | null
+  suggestedSkills?: BotSkillRef[]
   onSend: (text: string) => Promise<void>
   /** Active run → open the ONE computer surface (the bot's live screen). */
   onWatch: (taskId: string) => void
   /** Finished run → open the run's written trace. */
   onTrace: (taskId: string) => void
   onCancel: (taskId: string) => void
+  onDismissSuggestions?: () => void
 }) {
   const [draft, setDraft] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
+  const stickToBottomRef = useRef(true)
 
-  // Thread = tasks oldest → newest (teach sessions get their own marker).
+  // Thread = chronological (oldest → newest) so the latest sits at the bottom.
   const thread = useMemo(
     () => [...(tasks || [])].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
     [tasks],
@@ -38,12 +47,22 @@ export function AgentChatPane({
 
   useEffect(() => {
     const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [thread.length, thread[thread.length - 1]?.status])
+    if (!el || !stickToBottomRef.current) return
+    el.scrollTop = el.scrollHeight
+  }, [thread.length, thread[thread.length - 1]?.status, thread[thread.length - 1]?.result])
+
+  const computerBlocked = !!quota && (!quota.computerAllowed || !quota.computerConfigured)
+  const composerHint = !quota
+    ? null
+    : !quota.computerConfigured
+      ? 'Computer provider is not configured on this deployment.'
+      : !quota.computerAllowed
+        ? 'Dedicated computer requires a plan with computer minutes.'
+        : null
 
   const send = async () => {
     const text = draft.trim()
-    if (!text || sending) return
+    if (!text || sending || computerBlocked) return
     setDraft('')
     try { await onSend(text) } catch { setDraft(text) }
   }
@@ -51,7 +70,15 @@ export function AgentChatPane({
   return (
     <div className="flex flex-col min-h-0 h-full">
       {/* Thread */}
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-5 py-5">
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-y-auto px-5 py-5"
+        onScroll={() => {
+          const el = scrollRef.current
+          if (!el) return
+          stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+        }}
+      >
         <div className="max-w-2xl mx-auto space-y-4">
           <div className="flex items-start gap-3">
             <Avatar />
@@ -60,6 +87,25 @@ export function AgentChatPane({
               You can watch me work from the Computer tab, and teach me new skills there too.
             </div>
           </div>
+
+          {!!suggestedSkills?.length && (
+            <div className="rounded-xl border border-[var(--accent-soft-border)] bg-[var(--accent-soft)] px-3 py-2 text-ui-xs text-[var(--accent-text)]">
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <span className="text-2xs uppercase tracking-wider opacity-80">Suggested skills</span>
+                {onDismissSuggestions && (
+                  <button type="button" onClick={onDismissSuggestions} className="text-2xs opacity-70 hover:opacity-100">Dismiss</button>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {suggestedSkills.map((skill) => (
+                  <span key={skill.id} className="rounded-lg bg-[var(--bg-raised)] px-2 py-1 border border-[var(--accent-soft-border)]" title={skill.description}>
+                    {skill.name}
+                  </span>
+                ))}
+              </div>
+              <p className="mt-1.5 text-2xs opacity-80">Re-send with a skill attached from the Library for a guided run.</p>
+            </div>
+          )}
 
           {thread.map((task) => (
             <Exchange key={task.id} task={task} onWatch={onWatch} onTrace={onTrace} onCancel={onCancel} />
@@ -78,25 +124,31 @@ export function AgentChatPane({
 
       {/* Composer — every instruction to the bot goes through here */}
       <div className="shrink-0 border-t border-[var(--border-subtle)] px-5 py-3.5">
-        <div className="max-w-2xl mx-auto flex items-end gap-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-3.5 py-2.5 focus-within:border-[var(--accent)] transition">
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() } }}
-            rows={1}
-            placeholder="Message Loop Bot"
-            aria-label="Message Loop Bot"
-            className="flex-1 bg-transparent resize-none text-ui-base text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] focus:outline-none max-h-32"
-          />
-          <button
-            type="button"
-            onClick={() => void send()}
-            disabled={!draft.trim() || sending}
-            aria-label="Send"
-            className="shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-white bg-[var(--accent)] hover:bg-[var(--accent-hover)] transition disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            {sending ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
-          </button>
+        <div className="max-w-2xl mx-auto space-y-2">
+          {(sendError || composerHint) && (
+            <p className="text-ui-xs text-[var(--danger)]" role="alert">{sendError || composerHint}</p>
+          )}
+          <div className={`flex items-end gap-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-3.5 py-2.5 focus-within:border-[var(--accent)] transition ${computerBlocked ? 'opacity-60' : ''}`}>
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() } }}
+              rows={1}
+              placeholder={computerBlocked ? 'Computer unavailable' : 'Message Loop Bot'}
+              aria-label="Message Loop Bot"
+              disabled={computerBlocked}
+              className="flex-1 bg-transparent resize-none text-ui-base text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] focus:outline-none max-h-32 disabled:cursor-not-allowed"
+            />
+            <button
+              type="button"
+              onClick={() => void send()}
+              disabled={!draft.trim() || sending || computerBlocked}
+              aria-label="Send"
+              className="shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-white bg-[var(--accent)] hover:bg-[var(--accent-hover)] transition disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              {sending ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -122,6 +174,7 @@ function Exchange({
 }) {
   const active = task.status === 'queued' || task.status === 'processing'
   const teach = task.kind === 'teach'
+  const routine = task.kind === 'scheduled'
   return (
     <div className="space-y-2.5">
       {/* User instruction */}
@@ -130,6 +183,11 @@ function Exchange({
           {teach && (
             <span className="mr-1.5 inline-flex items-center gap-1 text-2xs text-[var(--danger)] align-middle">
               <GraduationCap size={11} /> teach
+            </span>
+          )}
+          {routine && (
+            <span className="mr-1.5 inline-flex items-center gap-1 text-2xs text-[var(--accent-text)] align-middle">
+              <Clock size={11} /> routine
             </span>
           )}
           {task.goal}
@@ -144,6 +202,9 @@ function Exchange({
             {active && <Loader2 size={12} className="animate-spin text-[var(--accent-text)]" />}
             <span>{replyFor(task)}</span>
           </div>
+          {task.status === 'succeeded' && task.result && (
+            <p className="mt-2 whitespace-pre-wrap text-ui-sm text-[var(--ink-secondary)] leading-relaxed">{task.result}</p>
+          )}
           <div className="mt-2 flex items-center gap-2">
             {active ? (
               <button
@@ -190,7 +251,7 @@ function replyFor(task: BotTask): string {
         ? 'Recording your demonstration on my computer.'
         : 'Working on it — watch me on the Computer tab.'
     case 'succeeded':
-      return 'Done. Open the trace for the full run.'
+      return task.result ? 'Done.' : 'Done. Open the trace for the full run.'
     case 'dead_letter':
       return `It failed${task.lastErrorCode ? ` — ${task.lastErrorCode.replace(/^BOT_/, '').replace(/_/g, ' ').toLowerCase()}` : ''}. Say the word and I'll retry.`
     case 'cancelled':

@@ -1,12 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, Users, X } from 'lucide-react'
 import { AVATAR_COLORS, type BotGroup, type NamedBot } from '../../lib/namedBots'
 import { useFocusTrap } from '@loop/ui'
-import { listBotSkills, type BotSkillRef } from '../../lib/bot'
+import { deleteBotSkill, listBotSkills, type BotSkillRef } from '../../lib/bot'
 import { useTeachSession } from '../team-bot/useTeachSession'
+import { AgentComputerTab } from '../team-bot/AgentComputerTab'
+import { BotFilesPanel } from '../team-bot/BotFilesPanel'
 
 function useDismissOnEscape(onClose: () => void) {
   useEffect(() => {
@@ -234,48 +235,32 @@ export function CreateGroupDialog({ bots, busy, onClose, onCreate }: {
   )
 }
 
+/**
+ * Chat-sidebar bot profile — same Computer / Library / Files surfaces as
+ * /agents (AgentComputerTab + BotFilesPanel), not an iframe. The old iframe
+ * hit X-Frame-Options on the noVNC HTML page.
+ */
 export function BotProfilePanel({ bot, onLabel }: {
   bot: NamedBot
   onLabel: (label: string) => void
 }) {
-  const [tab, setTab] = useState<'details' | 'library' | 'computer'>('details')
+  const [tab, setTab] = useState<'details' | 'library' | 'computer' | 'files'>('details')
   const [label, setLabel] = useState(bot.label || '')
   const [skills, setSkills] = useState<BotSkillRef[]>([])
-  const [enlarged, setEnlarged] = useState(false)
-  const teach = useTeachSession(() => { void listBotSkills(bot.id).then((d) => setSkills(d.skills || [])).catch(() => {}) }, bot.id)
+  const [computerExpanded, setComputerExpanded] = useState(false)
+  const refreshSkills = () => { void listBotSkills(bot.id).then((d) => setSkills(d.skills || [])).catch(() => {}) }
+  const teach = useTeachSession(() => refreshSkills(), bot.id)
   useEffect(() => { setLabel(bot.label || '') }, [bot.id, bot.label])
   useEffect(() => {
     if (tab !== 'library') return
-    void listBotSkills(bot.id).then((d) => setSkills(d.skills || [])).catch(() => {})
-  }, [tab, bot.id, teach.phase])
-  const teachPhase = teach.phase
-  const takeOver = teach.takeOver
+    refreshSkills()
+  }, [tab, bot.id, teach.phase]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (teachPhase === 'waiting') void takeOver()
-  }, [teachPhase, takeOver])
-
-  const view = (teach.computer?.takeoverRequested && teach.computer.interactiveUrl) || teach.computer?.viewUrl || ''
-  const teachLabel = teach.phase === 'recording' || teach.phase === 'waiting' ? 'Stop' : 'Teach a task'
-
-  const computer = (
-    <div className="space-y-2">
-      {view ? (
-        <button type="button" onClick={() => setEnlarged(true)} className="block w-full rounded-xl overflow-hidden border border-white/10" aria-label="Enlarge computer">
-          <iframe title={`${bot.name} computer`} src={view} className="w-full h-36 pointer-events-none bg-black" />
-        </button>
-      ) : (
-        <p className="text-[12px] text-slate-500">No computer session yet. Teach a task to open one.</p>
-      )}
-      <button
-        type="button"
-        onClick={() => { if (teach.phase === 'recording' || teach.phase === 'waiting') void teach.stop(); else void teach.start(`Watch how I work and save it as a skill for ${bot.name}.`) }}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-white/10 text-[12px] text-slate-200 hover:bg-white/[0.05]"
-      >
-        <span aria-hidden>⏺</span> {teachLabel}
-      </button>
-      {teach.error && <p className="text-[12px] text-rose-300">{teach.error}</p>}
-    </div>
-  )
+    if (teach.phase === 'waiting' || teach.phase === 'recording') {
+      setTab('computer')
+      setComputerExpanded(true)
+    }
+  }, [teach.phase])
 
   return (
     <>
@@ -292,12 +277,12 @@ export function BotProfilePanel({ bot, onLabel }: {
             className="mt-1 w-full bg-transparent text-[12px] text-slate-400 placeholder-slate-600 focus:outline-none"
           />
         </div>
-        <div className="px-3 flex gap-1 text-[12px]">
-          {(['details', 'library', 'computer'] as const).map((id) => (
+        <div className="px-3 flex gap-1 text-[12px] flex-wrap">
+          {(['details', 'library', 'computer', 'files'] as const).map((id) => (
             <button key={id} type="button" onClick={() => setTab(id)} className={`px-2.5 py-1 rounded-lg capitalize ${tab === id ? 'bg-white/[0.08] text-slate-100' : 'text-slate-500'}`} aria-pressed={tab === id}>{id}</button>
           ))}
         </div>
-        <div className="flex-1 overflow-y-auto px-4 py-3 text-[13px] text-slate-300">
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 text-[13px] text-slate-300">
           {tab === 'details' && (
             <div className="space-y-2">
               <p className="text-slate-400 whitespace-pre-wrap">{bot.persona || 'No persona yet.'}</p>
@@ -307,29 +292,52 @@ export function BotProfilePanel({ bot, onLabel }: {
           {tab === 'library' && (
             skills.length === 0
               ? <p className="text-slate-500">No skills yet. Teach a task and it lands here.</p>
-              : <ul className="space-y-2">{skills.map((s) => <li key={s.id} className="rounded-lg border border-white/[0.06] px-3 py-2"><div className="text-slate-100">{s.name}</div><div className="text-[12px] text-slate-500">{s.description}</div></li>)}</ul>
+              : (
+                <ul className="space-y-2">
+                  {skills.map((s) => (
+                    <li key={s.id} className="rounded-lg border border-white/[0.06] px-3 py-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-slate-100 truncate">{s.name}</div>
+                          <div className="text-[12px] text-slate-500">{s.description}</div>
+                        </div>
+                        <button
+                          type="button"
+                          aria-label={`Delete ${s.name}`}
+                          onClick={() => { void deleteBotSkill(s.id).then(refreshSkills).catch(() => {}) }}
+                          className="text-slate-500 hover:text-rose-300"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )
           )}
-          {tab === 'computer' && computer}
+          {tab === 'computer' && !computerExpanded && (
+            <div className="h-56 rounded-xl border border-white/10 overflow-hidden">
+              <AgentComputerTab
+                session={teach}
+                onExpand={() => setComputerExpanded(true)}
+              />
+            </div>
+          )}
+          {tab === 'files' && (
+            <div className="h-64 min-h-0">
+              <BotFilesPanel />
+            </div>
+          )}
+          {teach.error && tab === 'computer' && <p className="mt-2 text-[12px] text-rose-300">{teach.error}</p>}
         </div>
       </aside>
-      <AnimatePresence>
-        {enlarged && (
-          <motion.div
-            className="fixed inset-0 z-40 bg-[#0c0c0e] flex flex-col"
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.98 }}
-            transition={{ duration: 0.18 }}
-          >
-            <div className="h-12 px-4 flex items-center gap-2 border-b border-white/[0.06]">
-              <span className="text-[13px] text-slate-200 flex-1 truncate">{bot.name} · Computer</span>
-              <button type="button" onClick={() => { if (teach.phase === 'recording' || teach.phase === 'waiting') void teach.stop(); else void teach.start(`Watch how I work and save it as a skill for ${bot.name}.`) }} className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-white/15 text-[12px] text-slate-100"><span aria-hidden>⏺</span> {teachLabel}</button>
-              <button type="button" onClick={() => setEnlarged(false)} aria-label="Collapse computer" className="px-2 py-1 text-[12px] text-slate-400 hover:text-slate-100">Collapse</button>
-            </div>
-            {view ? <iframe title={`${bot.name} computer enlarged`} src={view} className="flex-1 w-full bg-black" /> : <div className="flex-1 flex items-center justify-center text-slate-500">The computer will appear here once the session starts.</div>}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {computerExpanded && (
+        <AgentComputerTab
+          session={teach}
+          expanded
+          onCollapse={() => setComputerExpanded(false)}
+        />
+      )}
     </>
   )
 }

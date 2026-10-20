@@ -77,8 +77,20 @@ function isStreamAlreadyRunning(error: unknown): boolean {
 
 /** Real E2B implementation. Dynamic import keeps the SDK out of unit-test
  *  processes and lets the backend boot without the package configured. */
-export async function createDesktop(opts: { timeoutMs: number }): Promise<DesktopClient> {
+export async function createDesktop(opts: {
+  timeoutMs: number
+  /** Tag the VM so the reaper can find dedicated sandboxes that lost their DB row. */
+  metadata?: Record<string, string>
+}): Promise<DesktopClient> {
   e2bApiKey()
+  const { awaitGnomeDesktop, desktopTemplateId, seedDesktopLaunchers } = await import('./gnomeSession')
+  const template = desktopTemplateId()
+  if (!template) {
+    throw new E2BDesktopError(
+      'E2B_DESKTOP_TEMPLATE is required for dedicated computer sessions (GNOME image). Build infra/e2b-gnome-desktop and set the template id.',
+      'unavailable',
+    )
+  }
   let Sandbox: any
   try {
     const mod = await import('@e2b/desktop')
@@ -88,20 +100,44 @@ export async function createDesktop(opts: { timeoutMs: number }): Promise<Deskto
   }
   let desktop: any
   try {
-    desktop = await Sandbox.create({ timeoutMs: opts.timeoutMs })
+    // Template must be the first argument (same as bot-live-smoke / SDK docs).
+    desktop = await Sandbox.create(template, {
+      timeoutMs: opts.timeoutMs,
+      // Pause on idle timeout so the next touch resumes (~1s) instead of cold-booting.
+      lifecycle: { onTimeout: 'pause', autoResume: true },
+      metadata: { loopGpt: 'bot-desktop', ...(opts.metadata || {}) },
+    })
   } catch (error: any) {
     const status = error?.status ?? error?.response?.status
     if (status === 401 || status === 403) throw new E2BDesktopError(`E2B auth rejected (${status})`, 'auth')
     throw new E2BDesktopError(`E2B sandbox creation failed${status ? ` (${status})` : ''}`, status && status >= 500 ? 'unavailable' : 'api')
   }
 
-  return wrapDesktop(desktop, false)
+  // Same GNOME-first gate as the persistent box — never hand back XFCE.
+  try {
+    await awaitGnomeDesktop(desktop)
+    await seedDesktopLaunchers(desktop)
+  } catch (error) {
+    await desktop.kill().catch(() => undefined)
+    const msg = String((error as Error)?.message || error)
+    throw new E2BDesktopError(msg, 'unavailable')
+  }
+
+  return wrapDesktop(desktop, true)
+}
+
+export interface PersistedStreamCreds {
+  streamAuthKey?: string | null
 }
 
 /** Wrap an already-running desktop sandbox (the persistent box) as a
  *  DesktopClient. When `owned` is false, kill() is a detach — the box stays
- *  alive for the next task and the operator's Computer tab. */
-function wrapDesktop(desktop: any, owned: boolean): DesktopClient {
+ *  alive for the next task and the operator's Computer tab.
+ *
+ *  `persisted` carries stream credentials written when the stream was first
+ *  started: a fresh Sandbox.connect never owned the stream, so getAuthKey()
+ *  fails after "already running" — the persisted key is the only recovery. */
+function wrapDesktop(desktop: any, owned: boolean, persisted?: PersistedStreamCreds): DesktopClient {
   const client: DesktopClient = {
     sandboxId: String(desktop.sandboxId),
     async startStream() {
@@ -110,12 +146,23 @@ function wrapDesktop(desktop: any, owned: boolean): DesktopClient {
       } catch (error) {
         // Resume path: the stream survives on the sandbox across SDK
         // reconnects, so a second start() rejects with "already running".
-        // That's fine — fall through and read the auth key; if this SDK
-        // instance never owned the stream (fresh Sandbox.connect), the reads
-        // throw and the caller falls back to its persisted credentials.
+        // Fall through and prefer this instance's auth key; if it never owned
+        // the stream, use the credentials persisted on BotBox / BotRun.
         if (!isStreamAlreadyRunning(error)) throw error
       }
-      const authKey = desktop.stream.getAuthKey()
+      let authKey = ''
+      try {
+        authKey = String(desktop.stream.getAuthKey() || '')
+      } catch {
+        authKey = ''
+      }
+      if (!authKey) authKey = String(persisted?.streamAuthKey || '')
+      if (!authKey) {
+        throw new E2BDesktopError(
+          'Desktop stream is already running but no stream auth key is available (persisted credentials missing)',
+          'api',
+        )
+      }
       // Same-origin noVNC URLs (our /novnc client + backend websockify proxy),
       // never the E2B-hosted vnc.html — see buildVncUrls for why.
       const urls = buildVncUrls(client.sandboxId, authKey)
@@ -158,8 +205,10 @@ function wrapDesktop(desktop: any, owned: boolean): DesktopClient {
 export { wrapDesktop }
 
 /** Attach to a RUNNING desktop sandbox by id (the user's persistent box).
- *  Returns a client whose kill() detaches instead of terminating. */
-export async function attachDesktop(sandboxId: string): Promise<DesktopClient> {
+ *  Returns a client whose kill() detaches instead of terminating.
+ *  Pass persisted stream credentials from BotBox so startStream() works when
+ *  the stream is already up on a sandbox this SDK instance never owned. */
+export async function attachDesktop(sandboxId: string, persisted?: PersistedStreamCreds): Promise<DesktopClient> {
   e2bApiKey()
   let Sandbox: any
   try {
@@ -169,5 +218,5 @@ export async function attachDesktop(sandboxId: string): Promise<DesktopClient> {
     throw new E2BDesktopError('@e2b/desktop is not installed', 'unavailable')
   }
   const desktop = await Sandbox.connect(sandboxId)
-  return wrapDesktop(desktop, false)
+  return wrapDesktop(desktop, false, persisted)
 }

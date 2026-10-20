@@ -27,10 +27,20 @@ interface Live {
   view: BotRunView
   listeners: Set<(event: AgentEvent) => void>
   persistTimer?: ReturnType<typeof setTimeout>
+  /** Next seq to assign (1-based). Survives event ring-buffer shifts. */
+  nextSeq: number
 }
 
 const MAX_EVENTS = 800
 const live = new Map<string, Live>()
+
+/** Monotonic seq stamped on every stored event so poll cursors survive the
+ *  800-event ring buffer (array-index cursors skip or replay after shift). */
+type Sequenced = AgentEvent & { seq: number }
+
+function withSeq(event: AgentEvent, seq: number): Sequenced {
+  return { ...event, seq }
+}
 
 const DATA_IMAGE = /^data:image\/[a-z0-9.+-]+;base64,/i
 
@@ -87,6 +97,7 @@ export async function startRun(taskId: string): Promise<{
   const id = randomUUID()
   const run: Live = {
     listeners: new Set(),
+    nextSeq: 1,
     view: { id, taskId, status: 'running', events: [], startedAt: new Date().toISOString() },
   }
   live.set(id, run)
@@ -101,7 +112,7 @@ export async function startRun(taskId: string): Promise<{
   return {
     runId: id,
     emit(event) {
-      const stored = redactEvent(event)
+      const stored = withSeq(redactEvent(event), run.nextSeq++)
       if (run.view.events.length >= MAX_EVENTS) run.view.events.shift()
       run.view.events.push(stored)
       for (const listener of run.listeners) { try { listener(stored) } catch { /* listener gone */ } }
@@ -128,11 +139,19 @@ export async function startRun(taskId: string): Promise<{
 
 /** Replay what has already happened, then attach live. Returns unsubscribe.
  *  When this process is not the worker, tail the persisted row so the API
- *  live viewer still receives events. */
-export function subscribe(runId: string, listener: (event: AgentEvent) => void): () => void {
+ *  live viewer still receives events.
+ *
+ *  `after` is the last seq the client received; only events with seq > after
+ *  are replayed. Array-index cursors break once the 800-event ring shifts. */
+export function subscribe(runId: string, listener: (event: AgentEvent) => void, opts?: { after?: number }): () => void {
+  const after = typeof opts?.after === 'number' && Number.isFinite(opts.after) ? opts.after : 0
   const run = live.get(runId)
   if (run) {
-    for (const event of run.view.events) { try { listener(event) } catch { /* ignore */ } }
+    for (const event of run.view.events) {
+      const seq = (event as Sequenced).seq
+      if (typeof seq === 'number' && seq <= after) continue
+      try { listener(event) } catch { /* ignore */ }
+    }
     if (run.view.status !== 'running') {
       try { listener({ type: 'done' }) } catch { /* ignore */ }
       return () => {}
@@ -141,7 +160,7 @@ export function subscribe(runId: string, listener: (event: AgentEvent) => void):
     return () => run.listeners.delete(listener)
   }
   let stopped = false
-  let cursor = 0
+  let cursor = after
   const poll: { timer?: ReturnType<typeof setInterval> } = {}
   const stop = () => {
     stopped = true
@@ -152,11 +171,13 @@ export function subscribe(runId: string, listener: (event: AgentEvent) => void):
     try {
       const row = await prisma.botRun.findUnique({ where: { id: runId }, select: { events: true, status: true } })
       if (!row || stopped) return
-      const events = Array.isArray(row.events) ? row.events as AgentEvent[] : []
-      for (let i = cursor; i < events.length; i++) {
-        try { listener(events[i]) } catch { /* ignore */ }
+      const events = Array.isArray(row.events) ? row.events as Sequenced[] : []
+      for (const event of events) {
+        const seq = typeof event.seq === 'number' ? event.seq : 0
+        if (seq <= cursor) continue
+        try { listener(event) } catch { /* ignore */ }
+        cursor = seq
       }
-      cursor = events.length
       if (row.status !== 'running') {
         try { listener({ type: 'done' }) } catch { /* ignore */ }
         stop()
@@ -167,6 +188,56 @@ export function subscribe(runId: string, listener: (event: AgentEvent) => void):
   poll.timer = setInterval(() => { void tick() }, 500)
   poll.timer.unref?.()
   return stop
+}
+
+/** Mark runs stuck at `running` as failed when their task lease has expired
+ *  (or the task is no longer processing). Sets completedAt / computer.endedAt. */
+export async function reconcileStuckBotRuns(): Promise<number> {
+  if (!prisma) return 0
+  try {
+    const stuck = await prisma.botRun.findMany({
+      where: { status: 'running' },
+      select: {
+        id: true,
+        computer: true,
+        task: { select: { status: true, leaseExpiresAt: true } },
+      },
+      take: 100,
+    })
+    let fixed = 0
+    const now = new Date()
+    for (const row of stuck) {
+      const leaseExpired = row.task.leaseExpiresAt != null && row.task.leaseExpiresAt.getTime() <= Date.now()
+      const taskGone = row.task.status !== 'processing'
+      if (!leaseExpired && !taskGone) continue
+      const computer = (row.computer as RunComputerInfo | null) || {}
+      const patched = {
+        ...computer,
+        endedAt: computer.endedAt || now.toISOString(),
+      }
+      const errMsg = 'Run abandoned — task lease expired'
+      await prisma.botRun.update({
+        where: { id: row.id },
+        data: {
+          status: 'failed',
+          error: errMsg,
+          completedAt: now,
+          computer: patched as any,
+        },
+      }).catch(() => undefined)
+      const inMemory = live.get(row.id)
+      if (inMemory) {
+        inMemory.view.status = 'failed'
+        inMemory.view.error = errMsg
+        inMemory.view.completedAt = now.toISOString()
+        live.delete(row.id)
+      }
+      fixed += 1
+    }
+    return fixed
+  } catch {
+    return 0
+  }
 }
 
 /**

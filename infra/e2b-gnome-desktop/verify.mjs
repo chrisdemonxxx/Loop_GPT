@@ -6,33 +6,34 @@
  * Run from backend/ so node resolves @e2b/desktop:
  *   node ../infra/e2b-gnome-desktop/verify.mjs
  */
+import path from 'node:path'
+import fs from 'node:fs'
+
 const TEMPLATE = process.env.E2B_DESKTOP_TEMPLATE || 'loop-gnome-desktop'
 
 async function main() {
   const { Sandbox } = await import('@e2b/desktop')
   console.log('[verify] creating sandbox with template', TEMPLATE)
-  const sandbox = await Sandbox.create({ template: TEMPLATE, timeoutMs: 20 * 60_000 })
+  const sandbox = await Sandbox.create({
+    template: TEMPLATE,
+    timeoutMs: 20 * 60_000,
+    lifecycle: { onTimeout: 'pause', autoResume: true },
+  })
   const id = String(sandbox.sandboxId)
   console.log('[verify] sandbox up:', id)
 
   try {
-    // Install GNOME into the live box if absent — the same path
-    // botBox.ensureGnomeInstalled takes. (The template-time install was
-    // pruned by E2B's optimize/snapshot phase three rebuilds running.)
+    // GNOME is baked into the template — no runtime apt install.
     const present = await sandbox.commands.run('test -x /usr/bin/gnome-shell -a -x /usr/bin/gnome-session', { timeoutMs: 10_000 }).catch(() => null)
     if (!present || (present.exitCode ?? 1) !== 0) {
-      console.log('[verify] installing GNOME into the live box (first boot, ~2-4 min)…')
-      const install = await sandbox.commands.run(
-        'sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gnome-session gnome-shell mutter gnome-terminal nautilus gnome-backgrounds adwaita-icon-theme-full gnome-themes-extra dbus-x11 mesa-utils libgl1-mesa-dri',
-        { timeoutMs: 480_000 },
-      )
-      if ((install.exitCode ?? 1) !== 0) {
-        console.error('[verify] GNOME install failed:\n' + install.stdout.slice(-2000) + install.stderr.slice(-1000))
-        process.exitCode = 1
-        return
-      }
-      console.log('[verify] GNOME installed')
+      console.error('[verify] GNOME binaries missing from the template — rebuild infra/e2b-gnome-desktop')
+      process.exitCode = 1
+      return
     }
+    console.log('[verify] GNOME binaries present in template')
+
+    const term = await sandbox.commands.run('readlink -f /usr/bin/x-terminal-emulator || true', { timeoutMs: 5_000 })
+    console.log('[verify] x-terminal-emulator →', String(term.stdout || '').trim())
 
     // Swap to GNOME — same steps as botBox.swapToGnomeSession, inlined so
     // this harness has no dependency on backend build artifacts.
@@ -85,8 +86,8 @@ async function main() {
     console.log('[verify] GNOME session is running')
 
     const png = await sandbox.screenshot('bytes')
-    const fs = await import('node:fs')
-    const out = process.env.VERIFY_SCREENSHOT || `${process.env.TEMP || '/tmp'}\\gnome-verify.png`
+    const out = process.env.VERIFY_SCREENSHOT
+      || path.join(process.env.TEMP || process.env.TMPDIR || '/tmp', 'gnome-verify.png')
     fs.writeFileSync(out, Buffer.from(png))
     console.log('[verify] screenshot written to', out, `(${png.length} bytes)`)
 

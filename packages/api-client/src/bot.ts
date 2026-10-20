@@ -1,8 +1,8 @@
 'use client'
 
 import type {
-  BotComputer, BotEvent, BotQuota, BotRun, BotSkillRef, BotTask, BotTaskDetail,
-  BotTaskStatus, EnqueueBotInput,
+  BotBoxTaskType, BotComputer, BotEvent, BotQuota, BotRun, BotSkillRef, BotTask, BotTaskDetail,
+  BotTaskStatus, EnqueueBotInput, EnqueueBotResult,
 } from '@loop/shared'
 import { API_URL, authHeaders } from './api'
 
@@ -38,7 +38,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 // ── Tasks ────────────────────────────────────────────────────────────────────
 
 export const enqueueBotTask = (input: EnqueueBotInput) =>
-  req<{ ok: true; task: { id: string; kind: string; status: string; nextAttemptAt: string; computer?: { enabled: boolean; ttlMinutes?: number } } }>('POST', '/api/bot/tasks', input)
+  req<EnqueueBotResult>('POST', '/api/bot/tasks', input)
 
 export const listBotTasks = (opts: { status?: string; limit?: number } = {}) => {
   const params = new URLSearchParams()
@@ -59,8 +59,8 @@ export const getBotRun = (runId: string) => req<BotRun>('GET', `/api/bot/runs/${
 export const getBotComputer = (runId: string) => req<BotComputer>('GET', `/api/bot/runs/${runId}/computer`)
 
 /** The caller's PERSISTENT box (Grok parity) — the always-on computer that
- *  exists independent of any task. GET boots/resumes it and returns the live
- *  stream; every computer-enabled task attaches to this same VM. */
+ *  exists independent of any task. GET is status-only (no boot side effect);
+ *  POST /computer/wake boots or resumes and returns the live stream. */
 export interface BotBox {
   alive: boolean
   sandboxId: string
@@ -68,11 +68,17 @@ export interface BotBox {
   interactiveUrl: string | null
   resumed: boolean
   ageMinutes: number
-  taskType: 'default' | 'coding' | 'research' | 'ops' | 'teach'
+  taskType: BotBoxTaskType
   workspaceDir: string
 }
-export const getBotBox = (taskType: BotBox['taskType'] = 'default') =>
+
+/** Status probe — must not boot the VM (backend Phase 1B). */
+export const getBotBox = (taskType: BotBoxTaskType = 'default') =>
   req<BotBox>('GET', `/api/bot/computer?taskType=${encodeURIComponent(taskType)}`)
+
+/** Boot / resume the persistent box. Call when the user opens Computer or needs files. */
+export const wakeBotComputer = (taskType: BotBoxTaskType = 'default') =>
+  req<BotBox>('POST', '/api/bot/computer/wake', { taskType })
 
 export const setBotTakeover = (runId: string, takeover: boolean) =>
   req<{ takeoverRequested: boolean; interactiveUrl: string | null }>('POST', `/api/bot/runs/${runId}/takeover`, { takeover })
@@ -94,6 +100,22 @@ export const writeBoxFile = (path: string, content: string) =>
 
 export const deleteBoxFile = (path: string) =>
   req<{ ok: boolean }>('DELETE', `/api/bot/computer/file?path=${encodeURIComponent(path)}`)
+
+/**
+ * Mint a short-lived signed token for noVNC websocket auth (desktop / Bearer
+ * sessions that cannot send cookies on the upgrade).
+ *
+ * POST /api/bot/computer/ws-token { sandboxId }
+ * → { token, expiresIn, queryParam: "token" }
+ * Connect websockify with `?token=<token>` (or `&token=` if the path already
+ * has a query string).
+ */
+export const mintNovncWsToken = (sandboxId: string) =>
+  req<{ token: string; expiresIn: number; queryParam: string }>(
+    'POST',
+    '/api/bot/computer/ws-token',
+    { sandboxId },
+  )
 
 // ── Routines — recurring jobs (bot + skill + schedule) ──────────────────────
 
@@ -131,54 +153,89 @@ export const deleteBotSkill = (id: string) => req<{ ok: true }>('DELETE', `/api/
 /**
  * Run event stream — replay buffered events then attach live (SSE). Uses
  * fetch+reader (NOT EventSource) because the endpoint needs the Authorization
- * header. Returns a stop function; onEvent fires per sequenced event,
- * onDone at the terminal event, onError on transport failure.
+ * header. Bounded reconnect on transport failure; returns a stop function.
+ *
+ * Only `done` ends the stream early — `final` is still delivered to onEvent
+ * (teach emits `skill_saved` after `final` in some paths).
  */
 export function streamBotRun(
   runId: string,
   onEvent: (event: BotEvent) => void,
   onDone?: () => void,
   onError?: (message: string) => void,
+  opts?: { maxRetries?: number },
 ): () => void {
   const controller = new AbortController()
+  const maxRetries = opts?.maxRetries ?? 3
   ;(async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/bot/runs/${runId}/events`, {
-        headers: authHeaders(),
-        signal: controller.signal,
-      })
-      if (!res.ok || !res.body) {
-        const data = await res.json().catch(() => ({}))
-        onError?.(data?.error || `Stream failed (${res.status})`)
-        return
-      }
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const parts = buffer.split('\n\n')
-        buffer = parts.pop() || ''
-        for (const part of parts) {
-          const line = part.split('\n').find((l) => l.startsWith('data:'))
-          if (!line) continue
-          const payload = line.slice(5).trim()
-          if (!payload || payload.startsWith(':')) continue
-          try {
-            const event = JSON.parse(payload) as BotEvent
-            onEvent(event)
-            if (event.type === 'done') { onDone?.(); return }
-          } catch { /* malformed frame */ }
+    let attempt = 0
+    /** Last monotonic event seq — resume via ?after= so reconnects survive the 800-event ring. */
+    let lastSeq = 0
+    while (!controller.signal.aborted) {
+      try {
+        const afterQs = lastSeq > 0 ? `?after=${lastSeq}` : ''
+        const res = await fetch(`${API_URL}/api/bot/runs/${runId}/events${afterQs}`, {
+          headers: authHeaders(),
+          signal: controller.signal,
+        })
+        if (!res.ok || !res.body) {
+          const data = await res.json().catch(() => ({}))
+          // 404 while the worker is still claiming — let the caller retry via
+          // reconnect; surface after retries are exhausted.
+          if (res.status === 404 && attempt < maxRetries) {
+            attempt += 1
+            await new Promise((r) => setTimeout(r, 1000 * attempt))
+            continue
+          }
+          onError?.(data?.error || `Stream failed (${res.status})`)
+          return
         }
+        attempt = 0
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const parts = buffer.split('\n\n')
+          buffer = parts.pop() || ''
+          for (const part of parts) {
+            const line = part.split('\n').find((l) => l.startsWith('data:'))
+            if (!line) continue
+            const payload = line.slice(5).trim()
+            if (!payload || payload.startsWith(':')) continue
+            try {
+              const event = JSON.parse(payload) as BotEvent
+              if (typeof event.seq === 'number' && event.seq > lastSeq) lastSeq = event.seq
+              onEvent(event)
+              if (event.type === 'done') { onDone?.(); return }
+            } catch { /* malformed frame */ }
+          }
+        }
+        // Transport closed without a terminal `done` — reconnect with the cursor.
+        attempt += 1
+        if (attempt > maxRetries) {
+          onDone?.()
+          return
+        }
+        await new Promise((r) => setTimeout(r, 1000 * attempt))
+      } catch (err: any) {
+        if (err?.name === 'AbortError' || controller.signal.aborted) return
+        attempt += 1
+        if (attempt > maxRetries) {
+          onError?.(err?.message || 'Stream failed')
+          return
+        }
+        await new Promise((r) => setTimeout(r, 1000 * attempt))
       }
-      onDone?.()
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') onError?.(err?.message || 'Stream failed')
     }
   })()
   return () => controller.abort()
 }
 
-export type { BotComputer, BotEvent, BotQuota, BotRun, BotSkillRef, BotTask, BotTaskDetail, BotTaskStatus, EnqueueBotInput }
+export type {
+  BotBoxTaskType, BotComputer, BotEvent, BotQuota, BotRun, BotSkillRef, BotTask, BotTaskDetail,
+  BotTaskStatus, EnqueueBotInput, EnqueueBotResult,
+}
+export type { BotTaskType } from '@loop/shared'

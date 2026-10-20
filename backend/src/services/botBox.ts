@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { buildVncUrls, isE2BConfigured } from './e2bDesktop'
+import { awaitGnomeDesktop, desktopTemplateId, seedDesktopLaunchers } from './gnomeSession'
 import { prisma } from './prisma'
 import { readBotMemory } from './botMemory'
 import { restoreWorkspaceIn, syncWorkspaceOut, syncWorkspaceThrottled } from './workspaceSync'
@@ -29,8 +30,8 @@ type Sandbox = any
  *  "always on" in practice via touch-keepalive (every use extends the timer)
  *  and fast resume — when it does expire, the next touch re-boots + re-seeds. */
 export const BOX_IDLE_TTL_MS = 60 * 60 * 1000
-const BOOT_BUDGET_MS = 30 * 1000
-const DEFAULT_SCREEN = { width: 1366, height: 768 }
+/** Documented E2B Desktop default geometry (also COMPUTER_FALLBACK_SCREEN). */
+export const DEFAULT_SCREEN = { width: 1366, height: 768 }
 
 export type BoxTaskType = 'default' | 'coding' | 'research' | 'ops' | 'teach'
 
@@ -85,6 +86,9 @@ async function seedBoxProfile(sandbox: Sandbox, userLabel: string, taskType: Box
     `printf 'Loop Bot box — %s\\nworkspace: /workspace\\n' ${quote(userLabel)} > /home/user/Desktop/ABOUT_THIS_BOX.txt 2>/dev/null || true`,
   ].join(' && '))
 
+  // Chrome + terminal desktop icons on every cold boot (Grok-feel first paint).
+  await seedDesktopLaunchers(sandbox)
+
   // Task-type tool packs — what appears ready-made on the desktop.
   const packs: Record<BoxTaskType, string[]> = {
     default: [],
@@ -98,7 +102,7 @@ async function seedBoxProfile(sandbox: Sandbox, userLabel: string, taskType: Box
     ],
     ops: [
       `mkdir -p /home/user/.config/autostart && printf '[Desktop Entry]\\nType=Application\\nName=Terminal\\nExec=x-terminal-emulator --working-directory=/workspace\\nX-GNOME-Autostart-enabled=true\\n' > /home/user/.config/autostart/terminal.desktop`,
-      `mkdir -p /home/user/.config/autostart && printf '[Desktop Entry]\\nType=Application\\nName=Files\\nExec=thunar /workspace\\nX-GNOME-Autostart-enabled=true\\n' > /home/user/.config/autostart/files.desktop`,
+      `mkdir -p /home/user/.config/autostart && printf '[Desktop Entry]\\nType=Application\\nName=Files\\nExec=nautilus /workspace\\nX-GNOME-Autostart-enabled=true\\n' > /home/user/.config/autostart/files.desktop`,
     ],
     teach: [
       `mkdir -p /workspace/teach-sessions`,
@@ -291,19 +295,31 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
       throw new Error('E2B is not configured on this deployment — the bot cannot boot its computer.')
     }
 
-    const template = process.env.E2B_DESKTOP_TEMPLATE
+    const template = desktopTemplateId()
+    if (!template) {
+      throw new Error(
+        'E2B_DESKTOP_TEMPLATE is required for bot Computer boot (GNOME image). Build infra/e2b-gnome-desktop and set the template id.',
+      )
+    }
     const { Sandbox: DesktopSandbox } = await import('@e2b/desktop')
-    const sandbox: Sandbox = await DesktopSandbox.create({
-      ...(template ? { template } : {}),
+    // First arg is the template id/alias — passing only { template } can fall
+    // back to the stock XFCE image (no GNOME binaries).
+    const sandbox: Sandbox = await DesktopSandbox.create(template, {
       timeoutMs,
+      // Pause on idle timeout so the next touch resumes quickly instead of cold-booting.
+      lifecycle: { onTimeout: 'pause', autoResume: true },
       metadata: { loopGpt: 'bot-box', userId },
     })
 
-    // The SDK boots whatever session the template ships (its own hardcoded
-    // XFCE path); the GNOME template carries GNOME as the real desktop, so
-    // the session is swapped right after create(). Everything the SDK does
-    // afterwards — stream, screenshots, input — is desktop-agnostic.
-    if (template) swapToGnomeSession(sandbox).catch((err: unknown) => console.warn('[bot-box] GNOME swap in background failed', String(err)))
+    // GNOME-first: do not return Computer / stream until GNOME owns the
+    // display. The SDK still starts its XFCE shim; we block on the swap.
+    // Fail loudly — never paint XFCE to the operator.
+    try {
+      await awaitGnomeDesktop(sandbox)
+    } catch (err) {
+      await sandbox.kill().catch(() => undefined)
+      throw err
+    }
 
     await runInBox(sandbox, 'mkdir -p /workspace /home/user/Desktop')
     // A fresh box is empty; the user's files come back from the durable mirror
@@ -325,7 +341,7 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
 
     const stream = await readVncUrls(sandbox)
     await rememberBoxStream(userId, sandbox.sandboxId, stream)
-    console.info('[bot-box] booted persistent box', { userId, sandboxId: sandbox.sandboxId, taskType })
+    console.info('[bot-box] booted persistent box', { userId, sandboxId: sandbox.sandboxId, taskType, template })
     return {
       sandboxId: sandbox.sandboxId,
       streamUrl: stream.streamUrl,
@@ -356,78 +372,131 @@ export async function attachUserBoxFromDB(userId: string): Promise<string | null
   }
 }
 
-/** Sync the workspace for all active user boxes in the DB, then kill them.
- *  Called only at shutdown from a SIGTERM handler, so a single monolithic
- *  failure does not leave boxes alive; every sync/kill is best-effort
- *  individually. */
-export async function syncAndKillAllBoxes(): Promise<void> {
-  if (!prisma) return
-  const rows = await prisma.botBox.findMany({ where: { sandboxId: { not: '' } }, select: { userId: true, sandboxId: true } }).catch(() => [])
-  for (const row of rows) {
-    if (!row.sandboxId) continue
-    try {
-      const { Sandbox } = await import('@e2b/desktop')
-      const sandbox = await Sandbox.connect(row.sandboxId)
-      try { await syncWorkspaceOut(sandbox, row.userId) } catch { /* best effort */ }
-      try { await sandbox.kill() } catch { /* best effort */ }
-    } catch { /* best effort — the provider will reap TTL anyway */ }
-  }
+/** Detach in-process box handles without killing provider VMs. The API process
+ *  must never kill every user's box on SIGTERM — only clear local refs so the
+ *  next boot reconnects. The worker drains its own in-flight tasks separately. */
+export async function detachAllBoxes(): Promise<void> {
+  liveBoxes.clear()
+  pendingBoots.clear()
 }
 
+/** @deprecated Prefer detachAllBoxes — killing every box on API shutdown is wrong. */
+export async function syncAndKillAllBoxes(): Promise<void> {
+  await detachAllBoxes()
+}
+
+const BOX_IDLE_REAP_MS = 2 * 60 * 60_000
+
 /** Every 5 minutes, kill stale bot boxes whose keep-alive window expired.
- *  A sandbox that hasn't been touched for >2 hours is either dead on the
- *  provider side (TTL) or orphaned by a crashed connection — either way
- *  its sandboxId should be cleared so the next boot creates a fresh one
- *  instead of trying to connect (and failing silently, which produces a
- *  5s delay per idle request while the SDK times out). */
+ *  Sync the workspace first, re-check updatedAt inside the kill step so a box
+ *  the user just touched isn't killed, and sweep untracked provider sandboxes
+ *  tagged with our metadata. */
 export async function reapOrphanBoxes(): Promise<void> {
   if (!prisma) return
   try {
-    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60_000)
+    const twoHoursAgo = new Date(Date.now() - BOX_IDLE_REAP_MS)
     const stale = await prisma.botBox.findMany({
       where: { sandboxId: { not: '' }, updatedAt: { lt: twoHoursAgo } },
-      select: { userId: true, sandboxId: true },
+      select: { userId: true, sandboxId: true, updatedAt: true },
     })
     for (const row of stale) {
       if (!row.sandboxId) continue
+      // Re-check freshness: a concurrent wake/heartbeat may have just touched it.
+      const fresh = await prisma.botBox.findUnique({
+        where: { userId: row.userId },
+        select: { sandboxId: true, updatedAt: true },
+      }).catch(() => null)
+      if (!fresh?.sandboxId || fresh.sandboxId !== row.sandboxId) continue
+      if (fresh.updatedAt.getTime() >= Date.now() - BOX_IDLE_REAP_MS) continue
       try {
         const { Sandbox } = await import('@e2b/desktop')
         const handle = await Sandbox.connect(row.sandboxId)
+        try { await syncWorkspaceOut(handle, row.userId) } catch { /* best effort */ }
+        // Final freshness check after the (slow) sync.
+        const again = await prisma.botBox.findUnique({
+          where: { userId: row.userId },
+          select: { updatedAt: true, sandboxId: true },
+        }).catch(() => null)
+        if (!again || again.sandboxId !== row.sandboxId) continue
+        if (again.updatedAt.getTime() >= Date.now() - BOX_IDLE_REAP_MS) continue
         await handle.kill().catch(() => undefined)
-        await prisma!.botBox.update({ where: { userId: row.userId }, data: { sandboxId: '' } }).catch(() => undefined)
+        await prisma.botBox.update({ where: { userId: row.userId }, data: { sandboxId: '' } }).catch(() => undefined)
+        liveBoxes.delete(row.userId)
         console.info('[bot-box] reaped stale sandbox', { userId: row.userId, sandboxId: row.sandboxId })
       } catch {
         // The sandbox is already dead (provider TTL), so the DB row is already
         // stale; clear the pointer to unblock the next cold-boot.
-        await prisma!.botBox.update({ where: { userId: row.userId }, data: { sandboxId: '' } }).catch(() => undefined)
+        await prisma.botBox.update({ where: { userId: row.userId }, data: { sandboxId: '' } }).catch(() => undefined)
+        liveBoxes.delete(row.userId)
       }
     }
+    await reapUntrackedSandboxes()
   } catch { /* best effort */ }
 }
 
-// ─── Graceful-shutdown handler for when the process gets SIGTERM ─────────────
-if (typeof process !== 'undefined' && process.on) {
-  let shuttingDown = false
-  process.on('SIGTERM', () => {
-    if (shuttingDown) return
-    shuttingDown = true
-    ;(async () => {
-      console.info('[bot-box] SIGTERM received — syncing and killing all active user boxes')
-      await syncAndKillAllBoxes()
-      process.exit(0)
-    })().catch(() => process.exit(1))
-  })
-  // uncleaned exit on SIGINT is intentional: interactive dev stop is not a
-  // production path and must not hold the process.
+/** Kill provider sandboxes tagged as ours that no BotBox / recent BotRun tracks. */
+async function reapUntrackedSandboxes(): Promise<void> {
+  if (!prisma || !isE2BConfigured()) return
+  try {
+    const { Sandbox } = await import('@e2b/desktop')
+    const tracked = new Set<string>()
+    const boxes = await prisma.botBox.findMany({
+      where: { sandboxId: { not: '' } },
+      select: { sandboxId: true },
+    }).catch(() => [])
+    for (const row of boxes) if (row.sandboxId) tracked.add(row.sandboxId)
+    const recent = await prisma.botRun.findMany({
+      where: { status: 'running', startedAt: { gt: new Date(Date.now() - BOX_IDLE_REAP_MS) } },
+      select: { computer: true },
+      take: 200,
+    }).catch(() => [])
+    for (const run of recent) {
+      const id = (run.computer as { sandboxId?: string } | null)?.sandboxId
+      if (id) tracked.add(id)
+    }
+    const paginator = Sandbox.list({ query: { metadata: { loopGpt: 'bot-box' } } })
+    while (paginator.hasNext) {
+      const page = await paginator.nextItems()
+      for (const info of page) {
+        const id = String(info.sandboxId || '')
+        if (!id || tracked.has(id)) continue
+        try {
+          const handle = await Sandbox.connect(id)
+          await handle.kill().catch(() => undefined)
+          console.info('[bot-box] reaped untracked sandbox', { sandboxId: id })
+        } catch { /* already gone */ }
+      }
+    }
+    // Dedicated per-run VMs use a different metadata tag.
+    const desktopPager = Sandbox.list({ query: { metadata: { loopGpt: 'bot-desktop' } } })
+    while (desktopPager.hasNext) {
+      const page = await desktopPager.nextItems()
+      for (const info of page) {
+        const id = String(info.sandboxId || '')
+        if (!id || tracked.has(id)) continue
+        try {
+          const handle = await Sandbox.connect(id)
+          await handle.kill().catch(() => undefined)
+          console.info('[bot-box] reaped untracked desktop sandbox', { sandboxId: id })
+        } catch { /* already gone */ }
+      }
+    }
+  } catch (error) {
+    console.warn('[bot-box] untracked sandbox sweep failed', String((error as Error)?.message || error))
+  }
 }
 
-/** Create (and remember) a per-task folder inside the user's box workspace. */
+/** Create (and remember) a per-task folder inside the user's box workspace.
+ *  Connects by the box id from BotBox — the worker process does not share the
+ *  API's in-memory liveBoxes map. */
 export async function createBoxTaskFolder(userId: string, taskId: string, goal: string): Promise<string> {
-  const live = liveBoxes.get(userId)
-  if (!live) return '/workspace'
+  const sandboxId = await attachUserBoxFromDB(userId)
+  if (!sandboxId) return '/workspace'
   const dir = `/workspace/task-folders/${taskId.slice(0, 8)}`
   try {
-    await live.sandbox.commands.run(
+    const { Sandbox } = await import('@e2b/desktop')
+    const sandbox = liveBoxes.get(userId)?.sandbox || await Sandbox.connect(sandboxId)
+    await sandbox.commands.run(
       `mkdir -p ${quote(dir)} && printf '%s\\n' ${quote(`# ${goal}\n# task ${taskId} — created ${new Date().toISOString()}`)} > ${quote(`${dir}/TASK.md`)}`,
       { timeoutMs: 20_000 },
     )
@@ -437,133 +506,87 @@ export async function createBoxTaskFolder(userId: string, taskId: string, goal: 
   }
 }
 
-/** Swap the SDK-started XFCE shim session for a real GNOME desktop.
- *
- *  Why GNOME is installed in the box and not in the template: E2B's build
- *  pipeline accepted GNOME packages at build time (dpkg '^ii' verified in
- *  the build log) and then dropped exactly that layer during its optimize /
- *  snapshot phase — three rebuilds proved it. Installing into the live box
- *  on first boot takes ~2-4 minutes once per box lifetime and nothing can
- *  prune it afterwards. The SDK's create() still boots the XFCE shim first;
- *  everything it does afterwards — stream, screenshots, input — is
- *  desktop-agnostic, so once GNOME owns the display the swap is invisible
- *  to the SDK.
- *
- *  Best-effort and idempotent: a failed swap leaves the XFCE shim running,
- *  which still streams and drives, so the box is degraded, not dead. */
-const GNOME_PACKAGES = [
-  'gnome-session',
-  'gnome-shell',
-  'mutter',
-  'gnome-terminal',
-  'nautilus',
-  'gnome-backgrounds',
-  'adwaita-icon-theme-full',
-  'gnome-themes-extra',
-  'dbus-x11',
-  'mesa-utils',
-  'libgl1-mesa-dri',
-]
+/** Extend the box timeout and bump BotBox.updatedAt while a task is attached
+ *  so the reaper never kills an active box. */
+export async function extendUserBoxLease(userId: string): Promise<void> {
+  if (!prisma) return
+  const timeoutMs = await boxTimeoutMs(userId).catch(() => BOX_IDLE_TTL_MS)
+  const live = liveBoxes.get(userId)
+  if (live) {
+    try {
+      await live.sandbox.setTimeout(timeoutMs)
+      live.lastTouchedAt = Date.now()
+    } catch { /* reconnect path below */ }
+  } else {
+    const row = await prisma.botBox.findUnique({ where: { userId }, select: { sandboxId: true } }).catch(() => null)
+    if (row?.sandboxId) {
+      try {
+        const { Sandbox } = await import('@e2b/desktop')
+        const sandbox = await Sandbox.connect(row.sandboxId)
+        await sandbox.setTimeout(timeoutMs)
+        liveBoxes.set(userId, {
+          sandboxId: row.sandboxId,
+          sandbox,
+          createdAt: Date.now(),
+          lastTouchedAt: Date.now(),
+        })
+      } catch { /* box may be paused/dead — next ensureUserBox resumes */ }
+    }
+  }
+  await prisma.botBox.update({
+    where: { userId },
+    data: { updatedAt: new Date() },
+  }).catch(() => undefined)
+}
 
-async function ensureGnomeInstalled(sandbox: Sandbox): Promise<boolean> {
-  try {
-    const present = await sandbox.commands.run('test -x /usr/bin/gnome-shell -a -x /usr/bin/gnome-session', { timeoutMs: 10_000 })
-    if ((present.exitCode ?? 1) === 0) return true
-  } catch { /* fall through to install */ }
-  console.info('[bot-box] installing GNOME into the live box (first boot)')
-  const install = await sandbox.commands.run(
-    `sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ${GNOME_PACKAGES.join(' ')}`,
-    { timeoutMs: 480_000 },
-  ).catch((error: unknown) => {
-    console.warn('[bot-box] GNOME install failed', String(error))
-    return null
-  })
-  if (!install || (install.exitCode ?? 1) !== 0) return false
-  try {
-    const verify = await sandbox.commands.run('test -x /usr/bin/gnome-shell -a -x /usr/bin/gnome-session', { timeoutMs: 10_000 })
-    return (verify.exitCode ?? 1) === 0
-  } catch {
-    return false
+/** Read-only stream state for GET /computer (no boot/resume side effects). */
+export async function getBoxStreamState(userId: string): Promise<{
+  alive: boolean
+  sandboxId?: string
+  viewUrl?: string | null
+  interactiveUrl?: string | null
+  ageMinutes?: number
+  taskType?: BoxTaskType
+  workspaceDir?: string
+} | null> {
+  if (!prisma) return null
+  const row = await prisma.botBox.findUnique({ where: { userId } }).catch(() => null)
+  if (!row?.sandboxId) return { alive: false }
+  let viewUrl = row.streamUrl
+  let interactiveUrl = row.interactiveUrl
+  if (row.streamAuthKey) {
+    const urls = buildVncUrls(row.sandboxId, row.streamAuthKey)
+    viewUrl = urls.viewUrl
+    interactiveUrl = urls.interactiveUrl
+  }
+  const live = liveBoxes.get(userId)
+  return {
+    alive: true,
+    sandboxId: row.sandboxId,
+    viewUrl: viewUrl || null,
+    interactiveUrl: interactiveUrl || null,
+    ageMinutes: live
+      ? Math.max(0, Math.round((Date.now() - live.createdAt) / 60_000))
+      : undefined,
+    workspaceDir: '/workspace',
   }
 }
 
-async function swapToGnomeSession(sandbox: Sandbox): Promise<void> {
-  const marker = '/tmp/.loop-gnome-session'
-  try {
-    const already = await sandbox.commands.run(`test -f ${marker}`, { timeoutMs: 5_000 }).catch(() => null)
-    if (already && (already.exitCode ?? 1) === 0) return
-  } catch { /* proceed */ }
-
-  if (!(await ensureGnomeInstalled(sandbox))) {
-    console.warn('[bot-box] GNOME unavailable; the XFCE shim remains as the desktop')
-    return
-  }
-
-  const autostarts = [
-    // GNOME must never blank or lock: the bot and the operator watch this
-    // screen, and a black frame looks like a dead box.
-    `printf '[Desktop Entry]\\nType=Application\\nName=Loop GNOME settings\\nExec=sh -c "gsettings set org.gnome.desktop.session idle-delay 0; gsettings set org.gnome.desktop.screensaver lock-enabled false"\\nX-GNOME-Autostart-enabled=true\\n' > /home/user/.config/autostart/loop-gnome-settings.desktop`,
-    `chown -R user:user /home/user/.config 2>/dev/null || true`,
-  ]
-  await runInBox(sandbox, autostarts.join(' && '))
-
-  const swap = [
-    'pkill -f xfce4-session 2>/dev/null; pkill -x xfwm4 2>/dev/null; pkill -x xfdesktop 2>/dev/null; true',
-    'sleep 1',
-    'cd /home/user && sudo -u user DISPLAY=:0 XDG_SESSION_TYPE=x11 XDG_CURRENT_DESKTOP=GNOME LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe /usr/bin/dbus-run-session -- /usr/bin/gnome-session --session=gnome > /tmp/gnome-session.log 2>&1 &',
-    `touch ${marker}`,
-  ].join('; ')
-  try {
-    const handle = await sandbox.commands.run(swap, { background: true, timeoutMs: 0 })
-    await handle.disconnect?.().catch(() => undefined)
-  } catch { /* fall through to the wait */ }
-
-  // Success check is gnome-shell alone: in nested X11 mode mutter lives
-  // inside the shell process as a library, so a separate mutter process
-  // never appears. gnome-session gets a short window (without systemd's
-  // user manager it usually cannot come up), then the nested shell, which
-  // is the reliable path under Xvfb.
-  for (let i = 0; i < 20; i += 1) {
-    try {
-      const r = await sandbox.commands.run('pgrep -x gnome-shell >/dev/null', { timeoutMs: 5_000 })
-      if ((r.exitCode ?? 1) === 0) {
-        console.info('[bot-box] GNOME session owns the display')
-        return
-      }
-    } catch { /* keep waiting */ }
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-  }
-  try {
-    const handle = await sandbox.commands.run(
-      'cd /home/user && sudo -u user DISPLAY=:0 XDG_CURRENT_DESKTOP=GNOME LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe /usr/bin/gnome-shell --x11 --replace > /tmp/gnome-shell.log 2>&1 &',
-      { background: true, timeoutMs: 0 },
-    )
-    await handle.disconnect?.().catch(() => undefined)
-  } catch { /* the next wait loop reports */ }
-  for (let i = 0; i < 45; i += 1) {
-    try {
-      const r = await sandbox.commands.run('pgrep -x gnome-shell >/dev/null', { timeoutMs: 5_000 })
-      if ((r.exitCode ?? 1) === 0) {
-        console.info('[bot-box] GNOME shell owns the display (nested mode)')
-        return
-      }
-    } catch { /* keep waiting */ }
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-  }
-  console.warn('[bot-box] GNOME session did not verify; the XFCE shim remains as the desktop')
-}
-
-/** Box health for the Computer tab. */
+/** Box health for the Computer tab. Prefers the in-process handle; falls back
+ *  to the persisted BotBox row (API vs worker don't share liveBoxes). */
 export async function getUserBoxStatus(userId: string): Promise<{ alive: boolean; sandboxId?: string; ageMinutes?: number }> {
   const live = liveBoxes.get(userId)
-  if (!live) return { alive: false }
-  try {
-    await live.sandbox.commands.run('true', { timeoutMs: 5_000 })
-    return { alive: true, sandboxId: live.sandboxId, ageMinutes: Math.max(0, Math.round((Date.now() - live.createdAt) / 60_000)) }
-  } catch {
-    liveBoxes.delete(userId)
-    return { alive: false }
+  if (live) {
+    try {
+      await live.sandbox.commands.run('true', { timeoutMs: 5_000 })
+      return { alive: true, sandboxId: live.sandboxId, ageMinutes: Math.max(0, Math.round((Date.now() - live.createdAt) / 60_000)) }
+    } catch {
+      liveBoxes.delete(userId)
+    }
   }
+  const sandboxId = await attachUserBoxFromDB(userId)
+  if (!sandboxId) return { alive: false }
+  return { alive: true, sandboxId }
 }
 
 /** Graceful shutdown (deploys / restarts): sync every workspace out first —

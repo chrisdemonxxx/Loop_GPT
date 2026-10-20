@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
-import { COMPUTER_TOOLS, COMPUTER_TOOL_NAMES } from '../tools/computerTools'
+import {
+  COMPUTER_TOOLS,
+  COMPUTER_TOOL_NAMES,
+  COMPUTER_SCREEN_W,
+  COMPUTER_SCREEN_H,
+  computerToolsForScreen,
+} from '../tools/computerTools'
 import type { ToolContext } from '../types'
 
-function fakeSession(clientCalls: string[] = []) {
+function fakeSession(clientCalls: string[] = [], screen?: { width: number; height: number }) {
   const client = {
     click: vi.fn(async () => { clientCalls.push('click') }),
     moveMouse: vi.fn(async () => { clientCalls.push('move') }),
@@ -16,6 +22,7 @@ function fakeSession(clientCalls: string[] = []) {
   return {
     client,
     session: {
+      ...(screen ? { screen } : {}),
       guard: vi.fn(async () => {}),
       screenshot: vi.fn(async () => ({ artifact: { name: 'shot.png' }, imageDataUri: 'data:image/png;base64,AA==' })),
       act: vi.fn(async (_desc: string, fn: (c: any) => Promise<void>) => {
@@ -48,12 +55,30 @@ describe('computer_* tools', () => {
     ])
   })
 
+  it('defaults fall back to E2B 1366×768 (not 1024×768)', () => {
+    expect(COMPUTER_SCREEN_W).toBe(1366)
+    expect(COMPUTER_SCREEN_H).toBe(768)
+  })
+
   it('click clamps coordinates to the real desktop and defaults to the left button', async () => {
     const { session, client } = fakeSession()
     const result = await tool('computer_click').handler({ x: -50, y: 9999 }, ctxWith(session))
     expect(result.isError).toBeUndefined()
-    expect(client.click).toHaveBeenCalledWith(0, 768, 'left')
+    expect(client.click).toHaveBeenCalledWith(0, COMPUTER_SCREEN_H, 'left')
     expect(result.data.imageDataUri).toContain('data:image/png')
+  })
+
+  it('click clamps to live xdpyinfo session size (1366×768), not a hardcoded 1024 canvas', async () => {
+    const { session, client } = fakeSession([], { width: 1366, height: 768 })
+    await tool('computer_click').handler({ x: 2000, y: 900 }, ctxWith(session))
+    expect(client.click).toHaveBeenCalledWith(1366, 768, 'left')
+  })
+
+  it('computerToolsForScreen rewrites click descriptions to the live size', () => {
+    const tools = computerToolsForScreen({ width: 1366, height: 768 })
+    const click = tools.find((t) => t.name === 'computer_click')!
+    expect(click.description).toContain('1366x768')
+    expect(click.description).not.toContain('1024x768')
   })
 
   it('click passes the requested button through', async () => {

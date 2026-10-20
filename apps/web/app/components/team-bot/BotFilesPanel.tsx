@@ -2,9 +2,12 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import {
-  ChevronRight, FileCode2, Folder, FolderOpen, Loader2, RefreshCw, Save, Trash2, Upload, X,
+  ChevronRight, FileCode2, Folder, FolderOpen, Loader2, Power, RefreshCw, Save, Trash2, Upload, X,
 } from 'lucide-react'
-import { deleteBoxFile, listBoxFiles, readBoxFile, writeBoxFile, type BoxFileEntry } from '@loop/api-client'
+import {
+  BotApiError, deleteBoxFile, listBoxFiles, readBoxFile, wakeBotComputer, writeBoxFile,
+  type BoxFileEntry,
+} from '@loop/api-client'
 import { useToast } from '../../lib/toast'
 
 /**
@@ -14,36 +17,87 @@ import { useToast } from '../../lib/toast'
  * and deletes through this panel — one filesystem, two writers, no sync
  * protocol that could drift. Changes land immediately for the bot's next run.
  */
-export function BotFilesPanel() {
+export function BotFilesPanel({ onWakeComputer }: { onWakeComputer?: () => void } = {}) {
   const toast = useToast()
   const [path, setPath] = useState<string[]>([])
   const [entries, setEntries] = useState<BoxFileEntry[] | null>(null)
-  const [openFile, setOpenFile] = useState<{ path: string; content: string; dirty: boolean } | null>(null)
+  const [openFile, setOpenFile] = useState<{ path: string; content: string; dirty: boolean; truncated: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [needsWake, setNeedsWake] = useState(false)
+  const [waking, setWaking] = useState(false)
 
   const currentDir = `/workspace${path.length ? `/${path.join('/')}` : ''}`
 
   const refresh = useCallback(async (dir: string) => {
     setError('')
+    setLoading(true)
     try {
       const body = await listBoxFiles(dir)
       setEntries(body.entries)
+      setNeedsWake(false)
     } catch (err: any) {
       setEntries(null)
-      setError(err?.message || 'Could not read the workspace.')
+      const code = err instanceof BotApiError ? err.code : ''
+      if (code === 'no_box' || err?.status === 409) {
+        setNeedsWake(true)
+        setError('The computer is asleep — wake it to browse files.')
+      } else {
+        setNeedsWake(false)
+        setError(err?.message || 'Could not read the workspace.')
+      }
+    } finally {
+      setLoading(false)
     }
   }, [])
 
   useEffect(() => { void refresh(currentDir) }, [currentDir, refresh])
 
+  const wake = async () => {
+    setWaking(true)
+    setError('')
+    try {
+      await wakeBotComputer('default')
+      onWakeComputer?.()
+      await refresh(currentDir)
+    } catch (err: any) {
+      setError(err?.message || 'Could not wake the computer.')
+    } finally {
+      setWaking(false)
+    }
+  }
+
+  const closeFile = () => {
+    if (openFile?.dirty) {
+      const ok = window.confirm('Discard unsaved changes to this file?')
+      if (!ok) return
+    }
+    setOpenFile(null)
+  }
+
   const openDir = (entry: BoxFileEntry) => {
-    if (entry.type === 'dir') { setPath((prev) => [...prev, entry.name]); setOpenFile(null); return }
+    if (entry.type === 'dir') {
+      if (openFile?.dirty) {
+        const ok = window.confirm('Discard unsaved changes to this file?')
+        if (!ok) return
+      }
+      setPath((prev) => [...prev, entry.name])
+      setOpenFile(null)
+      return
+    }
     void (async () => {
+      if (openFile?.dirty) {
+        const ok = window.confirm('Discard unsaved changes to this file?')
+        if (!ok) return
+      }
       setBusy(true)
       try {
         const body = await readBoxFile(entry.path)
-        setOpenFile({ path: entry.path, content: body.content, dirty: false })
+        setOpenFile({ path: entry.path, content: body.content, dirty: false, truncated: !!body.truncated })
+        if (body.truncated) {
+          toast.push('error', 'This file is too large to edit safely — saving is blocked.')
+        }
       } catch (err: any) {
         toast.push('error', err?.message || 'Could not read the file.')
       } finally {
@@ -54,6 +108,10 @@ export function BotFilesPanel() {
 
   const saveFile = async () => {
     if (!openFile) return
+    if (openFile.truncated) {
+      toast.push('error', 'Cannot save a truncated file — open a smaller file or wake a full read.')
+      return
+    }
     setBusy(true)
     try {
       await writeBoxFile(openFile.path, openFile.content)
@@ -89,6 +147,8 @@ export function BotFilesPanel() {
   }
 
   const remove = async (entry: BoxFileEntry) => {
+    const ok = window.confirm(`Delete “${entry.name}”? This cannot be undone.`)
+    if (!ok) return
     setBusy(true)
     try {
       await deleteBoxFile(entry.path)
@@ -125,9 +185,23 @@ export function BotFilesPanel() {
       <div className="flex-1 min-h-0 flex gap-2">
         {/* Tree */}
         <div className="w-1/2 min-w-0 overflow-y-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] p-1.5">
-          {busy && !entries && <div className="flex items-center gap-2 p-3 text-ui-xs text-[var(--ink-muted)]"><Loader2 size={12} className="animate-spin" /> Reading…</div>}
-          {error && <p className="p-3 text-ui-xs text-[var(--danger)]">{error}</p>}
-          {entries?.length === 0 && <p className="p-3 text-ui-xs text-[var(--ink-muted)]">Empty directory.</p>}
+          {loading && <div className="flex items-center gap-2 p-3 text-ui-xs text-[var(--ink-muted)]"><Loader2 size={12} className="animate-spin" /> Reading…</div>}
+          {!loading && needsWake && (
+            <div className="flex flex-col items-start gap-2 p-3">
+              <p className="text-ui-xs text-[var(--ink-muted)]">{error || 'The computer is asleep.'}</p>
+              <button
+                type="button"
+                onClick={() => void wake()}
+                disabled={waking}
+                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-2xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] disabled:opacity-40 transition"
+              >
+                {waking ? <Loader2 size={11} className="animate-spin" /> : <Power size={11} aria-hidden />}
+                Wake computer
+              </button>
+            </div>
+          )}
+          {!loading && !needsWake && error && <p className="p-3 text-ui-xs text-[var(--danger)]">{error}</p>}
+          {!loading && entries?.length === 0 && <p className="p-3 text-ui-xs text-[var(--ink-muted)]">Empty directory.</p>}
           {entries?.map((entry) => (
             <div key={entry.path} className="group flex items-center gap-1.5 rounded-lg px-2 py-1 hover:bg-[var(--bg-hover)] transition">
               <button type="button" onClick={() => openDir(entry)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
@@ -150,11 +224,12 @@ export function BotFilesPanel() {
             <>
               <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-[var(--border-subtle)] shrink-0">
                 <span className="flex-1 min-w-0 truncate font-mono text-2xs text-[var(--ink-primary)]">{openFile.path.split('/').pop()}</span>
-                {openFile.dirty && <span className="text-3xs text-[var(--warning)]">unsaved</span>}
-                <button type="button" onClick={() => void saveFile()} disabled={!openFile.dirty || busy} className="flex items-center gap-1 rounded-lg px-2 py-1 text-2xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] disabled:opacity-40 transition">
+                {openFile.truncated && <span className="text-3xs text-[var(--danger)]">truncated</span>}
+                {openFile.dirty && !openFile.truncated && <span className="text-3xs text-[var(--warning)]">unsaved</span>}
+                <button type="button" onClick={() => void saveFile()} disabled={!openFile.dirty || busy || openFile.truncated} className="flex items-center gap-1 rounded-lg px-2 py-1 text-2xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] disabled:opacity-40 transition">
                   <Save size={10} aria-hidden /> Save
                 </button>
-                <button type="button" onClick={() => setOpenFile(null)} className="p-1 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--bg-hover)]" aria-label="Close file">
+                <button type="button" onClick={closeFile} className="p-1 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--bg-hover)]" aria-label="Close file">
                   <X size={11} aria-hidden />
                 </button>
               </div>
@@ -162,6 +237,7 @@ export function BotFilesPanel() {
                 value={openFile.content}
                 onChange={(e) => setOpenFile({ ...openFile, content: e.target.value, dirty: true })}
                 spellCheck={false}
+                readOnly={openFile.truncated}
                 className="flex-1 min-h-0 resize-none bg-transparent p-2.5 font-mono text-2xs leading-relaxed text-[var(--ink-secondary)] focus:outline-none"
               />
             </>

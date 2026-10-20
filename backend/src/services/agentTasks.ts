@@ -299,10 +299,21 @@ export async function renewAgentTaskLease(claim: AgentTaskClaim, leaseMs: number
   return renewed === 1
 }
 
-/** Success ack. One-shot tasks retire; scheduled tasks requeue at DB clock + interval. */
-export async function completeAgentTask(claim: AgentTaskClaim): Promise<'succeeded' | 'lease_lost'> {
+/** Success ack. One-shot tasks retire; scheduled tasks requeue at DB clock + interval.
+ *  Delete-during-run (cancelRequested) and pause (PAUSED_AT) stick here too —
+ *  not only on the heartbeat. */
+export async function completeAgentTask(claim: AgentTaskClaim): Promise<'succeeded' | 'cancelled' | 'lease_lost'> {
   const db = database()
-  const task = await db.agentTask.findUnique({ where: { id: claim.taskId }, select: { kind: true, schedule: true } })
+  const task = await db.agentTask.findUnique({ where: { id: claim.taskId }, select: { kind: true, schedule: true, cancelRequested: true } })
+  if (task?.cancelRequested) {
+    const cancelled = await db.$executeRaw`
+      UPDATE "AgentTask"
+      SET "status" = 'cancelled', "cancelRequested" = false,
+          "leaseToken" = NULL, "leaseExpiresAt" = NULL, "updatedAt" = clock_timestamp()
+      WHERE "id" = ${claim.taskId} AND "status" = 'processing'
+        AND "leaseToken" = ${claim.leaseToken} AND "leaseExpiresAt" > clock_timestamp()`
+    return cancelled === 1 ? 'cancelled' : 'lease_lost'
+  }
   const intervalMs = task?.kind === 'scheduled' && task.schedule ? parseScheduleMs(task.schedule) : null
   const count = await db.$executeRaw`
     UPDATE "AgentTask"
@@ -325,24 +336,34 @@ export type AgentTaskOutcome = 'succeeded' | 'cancelled' | 'retry' | 'dead_lette
  *  (missing provider config, invalid task, out of daily credits) — dead-letter
  *  on the FIRST attempt instead of burning three. Transient codes keep the
  *  deterministic backoff. */
-export const BOT_PERMANENT_FAILURES = ['BOT_TASK_INVALID', 'BOT_COMPUTER_UNCONFIGURED', 'BOT_OUT_OF_CREDITS'] as const
+export const BOT_PERMANENT_FAILURES = [
+  'BOT_TASK_INVALID',
+  'BOT_COMPUTER_UNCONFIGURED',
+  'BOT_OUT_OF_CREDITS',
+  'BOT_COMPUTER_TTL',
+  'BOT_COMPUTER_QUOTA',
+] as const
 
 /** Failure recording with deterministic DB-clock backoff; mirrors the settlement
- *  workers: never reset a row we no longer own, never resurrect a dead letter. */
+ *  workers: never reset a row we no longer own, never resurrect a dead letter.
+ *  Pause (nextAttemptAt ≥ 2099) and delete-during-run (cancelRequested) stick. */
 export async function failAgentTask(claim: AgentTaskClaim, code: string, message?: string): Promise<'retry' | 'cancelled' | 'dead_letter' | 'lease_lost'> {
   const lastError = (message || code).slice(0, 500)
   const rows = await database().$queryRaw<{ status: string }[]>`
     UPDATE "AgentTask"
     SET "status" = CASE
-          WHEN ${code} = 'BOT_TASK_CANCELLED' THEN 'cancelled'
-          WHEN ${code} IN ('BOT_TASK_INVALID', 'BOT_COMPUTER_UNCONFIGURED', 'BOT_OUT_OF_CREDITS') THEN 'dead_letter'
+          WHEN "cancelRequested" = true OR ${code} = 'BOT_TASK_CANCELLED' THEN 'cancelled'
+          WHEN ${code} IN ('BOT_TASK_INVALID', 'BOT_COMPUTER_UNCONFIGURED', 'BOT_OUT_OF_CREDITS', 'BOT_COMPUTER_TTL', 'BOT_COMPUTER_QUOTA') THEN 'dead_letter'
           WHEN "attempts" >= ${AGENT_TASK_MAX_ATTEMPTS} THEN 'dead_letter'
           ELSE 'queued' END,
         "nextAttemptAt" = CASE
-          WHEN ${code} = 'BOT_TASK_CANCELLED' OR "attempts" >= ${AGENT_TASK_MAX_ATTEMPTS}
-               OR ${code} IN ('BOT_TASK_INVALID', 'BOT_COMPUTER_UNCONFIGURED', 'BOT_OUT_OF_CREDITS') THEN "nextAttemptAt"
+          WHEN "cancelRequested" = true OR ${code} = 'BOT_TASK_CANCELLED'
+               OR "attempts" >= ${AGENT_TASK_MAX_ATTEMPTS}
+               OR ${code} IN ('BOT_TASK_INVALID', 'BOT_COMPUTER_UNCONFIGURED', 'BOT_OUT_OF_CREDITS', 'BOT_COMPUTER_TTL', 'BOT_COMPUTER_QUOTA') THEN "nextAttemptAt"
+          -- A paused routine (PAUSED_AT) must stay paused through backoff.
+          WHEN "nextAttemptAt" >= '2099-01-01'::timestamptz THEN "nextAttemptAt"
           ELSE statement_timestamp() + (LEAST(300000, 1000 * power(2, LEAST("attempts" - 1, 9))) * interval '1 millisecond') END,
-        "failures" = "failures" + CASE WHEN ${code} = 'BOT_TASK_CANCELLED' THEN 0 ELSE 1 END,
+        "failures" = "failures" + CASE WHEN "cancelRequested" = true OR ${code} = 'BOT_TASK_CANCELLED' THEN 0 ELSE 1 END,
         "cancelRequested" = false,
         "lastErrorCode" = ${code.slice(0, 80)}, "lastError" = ${lastError},
         "leaseToken" = NULL, "leaseExpiresAt" = NULL, "updatedAt" = statement_timestamp()

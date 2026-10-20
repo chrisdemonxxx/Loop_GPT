@@ -1,20 +1,20 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
-  Bot, Loader2, Sparkles, Trash2, Clock, Monitor, Square, Pause, Play, Plus,
+  Bot, Loader2, Sparkles, Trash2, Clock, Pause, Play, Plus,
 } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   enqueueBotTask, listBotTasks, cancelBotTask, getBotQuota, listBotSkills, deleteBotSkill,
   listBotRoutines, createBotRoutine, setBotRoutinePaused, deleteBotRoutine,
-  BOT_STATUS_LABEL, BOT_STATUS_TONE,
+  getBotRun, getBotTask, wakeBotComputer, BotApiError,
   type BotRoutine, type BotTask, type BotQuota, type BotSkillRef,
 } from '../lib/bot'
 import { getStoredUser } from '../lib/api'
 import { getBotMemory } from '../lib/bot'
-import { listNamedBots } from '../lib/namedBots'
+import { listNamedBots, type NamedBot } from '../lib/namedBots'
 import RunViewer from '../components/team-bot/RunViewer'
 import { AgentComputerTab } from '../components/team-bot/AgentComputerTab'
 import { AgentChatPane } from '../components/team-bot/AgentChatPane'
@@ -28,23 +28,56 @@ import { AppPage } from '../components/AppPage'
  *           composer ("Message Loop Bot"); the bot answers with run updates.
  *   RIGHT — the bot's profile card: avatar, name, tabs Details / Library /
  *           Computer. The Computer tab streams its persistent box small, with
- *           an expand button that enlarges it to the full window (⤢) — the
- *           expanded view carries the "⏺ Teach a task" pill, which simply
- *           starts recording the human's workflow inside the computer.
+ *           an expand button that enlarges it to the full window (⤢).
+ *
+ * Accepts ?botId= to scope skills/memory/enqueue to a named bot (defaults to
+ * the owner's primary).
  */
 export default function AgentsPage() {
+  return (
+    <Suspense fallback={null}>
+      <AgentsPageInner />
+    </Suspense>
+  )
+}
+
+function AgentsPageInner() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const botIdParam = searchParams.get('botId')
   const queryClient = useQueryClient()
   const [user, setUser] = useState<any>(null)
   const [traceTaskId, setTraceTaskId] = useState<string | null>(null)
   const [tab, setTab] = useState<'details' | 'library' | 'computer' | 'files'>('details')
   const [computerExpanded, setComputerExpanded] = useState(false)
+  const [suggestedSkills, setSuggestedSkills] = useState<BotSkillRef[]>([])
+  const [sendError, setSendError] = useState('')
+  const [taskResults, setTaskResults] = useState<Record<string, string>>({})
+  const fetchedResultsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     const u = getStoredUser()
     if (!u) { router.replace('/login'); return }
     setUser(u)
   }, [router])
+
+  const botsQuery = useQuery<{ bots: NamedBot[] }>({
+    queryKey: ['bots', 'named'],
+    queryFn: async () => {
+      const { bots } = await listNamedBots()
+      return { bots }
+    },
+    enabled: typeof window !== 'undefined' && !!user,
+    retry: false,
+  })
+
+  const activeBot = useMemo(() => {
+    const bots = botsQuery.data?.bots ?? []
+    if (botIdParam) return bots.find((b) => b.id === botIdParam) ?? bots.find((b) => b.isPrimary) ?? bots[0] ?? null
+    return bots.find((b) => b.isPrimary) ?? bots[0] ?? null
+  }, [botsQuery.data?.bots, botIdParam])
+
+  const botId = activeBot?.id ?? null
 
   const tasksQuery = useQuery<{ tasks: BotTask[]; quota: BotQuota | null }>({
     queryKey: ['bot', 'tasks'],
@@ -65,9 +98,41 @@ export default function AgentsPage() {
     ? ((tasksQuery.error as { message?: string })?.message || 'Could not load Loop Bot tasks.')
     : ''
 
+  // Enrich succeeded tasks with latest run result text (for the bot bubble).
+  useEffect(() => {
+    if (!tasks?.length) return
+    const targets = tasks
+      .filter((t) => t.status === 'succeeded' && !t.result && !fetchedResultsRef.current.has(t.id))
+      .slice(-8)
+    if (!targets.length) return
+    for (const t of targets) fetchedResultsRef.current.add(t.id)
+    let cancelled = false
+    void (async () => {
+      const next: Record<string, string> = {}
+      await Promise.all(targets.map(async (t) => {
+        try {
+          const detail = await getBotTask(t.id)
+          const runId = detail.runs?.[0]?.id
+          if (!runId) return
+          const run = await getBotRun(runId)
+          if (run.result) next[t.id] = run.result
+        } catch { /* ignore */ }
+      }))
+      if (!cancelled && Object.keys(next).length) {
+        setTaskResults((prev) => ({ ...prev, ...next }))
+      }
+    })()
+    return () => { cancelled = true }
+  }, [tasks])
+
+  const displayTasks = useMemo(() => {
+    if (!tasks) return null
+    return tasks.map((t) => (taskResults[t.id] && !t.result ? { ...t, result: taskResults[t.id] } : t))
+  }, [tasks, taskResults])
+
   const skillsQuery = useQuery<{ skills: BotSkillRef[] }>({
-    queryKey: ['bot', 'skills'],
-    queryFn: () => listBotSkills(),
+    queryKey: ['bot', 'skills', botId],
+    queryFn: () => listBotSkills(botId || undefined),
     enabled: typeof window !== 'undefined' && !!user,
     retry: false,
   })
@@ -82,16 +147,13 @@ export default function AgentsPage() {
   })
   const routineRows = routinesQuery.data?.routines ?? null
 
-  /** The primary bot's long-term memory — what it kept from earlier sessions. */
   const memoryQuery = useQuery<{ memory: string } | null>({
-    queryKey: ['bot', 'memory'],
+    queryKey: ['bot', 'memory', botId],
     queryFn: async () => {
-      const { bots } = await listNamedBots().catch(() => ({ bots: [] as Array<{ id: string; isPrimary: boolean }> }))
-      const primary = bots.find((bot) => bot.isPrimary) ?? bots[0]
-      if (!primary) return null
-      return getBotMemory(primary.id)
+      if (!botId) return null
+      return getBotMemory(botId)
     },
-    enabled: typeof window !== 'undefined' && !!user,
+    enabled: typeof window !== 'undefined' && !!user && !!botId,
     retry: false,
   })
   const botMemory = memoryQuery.data?.memory ?? ''
@@ -102,7 +164,7 @@ export default function AgentsPage() {
     void queryClient.invalidateQueries({ queryKey: ['bot', 'routines'] })
   }
 
-  const teach = useTeachSession(refresh)
+  const teach = useTeachSession(refresh, botId)
 
   const anyActive = useMemo(() => !!tasks?.some((t) => t.status === 'queued' || t.status === 'processing'), [tasks])
 
@@ -114,14 +176,11 @@ export default function AgentsPage() {
     }
   }, [teach.phase])
 
-  const routines = useMemo(() => (tasks || []).filter((t) => t.kind === 'scheduled'), [tasks])
-
-  /** Grok parity: ONE computer surface. "Watch" opens it (embedded → full
-   *  window); the run attaches to this same box, so there is nothing else
-   *  to watch. "Trace" opens the run's written record. */
+  /** Grok parity: ONE computer surface. Wake on open; never keepalive-poll. */
   const openComputer = () => {
     setTab('computer')
     setComputerExpanded(true)
+    void wakeBotComputer('default').catch(() => undefined)
   }
 
   const cancel = useMutation({
@@ -136,14 +195,31 @@ export default function AgentsPage() {
         goal: text,
         maxSteps: 16,
         computer: { enabled: true, ttlMinutes: 30 },
+        ...(botId ? { botId } : {}),
       }),
-    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] }) },
+    onSuccess: (res) => {
+      setSendError('')
+      setSuggestedSkills(res.suggestedSkills || [])
+      void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] })
+    },
+    onError: (err: unknown) => {
+      if (err instanceof BotApiError) {
+        if (err.status === 403) setSendError(err.message || 'Dedicated computer requires a higher plan.')
+        else if (err.status === 402) setSendError(err.message || "Today's computer minutes are used up.")
+        else if (err.status === 503) setSendError(err.message || 'Computer provider unavailable.')
+        else setSendError(err.message || 'Could not send.')
+      } else {
+        setSendError((err as { message?: string })?.message || 'Could not send.')
+      }
+    },
   })
 
   if (!user) return null
 
+  const botName = activeBot?.name || 'Loop Bot'
+
   return (
-    <AppPage width="fill" title="Loop Bot" documentTitle="Loop Bot">
+    <AppPage width="fill" title={botName} documentTitle={botName}>
       {/* Slim status strip — actions live in the computer view. */}
       <div className="flex items-center gap-3 px-4 py-2 border-b border-[var(--border-subtle)] shrink-0 min-h-[38px]">
         {anyActive && (
@@ -163,8 +239,12 @@ export default function AgentsPage() {
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_400px]">
         {/* ── Chat pane ── */}
         <AgentChatPane
-          tasks={tasks}
+          tasks={displayTasks}
           sending={sendInstruction.isPending}
+          sendError={sendError}
+          quota={quota}
+          suggestedSkills={suggestedSkills}
+          onDismissSuggestions={() => setSuggestedSkills([])}
           onSend={async (text) => { await sendInstruction.mutateAsync(text) }}
           onWatch={openComputer}
           onTrace={(id) => setTraceTaskId(id)}
@@ -177,8 +257,8 @@ export default function AgentsPage() {
             <div className="w-16 h-16 rounded-[22px] bg-[var(--accent-soft)] border border-[var(--accent-soft-border)] flex items-center justify-center">
               <Bot size={30} className="text-[var(--accent-text)]" aria-hidden />
             </div>
-            <div className="mt-3 text-ui-md font-semibold text-[var(--ink-primary)]">Loop Bot</div>
-            <div className="text-ui-xs text-[var(--ink-muted)]">Autonomous operator</div>
+            <div className="mt-3 text-ui-md font-semibold text-[var(--ink-primary)]">{botName}</div>
+            <div className="text-ui-xs text-[var(--ink-muted)]">{activeBot?.label || 'Autonomous operator'}</div>
           </div>
 
           <div className="flex gap-1 px-4 shrink-0">
@@ -186,7 +266,10 @@ export default function AgentsPage() {
               <button
                 key={id}
                 type="button"
-                onClick={() => setTab(id)}
+                onClick={() => {
+                  setTab(id)
+                  if (id === 'computer') void wakeBotComputer('default').catch(() => undefined)
+                }}
                 className={`px-3.5 py-1.5 rounded-lg text-ui-xs font-medium capitalize transition ${
                   tab === id ? 'bg-[var(--bg-hover-strong)] text-[var(--ink-primary)]' : 'text-[var(--ink-muted)] hover:text-[var(--ink-secondary)]'
                 }`}
@@ -222,7 +305,7 @@ export default function AgentsPage() {
                 )}
                 <div>
                   <h3 className="text-2xs uppercase tracking-widest text-[var(--ink-muted)] font-medium mb-2">Routines</h3>
-                  <RoutineComposer skills={skills ?? []} onCreated={refresh} />
+                  <RoutineComposer skills={skills ?? []} botId={botId} onCreated={refresh} />
                   {routineRows === null ? (
                     <div className="mt-2 text-ui-xs text-[var(--ink-muted)] flex items-center gap-2"><Loader2 size={12} className="animate-spin" aria-hidden /> Loading routines…</div>
                   ) : routineRows.length === 0 ? (
@@ -261,7 +344,8 @@ export default function AgentsPage() {
               )
             )}
 
-            {tab === 'computer' && (
+            {/* Skip embedded mount while expanded — avoids duplicate status probes. */}
+            {tab === 'computer' && !computerExpanded && (
               <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] overflow-hidden h-[46vh]">
                 <AgentComputerTab session={teach} onExpand={() => setComputerExpanded(true)} />
               </div>
@@ -269,7 +353,7 @@ export default function AgentsPage() {
 
             {tab === 'files' && (
               <div className="h-[52vh] min-h-0">
-                <BotFilesPanel />
+                <BotFilesPanel onWakeComputer={() => { void wakeBotComputer('default').catch(() => undefined) }} />
               </div>
             )}
           </div>
@@ -300,13 +384,18 @@ const SCHEDULE_OPTIONS = [
   { value: '7d', label: 'weekly' },
 ]
 
-function RoutineComposer({ skills, onCreated }: { skills: BotSkillRef[]; onCreated: () => void }) {
+function RoutineComposer({ skills, botId, onCreated }: { skills: BotSkillRef[]; botId: string | null; onCreated: () => void }) {
   const [open, setOpen] = useState(false)
   const [goal, setGoal] = useState('')
   const [schedule, setSchedule] = useState('1d')
   const [skillId, setSkillId] = useState('')
   const create = useMutation({
-    mutationFn: () => createBotRoutine({ goal: goal.trim(), schedule, ...(skillId ? { skillId } : {}) }),
+    mutationFn: () => createBotRoutine({
+      goal: goal.trim(),
+      schedule,
+      ...(skillId ? { skillId } : {}),
+      ...(botId ? { botId } : {}),
+    }),
     onSuccess: () => { setGoal(''); setSkillId(''); setOpen(false); onCreated() },
   })
 
@@ -394,10 +483,6 @@ function RoutineCard({ routine, onChanged }: { routine: BotRoutine; onChanged: (
     </div>
   )
 }
-
-// ── Skill card ────────────────────────────────────────────────────────────────
-
-// ── Skill card ────────────────────────────────────────────────────────────────
 
 function SkillCard({ skill, onDeleted }: { skill: BotSkillRef; onDeleted: () => void }) {
   const remove = async () => {

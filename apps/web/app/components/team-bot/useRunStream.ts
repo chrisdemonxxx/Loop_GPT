@@ -6,9 +6,9 @@ import type { BotComputer, BotEvent, BotTaskDetail } from '../../lib/bot'
 
 /**
  * Run-stream lifecycle for the team-bot run viewer: load the task, follow its
- * latest run over SSE (replay + live attach, never polling), refresh the
- * dedicated computer's metadata while the run is live. The viewer composes
- * this with the trace + computer panes; nothing else owns stream state.
+ * latest run over SSE (replay + live attach, with reconnect), refresh the
+ * computer metadata while the run is live. The viewer composes this with the
+ * trace pane; nothing else owns stream state.
  */
 export function useRunStream(taskId: string) {
   const [task, setTask] = useState<BotTaskDetail | null>(null)
@@ -19,43 +19,80 @@ export function useRunStream(taskId: string) {
   const [loadError, setLoadError] = useState('')
   const runIdRef = useRef<string | null>(null)
 
-  // Load the task, then follow its latest run (SSE, not polling).
+  // Load the task, wait for a run if the worker hasn't claimed yet, then SSE.
   useEffect(() => {
     let stop: (() => void) | null = null
     let cancelled = false
-    ;(async () => {
+    let waitTimer: ReturnType<typeof setTimeout> | null = null
+    let attempts = 0
+
+    const attach = (id: string, status: string) => {
+      setRunId(id)
+      runIdRef.current = id
+      setLive(status === 'running')
+      setLoadError('')
+      stop = streamBotRun(
+        id,
+        (event) => {
+          setEvents((prev) => [...prev.slice(-399), event])
+          if (event.type === 'final' || event.type === 'done') setLive(false)
+        },
+        () => setLive(false),
+        (msg) => { setLoadError(msg); setLive(false) },
+      )
+      void getBotComputer(id).then((comp) => {
+        if (!cancelled && comp?.sandboxId) setComputer(comp)
+      }).catch(() => undefined)
+    }
+
+    const load = async () => {
       try {
         const detail = await getBotTask(taskId)
         if (cancelled) return
         setTask(detail)
         const latest = detail.runs?.[0]
-        if (!latest) { setLoadError('No run yet — the worker picks tasks up every few seconds.'); return }
-        setRunId(latest.id)
-        runIdRef.current = latest.id
-        setLive(latest.status === 'running')
-        stop = streamBotRun(
-          latest.id,
-          (event) => { setEvents((prev) => [...prev.slice(-399), event]); if (event.type === 'final') setLive(false) },
-          () => setLive(false),
-          (msg) => { setLoadError(msg); setLive(false) },
-        )
-        const comp = await getBotComputer(latest.id).catch(() => null)
-        if (!cancelled && comp?.sandboxId) setComputer(comp)
+        if (!latest) {
+          // Worker claims every few seconds — retry instead of a hard error.
+          attempts += 1
+          if (attempts > 30) {
+            setLoadError('No run yet — the worker may be offline.')
+            return
+          }
+          setLoadError('')
+          waitTimer = setTimeout(() => { void load() }, 2000)
+          return
+        }
+        attach(latest.id, latest.status)
       } catch (err: any) {
         if (!cancelled) setLoadError(err?.message || 'Could not load the run.')
       }
-    })()
-    return () => { cancelled = true; stop?.() }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+      if (waitTimer) clearTimeout(waitTimer)
+      stop?.()
+    }
   }, [taskId])
 
-  // Refresh computer metadata while the run is live (minutes tick up), and
-  // once more when it ends: the worker destroys the dedicated VM at run end,
-  // so the last fetch flips active→false and the pane swaps from a dead
-  // iframe (black screen) to the honest offline state.
+  // Keep header status live while the run is in flight (task status + result).
   useEffect(() => {
-    if (!runId || !computer) return
+    if (!taskId || !live) return
+    const t = setInterval(() => {
+      void getBotTask(taskId).then((detail) => setTask(detail)).catch(() => undefined)
+    }, 8_000)
+    return () => clearInterval(t)
+  }, [taskId, live])
+
+  // Refresh computer metadata while live. Do NOT depend on `computer` — that
+  // caused a hot loop (every setComputer restarted the interval).
+  useEffect(() => {
+    if (!runId) return
     if (!live) {
-      void getBotComputer(runId).then((comp) => { if (comp?.sandboxId) setComputer(comp) }).catch(() => undefined)
+      void getBotComputer(runId).then((comp) => {
+        if (comp?.sandboxId) setComputer(comp)
+      }).catch(() => undefined)
       return
     }
     const t = setInterval(async () => {
@@ -63,7 +100,7 @@ export function useRunStream(taskId: string) {
       if (comp?.sandboxId) setComputer(comp)
     }, 15_000)
     return () => clearInterval(t)
-  }, [runId, live, computer])
+  }, [runId, live])
 
   return { task, runId, events, live, computer, setComputer, loadError, setLoadError, runIdRef }
 }

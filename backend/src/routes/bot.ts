@@ -132,7 +132,9 @@ router.get('/runs/:runId', asyncHandler(async (req, res) => {
   res.json(run)
 }))
 
-/** GET /api/bot/runs/:runId/events — SSE replay + live attach, owner-checked. */
+/** GET /api/bot/runs/:runId/events?after=<seq> — SSE replay + live attach, owner-checked.
+ *  `after` is the last event seq the client received (monotonic; survives the
+ *  800-event ring buffer). */
 router.get('/runs/:runId/events', asyncHandler(async (req, res) => {
   if (!hasDb || !prisma) return noDb(res)
   const { subscribe, getRun } = await import('../services/botRuns')
@@ -140,17 +142,23 @@ router.get('/runs/:runId/events', asyncHandler(async (req, res) => {
   // Ownership gate BEFORE opening the stream.
   const persisted = await getRun(req.params.runId, (req as any).userId)
   if (!persisted) return res.status(404).json({ error: 'Bot run not found' })
+  const afterRaw = typeof req.query.after === 'string' ? Number(req.query.after) : 0
+  const after = Number.isFinite(afterRaw) ? afterRaw : 0
   initSSE(res)
   const stopKeepalive = startKeepalive(res)
   const detach = subscribe(req.params.runId, (event) => {
     if (res.writableEnded) return
     sendEvent(res, event)
     if (event.type === 'done') { stopKeepalive(); res.end() }
-  })
+  }, { after })
   if (res.writableEnded) return
   if (persisted.status !== 'running') {
     detach()
-    for (const event of persisted.events) sendEvent(res, event)
+    for (const event of persisted.events) {
+      const seq = (event as { seq?: number }).seq
+      if (typeof seq === 'number' && seq <= after) continue
+      sendEvent(res, event)
+    }
     sendEvent(res, { type: 'done' })
     stopKeepalive()
     res.end()
@@ -301,15 +309,49 @@ router.delete('/computer/file', asyncHandler(async (req, res) => {
   }
 }))
 
-/** GET /api/bot/computer - YOUR persistent box (Grok parity): the always-on
- *  computer that exists independent of any task. Boots or resumes it on
- *  demand and returns the live stream; per-task runs attach to this same VM.
- *  Body: ?taskType=default|coding|research|ops|teach (seeds the tool pack). */
+/** GET /api/bot/computer — read stream state only (no boot/resume side effects).
+ *  Use POST /computer/wake to boot or resume the persistent box. */
 router.get('/computer', asyncHandler(async (req, res) => {
+  const { getBoxStreamState, getUserBoxStatus } = await import('../services/botBox')
+  const userId = (req as any).userId as string
+  const state = await getBoxStreamState(userId)
+  if (!state?.sandboxId) {
+    return res.json({
+      alive: false,
+      sandboxId: null,
+      viewUrl: null,
+      interactiveUrl: null,
+      resumed: false,
+      ageMinutes: null,
+      taskType: null,
+      workspaceDir: '/workspace',
+    })
+  }
+  const status = await getUserBoxStatus(userId)
+  res.json({
+    alive: status.alive,
+    sandboxId: state.sandboxId,
+    viewUrl: state.viewUrl || null,
+    interactiveUrl: state.interactiveUrl || null,
+    resumed: true,
+    ageMinutes: state.ageMinutes ?? status.ageMinutes ?? null,
+    taskType: state.taskType || 'default',
+    workspaceDir: state.workspaceDir || '/workspace',
+  })
+}))
+
+/** POST /api/bot/computer/wake — boot or resume YOUR persistent box (side effects
+ *  + interactive VM-minute metering). Body/query: taskType optional. */
+router.post('/computer/wake', asyncHandler(async (req, res) => {
   const { ensureUserBox, getUserBoxStatus } = await import('../services/botBox')
+  const { recordInteractiveVmMinutes } = await import('../services/botComputerMeter')
   const userId = (req as any).userId as string
   const user = hasDb && prisma ? await prisma.user.findUnique({ where: { id: userId }, select: { email: true } }) : null
-  const taskType = (typeof req.query.taskType === 'string' ? req.query.taskType : 'default') as any
+  const taskType = (
+    typeof req.body?.taskType === 'string' ? req.body.taskType
+      : typeof req.query.taskType === 'string' ? req.query.taskType
+        : 'default'
+  ) as any
   let box
   try {
     box = await ensureUserBox(userId, (user?.email || 'operator').split('@')[0], taskType)
@@ -318,12 +360,12 @@ router.get('/computer', asyncHandler(async (req, res) => {
       return botError(res, error)
     }
     const msg = String(error?.message || 'box boot failed')
-    // Honest failure modes: provider not configured vs provider error.
     if (/not configured|E2B_API_KEY/i.test(msg)) {
       return res.status(503).json({ error: 'The computer provider is not configured on this deployment (E2B_API_KEY missing).', code: 'unavailable' })
     }
     return res.status(502).json({ error: `Could not boot the bot computer: ${msg}`, code: 'provider' })
   }
+  await recordInteractiveVmMinutes(userId).catch(() => undefined)
   const status = await getUserBoxStatus(userId)
   res.json({
     alive: status.alive,
@@ -335,6 +377,36 @@ router.get('/computer', asyncHandler(async (req, res) => {
     taskType: box.taskType,
     workspaceDir: box.workspaceDir,
   })
+}))
+
+/** POST /api/bot/computer/ws-token { sandboxId } — short-lived signed query
+ *  token for the noVNC websocket (desktop Bearer sessions cannot set cookies).
+ *  Client connects to …/websockify?token=<token>. */
+router.post('/computer/ws-token', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const sandboxId = String(req.body?.sandboxId || '').trim()
+  if (!/^[A-Za-z0-9]+$/.test(sandboxId)) {
+    return res.status(400).json({ error: 'sandboxId is required', code: 'invalid_request' })
+  }
+  const userId = (req as any).userId as string
+  const box = await prisma.botBox.findUnique({ where: { userId }, select: { sandboxId: true } })
+  const ownsBox = box?.sandboxId === sandboxId
+  let ownsRun = false
+  if (!ownsBox) {
+    const runs = await prisma.botRun.findMany({
+      where: { task: { userId } },
+      orderBy: { startedAt: 'desc' },
+      take: 10,
+      select: { computer: true },
+    })
+    ownsRun = runs.some((run) => (run.computer as { sandboxId?: string } | null)?.sandboxId === sandboxId)
+  }
+  if (!ownsBox && !ownsRun) {
+    return res.status(403).json({ error: 'Not authorized for this sandbox', code: 'forbidden' })
+  }
+  const { mintNovncWsToken } = await import('../services/novncProxy')
+  const minted = mintNovncWsToken(userId, sandboxId)
+  res.json({ token: minted.token, expiresIn: minted.expiresIn, queryParam: 'token' })
 }))
 
 export default router

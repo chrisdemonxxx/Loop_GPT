@@ -1,8 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Monitor, Loader2, MousePointer2, Square, RefreshCw, Power, Maximize2, X, Circle, GraduationCap } from 'lucide-react'
-import { getBotBox, BotApiError, type BotBox } from '../../lib/bot'
+import { getBotBox, wakeBotComputer, BotApiError, type BotBox } from '../../lib/bot'
 import { Dialog } from '@loop/ui'
 import { BotScreen } from './BotScreen'
 import type { TeachSession } from './useTeachSession'
@@ -14,63 +14,106 @@ import type { TeachSession } from './useTeachSession'
  *    ⤢ expand button — Grok's "create bot" panel view.
  *  - expanded (onExpand → shared Dialog, full-bleed): the screen enlarges to
  *    fill the window; header carries the "⏺ Teach a task" pill and the
- *    collapse ✕ — Grok's full-desktop view. Teach simply starts recording
- *    the human's workflow inside the computer (one click). Escape collapses.
+ *    collapse ✕ — Grok's full-desktop view.
+ *
+ * Stream is view-only unless the user explicitly takes over. Opening the tab
+ * does a status GET only; Wake boots the box (POST). No keepalive polling —
+ * that previously kept the VM awake from the Computer tab alone.
  */
 export function AgentComputerTab({
   session,
   onExpand,
   expanded = false,
   onCollapse,
+  /** When false, skip the initial status probe (parent already owns wake). */
+  autoProbe = true,
 }: {
   session: TeachSession
   onExpand?: () => void
   expanded?: boolean
   onCollapse?: () => void
+  autoProbe?: boolean
 }) {
   const [box, setBox] = useState<BotBox | null>(null)
   const [booting, setBooting] = useState(false)
   const [error, setError] = useState('')
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [driving, setDriving] = useState(false)
 
-  const boot = useCallback(async () => {
-    setBooting(true); setError('')
+  const taskType = session.phase === 'recording' || session.phase === 'waiting' ? 'teach' as const : 'default' as const
+
+  const probe = useCallback(async () => {
+    setError('')
     try {
-      const b = await getBotBox(session.phase === 'recording' || session.phase === 'waiting' ? 'teach' : 'default')
+      const b = await getBotBox(taskType)
       setBox(b)
     } catch (err: any) {
+      if (err instanceof BotApiError && err.status === 404) {
+        setError('This backend does not have persistent boxes yet — the deployment is still rolling out. Retry in a minute.')
+      } else {
+        setError(err?.message || 'Could not read the bot computer status.')
+      }
+    }
+  }, [taskType])
+
+  const wake = useCallback(async () => {
+    setBooting(true)
+    setError('')
+    try {
+      const b = await wakeBotComputer(taskType)
+      setBox(b)
+    } catch (err: any) {
+      if (err instanceof BotApiError && err.status === 404) {
+        // Wake route not deployed yet — fall back to legacy GET boot once.
+        try {
+          const b = await getBotBox(taskType)
+          setBox(b)
+          return
+        } catch (fallbackErr: any) {
+          err = fallbackErr
+        }
+      }
       if (err instanceof BotApiError && err.status === 404) {
         setError('This backend does not have persistent boxes yet — the deployment is still rolling out. Retry in a minute.')
       } else if (err instanceof BotApiError && (err.status === 503 || /E2B/i.test(err.message || ''))) {
         setError('The computer provider is not configured on this deployment (E2B_API_KEY missing).')
       } else {
-        setError(err?.message || 'Could not boot the bot computer.')
+        setError(err?.message || 'Could not wake the bot computer.')
       }
     } finally {
       setBooting(false)
     }
-  }, [session.phase])
+  }, [taskType])
 
+  // Status probe only — never wake on mount (GET must stay side-effect free).
   useEffect(() => {
-    void boot()
-    pollRef.current = setInterval(() => void boot(), 60_000)
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [boot])
+    if (!autoProbe) return
+    void probe()
+  }, [autoProbe, probe])
+
+  // When the user expands, wake if we don't have a stream yet.
+  useEffect(() => {
+    if (!expanded) return
+    if (box?.viewUrl || box?.interactiveUrl) return
+    void wake()
+  }, [expanded]) // eslint-disable-line react-hooks/exhaustive-deps -- wake once on expand
 
   const teachActive = session.phase === 'waiting' || session.phase === 'recording'
   const comp = session.computer
   const viewUrl = teachActive && comp?.viewUrl ? comp.viewUrl : box?.viewUrl || null
   const interactiveUrl = teachActive && comp?.interactiveUrl ? comp.interactiveUrl : (box?.interactiveUrl || null)
-  // Embedded = watch (view-only); expanded = drive (interactive). During a
-  // teach takeover the interactive layer always wins.
-  const showInteractive =
-    (teachActive && comp?.takeoverRequested && interactiveUrl) ||
-    (!teachActive && expanded && interactiveUrl)
+
+  // View-only unless the user has taken over (teach takeover or explicit drive).
+  const showInteractive = !!(
+    (teachActive && comp?.takeoverRequested && interactiveUrl)
+    || (!teachActive && driving && interactiveUrl)
+  )
   const shownUrl = showInteractive ? interactiveUrl : viewUrl
 
-  /** One click: boot the box and start recording the operator's workflow. */
+  /** One click: wake the box and start recording the operator's workflow. */
   const startTeach = () => {
-    void session.start('Watch the operator demonstrate a workflow on this computer and learn it as a reusable skill.')
+    void wake().then(() => {
+      void session.start('Watch the operator demonstrate a workflow on this computer and learn it as a reusable skill.')
+    })
   }
 
   const screen = (
@@ -78,7 +121,7 @@ export function AgentComputerTab({
       {/* Screen */}
       <div className="relative flex-1 min-h-0 bg-black">
         {shownUrl ? (
-          <BotScreen key={shownUrl} url={shownUrl} interactive={!!showInteractive} />
+          <BotScreen key={`${shownUrl}:${showInteractive ? 'i' : 'v'}`} url={shownUrl} interactive={!!showInteractive} />
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 text-center px-6">
             {booting ? (
@@ -90,16 +133,16 @@ export function AgentComputerTab({
               <>
                 <Monitor size={22} className="text-[var(--ink-muted)]" aria-hidden />
                 <p className="text-ui-sm text-[var(--danger)] max-w-sm">{error}</p>
-                <button type="button" onClick={() => void boot()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
-                  <Power size={12} aria-hidden /> Boot the computer
+                <button type="button" onClick={() => void wake()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
+                  <Power size={12} aria-hidden /> Wake the computer
                 </button>
               </>
             ) : (
               <>
                 <Monitor size={22} className="text-[var(--ink-muted)]" aria-hidden />
-                <p className="text-ui-sm text-[var(--ink-secondary)]">The computer is off.</p>
-                <button type="button" onClick={() => void boot()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
-                  <Power size={12} aria-hidden /> Boot the computer
+                <p className="text-ui-sm text-[var(--ink-secondary)]">{box?.alive ? 'Stream offline — wake to reconnect.' : 'The computer is asleep.'}</p>
+                <button type="button" onClick={() => void wake()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
+                  <Power size={12} aria-hidden /> Wake the computer
                 </button>
               </>
             )}
@@ -118,6 +161,7 @@ export function AgentComputerTab({
               <button type="button" onClick={() => void session.takeOver()} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs font-medium text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
                 <MousePointer2 size={12} aria-hidden /> Take over
               </button>
+              <button type="button" onClick={() => void session.cancel()} className="shrink-0 px-2 py-1.5 text-2xs text-[var(--ink-muted)] hover:text-[var(--danger)]">Cancel</button>
             </div>
           </div>
         )}
@@ -132,6 +176,15 @@ export function AgentComputerTab({
             </div>
           </div>
         )}
+        {session.phase === 'starting' && (
+          <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/85 to-transparent">
+            <div className="flex items-center gap-3 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-overlay)] px-3.5 py-2.5">
+              <Loader2 size={14} className="animate-spin text-[var(--accent-text)] shrink-0" aria-hidden />
+              <p className="flex-1 text-ui-sm text-[var(--ink-primary)]">Starting the teach session…</p>
+              <button type="button" onClick={() => void session.cancel()} className="shrink-0 px-2 py-1.5 text-2xs text-[var(--ink-muted)] hover:text-[var(--danger)]">Cancel</button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Status strip */}
@@ -139,9 +192,18 @@ export function AgentComputerTab({
         <span className={`w-1.5 h-1.5 rounded-full ${box?.alive ? 'bg-[var(--success)]' : 'bg-[var(--ink-muted)]'}`} aria-hidden />
         <span className="font-mono truncate">{box?.sandboxId ? `loop-bot-vm-${box.sandboxId.slice(0, 8)}` : 'loop-bot-vm'}</span>
         <span className="opacity-50">·</span>
-        <span>{box?.alive ? (box.resumed ? 'resumed' : 'always on') : booting ? 'booting…' : 'off'}</span>
+        <span>{box?.alive ? (box.resumed ? 'resumed' : 'always on') : booting ? 'waking…' : 'asleep'}</span>
+        {!teachActive && interactiveUrl && (
+          <button
+            type="button"
+            onClick={() => setDriving((v) => !v)}
+            className="ml-1 px-1.5 py-0.5 rounded text-2xs border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] transition"
+          >
+            {driving ? 'Release' : 'Take over'}
+          </button>
+        )}
         <span className="ml-auto font-mono opacity-50">{box?.workspaceDir || '/workspace'}</span>
-        <button type="button" onClick={() => void boot()} aria-label="Refresh the stream" className="p-1 rounded text-[var(--ink-muted)] hover:text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition">
+        <button type="button" onClick={() => void (shownUrl ? probe() : wake())} aria-label="Refresh the stream" className="p-1 rounded text-[var(--ink-muted)] hover:text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition">
           <RefreshCw size={12} aria-hidden />
         </button>
       </div>
@@ -188,7 +250,7 @@ export function AgentComputerTab({
           {onExpand && (
             <button
               type="button"
-              onClick={onExpand}
+              onClick={() => { onExpand(); if (!box?.viewUrl) void wake() }}
               aria-label="Enlarge the computer view"
               title="Enlarge"
               className="p-1.5 rounded-lg text-[var(--ink-muted)] hover:text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition"

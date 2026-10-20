@@ -17,8 +17,9 @@ export class ComputerTakeoverTimeout extends Error {
   constructor() { super('Operator takeover did not end within the allowed window') }
 }
 
-/** Fallback display geometry when xdpyinfo is unavailable at boot. */
-export const COMPUTER_FALLBACK_SCREEN = { width: 1024, height: 768 }
+/** Fallback display geometry when xdpyinfo is unavailable at boot.
+ *  Matches the E2B Desktop default (1366×768), not the older 1024×768 guess. */
+export const COMPUTER_FALLBACK_SCREEN = { width: 1366, height: 768 }
 
 export interface ComputerSessionOptions {
   runId: string

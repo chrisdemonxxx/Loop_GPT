@@ -81,6 +81,8 @@ export type AgentEvent =
   | { type: 'pending_approval'; tool_name: string; args: Record<string, any>; prompt: string; approvalId?: string }
   | { type: 'final'; content: string; metadata?: any }
   | { type: 'error'; message: string }
+  /** Teach flow: create_skill succeeded — frontend waits on this (not a timer). */
+  | { type: 'skill_saved'; skillId: string; name?: string }
   | { type: 'done' }
 
 export interface ArtifactRef {

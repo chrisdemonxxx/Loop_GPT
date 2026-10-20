@@ -11,10 +11,9 @@
 import type { ToolContext, ToolDefinition, ToolResult } from '../types'
 import type { ComputerSession } from '../../services/computerSession'
 
-/** Desktop geometry (E2B Desktop default 1024x768). Clicks outside this range
- *  land off-screen, so every coordinate tool clamps to it and the
- *  descriptions tell the model the truth about the canvas. */
-export const COMPUTER_SCREEN_W = Math.min(Math.max(Number(process.env.COMPUTER_SCREEN_W) || 1024, 640), 3840)
+/** Static fallback when a session has no probed screen (tests / mis-boot).
+ *  Live runs always prefer ComputerSession.screen from xdpyinfo (typically 1366×768). */
+export const COMPUTER_SCREEN_W = Math.min(Math.max(Number(process.env.COMPUTER_SCREEN_W) || 1366, 640), 3840)
 export const COMPUTER_SCREEN_H = Math.min(Math.max(Number(process.env.COMPUTER_SCREEN_H) || 768, 480), 2160)
 
 function session(ctx: ToolContext): ComputerSession | null {
@@ -22,10 +21,49 @@ function session(ctx: ToolContext): ComputerSession | null {
   return value && typeof value.act === 'function' ? (value as ComputerSession) : null
 }
 
-/** Live display bounds from the session (synced from the VM at boot), with
- *  the static env-configured values as fallback for old sessions/tests. */
-function screenBounds(s: ComputerSession): { width: number; height: number } {
-  return s.screen || { width: COMPUTER_SCREEN_W, height: COMPUTER_SCREEN_H }
+/** Live display bounds from the session (synced from the VM at boot via xdpyinfo),
+ *  with the static env-configured values as fallback for old sessions/tests. */
+export function screenBounds(s: ComputerSession): { width: number; height: number } {
+  if (s.screen?.width && s.screen?.height) return { width: s.screen.width, height: s.screen.height }
+  return { width: COMPUTER_SCREEN_W, height: COMPUTER_SCREEN_H }
+}
+
+/** Rewrite coordinate tool copy to the live screen size so the model never
+ *  aims at a hardcoded 1024×768 canvas when the box is 1366×768. */
+export function computerToolsForScreen(screen: { width: number; height: number }): ToolDefinition[] {
+  const w = screen.width
+  const h = screen.height
+  return COMPUTER_TOOLS.map((t) => {
+    if (t.name === 'computer_click') {
+      return {
+        ...t,
+        description: `Click the dedicated computer screen (${w}x${h}) at pixel coordinates (x, y). Aim for the CENTER of large targets. button: left (default), right, middle or double.`,
+        parameters: {
+          ...t.parameters,
+          properties: {
+            ...t.parameters.properties,
+            x: { type: 'number', description: `Horizontal pixel (0-${w}).` },
+            y: { type: 'number', description: `Vertical pixel (0-${h}).` },
+            button: t.parameters.properties?.button,
+          },
+        },
+      }
+    }
+    if (t.name === 'computer_move') {
+      return {
+        ...t,
+        description: `Move the mouse pointer without clicking (hover). Screen is ${w}x${h}.`,
+        parameters: {
+          ...t.parameters,
+          properties: {
+            x: { type: 'number', description: `Horizontal pixel (0-${w}).` },
+            y: { type: 'number', description: `Vertical pixel (0-${h}).` },
+          },
+        },
+      }
+    }
+    return t
+  })
 }
 
 function noSession(): ToolResult {
@@ -65,12 +103,12 @@ export const computerScreenshotTool: ToolDefinition = {
 export const computerClickTool: ToolDefinition = {
   name: 'computer_click',
   source: 'builtin',
-  description: `Click the dedicated computer screen (${COMPUTER_SCREEN_W}x${COMPUTER_SCREEN_H}) at pixel coordinates (x, y). Aim for the CENTER of large targets. button: left (default), right, middle or double.`,
+  description: `Click the dedicated computer screen (${COMPUTER_SCREEN_W}x${COMPUTER_SCREEN_H} default; live bounds come from the session) at pixel coordinates (x, y). Aim for the CENTER of large targets. button: left (default), right, middle or double.`,
   parameters: {
     type: 'object',
     properties: {
-      x: { type: 'number', description: `Horizontal pixel (0-${COMPUTER_SCREEN_W}).` },
-      y: { type: 'number', description: `Vertical pixel (0-${COMPUTER_SCREEN_H}).` },
+      x: { type: 'number', description: `Horizontal pixel (0-${COMPUTER_SCREEN_W}; clamped to live screen).` },
+      y: { type: 'number', description: `Vertical pixel (0-${COMPUTER_SCREEN_H}; clamped to live screen).` },
       button: { type: 'string', enum: ['left', 'right', 'middle', 'double'], description: 'Which click. Default left.' },
     },
     required: ['x', 'y'],

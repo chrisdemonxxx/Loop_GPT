@@ -69,17 +69,65 @@ function quote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
-async function runInBox(sandbox: Sandbox, cmd: string, timeoutMs = 30_000) {
-  return sandbox.commands.run(cmd, { timeoutMs })
+/** The E2B SDK throws CommandExitError on non-zero exits instead of returning
+ *  { exitCode }. Treat exit 1 as a boolean "false"; other failures rethrow. */
+async function runChecked(sandbox: Sandbox, cmd: string, timeoutMs = 30_000): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  try {
+    const result = await sandbox.commands.run(cmd, { timeoutMs })
+    return {
+      stdout: String(result?.stdout || ''),
+      stderr: String(result?.stderr || ''),
+      exitCode: result?.exitCode ?? 0,
+    }
+  } catch (error: any) {
+    const code = typeof error?.exitCode === 'number' ? error.exitCode : null
+    if (code === 1) {
+      return {
+        stdout: String(error?.stdout || ''),
+        stderr: String(error?.stderr || ''),
+        exitCode: 1,
+      }
+    }
+    if (code != null) {
+      return {
+        stdout: String(error?.stdout || ''),
+        stderr: String(error?.stderr || error?.message || ''),
+        exitCode: code,
+      }
+    }
+    throw error
+  }
 }
 
-/** List one directory, sorted dirs-first then name. */
+async function runInBox(sandbox: Sandbox, cmd: string, timeoutMs = 30_000) {
+  return runChecked(sandbox, cmd, timeoutMs)
+}
+
+/** Resolve a jailed path through realpath and refuse anything that escapes
+ *  /workspace (symlink escape). Returns the real path under the workspace. */
+async function resolveUnderWorkspace(sandbox: Sandbox, jailed: string): Promise<string> {
+  if (jailed === WORKSPACE_ROOT) return WORKSPACE_ROOT
+  const result = await runChecked(sandbox, `realpath -m -- ${quote(jailed)}`, 5_000)
+  const real = String(result.stdout || '').trim().replace(/\/+$/, '') || WORKSPACE_ROOT
+  if (real !== WORKSPACE_ROOT && !real.startsWith(`${WORKSPACE_ROOT}/`)) {
+    throw new BoxFilesError('Paths stay inside the workspace', 'bad_path')
+  }
+  return real
+}
+
+async function pathExists(sandbox: Sandbox, target: string): Promise<boolean> {
+  const result = await runChecked(sandbox, `test -e ${quote(target)}`, 5_000)
+  return result.exitCode === 0
+}
+
+/** List one directory, sorted dirs-first then name (sorted in JS — the shell
+ *  `sort -t '\\t'` pipeline mishandles the tab delimiter). */
 export async function listBoxFiles(userId: string, dirPath: string): Promise<BoxFileEntry[]> {
   const sandbox = await liveSandboxOrThrow(userId)
-  const dir = jailWorkspacePath(dirPath || WORKSPACE_ROOT)
+  const dir = await resolveUnderWorkspace(sandbox, jailWorkspacePath(dirPath || WORKSPACE_ROOT))
   const result = await runInBox(
     sandbox,
-    `find ${quote(dir)} -mindepth 1 -maxdepth 1 -printf '%y\\t%s\\t%p\\n' 2>/dev/null | sort -t '\\t' -k1,1r -k3,3`,
+    `find ${quote(dir)} -mindepth 1 -maxdepth 1 -printf '%y\\t%s\\t%p\\n' 2>/dev/null`,
   )
   const out: BoxFileEntry[] = []
   for (const line of String(result?.stdout || '').split('\n')) {
@@ -94,15 +142,18 @@ export async function listBoxFiles(userId: string, dirPath: string): Promise<Box
       size: Number(sizeRaw) || 0,
     })
   }
+  out.sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
+    return a.name.localeCompare(b.name)
+  })
   return out
 }
 
 /** Read a text file (capped); larger files are reported, not truncated silently. */
 export async function readBoxFile(userId: string, filePath: string): Promise<{ content: string; truncated: boolean; size: number }> {
   const sandbox = await liveSandboxOrThrow(userId)
-  const file = jailWorkspacePath(filePath)
-  const isSymlink = await sandbox.commands.run(`test -L ${quote(file)}`, { timeoutMs: 5_000 })
-  if ((isSymlink.exitCode ?? 1) === 0) throw new BoxFilesError('Symlinks are not resolved — use the real path the link points at.', 'bad_path')
+  const file = await resolveUnderWorkspace(sandbox, jailWorkspacePath(filePath))
+  if (!(await pathExists(sandbox, file))) throw new BoxFilesError('File not found', 'not_found')
   const sizeResult = await runInBox(sandbox, `stat -c %s ${quote(file)} 2>/dev/null || echo -1`)
   const size = Number(String(sizeResult?.stdout || '-1').trim())
   if (size < 0) throw new BoxFilesError('File not found', 'not_found')
@@ -122,9 +173,7 @@ export async function readBoxFile(userId: string, filePath: string): Promise<{ c
 /** Write a text file (capped), creating parent directories. */
 export async function writeBoxFile(userId: string, filePath: string, content: string): Promise<{ size: number }> {
   const sandbox = await liveSandboxOrThrow(userId)
-  const file = jailWorkspacePath(filePath)
-  const isSymlink = await sandbox.commands.run(`test -L ${quote(file)}`, { timeoutMs: 5_000 })
-  if ((isSymlink.exitCode ?? 1) === 0) throw new BoxFilesError('Symlinks are not resolved through this interface.', 'bad_path')
+  const file = await resolveUnderWorkspace(sandbox, jailWorkspacePath(filePath))
   const data = Buffer.from(String(content ?? ''), 'utf-8')
   if (data.length > MAX_WRITE_BYTES) throw new BoxFilesError(`Content is ${data.length} bytes — the inline editor caps at ${MAX_WRITE_BYTES}`, 'too_large')
   await runInBox(sandbox, `mkdir -p ${quote(file.split('/').slice(0, -1).join('/') || WORKSPACE_ROOT)}`)
@@ -143,10 +192,9 @@ export async function writeBoxFile(userId: string, filePath: string, content: st
 /** Delete a file or (recursively) a directory inside the workspace. */
 export async function deleteBoxPath(userId: string, targetPath: string): Promise<void> {
   const sandbox = await liveSandboxOrThrow(userId)
-  const target = jailWorkspacePath(targetPath)
+  const target = await resolveUnderWorkspace(sandbox, jailWorkspacePath(targetPath))
   if (target === WORKSPACE_ROOT) throw new BoxFilesError('The workspace root cannot be deleted', 'bad_path')
-  const isSymlink = await sandbox.commands.run(`test -L ${quote(target)}`, { timeoutMs: 5_000 })
-  if ((isSymlink.exitCode ?? 1) === 0) throw new BoxFilesError('Symlinks are not resolved through this interface.', 'bad_path')
+  if (!(await pathExists(sandbox, target))) throw new BoxFilesError('Path not found', 'not_found')
   const result = await runInBox(sandbox, `rm -rf -- ${quote(target)} && echo gone || echo missing`)
   if (!String(result?.stdout || '').includes('gone')) throw new BoxFilesError('Path not found', 'not_found')
 }

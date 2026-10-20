@@ -3,10 +3,10 @@
 Forked from e2b-dev/desktop (their XFCE recipe). The @e2b/desktop SDK's
 session bootstrap is hardcoded to `startxfce4` and verifies the XFCE session
 processes at create() time, so the image keeps the three XFCE binaries the
-SDK checks for — and nothing else from XFCE. The real desktop is GNOME
-(gnome-shell on mutter/x11 over Xvfb with software GL), which botBox starts
-immediately after the SDK's create() returns; everything the SDK does after
-that point (stream, screenshots, input) is desktop-agnostic.
+SDK checks for — and nothing else from XFCE. GNOME packages are baked into
+this template; botBox swaps to gnome-session immediately after the SDK's
+create() returns. Everything the SDK does after that point (stream,
+screenshots, input) is desktop-agnostic.
 """
 
 from e2b import CopyItem, Template
@@ -57,13 +57,22 @@ template = (
             "software-properties-common",
             "apt-transport-https",
             "libgtk-3-bin",
+            # Real desktop: GNOME is baked into the template so first boot does
+            # not apt-install for 2–4 minutes. The SDK still starts its XFCE
+            # shim; botBox swaps to gnome-session immediately after create().
+            "gnome-session",
+            "gnome-shell",
+            "mutter",
+            "gnome-terminal",
+            "nautilus",
+            "gnome-backgrounds",
+            "adwaita-icon-theme-full",
+            "gnome-themes-extra",
+            "dbus-x11",
+            "mesa-utils",
+            "libgl1-mesa-dri",
         ]
     )
-    # NOTE: GNOME is deliberately NOT installed here. E2B's optimize/snapshot
-    # phase drops the GNOME layer from the final image (verified across three
-    # rebuilds — the build log shows the packages installed and the booted
-    # sandbox lacks them). botBox installs GNOME into the live box on first
-    # boot instead (~2-4 min once per box lifetime, nothing can prune it).
     .apt_install(["libreoffice", "gedit"])
     .pip_install("numpy")
     # NoVNC and websockify — identical to the upstream recipe; the stream
@@ -89,11 +98,11 @@ template = (
         ],
     )
     .apt_install(["firefox-esr", "google-chrome-stable", "code"])
-    # gnome-terminal is the terminal every seeded autostart entry launches.
-    .make_symlink(
-        "/usr/bin/gnome-terminal.wrapper",
-        "/etc/alternatives/x-terminal-emulator",
-        force=True,
+    # Seeded autostarts launch x-terminal-emulator; point it at gnome-terminal
+    # (the .wrapper path is not always present on minimal images).
+    .run_cmd(
+        "update-alternatives --install /usr/bin/x-terminal-emulator x-terminal-emulator /usr/bin/gnome-terminal 50 && "
+        "update-alternatives --set x-terminal-emulator /usr/bin/gnome-terminal"
     )
     .run_cmd("update-alternatives --set x-www-browser /usr/bin/google-chrome-stable")
     .make_dir("/home/user/.config/Code/User")

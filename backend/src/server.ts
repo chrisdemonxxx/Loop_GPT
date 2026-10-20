@@ -286,6 +286,29 @@ setInterval(async () => {
     await reapOrphanBoxes()
   } catch { /* best effort — next tick retries */ }
 }, 5 * 60_000)
+// Stuck bot-run reconciler: mark running BotRuns failed once their task lease
+// has expired so the live viewer does not show a black screen forever.
+setInterval(async () => {
+  try {
+    const { reconcileStuckBotRuns } = await import('./services/botRuns')
+    await reconcileStuckBotRuns()
+  } catch { /* best effort */ }
+}, 60_000)
+// API shutdown: detach local box handles only — never kill every user's VM.
+let shuttingDown = false
+const detachBoxesOnShutdown = () => {
+  if (shuttingDown) return
+  shuttingDown = true
+  acceptingTraffic = false
+  void import('./services/botBox')
+    .then(({ detachAllBoxes }) => detachAllBoxes())
+    .finally(() => {
+      server.close(() => process.exit(0))
+      setTimeout(() => process.exit(0), 5_000).unref?.()
+    })
+}
+process.on('SIGTERM', detachBoxesOnShutdown)
+process.on('SIGINT', detachBoxesOnShutdown)
 server.on('error', (err) => {
   console.error('Server failed to start:', err instanceof Error ? err.message : err)
   process.exit(1)

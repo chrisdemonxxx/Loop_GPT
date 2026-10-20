@@ -6,13 +6,15 @@
 export type BotTaskStatus = 'queued' | 'processing' | 'succeeded' | 'dead_letter' | 'cancelled'
 export type BotRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 
-export type BotTaskType = 'default' | 'coding' | 'research' | 'ops' | 'teach'
+/** Tool-pack seed for the persistent box (computer wake), not an AgentTask field. */
+export type BotBoxTaskType = 'default' | 'coding' | 'research' | 'ops' | 'teach'
+
+/** @deprecated Use BotBoxTaskType — taskType is not an AgentTask column. */
+export type BotTaskType = BotBoxTaskType
 
 export interface BotTask {
   id: string
   kind: 'ops' | 'scheduled' | 'teach'
-  /** Task type — drives which tool pack the persistent box boots with. */
-  taskType?: BotTaskType
   goal: string
   status: BotTaskStatus
   schedule: string | null
@@ -23,6 +25,14 @@ export interface BotTask {
   nextAttemptAt: string
   cancelRequested: boolean
   lastErrorCode: string | null
+  /** Dedicated-computer request on this task (enabled + optional TTL). */
+  computer?: { enabled: boolean; ttlMinutes?: number } | null
+  /** Named bot this task runs as. */
+  botId?: string | null
+  /** Audit trail — who enqueued the task. */
+  createdBy?: string
+  /** Latest run result text when the list/detail payload includes it. */
+  result?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -87,6 +97,8 @@ export interface BotEvent {
   data?: any
   artifact?: { id: string; kind: string; name: string }
   runId?: string
+  /** Present on `skill_saved` teach events. */
+  skillId?: string
 }
 
 /** Live feed frame (SSE + poll fallback both emit this shape). */
@@ -103,9 +115,6 @@ export interface BotFeedEvent {
 export interface EnqueueBotInput {
   goal: string
   kind?: 'ops' | 'scheduled' | 'teach'
-  /** Task type — which tool pack the persistent box seeds (terminal/files/
-   *  Chrome autostart, workspace layout). Defaults to 'default'. */
-  taskType?: BotTaskType
   schedule?: string
   model?: string
   thinking?: 'low' | 'medium' | 'high' | 'xhigh'
@@ -116,6 +125,18 @@ export interface EnqueueBotInput {
   /** Named bot this task runs as. Omitted → the owner's primary Loop Bot. */
   botId?: string
   priority?: number
+}
+
+export interface EnqueueBotResult {
+  ok: true
+  task: {
+    id: string
+    kind: string
+    status: string
+    nextAttemptAt: string
+    computer?: { enabled: boolean; ttlMinutes?: number } | null
+  }
+  suggestedSkills: BotSkillRef[]
 }
 
 export interface BotSkillRef {

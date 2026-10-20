@@ -88,12 +88,34 @@ export async function createRoutine(
   return toRoutine({ ...task, runs: [] })
 }
 
-/** Pause moves the next run to the far future; resume schedules it for now. */
+/** Pause moves the next run to the far future; resume schedules it for now.
+ *  Resuming a dead-lettered routine re-queues it (clears the permanent failure). */
 export async function setRoutinePaused(userId: string, id: string, paused: boolean): Promise<Routine | null> {
   if (!hasDb || !prisma) return null
   const owned = await prisma.agentTask.findFirst({ where: { id, userId, kind: 'scheduled' }, select: { id: true, status: true } })
   if (!owned) return null
-  await prisma.agentTask.update({ where: { id }, data: { nextAttemptAt: paused ? PAUSED_AT : new Date() } })
+  if (paused) {
+    await prisma.agentTask.update({ where: { id }, data: { nextAttemptAt: PAUSED_AT } })
+  } else {
+    const revive = owned.status === 'dead_letter'
+    await prisma.agentTask.update({
+      where: { id },
+      data: {
+        nextAttemptAt: new Date(),
+        ...(revive
+          ? {
+              status: 'queued',
+              attempts: 0,
+              lastError: null,
+              lastErrorCode: null,
+              cancelRequested: false,
+              leaseToken: null,
+              leaseExpiresAt: null,
+            }
+          : {}),
+      },
+    })
+  }
   const rows = await prisma.agentTask.findFirst({
     where: { id },
     include: { runs: { orderBy: { startedAt: 'desc' }, take: 20, select: { id: true, status: true, error: true, startedAt: true, completedAt: true } } },

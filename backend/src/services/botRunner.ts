@@ -21,9 +21,9 @@ import { DailyCreditError, captureDailyReservation, cleanupDailyReservation, dai
 import { sanitizeMetadata } from '../agent/guardrails'
 import { startRun, setRunComputer, isRunTakeoverRequested } from './botRuns'
 import { ComputerSession } from './computerSession'
-import { E2BDesktopError, attachDesktop, wrapDesktop } from './e2bDesktop'
-import { attachUserBoxFromDB, createBoxTaskFolder } from './botBox'
-import { COMPUTER_TOOLS, COMPUTER_TOOL_NAMES } from '../agent/tools/computerTools'
+import { E2BDesktopError, attachDesktop } from './e2bDesktop'
+import { attachUserBoxFromDB, createBoxTaskFolder, extendUserBoxLease } from './botBox'
+import { COMPUTER_TOOL_NAMES, computerToolsForScreen } from '../agent/tools/computerTools'
 import { builtinToolNames } from '../agent'
 import { saveArtifact } from '../agent/artifacts'
 import { loadSkillsForUser } from '../agent/skills/skillLoader'
@@ -38,7 +38,7 @@ import {
   type AgentTaskClaim,
   type AgentTaskOutcome,
 } from './agentTasks'
-import type { AgentEvent, ArtifactRef, ChatMessage, ToolContext } from '../agent/types'
+import type { AgentEvent, ArtifactRef, ChatMessage, ToolContext, ToolDefinition } from '../agent/types'
 import type { ThinkingInput } from '../agent/thinking'
 
 const BOT_SYSTEM_PROMPT = [
@@ -51,17 +51,18 @@ const BOT_SYSTEM_PROMPT = [
 ].join('\n')
 
 /** Computer-use discipline, appended only when a dedicated desktop is attached.
- *  Written from a live grounding probe (2026-10-05): the model reads screens
- *  well but its raw coordinate picks drift, so the loop is keyboard-first and
- *  always re-observes. */
-const COMPUTER_SYSTEM_ADDENDUM = [
-  'You are driving a dedicated cloud desktop (1024x768 pixels) through computer_* tools.',
-  'Loop discipline: computer_screenshot → ONE small action → read the fresh screenshot. Never chain blind actions.',
-  'Prefer the keyboard over the mouse: typing and shortcuts (ctrl+l for the browser address bar, tab, enter) are far more reliable than pixel clicks.',
-  'When you must click, aim for the CENTER of a large target, then read the new screenshot — if you missed, say so and click again with adjusted coordinates.',
-  'Launch apps with computer_launch, then computer_wait and look before interacting.',
-  'Before each action, state in one short line what you see and what you are about to do.',
-].join('\n')
+ *  Screen size comes from the live session (xdpyinfo) — never hardcode 1024×768
+ *  when the box is 1366×768. Written from a live grounding probe: keyboard-first. */
+export function buildComputerSystemAddendum(screen: { width: number; height: number }): string {
+  return [
+    `You are driving a dedicated cloud desktop (${screen.width}x${screen.height} pixels) through computer_* tools.`,
+    'Loop discipline: computer_screenshot → ONE small action → read the fresh screenshot. Never chain blind actions.',
+    'Prefer the keyboard over the mouse: typing and shortcuts (ctrl+l for the browser address bar, tab, enter) are far more reliable than pixel clicks.',
+    'When you must click, aim for the CENTER of a large target, then read the new screenshot — if you missed, say so and click again with adjusted coordinates.',
+    'Launch apps with computer_launch, then computer_wait and look before interacting.',
+    'Before each action, state in one short line what you see and what you are about to do.',
+  ].join('\n')
+}
 
 /** Teach-mode phase 1: announce readiness and stop. The runner handles the
  *  wait + recording; phase 2 gets the distilled demo. */
@@ -93,7 +94,7 @@ function attachSkill(task: { userId: string | null; skillId: string | null }, na
 
 /** The named bot's identity + remembered notes, injected for its runs so a
  *  bot answers as itself and keeps what it learned between sessions. */
-async function attachBotIdentity(
+export async function attachBotIdentity(
   task: { userId: string | null; botId: string | null },
   names: string[],
   systemPrompt: string,
@@ -116,6 +117,22 @@ async function attachBotIdentity(
     names: merged,
     systemPrompt: `${systemPrompt}\n\nBOT IDENTITY\n${parts.join('\n\n')}`,
   }
+}
+
+/** Build the authorized tool grant from the FINAL name list (after identity /
+ *  skill attachment). Remember_fact and skill tools must be in the grant or
+ *  the runtime returns 403 when the model calls them. */
+export function buildGrantedTools(
+  runNames: string[],
+  catalog: ToolDefinition[],
+): ToolDefinition[] {
+  const byName = new Map(catalog.map((tool) => [tool.name, tool]))
+  const granted: ToolDefinition[] = []
+  for (const name of runNames) {
+    const tool = byName.get(name)
+    if (tool && !granted.some((g) => g.name === tool.name)) granted.push(tool)
+  }
+  return granted
 }
 
 export interface BotIdentity { userId: string; workspaceId: string; conversationId: string }
@@ -216,8 +233,8 @@ export async function executeBotTask(
   const stopFromWorker = () => abort.abort(new BotAbort('worker_stop'))
   workerSignal?.addEventListener('abort', stopFromWorker, { once: true })
 
-  // Heartbeat: renew the lease and poll the operator cancel flag. Unref'd so a
-  // wedged tick never keeps the worker alive past SIGTERM.
+  // Heartbeat: renew the lease, extend the box timeout, and poll the operator
+  // cancel flag. Unref'd so a wedged tick never keeps the worker alive past SIGTERM.
   let leaseLost = false
   const heartbeatMs = Math.max(5000, Math.floor(options.leaseMs / 3))
   const heartbeat = setInterval(() => {
@@ -228,6 +245,7 @@ export async function executeBotTask(
           abort.abort(new BotAbort('lease_lost'))
           return
         }
+        if (task.userId) await extendUserBoxLease(task.userId).catch(() => undefined)
         if (await isCancelRequested(task.id)) abort.abort(new BotAbort('cancelled'))
       } catch { /* transient DB errors ride the next tick */ }
     })()
@@ -256,8 +274,8 @@ export async function executeBotTask(
     const requested = Array.isArray(task.allowedTools) ? (task.allowedTools as string[]) : [...BOT_DEFAULT_TOOLS]
     const names = requested.filter((name) => builtinNames.has(name))
     if (!names.length) throw new AgentTaskError('invalid_request')
-    const tools = builtins.filter((tool) => names.includes(tool.name))
 
+    const isTeach = task.kind === 'teach'
     const emit = (event: AgentEvent) => {
       if (event.type === 'final') {
         finalContent = event.content
@@ -266,6 +284,13 @@ export async function executeBotTask(
         artifacts.push(event.artifact)
       }
       run.emit(event)
+      // Explicit skill_saved so the teach UI can stop waiting on a timer.
+      if (isTeach && event.type === 'tool_result' && event.name === 'create_skill' && !event.isError) {
+        const skill = event.data && typeof event.data === 'object' ? (event.data as { skill?: { id?: string; name?: string } }).skill : undefined
+        if (skill?.id) {
+          run.emit({ type: 'skill_saved', skillId: String(skill.id), ...(skill.name ? { name: String(skill.name) } : {}) })
+        }
+      }
     }
 
     // Dedicated computer session (task.computer.enabled): provision the VM,
@@ -285,7 +310,12 @@ export async function executeBotTask(
       let existingDesktop: import('./e2bDesktop').DesktopClient | undefined
       try {
         const sandboxId = await attachUserBoxFromDB(identity.userId)
-        if (sandboxId) existingDesktop = await attachDesktop(sandboxId)
+        if (sandboxId) {
+          const boxRow = prisma
+            ? await prisma.botBox.findUnique({ where: { userId: identity.userId }, select: { streamAuthKey: true } }).catch(() => null)
+            : null
+          existingDesktop = await attachDesktop(sandboxId, { streamAuthKey: boxRow?.streamAuthKey })
+        }
       } catch {
         existingDesktop = undefined // fall back to a fresh dedicated VM
       }
@@ -298,6 +328,14 @@ export async function executeBotTask(
         emit,
         isTakeoverRequested: isRunTakeoverRequested,
         ...(existingDesktop ? { existingDesktop } : {}),
+        // Tag dedicated VMs so the reaper can find orphans.
+        ...(!existingDesktop ? {
+          createDesktopFn: (opts: { timeoutMs: number }) =>
+            import('./e2bDesktop').then((m) => m.createDesktop({
+              ...opts,
+              metadata: { userId: identity.userId, runId: run.runId },
+            })),
+        } : {}),
       })
       // Per-task folder inside the box workspace (Grok's /workspace/task-*).
       void createBoxTaskFolder(identity.userId, task.id, task.goal).catch(() => {})
@@ -309,8 +347,11 @@ export async function executeBotTask(
         startedAt: new Date().toISOString(),
       })
       emit({ type: 'status', message: `Dedicated computer ready (${computer.info.sandboxId}); live view available to admins` })
-      ttlTimer = setTimeout(() => abort.abort(new BotAbort('computer_ttl')), computerCfg.ttlMinutes * 60_000)
-      ttlTimer.unref?.()
+      // Teach takeover waits are not ended by the run TTL — arm after recording.
+      if (!isTeach) {
+        ttlTimer = setTimeout(() => abort.abort(new BotAbort('computer_ttl')), computerCfg.ttlMinutes * 60_000)
+        ttlTimer.unref?.()
+      }
     }
 
     const ctx: ToolContext = {
@@ -323,20 +364,30 @@ export async function executeBotTask(
         ...(task.botId ? { botId: task.botId } : {}),
       },
     }
-    const grantedTools = computer ? [...tools, ...COMPUTER_TOOLS] : tools
     // Teach runs distill skills; grant the writer. Skill-attached runs follow
     // their procedure. Both stay inside the reviewed builtin catalog.
-    const isTeach = task.kind === 'teach'
     const skillTool = isTeach ? toolRegistry.get('create_skill') : undefined
-    if (skillTool && !grantedTools.some((tool) => tool.name === 'create_skill')) grantedTools.push(skillTool)
-    let runNames = computer ? [...names, ...COMPUTER_TOOL_NAMES] : names
-    let systemPrompt = computer ? `${BOT_SYSTEM_PROMPT}\n\n${COMPUTER_SYSTEM_ADDENDUM}` : BOT_SYSTEM_PROMPT
+    let runNames = computer ? [...names, ...COMPUTER_TOOL_NAMES] : [...names]
+    const screen = computer?.screen || { width: 1366, height: 768 }
+    let systemPrompt = computer
+      ? `${BOT_SYSTEM_PROMPT}\n\n${buildComputerSystemAddendum(screen)}`
+      : BOT_SYSTEM_PROMPT
     const attached = attachSkill(task, runNames, systemPrompt)
     if (attached) { runNames = attached.names; systemPrompt = attached.systemPrompt }
     const identified = await attachBotIdentity(task, runNames, systemPrompt)
     runNames = identified.names
     systemPrompt = identified.systemPrompt
     if (skillTool && !runNames.includes('create_skill')) runNames = [...runNames, 'create_skill']
+    // Grant AFTER identity/skill attachment so remember_fact (and skill tools)
+    // are actually authorized — building earlier left them as names-only → 403.
+    // Tool descriptions use the live xdpyinfo size so clicks match the canvas.
+    const computerTools = computer ? computerToolsForScreen(screen) : []
+    const catalog: ToolDefinition[] = [
+      ...builtins,
+      ...computerTools,
+      ...(skillTool ? [skillTool] : []),
+    ]
+    const grantedTools = buildGrantedTools(runNames, catalog)
     const authorizedCtx = await authorizeRunContext(ctx, identity.workspaceId, grantedTools)
     run.emit({ type: 'run', runId: run.runId } as AgentEvent)
     run.emit({ type: 'status', message: `task:${task.id}` } as AgentEvent)
@@ -362,12 +413,14 @@ export async function executeBotTask(
       await runAgentOnce([{ role: 'user', content: 'Announce teach readiness now.' }], `${BOT_SYSTEM_PROMPT}\n\n${TEACH_READY_PROMPT}`, runNames)
       if (abort.signal.aborted) throw abort.signal.reason instanceof BotAbort ? abort.signal.reason : new BotAbort('worker_stop')
       emit({ type: 'status', message: 'Waiting for the operator to take over and demonstrate… (the session records what you do)' })
-      // Phase 1.5: record the takeover demonstration. Screen-state timeline:
-      // frames every ~1.5s while the operator drives, capped, then distilled.
+      // Phase 1.5: record the takeover demonstration. Frames every ~1.5s while
+      // the operator drives; stop on Release or a time cap (no hard frame count).
+      // The run TTL does not end this wait — it is armed after recording.
       const recording: Array<{ at: number; png: Buffer }> = []
-      const takeoverDeadline = Date.now() + (Number(process.env.BOT_TAKEOVER_TIMEOUT_MS || 30 * 60_000))
+      const teachWindowMs = Number(process.env.BOT_TEACH_MAX_MS || process.env.BOT_TAKEOVER_TIMEOUT_MS || 30 * 60_000)
+      const takeoverDeadline = Date.now() + teachWindowMs
       let sawTakeover = false
-      while (Date.now() < takeoverDeadline && recording.length < 40 && !abort.signal.aborted) {
+      while (Date.now() < takeoverDeadline && !abort.signal.aborted) {
         const takeover = await isRunTakeoverRequested(run.runId).catch(() => false)
         if (takeover) {
           sawTakeover = true
@@ -378,7 +431,14 @@ export async function executeBotTask(
         }
         await new Promise((r) => setTimeout(r, 1500))
       }
-      if (abort.signal.aborted) throw abort.signal.reason instanceof BotAbort ? abort.signal.reason : new BotAbort('worker_stop')
+      if (abort.signal.aborted) {
+        throw abort.signal.reason instanceof BotAbort ? abort.signal.reason : new BotAbort('worker_stop')
+      }
+      // Arm the computer TTL for the distill phase now that recording is done.
+      if (!ttlTimer) {
+        ttlTimer = setTimeout(() => abort.abort(new BotAbort('computer_ttl')), computerCfg.ttlMinutes * 60_000)
+        ttlTimer.unref?.()
+      }
       if (!sawTakeover) {
         await run.fail('Teach session ended without a demonstration — no takeover happened during the wait window', true)
         return failAgentTask(claim, 'BOT_TEACH_NO_DEMO', 'Operator never took over')
@@ -446,6 +506,7 @@ export async function executeBotTask(
       await syncUserBoxNow(task.userId).catch(() => undefined)
     }
     const ack = await completeAgentTask(claim)
+    if (ack === 'cancelled') return 'cancelled'
     return ack === 'succeeded' ? 'succeeded' : 'lease_lost'
   } catch (error: any) {
     // B4: every failure path settles the reservation exactly once — release if
