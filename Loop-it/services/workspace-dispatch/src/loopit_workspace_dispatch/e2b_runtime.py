@@ -7,9 +7,11 @@ Docker. Generated code still runs only in the E2B microVM (I1).
 
 from __future__ import annotations
 
+import base64
 import json
 import os
-from collections.abc import Callable, Mapping
+import shlex
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, Protocol, runtime_checkable
@@ -19,7 +21,7 @@ from loopit_sandbox_sdk import Envelope, Lease, derive_lease_signing_key, sign
 from loopit_tools import RemoteWorkspace
 from loopit_tools.transport import RemoteWorkspaceClient
 
-from .workspace import WorkspaceUnavailable, _b64, _runtime_result_to_workspace_response
+from .workspace import BlobWriter, WorkspaceUnavailable, _b64, _runtime_result_to_workspace_response
 
 
 @runtime_checkable
@@ -109,6 +111,29 @@ class E2BRuntimeWorkspace(RemoteWorkspace):
                 env={},
             )
         )
+
+    def snapshot_contents_for_paths(self, paths: Sequence[str]) -> Mapping[str, bytes]:
+        if not paths:
+            return {}
+        command = (
+            "python -c "
+            + shlex.quote(_CONTENTS_SCRIPT)
+            + " "
+            + shlex.quote(self._workspace)
+            + " "
+            + shlex.quote(json.dumps(list(paths)))
+        )
+        raw = self._session.run(command, env={})
+        decoded = json.loads(raw.strip().splitlines()[-1] if raw.strip() else "{}")
+        if not isinstance(decoded, Mapping):
+            raise WorkspaceUnavailable("sandbox checkpoint contents were invalid")
+        return {str(path): base64.b64decode(str(encoded)) for path, encoded in decoded.items()}
+
+    def store_blobs_for_paths(
+        self, blob_writer: BlobWriter, paths: Sequence[str]
+    ) -> Mapping[str, str]:
+        contents = self.snapshot_contents_for_paths(paths)
+        return {path: blob_writer.put(data) for path, data in contents.items()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,7 +233,21 @@ _STATE_SCRIPT = (
     "        rel=os.path.relpath(path,root).replace(os.sep,'/')\n"
     "        item=os.stat(path)\n"
     "        state[rel]=f'{item.st_size}:{item.st_mtime_ns}:{item.st_ctime_ns}'\n"
-    "print(json.dumps(state, sort_keys=True))"
+        "print(json.dumps(state, sort_keys=True))"
+)
+_CONTENTS_SCRIPT = (
+    "import base64,json,os,sys;root=sys.argv[1];paths=json.loads(sys.argv[2]);contents={};\n"
+    "for rel in paths:\n"
+    "    normal=str(rel).replace('\\\\','/')\n"
+    "    parts=[part for part in normal.split('/') if part not in {'', '.'}]\n"
+    "    if not parts or '..' in parts or normal.startswith(('/', '~')):\n"
+    "        raise ValueError('invalid relative path')\n"
+    "    path=os.path.join(root,*parts)\n"
+    "    if not os.path.isfile(path):\n"
+    "        continue\n"
+    "    with open(path,'rb') as handle:\n"
+    "        contents['/'.join(parts)]=base64.b64encode(handle.read()).decode('ascii')\n"
+    "print(json.dumps(contents, sort_keys=True))"
 )
 
 
