@@ -1,6 +1,9 @@
 # Single-node Temporal dev frontend for staging.
-# The image entrypoint is the temporal CLI. gRPC stays on 7233 for the
-# private network. Railway's HTTP health check uses PORT (8233), the UI.
+# Railway's start command is a single token (/start.sh) so the CLI arguments
+# are not collapsed into one unknown command. gRPC stays on 7233. The UI
+# listens on 8233, which is the Railway health-check port.
 FROM temporalio/temporal:latest
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
 EXPOSE 7233 8233
-CMD ["server", "start-dev", "--ip", "0.0.0.0", "--port", "7233", "--ui-port", "8233", "--db-filename", "/var/lib/temporal/temporal.db"]
+ENTRYPOINT ["/start.sh"]
