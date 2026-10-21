@@ -13,7 +13,10 @@ RUN uv sync --frozen --no-dev --no-editable --package loopit-egress
 FROM ${UV_IMAGE} AS runtime
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
-    PORT=8002
+    PORT=8128 \
+    LOOPIT_EGRESS_PORT=3128 \
+    LOOPIT_EGRESS_ADMIN_HOST=0.0.0.0 \
+    LOOPIT_EGRESS_ADMIN_PORT=8128
 WORKDIR /app
 # hadolint ignore=DL3008
 RUN apt-get update \
@@ -23,7 +26,7 @@ RUN apt-get update \
     && useradd --system --uid 10001 --gid loopit --home-dir /app --shell /usr/sbin/nologin loopit
 COPY --from=builder --chown=loopit:loopit /app/.venv /app/.venv
 USER 10001:10001
-EXPOSE 8002
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/healthz', timeout=3).read()"]
+EXPOSE 3128 8128
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["python", "-c", "import os, urllib.request; port=os.environ.get('LOOPIT_EGRESS_ADMIN_PORT', '8128'); urllib.request.urlopen('http://127.0.0.1:%s/healthz' % port, timeout=3).read()"]
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["sh", "-c", "exec python -m loopit_egress.server --host 0.0.0.0 --port ${PORT:-8002}"]
+CMD ["python", "-m", "loopit_egress.server"]

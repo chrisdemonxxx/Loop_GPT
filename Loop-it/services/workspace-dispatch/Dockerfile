@@ -13,12 +13,15 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PROJECT_ENVIRONMENT=/app/.venv
 WORKDIR /app
 COPY . .
-RUN uv sync --frozen --no-dev --no-editable --package loopit-workspace-dispatch
+# e2b extra: Railway sets LOOPIT_SANDBOX_PROVIDER=e2b. The server refuses to
+# boot in that mode unless e2b-code-interpreter is installed.
+RUN uv sync --frozen --no-dev --no-editable --package loopit-workspace-dispatch --extra e2b
 
 FROM ${UV_IMAGE} AS runtime
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     PORT=8005 \
+    LOOPIT_WORKSPACE_DISPATCH_PORT=8005 \
     LOOPIT_CONTRACTS_DIR=/opt/loopit/contracts/schemas
 WORKDIR /app
 # hadolint ignore=DL3008
