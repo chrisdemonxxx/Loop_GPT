@@ -74,6 +74,7 @@ const GATE_ACTIONS: Record<string, string> = {
   run_shell: 'Loop wants to run a command',
   deploy: 'Loop wants to publish this build',
   provision: 'Loop wants to set up a database table',
+  request_secret: 'Loop needs a secret from you',
 }
 
 export function gateTitle(action: string | null | undefined): string {

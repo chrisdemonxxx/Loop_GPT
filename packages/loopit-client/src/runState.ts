@@ -2,6 +2,7 @@ import { toActivity, type Activity } from './activity'
 import type {
   ApprovalGate,
   CheckpointView,
+  FileChange,
   RunCost,
   RunDetail,
   RunSummary,
@@ -18,10 +19,21 @@ export interface RunUiState {
   checkpoints: CheckpointView[]
   cost: RunCost | null
   error: string | null
+  /** Structured file changes from apply_patch (Phase 1.12). */
+  fileChanges: FileChange[]
 }
 
 export function emptyRunUiState(): RunUiState {
-  return { run: null, activity: [], dag: null, gates: [], checkpoints: [], cost: null, error: null }
+  return {
+    run: null,
+    activity: [],
+    dag: null,
+    gates: [],
+    checkpoints: [],
+    cost: null,
+    error: null,
+    fileChanges: [],
+  }
 }
 
 export function extractDag(run: RunDetail | null): TaskDagView | null {
@@ -75,7 +87,17 @@ export function reduceRunEvent(state: RunUiState, event: StreamEvent): RunUiStat
   if (event.kind === 'cost') return { ...state, cost: event.cost }
   // Chat turns and token chunks are consumed by the run's chat pane, not the
   // run reducer.
-  if (event.kind === 'chat' || event.kind === 'chat_chunk') return state
+  if (event.kind === 'chat' || event.kind === 'chat_chunk' || event.kind === 'log') return state
+  if (event.kind === 'file_change') {
+    const change: FileChange = {
+      path: event.path,
+      op: event.op,
+      diff: event.diff,
+      additions: event.additions,
+      deletions: event.deletions,
+    }
+    return { ...state, fileChanges: [...state.fileChanges, change] }
+  }
   return { ...state, error: event.message }
 }
 

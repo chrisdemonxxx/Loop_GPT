@@ -11,27 +11,26 @@ Compose builds from that directory (`../../Loop-it`).
 
 The sandbox **scheduler** (`Loop-it/services/scheduler`) does not import
 Temporal and does not read `LOOPIT_TEMPORAL_*`. It boots from its lease store
-and `LOOPIT_SANDBOX_PROVIDER`. This stack sets that provider to `e2b` and does
-not run a Temporal server.
+and `LOOPIT_SANDBOX_PROVIDER` (`memory` by default in this compose for offline
+bring-up; set `e2b` for live sandboxes).
 
 Durable agent runs are a different process: `Loop-it/services/orchestrator`.
 That package depends on `temporalio` and a reachable Temporal frontend. It is
-**not** in this minimal stack. The API is set to `LOOPIT_RUN_EXECUTION_MODE=local`,
-so it serves without Temporal. Live model calls still need `HF_TOKEN`; without
-it the API starts in its existing offline mode.
+in this compose under the **`orchestrator` profile** (not started by a plain
+`up`). The API defaults to `LOOPIT_RUN_EXECUTION_MODE=local`, so it serves
+without Temporal. Live model calls still need `HF_TOKEN`; without it the API
+starts in its existing offline mode.
 
-When durable runs are turned on later, point the same three variables at either
-backend below and set `LOOPIT_RUN_EXECUTION_MODE=orchestrator`. The compose file
-does not embed a Temporal service, so either address works without editing the
-service list.
+To turn durable runs on: set `LOOPIT_TEMPORAL_ADDRESS` (and namespace / task
+queue), set `LOOPIT_RUN_EXECUTION_MODE=orchestrator`, and start with
+`--profile orchestrator`. The compose file does not embed a Temporal server.
 
 ### Temporal Cloud (recommended)
 
 `temporal start-dev` has no auth and local storage. A self-hosted history
-cluster (the production Temporal server plus its database) does not fit a
-small Railway service. Use Temporal Cloud. Set `LOOPIT_TEMPORAL_ADDRESS` to
-the Cloud frontend and supply the Cloud namespace and API key on the
-orchestrator service when that service is added.
+cluster does not fit a small Railway service. Use Temporal Cloud. Set
+`LOOPIT_TEMPORAL_ADDRESS` to the Cloud frontend and supply the Cloud namespace
+(and API key as required by the Temporal SDK) on the orchestrator service.
 
 ### Self-hosted Temporal
 
@@ -43,26 +42,42 @@ public internet until mTLS and namespace auth are in place. See
 
 ## Services
 
-| Service | Image Dockerfile (context `Loop-it/`) | Listen port |
-| --- | --- | --- |
-| migrate | `apps/api/Dockerfile` (one-shot command) | none |
-| router-svc | `services/router-svc/Dockerfile` | 8001 |
-| scheduler | `services/scheduler/Dockerfile` | 8004 |
-| preview-proxy | `services/preview-proxy/Dockerfile` | 8003 |
-| api | `apps/api/Dockerfile` | 8000 |
+| Service | Image Dockerfile (context `Loop-it/`) | Listen port | Notes |
+| --- | --- | --- | --- |
+| migrate | `apps/api/Dockerfile` (one-shot command) | none | |
+| router-svc | `services/router-svc/Dockerfile` | 8001 | |
+| egress-proxy | `services/egress-proxy/Dockerfile` | 3128 / admin 8128 | npm/pypi allowlist |
+| scheduler | `services/scheduler/Dockerfile` | 8004 | `memory` or `e2b`; warm pool env |
+| workspace-dispatch | `services/workspace-dispatch/Dockerfile` | 8005 | sandboxed tools |
+| preview-proxy | `services/preview-proxy/Dockerfile` | 8003 | |
+| orchestrator | `services/orchestrator/Dockerfile` | none | profile `orchestrator` |
+| api | `apps/api/Dockerfile` | 8000 | |
+| loopit-mcp | `services/loopit-mcp/Dockerfile` | 8010 | chat `start_run` bridge (B20) | |
 
 The scheduler image installs the `providers` extra (Docker and E2B). This
-compose forces `LOOPIT_SANDBOX_PROVIDER=e2b` and does not mount a Docker socket.
+compose does not mount a Docker socket; use `LOOPIT_SANDBOX_PROVIDER=e2b` (or
+`memory` offline).
 
 ## Start order
 
 1. **migrate** — `python -m loopit_store.migrate --dsn "$DATABASE_URL"`. Creates
    schema `loopit` if needed and applies store migrations only inside it.
-2. **router-svc**, **scheduler**, and **preview-proxy** — after migrate exits 0.
-3. **api** — after those three are healthy.
-4. On the Loop-GPT web service, set `LOOPIT_API_UPSTREAM` to this API
+2. **router-svc**, **egress-proxy**, **scheduler**, **workspace-dispatch**, and
+   **preview-proxy** — after migrate exits 0.
+3. **api** — after those are healthy.
+4. **orchestrator** (optional) — `docker compose --profile orchestrator ...`
+   after Temporal Cloud (or self-hosted) is reachable.
+5. On the Loop-GPT web service, set `LOOPIT_API_UPSTREAM` to this API
    (`http://<loopit-api>.railway.internal:8000`). Until that variable is set,
    nginx `/api/loopit/` follows the main Loop-GPT API and changes nothing.
+
+### Offline vs live
+
+| Goal | Provider / mode | Needs |
+| --- | --- | --- |
+| Compose + API tests, no cloud | `LOOPIT_SANDBOX_PROVIDER=memory`, `LOOPIT_RUN_EXECUTION_MODE=local` | DB + identity secrets; no E2B / Temporal |
+| Lease + dispatch smoke | same + hit `/api/projects/<id>/lease` in orchestrator mode with a mock scheduler | `LOOPIT_SERVICE_TOKEN` |
+| Live agent sandbox | `e2b` + `orchestrator` profile | `E2B_API_KEY`, template id, Temporal Cloud |
 
 Pin each Railway service `PORT` to the listen port above. The image
 `HEALTHCHECK` uses that port literally.
@@ -83,15 +98,19 @@ networking replaces the compose DNS names. Set:
 LOOPIT_ROUTER_URL=http://<router>.railway.internal:8001
 LOOPIT_SCHEDULER_URL=http://<scheduler>.railway.internal:8004
 LOOPIT_PREVIEW_PROXY_URL=http://<preview>.railway.internal:8003
+LOOPIT_WORKSPACE_DISPATCH_URL=http://<dispatch>.railway.internal:8005/dispatch
+LOOPIT_EGRESS_PROXY_URL=http://<egress>.railway.internal:8002
 ```
 
-Leave `LOOPIT_ROUTER_URL` and the other two at their compose defaults
-(`http://router-svc:8001` and so on) only when using this compose file.
+Leave these at their compose defaults (`http://router-svc:8001` and so on) only
+when using this compose file. Also set `LOOPIT_SANDBOX_SIGNING_KEY` on
+workspace-dispatch (and generate it with Loop-IT's secrets script).
 
 Web build arg, on the existing Loop-GPT web service, not on these services:
 `LOOPIT_ENABLED=1` shows the Build link and sends `/code` to `/build`. Unset
-or any other value keeps today's `/developer` redirect. The `/build` page is a
-placeholder until the native UI lands.
+or any other value keeps today's `/developer` redirect. The `/build` page is the
+native Build Mode UI (`apps/web/app/build`), talking to this API through nginx
+`/api/loopit/*`.
 
 ## Local compose
 

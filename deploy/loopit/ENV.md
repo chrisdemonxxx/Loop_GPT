@@ -84,8 +84,14 @@ Optional identity labels, with compose defaults: `LOOPIT_IDENTITY_ISSUER`,
 | `LOOPIT_SANDBOX_POOL_MAX_IDLE_SECONDS` | scheduler | Retire unused warm sandboxes after this many seconds (default `900`). |
 | `LOOPIT_EGRESS_ALLOW_PACKAGE_REGISTRIES` | egress-proxy | `1` (default) allows npm/pypi (and friends) through the default-deny egress proxy. |
 | `LOOPIT_WORKSPACE_DISPATCH_URL` | api, orchestrator | Default `http://workspace-dispatch:8005/dispatch`. Agent shell / package / dev-server tools go here. |
-| `LOOPIT_EGRESS_PROXY_URL` | api | Default `http://egress-proxy:8002`. Documented for sandbox HTTP_PROXY wiring (E2B template / Phase 1.3). |
-| `LOOPIT_SERVICE_TOKEN` | api, scheduler, workspace-dispatch, orchestrator | Shared service auth for lease acquire/renew/release. |
+| `LOOPIT_EGRESS_PROXY_URL` | api, scheduler, workspace-dispatch | URL the **sandbox** uses for HTTP(S)_PROXY (often a public/VPC address of egress-proxy). Injected on E2B create and into runtime command env. |
+| `LOOPIT_EGRESS_NO_PROXY` | scheduler, workspace-dispatch | Optional; default `localhost,127.0.0.1`. |
+| `LOOPIT_SERVICE_TOKEN` | api, scheduler, workspace-dispatch, orchestrator | Shared service auth for lease acquire/renew/release/pause/resume. |
+| `LOOPIT_PREVIEW_PROXY_UPSTREAM` | Loop-GPT **web** runtime | Optional. `http://preview-proxy…:8003` (or https). When set, nginx fronts `/p/{project}/` (HMR + websocket) to preview-proxy. Unset: copies `LOOPIT_API_UPSTREAM` (inert). |
+| `LOOPIT_PREVIEW_PUBLIC_URL` | api | Public origin for HMR iframe URLs (prefer same-site gateway origin so `/p/{id}/` works). |
+| `LOOPIT_VISION_ENABLED` | api / router | `1`/`true` expands Build attachment URLs to multimodal `image_url` parts. |
+| `LOOPIT_VISION_ENDPOINT_URL` | api | Optional OpenAI-compatible VL endpoint; preferred for `implementation` when set. |
+| `LOOPIT_VISION_MODEL` | api | Served model id on the vision endpoint. |
 
 ### Enabling live Temporal Cloud + E2B
 
@@ -93,9 +99,11 @@ Optional identity labels, with compose defaults: `LOOPIT_IDENTITY_ISSUER`,
 2. Create a Temporal Cloud namespace + API key; set `LOOPIT_TEMPORAL_ADDRESS`, `LOOPIT_TEMPORAL_NAMESPACE` (and Cloud API key env as required by the orchestrator image / Temporal SDK).
 3. `LOOPIT_SANDBOX_PROVIDER=e2b`, `LOOPIT_SANDBOX_POOL_TARGET_SIZE=3` (or higher).
 4. `LOOPIT_RUN_EXECUTION_MODE=orchestrator`.
-5. `docker compose --profile orchestrator -f deploy/loopit/docker-compose.yml up --build`.
+5. Set `LOOPIT_EGRESS_PROXY_URL` to an address sandboxes can reach; npm/pip then go through egress-proxy.
+6. Point Loop-GPT web `LOOPIT_PREVIEW_PROXY_UPSTREAM` at preview-proxy and `LOOPIT_PREVIEW_PUBLIC_URL` at the gateway origin.
+7. `docker compose --profile orchestrator -f deploy/loopit/docker-compose.yml up --build`.
 
-Pause/resume of idle E2B VMs is **not** an HTTP API yet; the warm pool destroys on release and never recycles (cross-tenant safety). Idle cost control today is release + pool refill.
+Pause/resume: `POST /leases/{id}/pause` and `/resume` (service token). E2B uses SDK `beta_pause` / connect when available; memory provider returns **501**. Warm pool still destroys on release (cross-tenant safety).
 
 ## Service URLs
 

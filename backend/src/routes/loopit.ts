@@ -7,11 +7,14 @@ import { LoopitContextError, readLoopitContext } from '../services/loopitContext
 import {
   LOOPIT_METER_KINDS,
   LoopitUsageError,
+  readLoopitCredits,
   recordLoopitUsage,
   type LoopitUsageEvent,
 } from '../services/loopitUsage'
 import {
+  LOOPIT_IDENTITY_SCOPES,
   LOOPIT_IDENTITY_TTL_SECONDS,
+  LOOPIT_TERMINAL_SCOPE,
   LoopitIdentityConfigError,
   VerifiedLoopitIdentity,
   WorkspaceMemberRole,
@@ -19,8 +22,11 @@ import {
   mintLoopitIdentityToken,
   verifyLoopitIdentityToken,
 } from '../services/loopitIdentity'
+import { buildGithubSyncRouter } from './buildGithubSync'
 
 const router = express.Router()
+/** Phase 2.3 stub/live GitHub connect for Build Mode sync. */
+router.use('/github-sync', buildGithubSyncRouter)
 const bodySchema = z.object({
   workspaceId: z.string().trim().min(1).max(200).optional(),
 }).strict()
@@ -68,6 +74,16 @@ async function resolveMembership(userId: string, workspaceId: string | undefined
   return { workspaceId: fallback.workspaceId, role: fallback.role }
 }
 
+/** Platform admins (User.role, the same flag requireAdmin checks) also get the
+ *  Build terminal scope. Workspace roles never grant it. */
+async function identityScopes(userId: string): Promise<string[]> {
+  if (!prisma) throw new LoopitIdentityConfigError('Loop-IT tokens require a database')
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } })
+  const scopes: string[] = [...LOOPIT_IDENTITY_SCOPES]
+  if (user?.role === 'admin') scopes.push(LOOPIT_TERMINAL_SCOPE)
+  return scopes
+}
+
 router.post('/token', authenticateToken, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store')
   const parsed = bodySchema.safeParse(req.body ?? {})
@@ -87,10 +103,12 @@ router.post('/token', authenticateToken, async (req, res) => {
       return
     }
     const role = loopitRoleForWorkspace(membership.role)
+    const scopes = await identityScopes(userId)
     const accessToken = mintLoopitIdentityToken({
       subject: userId,
       orgId: membership.workspaceId,
       role,
+      scopes,
     })
     // Two vocabularies, one response: `access_token`/`expires_in` (OAuth style,
     // the original contract) and `token`/`expiresAt` (what the web client's
@@ -105,6 +123,7 @@ router.post('/token', authenticateToken, async (req, res) => {
       expiresAt,
       org: membership.workspaceId,
       role,
+      scopes,
     })
   } catch (error) {
     if (error instanceof LoopitIdentityConfigError) {
@@ -192,6 +211,26 @@ router.get('/context', requireLoopitIdentity, async (req, res) => {
       return
     }
     if (!res.headersSent) res.status(503).json({ error: 'Project context is temporarily unavailable' })
+  }
+})
+
+/** Remaining credits for the token workspace's billing owner (run preflight). */
+router.get('/credits', requireLoopitIdentity, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store')
+  const identity = (req as IdentityRequest).loopitIdentity
+  if (!identity) {
+    res.status(401).json({ error: 'No token provided' })
+    return
+  }
+  try {
+    const balance = await readLoopitCredits(identity.org)
+    res.json(balance)
+  } catch (error) {
+    if (error instanceof LoopitUsageError) {
+      res.status(error.status).json({ error: error.message })
+      return
+    }
+    if (!res.headersSent) res.status(503).json({ error: 'Credits are temporarily unavailable' })
   }
 })
 

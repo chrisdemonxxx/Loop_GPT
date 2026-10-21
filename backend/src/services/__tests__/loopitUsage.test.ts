@@ -71,12 +71,30 @@ const tx = {
   usageEvent: { create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => data) },
 }
 
+const prisma = {
+  $transaction: async (work: (client: typeof tx) => Promise<unknown>) => work(tx),
+  workspace: {
+    findUnique: vi.fn(async () => ({
+      personalOwnerId: 'owner-a',
+      members: [{ userId: 'owner-a' }],
+    })),
+  },
+  user: {
+    findUnique: vi.fn(async () => state.user),
+  },
+}
+
 vi.mock('../prisma', () => ({
-  get prisma() { return { $transaction: async (work: (client: typeof tx) => Promise<unknown>) => work(tx) } },
+  get prisma() { return prisma },
   get hasDb() { return true },
 }))
 
-import { loopitMeterCredits, loopitUsageFingerprints, type LoopitUsageEvent } from '../loopitUsage'
+import {
+  loopitMeterCredits,
+  loopitUsageFingerprints,
+  readLoopitCredits,
+  type LoopitUsageEvent,
+} from '../loopitUsage'
 import { recordLoopitMeteredUsage } from '../dailyReservations'
 
 const event: LoopitUsageEvent = {
@@ -99,6 +117,19 @@ describe('Loop-IT metered usage', () => {
     state.reservation = null
     state.intent = null
     state.debits = 0
+    prisma.workspace.findUnique.mockClear()
+    prisma.user.findUnique.mockClear()
+  })
+
+  it('reads remaining credits for preflight', async () => {
+    await expect(readLoopitCredits('ws-a')).resolves.toMatchObject({
+      workspaceId: 'ws-a',
+      ownerId: 'owner-a',
+      credits: 100,
+      unlimited: false,
+    })
+    state.user = { ...state.user, unlimited: true, credits: 0 }
+    await expect(readLoopitCredits('ws-a')).resolves.toMatchObject({ credits: 0, unlimited: true })
   })
 
   it('prices meters and charges the owner once for a replayed key', async () => {

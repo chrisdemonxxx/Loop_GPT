@@ -58,7 +58,7 @@ router.post('/runs', authenticateTokenOrApiKey, buildJson, asyncHandler(async (r
   }
 
   try {
-    const upstream = await fetch(`${loopitApiBaseUrl()}/v1/runs`, {
+    const upstream = await fetch(`${loopitApiBaseUrl()}/api/runs`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -100,7 +100,7 @@ router.get('/runs/:id', authenticateTokenOrApiKey, asyncHandler(async (req, res)
   }
 
   try {
-    const upstream = await fetch(`${loopitApiBaseUrl()}/v1/runs/${encodeURIComponent(req.params.id)}`, {
+    const upstream = await fetch(`${loopitApiBaseUrl()}/api/runs/${encodeURIComponent(req.params.id)}`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${auth.token}`,

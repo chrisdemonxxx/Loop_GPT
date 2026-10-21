@@ -28,9 +28,11 @@ export function CheckpointDialog({
   onConfirm: (reason: string) => void
 }) {
   const [reason, setReason] = useState(DEFAULT_REASON)
+  // Reset the reason whenever a new confirm target opens (kind + checkpoint).
+  const actionKey = action ? `${action.kind}:${action.checkpoint.checkpoint_id}` : null
   useEffect(() => {
-    if (action) setReason(DEFAULT_REASON)
-  }, [action?.kind, action?.checkpoint.checkpoint_id])
+    if (actionKey) setReason(DEFAULT_REASON)
+  }, [actionKey])
 
   const copy = action ? COPY[action.kind] : COPY.fork
   const needsReason = action?.kind === 'deploy'

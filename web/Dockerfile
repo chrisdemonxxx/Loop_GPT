@@ -112,8 +112,30 @@ else
   export LOOPIT_API_HOST="$API_HOST"
   export LOOPIT_API_TLS_NAME="$API_TLS_NAME"
 fi
+# Optional preview-proxy for /p/{project}/ HMR. Unset → same as Loop-IT API
+# (inert until an operator points LOOPIT_PREVIEW_PROXY_UPSTREAM at preview-proxy).
+if [ -n "${LOOPIT_PREVIEW_PROXY_UPSTREAM:-}" ]; then
+  case "$LOOPIT_PREVIEW_PROXY_UPSTREAM" in *"$cr"*|*"$lf"*) fail ;; esac
+  printf '%s' "$LOOPIT_PREVIEW_PROXY_UPSTREAM" | grep -Eq '^https?://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$' || fail
+  preview_authority=${LOOPIT_PREVIEW_PROXY_UPSTREAM#*://}
+  preview_host=${preview_authority%%:*}
+  case "$LOOPIT_PREVIEW_PROXY_UPSTREAM" in
+    https://*) ;;
+    http://*) case "$preview_host" in *.railway.internal|preview-proxy|loopit-preview-proxy) ;; *) fail ;; esac ;;
+    *) fail ;;
+  esac
+  if [ "$preview_authority" != "$preview_host" ]; then
+    preview_port=${preview_authority##*:}
+    [ "$preview_port" -ge 1 ] && [ "$preview_port" -le 65535 ] || fail
+  fi
+  export LOOPIT_PREVIEW_PROXY_HOST="$preview_authority" LOOPIT_PREVIEW_PROXY_TLS_NAME="$preview_host"
+else
+  export LOOPIT_PREVIEW_PROXY_UPSTREAM="$LOOPIT_API_UPSTREAM"
+  export LOOPIT_PREVIEW_PROXY_HOST="$LOOPIT_API_HOST"
+  export LOOPIT_PREVIEW_PROXY_TLS_NAME="$LOOPIT_API_TLS_NAME"
+fi
 # Subprocess exports do not reach the stock entrypoint. Render explicitly here.
-envsubst '${PORT} ${API_UPSTREAM} ${API_HOST} ${API_TLS_NAME} ${API_RESOLVER} ${PROXY_SHARED_SECRET} ${LOOPIT_API_UPSTREAM} ${LOOPIT_API_HOST} ${LOOPIT_API_TLS_NAME}' \
+envsubst '${PORT} ${API_UPSTREAM} ${API_HOST} ${API_TLS_NAME} ${API_RESOLVER} ${PROXY_SHARED_SECRET} ${LOOPIT_API_UPSTREAM} ${LOOPIT_API_HOST} ${LOOPIT_API_TLS_NAME} ${LOOPIT_PREVIEW_PROXY_UPSTREAM} ${LOOPIT_PREVIEW_PROXY_HOST} ${LOOPIT_PREVIEW_PROXY_TLS_NAME}' \
   < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf
 # Keep restarts idempotent; the stock renderer must not overwrite these values.
 export NGINX_ENVSUBST_TEMPLATE_DIR=/nonexistent

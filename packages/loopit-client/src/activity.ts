@@ -17,6 +17,10 @@ export interface Activity {
   title: string
   body: string
   tone: 'neutral' | 'good' | 'bad' | 'work'
+  /** Audit event type (e.g. `tool.called`, `verification.completed`) for structured UI. */
+  kind?: string
+  /** Tool name when the audit row is a tool call/result. */
+  tool?: string
 }
 
 function asText(value: unknown): string {
@@ -44,7 +48,7 @@ export function toActivity(event: AuditStreamEvent, index: number): Activity {
 
   switch (event.type) {
     case 'task.started':
-      return { id, at, title: 'Started building', body: '', tone: 'work' }
+      return { id, at, title: 'Started building', body: '', tone: 'work', kind: event.type }
     case 'tool.called':
       return {
         id,
@@ -52,6 +56,8 @@ export function toActivity(event: AuditStreamEvent, index: number): Activity {
         title: TOOL_TITLES[tool] ?? 'Working on the build',
         body: describeWork(detail),
         tone: 'work',
+        kind: event.type,
+        tool: tool || undefined,
       }
     case 'tool.result':
     case 'tool.completed':
@@ -61,6 +67,8 @@ export function toActivity(event: AuditStreamEvent, index: number): Activity {
         title: event.outcome === 'failure' ? 'A step did not go as planned' : 'Step finished',
         body: '',
         tone: event.outcome === 'failure' ? 'bad' : 'neutral',
+        kind: event.type,
+        tool: tool || undefined,
       }
     case 'verification.completed':
       return {
@@ -72,6 +80,7 @@ export function toActivity(event: AuditStreamEvent, index: number): Activity {
             : 'The checks found something to fix',
         body: '',
         tone: event.outcome === 'success' ? 'good' : 'bad',
+        kind: event.type,
       }
     case 'task.stopped':
     case 'task.completed':
@@ -81,11 +90,12 @@ export function toActivity(event: AuditStreamEvent, index: number): Activity {
         title: event.outcome === 'success' ? 'Build verified' : 'The build stopped',
         body: '',
         tone: event.outcome === 'success' ? 'good' : 'bad',
+        kind: event.type,
       }
     default:
       // Unknown event types still pace the timeline without leaking their
       // internal names.
-      return { id, at, title: 'Working…', body: '', tone: 'neutral' }
+      return { id, at, title: 'Working…', body: '', tone: 'neutral', kind: event.type }
   }
 }
 

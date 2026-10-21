@@ -18,5 +18,9 @@
   "overrides": {
     "katex": "0.18.11",
     "postcss": "^8.5.29"
+  },
+  "dependencies": {
+    "@e2b/desktop": "^2.5.0",
+    "e2b": "^2.57.0"
   }
 }

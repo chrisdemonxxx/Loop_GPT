@@ -115,6 +115,21 @@ describe('POST /api/loopit/token', () => {
     expect(JSON.parse(Buffer.from(String(body.access_token).split('.')[0], 'base64url').toString('utf8')).kid).toBe('route-kid')
   })
 
+  it('grants the Build terminal scope to platform admins only', async () => {
+    const scopesOf = (token: unknown) =>
+      JSON.parse(Buffer.from(String(token).split('.')[1], 'base64url').toString('utf8')).scopes
+    db.client.workspaceMember.findUnique.mockResolvedValue({ role: 'owner', workspaceId: 'ws-1' })
+
+    const member = await (await call({ body: { workspaceId: 'ws-1' } })).json()
+    expect(scopesOf(member.access_token)).toEqual(['api', 'runs'])
+    expect(member.scopes).toEqual(['api', 'runs'])
+
+    db.client.user.findUnique.mockResolvedValue({ sessionInvalidatedAt: null, role: 'admin' })
+    const admin = await (await call({ body: { workspaceId: 'ws-1' } })).json()
+    expect(scopesOf(admin.access_token)).toEqual(['api', 'runs', 'build:terminal'])
+    expect(admin.scopes).toEqual(['api', 'runs', 'build:terminal'])
+  })
+
   it('defaults to the personal workspace ahead of an older membership', async () => {
     db.client.workspace.findUnique.mockResolvedValue({ id: 'personal-user-1' })
     db.client.workspaceMember.findUnique.mockResolvedValue({ role: 'owner' })

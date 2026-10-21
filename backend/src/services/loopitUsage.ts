@@ -132,6 +132,36 @@ export async function resolveWorkspaceBillingOwner(workspaceId: string): Promise
   return { ownerId }
 }
 
+export interface LoopitCreditsBalance {
+  workspaceId: string
+  ownerId: string
+  credits: number
+  unlimited: boolean
+}
+
+/** Remaining Loop-GPT credits for the workspace billing owner (preflight). */
+export async function readLoopitCredits(workspaceId: string): Promise<LoopitCreditsBalance> {
+  if (!hasDb || !prisma) throw new LoopitUsageError(503, 'Credits are temporarily unavailable')
+  const owner = await resolveWorkspaceBillingOwner(workspaceId)
+  if ('error' in owner) {
+    throw new LoopitUsageError(
+      owner.error === 'missing' ? 404 : 409,
+      owner.error === 'missing' ? 'Workspace not found' : 'Workspace has no billing owner',
+    )
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: owner.ownerId },
+    select: { credits: true, unlimited: true, role: true },
+  })
+  if (!user) throw new LoopitUsageError(404, 'Billing owner not found')
+  return {
+    workspaceId,
+    ownerId: owner.ownerId,
+    credits: Math.max(0, Math.floor(user.credits ?? 0)),
+    unlimited: Boolean(user.unlimited) || user.role === 'admin',
+  }
+}
+
 export async function recordLoopitUsage(workspaceId: string, event: LoopitUsageEvent): Promise<LoopitUsageResult> {
   if (event.kind === 'inference' && !event.model) throw new LoopitUsageError(400, 'Inference usage requires a model')
   const owner = await resolveWorkspaceBillingOwner(workspaceId)

@@ -61,14 +61,24 @@ describe('createLoopitClient site URL surfaces', () => {
   it('gateway-prefixes the preview URL minted by the engine', async () => {
     const fetchImpl = routingFetch(() => ({
       url: SITE_URL,
-      expires_at: 0,
+      expires_at: '2099-01-01T00:00:00.000Z',
       token_type: 'signed_url',
     }))
     const client = createLoopitClient({ fetchImpl })
-    await expect(client.createPreviewUrl('proj_1')).resolves.toBe(
-      '/api/loopit/projects/proj_1/site/t/tok/index.html',
-    )
+    const preview = await client.createPreviewUrl('proj_1')
+    expect(preview.url).toBe('/api/loopit/projects/proj_1/site/t/tok/index.html')
+    expect(preview.expiresAt).toBe(Date.parse('2099-01-01T00:00:00.000Z'))
     expect(String(fetchImpl.mock.calls.at(-1)?.[0])).toBe('/api/loopit/projects/proj_1/preview')
+  })
+
+  it('defaults expiresAt to ~900s when the engine omits expires_at', async () => {
+    const fetchImpl = routingFetch(() => ({ url: SITE_URL }))
+    const client = createLoopitClient({ fetchImpl })
+    const before = Date.now()
+    const preview = await client.createPreviewUrl('proj_1')
+    const after = Date.now()
+    expect(preview.expiresAt).toBeGreaterThanOrEqual(before + 900_000)
+    expect(preview.expiresAt).toBeLessThanOrEqual(after + 900_000)
   })
 
   it('gateway-prefixes production_url in the deploy response', async () => {
@@ -84,5 +94,26 @@ describe('createLoopitClient site URL surfaces', () => {
     const result = await client.deployProject('proj_1', 'cp_1', 'ship it')
     expect(result.production_url).toBe('/api/loopit/projects/proj_1/site/t/tok/index.html')
     expect(result.status).toBe('live')
+    // Unpublish/Re-publish UI keys off this id from the deploy response.
+    expect(result.deployment_id).toBe('dep_1')
+  })
+
+  it('maps unpublish and republish to engine deployment paths', async () => {
+    const fetchImpl = routingFetch(() => ({
+      deployment_id: 'dep_1',
+      status: 'live',
+      production_url: SITE_URL,
+    }))
+    const client = createLoopitClient({ fetchImpl })
+    await client.unpublishProject('proj_1', 'dep_1')
+    expect(String(fetchImpl.mock.calls.at(-1)?.[0])).toBe(
+      '/api/loopit/projects/proj_1/deployments/dep_1/unpublish',
+    )
+    const republished = await client.republishProject('proj_1', 'dep_1')
+    expect(String(fetchImpl.mock.calls.at(-1)?.[0])).toBe(
+      '/api/loopit/projects/proj_1/deployments/dep_1/republish',
+    )
+    expect(republished.deployment_id).toBe('dep_1')
+    expect(republished.status).toBe('live')
   })
 })

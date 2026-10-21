@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import {
-  AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, FileCode2,
-  FileText, Loader2, Monitor, Play, Rocket, RotateCw, Send, ShieldCheck, Smartphone, Sparkles, Square, Terminal, X,
+  AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, ChevronRight, Crosshair, Database, ExternalLink, FileCode2,
+  FileText, FlaskConical, Loader2, Monitor, Play, Rocket, RotateCw, Send, Shield, ShieldCheck, Smartphone, Sparkles, Square, Tablet, Terminal, X,
 } from 'lucide-react'
 import { Badge, EmptyState, LoadingState, SectionHeader, StatusDot, btnGhost, btnOutline, btnPrimary, panelCls, textareaCls } from '@loop/ui'
 import {
@@ -20,11 +20,22 @@ import {
   orderedDagNodes,
   pickPreviewFile,
   reduceRunEvent,
+  applyVisualEdit,
+  getPreviewMeta,
+  getProjectDatabase,
+  getProjectDatabaseTable,
+  reportConsoleError,
+  republishProject,
   runTitle,
   toUserFacingError,
+  unpublishProject,
+  type PreviewMeta,
   type Activity,
   type ApprovalGate,
   type CheckpointView,
+  type EffortTier,
+  type FileChange,
+  type RunMode,
   type RunSummary,
   type StreamEvent,
   type TaskNodeView,
@@ -33,22 +44,44 @@ import { useToast } from '../../lib/toast'
 import { AppPage } from '../../components/AppPage'
 import { CheckpointDialog, type CheckpointAction } from '../confirm'
 import {
-  useBuildRun, useCancelRun, useCheckpointAction, useExecCommand, useFileContent, useGateDecision,
-  usePreviewUrl, useRunStream, useSendRunMessage, useStartBuild,
+  useBuildRun, useCancelRun, useCheckpointAction, useGateDecision,
+  useGatesEnabled, usePreviewUrl, useRunStream, useSendRunMessage, useStartBuild, useTerminalAccess,
 } from '../hooks'
 import { ErrorNotice } from '../shell'
 import { formatWhen, gateTitle, isLiveStatus, statusLabel, statusTone } from '../status'
+import { FileChangeChips } from '../DiffView'
+import { ModeSwitch } from '../ModeSwitch'
+import { CostTransparencyBar, EffortEstimateNotice, EffortSwitch } from '../EffortSwitch'
+import { MobileBuildSplit } from '../MobileBuildSplit'
+import { NotificationsBell } from '../NotificationsBell'
+import {
+  BrowserTestsPanel,
+  EditingElementChip,
+  SecurityPanel,
+  type InspectTarget,
+} from '../Phase2Panels'
+import { CodeEditorDrawer } from '../CodeEditorDrawer'
+import { TerminalPane, type TerminalEntry } from '../TerminalPane'
+import {
+  normalizePreviewRoute,
+  previewIframeKey,
+  previewMaxWidth,
+  previewRouteOptions,
+  shouldClearInspectAfterEdit,
+  type PreviewDevice,
+} from '../previewDevices'
 
-/** Scripts only. allow-same-origin is omitted so the preview cannot read the app. */
-const PREVIEW_SANDBOX = 'allow-scripts'
+/** Scripts + forms/popups for HMR/Vite apps. allow-same-origin omitted so the preview cannot read the app. */
+const PREVIEW_SANDBOX = 'allow-scripts allow-forms allow-popups'
 
 const BACK = { href: '/build', label: 'All builds' }
+const PROJECTS = { href: '/build/projects', label: 'Projects' }
 
 /** One bubble in the run's chat pane. `pending` marks an optimistic user
  *  bubble waiting for the stream's journaled echo to confirm it landed. */
 type ChatMessage = { id: string; role: 'user' | 'assistant' | 'system'; text: string; at: string; pending?: boolean }
 
-type TerminalEntry = { id: string; command: string; stdout: string; stderr: string; exitCode: number; duration: number }
+type ConsoleEntry = { id: string; level: string; text: string; at: string; source: 'preview' | 'sandbox' }
 
 export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const params = useParams()
@@ -61,19 +94,32 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const [showCompleted, setShowCompleted] = useState(false)
   const [action, setAction] = useState<CheckpointAction | null>(null)
   const [deployUrl, setDeployUrl] = useState<string | null>(null)
+  const [deploymentId, setDeploymentId] = useState<string | null>(null)
+  const [deployStatus, setDeployStatus] = useState<'live' | 'unpublished' | null>(null)
+  const [deployBusy, setDeployBusy] = useState(false)
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [codePath, setCodePath] = useState<string | null>(null)
+  const [diffChange, setDiffChange] = useState<FileChange | null>(null)
+  const [compareCheckpointId, setCompareCheckpointId] = useState<string | null>(null)
   const [previewEpoch, setPreviewEpoch] = useState(0)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streamingText, setStreamingText] = useState<string | null>(null)
   const [terminalHistory, setTerminalHistory] = useState<TerminalEntry[]>([])
+  const [consoleEntries, setConsoleEntries] = useState<ConsoleEntry[]>([])
   const [terminalOpen, setTerminalOpen] = useState(false)
+  const [continueMode, setContinueMode] = useState<RunMode>('build')
+  const [continueTier, setContinueTier] = useState<EffortTier>('standard')
+  const [inspectMode, setInspectMode] = useState(false)
+  const [inspectTarget, setInspectTarget] = useState<InspectTarget | null>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
+  const previewIframeRef = useRef<HTMLIFrameElement>(null)
   const seenSeqRef = useRef<Set<number>>(new Set())
   const reloadTimer = useRef<number | null>(null)
+  const hmrModeRef = useRef(false)
 
   const sendMessage = useSendRunMessage(runId)
   const cancel = useCancelRun(runId)
+  const terminalAllowed = useTerminalAccess()
 
   useEffect(() => {
     const detail = query.data
@@ -89,9 +135,10 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
     setPreviewPath((current) => current ?? pickPreviewFile(detail.files) ?? null)
   }, [query.data])
 
-  /** The preview re-renders when the builder touches files — debounced so a
-   *  patch storm reloads once, not per patch. */
+  /** Remount the static preview after file writes. Skipped when HMR is active
+   *  so Vite can update the iframe in place (Phase 1.4). */
   const pokePreviewReload = useCallback(() => {
+    if (hmrModeRef.current) return
     if (reloadTimer.current) window.clearTimeout(reloadTimer.current)
     reloadTimer.current = window.setTimeout(() => setPreviewEpoch((n) => n + 1), 1500)
   }, [])
@@ -125,6 +172,18 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
         return [...prev, { id: `chat-${seq ?? prev.length}-${chat.role}`, role: chat.role, text: chat.text, at: new Date().toISOString() }]
       })
     }
+    if (event.kind === 'log') {
+      setConsoleEntries((prev) => [
+        ...prev.slice(-199),
+        {
+          id: `log-${seq ?? prev.length}`,
+          level: event.stream === 'stderr' ? 'error' : 'log',
+          text: event.text,
+          at: new Date().toISOString(),
+          source: 'sandbox',
+        },
+      ])
+    }
     if (event.kind === 'run') {
       const next = pickPreviewFile(event.files)
       if (next) setPreviewPath((current) => current ?? next)
@@ -140,28 +199,95 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   // Always subscribed: for a live run the stream carries new events; for a
   // finished run the engine replays the durable journal and closes, so the
   // PROGRESS panel shows the full history instead of "Nothing to report yet".
-  useRunStream(runId, true, onStream)
+  // While live, reconnect after a clean close (proxy idle cut) with ?after=.
+  useRunStream(runId, true, onStream, { live: !!live })
 
   const projectId = ui.run?.project_id ?? query.data?.project_id ?? null
-  const preview = usePreviewUrl(projectId, previewPath && /\.html?$/i.test(previewPath) ? previewPath : null)
+  // Preview any served path (not only .html); fall back to index.html when unset.
+  const previewServePath = previewPath || (projectId ? 'index.html' : null)
+  const preview = usePreviewUrl(projectId, previewServePath)
+  const previewUrl = preview.data?.url ?? null
+  const previewHmr = preview.data?.mode === 'hmr'
+  hmrModeRef.current = previewHmr
+
+  // Preview bridge → Console tab + engine (Phase 1.5) and inspect (Phase 2.1).
+  useEffect(() => {
+    if (!projectId) return
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data
+      if (!data || typeof data !== 'object' || (data as { source?: string }).source !== 'loopit-preview') return
+      const type = (data as { type?: string }).type
+      if (type === 'inspect') {
+        setInspectTarget({
+          selector: String((data as { selector?: string }).selector || ''),
+          snippet: String((data as { snippet?: string }).snippet || ''),
+          loc: (data as { loc?: string | null }).loc ?? null,
+          tag: (data as { tag?: string | null }).tag ?? null,
+          text: String((data as { text?: string }).text || ''),
+        })
+        setInspectMode(false)
+        return
+      }
+      if (type !== 'console') return
+      const level = String((data as { level?: string }).level || 'log')
+      const text = String((data as { text?: string }).text || '')
+      if (!text) return
+      setConsoleEntries((prev) => [
+        ...prev.slice(-199),
+        { id: `prev-${Date.now()}-${prev.length}`, level, text, at: new Date().toISOString(), source: 'preview' },
+      ])
+      if (level === 'error' || level === 'warn') {
+        void reportConsoleError(projectId, { level, text, href: String((data as { href?: string }).href || '') }).catch(() => {})
+      }
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [projectId])
+
+  // Tell the preview iframe to enter/leave inspect mode (Phase 2.1).
+  useEffect(() => {
+    const frame = previewIframeRef.current
+    if (!frame?.contentWindow) return
+    frame.contentWindow.postMessage(
+      { source: 'loopit-parent', type: 'inspect-mode', enabled: inspectMode },
+      '*',
+    )
+  }, [inspectMode, previewUrl, previewEpoch])
   const nodes = useMemo(() => (ui.dag ? orderedDagNodes(ui.dag) : []), [ui.dag])
   const verified = ui.checkpoints.find((checkpoint) => checkpoint.live && checkpoint.verified)
     ?? ui.checkpoints.find((checkpoint) => checkpoint.verified)
     ?? null
 
-  const checkpointMutation = useCheckpointAction(runId, projectId)
+  const checkpointMutation = useCheckpointAction(runId, projectId, { live: !!live })
   const gateMutation = useGateDecision(runId)
-  const exec = useExecCommand(projectId)
+  const gatesEnabled = useGatesEnabled()
+  const startBuild = useStartBuild()
   const closeAction = useCallback(() => setAction(null), [])
 
   const runCheckpoint = (pending: CheckpointAction, reason: string) => {
     checkpointMutation.mutate({ pending, reason }, {
       onSuccess: (result) => {
-        if (result && 'production_url' in result && result.production_url) {
+        if (result.kind === 'deploy' && result.production_url) {
           setDeployUrl(result.production_url)
+          setDeploymentId(result.deployment_id ?? null)
+          setDeployStatus('live')
           toast.push('success', 'Your app is live')
-        } else {
-          toast.push('success', 'Version saved')
+        } else if (result.kind === 'fork') {
+          toast.push('success', 'Copy saved')
+          const forkedProjectId = result.project_id
+          if (forkedProjectId) {
+            // Open a new run on the forked project so the copy is reachable.
+            const prompt = ui.run?.prompt ?? query.data?.prompt ?? 'Continue from this saved copy'
+            startBuild.mutate({ prompt, projectId: forkedProjectId }, {
+              onSuccess: (created) => router.push(`/build/?run=${encodeURIComponent(created.run_id)}`),
+              onError: (cause) => toast.push('error', toUserFacingError(cause).message),
+            })
+          } else {
+            toast.push('info', 'Copy saved, but the new project id was not returned')
+          }
+        } else if (result.kind === 'rollback') {
+          setPreviewEpoch((n) => n + 1)
+          toast.push('success', 'Rolled back to this version')
         }
         setAction(null)
       },
@@ -193,15 +319,45 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
     })
   }
 
-  const startBuild = useStartBuild()
-
   /** Edit-and-resend: any earlier instruction can become the prompt of a new
    *  run against the same project, so a wrong turn is corrected by resending
    *  rather than by layering a patch on top of it. */
   const handleResend = (text: string) => {
     if (startBuild.isPending || !projectId) return
-    startBuild.mutate({ prompt: text }, {
+    startBuild.mutate({ prompt: text, projectId }, {
       onSuccess: (created) => router.push(`/build/?run=${encodeURIComponent(created.run_id)}`),
+      onError: (cause) => toast.push('error', toUserFacingError(cause).message),
+    })
+  }
+
+  /** Continue after a failed/stopped run: start a follow-up on the same project
+   *  with the composer text (not just focus). Empty composer → focus instead. */
+  const handleContinue = () => {
+    const text = composerRef.current?.value?.trim() ?? ''
+    if (!text) {
+      composerRef.current?.focus()
+      return
+    }
+    if (startBuild.isPending || !projectId) return
+    startBuild.mutate({ prompt: text, projectId, mode: continueMode, tier: continueTier }, {
+      onSuccess: (created) => router.push(`/build/?run=${encodeURIComponent(created.run_id)}`),
+      onError: (cause) => toast.push('error', toUserFacingError(cause).message),
+    })
+  }
+
+  /** Plan-mode Approve: start a Build run with the plan goal (Temporal DAG deferred). */
+  const handleApprovePlan = (background = false) => {
+    const goal = ui.dag?.goal || ui.run?.prompt || query.data?.prompt
+    if (!goal || !projectId || startBuild.isPending) return
+    startBuild.mutate({ prompt: goal, projectId, mode: 'build', tier: continueTier, background }, {
+      onSuccess: (created) => {
+        if (background) {
+          toast.push('success', 'Building in the background — we will notify you when it is ready to apply')
+          router.push('/build')
+          return
+        }
+        router.push(`/build/?run=${encodeURIComponent(created.run_id)}`)
+      },
       onError: (cause) => toast.push('error', toUserFacingError(cause).message),
     })
   }
@@ -226,21 +382,31 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   return (
     <AppPage
       width="fill"
-      back={BACK}
+      back={projectId ? { href: `/build/projects/?id=${encodeURIComponent(projectId)}`, label: 'Project' } : BACK}
       title={title}
       documentTitle="Build"
       meta={(
         <>
           {status && <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>}
+          {(ui.run?.mode || query.data?.mode) && (
+            <Badge tone="neutral">{(ui.run?.mode || query.data?.mode)} mode</Badge>
+          )}
           {live && <StatusDot state="working" />}
           {startedAt && <Elapsed since={startedAt} live={!!live} />}
           {ui.cost?.credits_spent != null && ui.cost.credits_spent > 0 && (
             <span>{ui.cost.credits_spent.toFixed(3)} credits</span>
           )}
+          <CostTransparencyBar
+            tier={ui.run?.tier || query.data?.tier || continueTier}
+            creditsSpent={ui.cost?.credits_spent}
+            iterations={ui.cost?.iterations}
+          />
         </>
       )}
       actions={(
         <div className="flex items-center gap-2">
+          <NotificationsBell />
+          <Link href={PROJECTS.href} className={btnGhost}>{PROJECTS.label}</Link>
           {live ? (
             <button
               type="button"
@@ -252,10 +418,13 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
             </button>
           ) : terminalFailed ? (
             <>
+              <EffortSwitch value={continueTier} onChange={setContinueTier} disabled={startBuild.isPending} />
+              <ModeSwitch value={continueMode} onChange={setContinueMode} disabled={startBuild.isPending} />
               <button
                 type="button"
                 className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-hover-strong)] px-3 py-1.5 text-ui-xs font-medium text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition"
-                onClick={() => { composerRef.current?.focus() }}
+                disabled={startBuild.isPending || !projectId}
+                onClick={handleContinue}
               >
                 <Play size={12} /> Continue
               </button>
@@ -301,75 +470,229 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
       {deployUrl && (
         <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-[var(--accent-soft-border)] bg-[var(--accent-soft)] p-4" role="status">
           <div className="min-w-0 flex-1">
-            <p className="text-ui-sm font-medium text-[var(--accent-text)]">Your app is live</p>
-            <p className="mt-0.5 text-ui-xs text-[var(--ink-secondary)]">Anyone with this link can open the app you just published. The link stays valid for 30 days.</p>
+            <p className="text-ui-sm font-medium text-[var(--accent-text)]">
+              {deployStatus === 'unpublished' ? 'Publication paused' : 'Your app is live'}
+            </p>
+            <p className="mt-0.5 text-ui-xs text-[var(--ink-secondary)]">
+              {deployStatus === 'unpublished'
+                ? 'This link no longer serves the app. Re-publish to make it live again.'
+                : 'Anyone with this link can open the app you just published. The link stays valid for 30 days.'}
+            </p>
           </div>
-          <button
-            type="button"
-            className={btnGhost}
-            onClick={() => {
-              const absolute = deployUrl.startsWith('http') ? deployUrl : `${window.location.origin}${deployUrl}`
-              void navigator.clipboard?.writeText(absolute).then(() => toast.push('success', 'Link copied'))
-            }}
-          >
-            Copy link
-          </button>
-          <a href={deployUrl} target="_blank" rel="noreferrer" className={btnPrimary}>Open app</a>
+          {deployStatus !== 'unpublished' && (
+            <button
+              type="button"
+              className={btnGhost}
+              onClick={() => {
+                const absolute = deployUrl.startsWith('http') ? deployUrl : `${window.location.origin}${deployUrl}`
+                void navigator.clipboard?.writeText(absolute).then(() => toast.push('success', 'Link copied'))
+              }}
+            >
+              Copy link
+            </button>
+          )}
+          {deployStatus !== 'unpublished' && (
+            <a href={deployUrl} target="_blank" rel="noreferrer" className={btnPrimary}>Open app</a>
+          )}
+          {deploymentId && projectId && deployStatus === 'live' && (
+            <button
+              type="button"
+              className={btnOutline}
+              disabled={deployBusy}
+              onClick={() => {
+                setDeployBusy(true)
+                void unpublishProject(projectId, deploymentId)
+                  .then(() => {
+                    setDeployStatus('unpublished')
+                    toast.push('success', 'Publication paused')
+                  })
+                  .catch((cause) => toast.push('error', toUserFacingError(cause).message))
+                  .finally(() => setDeployBusy(false))
+              }}
+            >
+              Unpublish
+            </button>
+          )}
+          {deploymentId && projectId && deployStatus === 'unpublished' && (
+            <button
+              type="button"
+              className={btnPrimary}
+              disabled={deployBusy}
+              onClick={() => {
+                setDeployBusy(true)
+                void republishProject(projectId, deploymentId)
+                  .then((result) => {
+                    if (result.production_url) setDeployUrl(result.production_url)
+                    setDeployStatus('live')
+                    toast.push('success', 'Your app is live again')
+                  })
+                  .catch((cause) => toast.push('error', toUserFacingError(cause).message))
+                  .finally(() => setDeployBusy(false))
+              }}
+            >
+              Re-publish
+            </button>
+          )}
         </div>
       )}
 
-      <GateList gates={ui.gates} busy={gateMutation.isPending} onDecision={decideGate} />
+      {/* Local-mode gates cannot resume a run — hide the inert UI (B9). */}
+      {gatesEnabled && <GateList gates={ui.gates} busy={gateMutation.isPending} onDecision={decideGate} />}
+
+      {(ui.run?.mode || query.data?.mode) === 'plan' && !live && (
+        <section className="mt-4 rounded-xl border border-[var(--accent-soft-border)] bg-[var(--accent-soft)] p-4">
+          <h2 className="text-ui-sm font-medium text-[var(--accent-text)]">Plan ready</h2>
+          <p className="mt-1 text-ui-xs text-[var(--ink-secondary)]">
+            Approve starts a Build run with this plan&apos;s goal. Build in background finishes detached and asks you to Apply changes (diff review) before merging into the main version line.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <EffortSwitch value={continueTier} onChange={setContinueTier} disabled={startBuild.isPending} />
+            <CostTransparencyBar tier={continueTier} />
+          </div>
+          <div className="mt-2">
+            <EffortEstimateNotice tier={continueTier} mode="plan" />
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" className={btnPrimary} disabled={startBuild.isPending || !projectId} onClick={() => handleApprovePlan(false)}>
+              Approve &amp; build
+            </button>
+            <button type="button" className={btnOutline} disabled={startBuild.isPending || !projectId} onClick={() => handleApprovePlan(true)}>
+              Build in background
+            </button>
+            <button type="button" className={btnOutline} onClick={() => composerRef.current?.focus()}>Revise</button>
+            <Link href="/build" className={btnGhost}>Cancel</Link>
+          </div>
+        </section>
+      )}
 
       {!query.isPending && !fetchError && (
         <>
           {status && <StatusStepper status={status} />}
-          <div className="mt-4 grid gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
-            <div className="space-y-4 min-w-0 order-2 xl:order-1">
-              <TaskGraph dagGoal={ui.dag?.goal ?? null} nodes={nodes} showCompleted={showCompleted} onToggle={() => setShowCompleted((value) => !value)} />
-              <ActivityTimeline
-                activity={ui.activity}
-                running={!!live}
-                outcome={status ? {
-                  status,
-                  summary: ui.run?.summary ?? null,
-                  iterations: ui.cost?.iterations,
-                  credits: ui.cost?.credits_spent,
-                } : null}
+          {ui.fileChanges.length > 0 && (
+            <section className={`${panelCls} mt-4 p-3`}>
+              <SectionHeader title="Changed files" count={ui.fileChanges.length} />
+              <FileChangeChips
+                changes={ui.fileChanges}
+                onOpen={(change) => {
+                  setDiffChange(change)
+                  setCodePath(change.path)
+                  setCompareCheckpointId(null)
+                }}
               />
-              <CheckpointList checkpoints={ui.checkpoints} onAction={setAction} />
-            </div>
-            <PreviewWorkspace
-              className="order-1 xl:order-2"
-              runId={runId}
-              files={files}
-              selected={previewPath}
-              onSelect={(path) => {
-                if (/\.html?$/i.test(path)) { setPreviewPath(path); setCodePath(null) }
-                else setCodePath(path)
-              }}
-              codePath={codePath}
-              onCloseCode={() => setCodePath(null)}
-              url={preview.data ?? null}
-              epoch={previewEpoch}
-              onReload={() => setPreviewEpoch((n) => n + 1)}
-              loading={preview.isFetching}
-              error={preview.isError ? toUserFacingError(preview.error).message : null}
-              live={!!live}
-            />
-          </div>
-          <RunWorkspace
-            runId={runId}
-            projectId={projectId}
-            messages={messages}
-            streamingText={streamingText}
-            terminalHistory={terminalHistory}
-            onSetTerminalHistory={setTerminalHistory}
-            onSendMessage={handleSendMessage}
-            onResend={handleResend}
-            sendBusy={sendMessage.isPending}
-            terminalOpen={terminalOpen}
-            onToggleTerminal={() => setTerminalOpen((v) => !v)}
-            composerRef={composerRef}
+            </section>
+          )}
+          <MobileBuildSplit
+            sidebar={(
+              <>
+                <TaskGraph dagGoal={ui.dag?.goal ?? null} nodes={nodes} showCompleted={showCompleted} onToggle={() => setShowCompleted((value) => !value)} />
+                <ActivityTimeline
+                  activity={ui.activity}
+                  running={!!live}
+                  outcome={status ? {
+                    status,
+                    summary: ui.run?.summary ?? null,
+                    iterations: ui.cost?.iterations,
+                    credits: ui.cost?.credits_spent,
+                  } : null}
+                />
+                <CheckpointList
+                  checkpoints={ui.checkpoints}
+                  runLive={!!live}
+                  onAction={setAction}
+                  onCompare={(checkpoint) => {
+                    setCompareCheckpointId(checkpoint.checkpoint_id)
+                    const path = previewPath || pickPreviewFile(files) || files[0] || null
+                    if (path) setCodePath(path)
+                  }}
+                />
+              </>
+            )}
+            preview={(
+              <PreviewWorkspace
+                runId={runId}
+                projectId={projectId}
+                files={files}
+                selected={previewPath}
+                onSelect={(path) => {
+                  if (/\.html?$/i.test(path)) { setPreviewPath(path); setCodePath(null); setDiffChange(null) }
+                  else { setCodePath(path); setDiffChange(null); setPreviewPath((current) => current ?? path) }
+                }}
+                codePath={codePath}
+                diffChange={diffChange}
+                compareCheckpointId={compareCheckpointId}
+                onCloseCode={() => { setCodePath(null); setDiffChange(null); setCompareCheckpointId(null) }}
+                url={previewUrl}
+                epoch={previewEpoch}
+                hmr={previewHmr}
+                onReload={() => setPreviewEpoch((n) => n + 1)}
+                loading={preview.isFetching}
+                error={preview.isError ? toUserFacingError(preview.error).message : null}
+                live={!!live}
+                inspectMode={inspectMode}
+                onToggleInspect={() => setInspectMode((v) => !v)}
+                iframeRef={previewIframeRef}
+              />
+            )}
+            chat={(
+              <RunWorkspace
+                runId={runId}
+                projectId={projectId}
+                previewUrl={previewUrl}
+                messages={messages}
+                streamingText={streamingText}
+                terminalHistory={terminalHistory}
+                onSetTerminalHistory={setTerminalHistory}
+                consoleEntries={consoleEntries}
+                onSendMessage={handleSendMessage}
+                onResend={handleResend}
+                onFixError={(text) => {
+                  const prompt = `Fix this error:\n${text}`
+                  if (live) handleSendMessage(prompt)
+                  else handleResend(prompt)
+                }}
+                sendBusy={sendMessage.isPending}
+                terminalAllowed={terminalAllowed}
+                terminalOpen={terminalOpen}
+                onToggleTerminal={() => setTerminalOpen((v) => !v)}
+                composerRef={composerRef}
+                gates={gatesEnabled ? ui.gates : []}
+                gatesBusy={gateMutation.isPending}
+                onGateDecision={decideGate}
+                inspectTarget={inspectTarget}
+                onClearInspect={() => setInspectTarget(null)}
+                onVisualEdit={async (kind, value) => {
+                  if (!projectId || !inspectTarget) return
+                  try {
+                    const result = await applyVisualEdit(projectId, {
+                      kind,
+                      value,
+                      selector: inspectTarget.selector,
+                      snippet: inspectTarget.snippet,
+                      loc: inspectTarget.loc,
+                      tag: inspectTarget.tag,
+                      text: inspectTarget.text,
+                    })
+                    if (result.applied) {
+                      toast.push('success', result.message || 'Visual edit applied')
+                      // HMR: do not remount; keep selection when possible (Phase 3.4).
+                      if (!previewHmr) setPreviewEpoch((n) => n + 1)
+                      if (shouldClearInspectAfterEdit({ applied: true, hmr: previewHmr, keepSelection: true })) {
+                        setInspectTarget(null)
+                      } else if (kind === 'text') {
+                        setInspectTarget((prev) => prev ? { ...prev, text: value } : prev)
+                      }
+                    } else if (result.prompt) {
+                      if (live) handleSendMessage(result.prompt)
+                      else handleResend(result.prompt)
+                      setInspectTarget(null)
+                      toast.push('info', 'Sent edit to the builder')
+                    }
+                  } catch (cause) {
+                    toast.push('error', toUserFacingError(cause).message)
+                  }
+                }}
+              />
+            )}
           />
         </>
       )}
@@ -502,7 +825,12 @@ function TaskGraph({ dagGoal, nodes, showCompleted, onToggle }: { dagGoal: strin
   )
 }
 
-function CheckpointList({ checkpoints, onAction }: { checkpoints: CheckpointView[]; onAction: (action: CheckpointAction) => void }) {
+function CheckpointList({ checkpoints, runLive, onAction, onCompare }: {
+  checkpoints: CheckpointView[]
+  runLive: boolean
+  onAction: (action: CheckpointAction) => void
+  onCompare?: (checkpoint: CheckpointView) => void
+}) {
   // Latest version first; each row carries its own number from the start.
   const ordered = checkpoints.map((checkpoint, index) => ({ checkpoint, version: index + 1 })).reverse()
   return (
@@ -519,8 +847,19 @@ function CheckpointList({ checkpoints, onAction }: { checkpoints: CheckpointView
             </div>
             <p className="mt-1 text-ui-xs text-[var(--ink-muted)]">Saved {formatWhen(checkpoint.created_at)}</p>
             <div className="mt-2 flex flex-wrap gap-2">
-              <button type="button" className={btnGhost} disabled={!checkpoint.verified} onClick={() => onAction({ kind: 'rollback', checkpoint })}>Roll back here</button>
+              <button
+                type="button"
+                className={btnGhost}
+                disabled={!checkpoint.verified || runLive}
+                title={runLive ? 'Stop the build before rolling back' : undefined}
+                onClick={() => onAction({ kind: 'rollback', checkpoint })}
+              >
+                Roll back here
+              </button>
               <button type="button" className={btnGhost} onClick={() => onAction({ kind: 'fork', checkpoint })}>Save a copy</button>
+              {onCompare && (
+                <button type="button" className={btnGhost} onClick={() => onCompare(checkpoint)}>Compare</button>
+              )}
               <button type="button" className={btnPrimary} disabled={!checkpoint.verified} onClick={() => onAction({ kind: 'deploy', checkpoint })}>Publish</button>
             </div>
           </article>
@@ -530,8 +869,27 @@ function CheckpointList({ checkpoints, onAction }: { checkpoints: CheckpointView
   )
 }
 
-/** Classify an activity row for its timeline icon, from the event's words. */
+/** Classify an activity row for its timeline icon from structured kind/tone first. */
 function activityIcon(item: Activity): { Icon: typeof FileText; cls: string } {
+  if (item.tone === 'bad') return { Icon: AlertTriangle, cls: 'text-[var(--danger)]' }
+  if (item.kind === 'verification.completed') {
+    return item.tone === 'good'
+      ? { Icon: ShieldCheck, cls: 'text-[var(--success)]' }
+      : { Icon: AlertTriangle, cls: 'text-[var(--danger)]' }
+  }
+  if (item.kind === 'tool.called' || item.kind === 'tool.result' || item.kind === 'tool.completed') {
+    const tool = item.tool ?? ''
+    if (tool === 'apply_patch') return { Icon: FileCode2, cls: 'text-[var(--accent-text)]' }
+    if (tool === 'read_file' || tool === 'search_code') return { Icon: FileText, cls: 'text-[var(--ink-muted)]' }
+    if (tool === 'deploy') return { Icon: Rocket, cls: 'text-[var(--success)]' }
+    return { Icon: Sparkles, cls: 'text-[var(--accent-text)]' }
+  }
+  if (item.kind === 'task.started' || item.kind === 'task.completed' || item.kind === 'task.stopped') {
+    return item.tone === 'good'
+      ? { Icon: CheckCircle2, cls: 'text-[var(--success)]' }
+      : { Icon: Sparkles, cls: 'text-[var(--accent-text)]' }
+  }
+  // TODO(B24): remove English regex once every timeline row carries `kind`.
   const text = `${item.title} ${item.body ?? ''}`.toLowerCase()
   if (/fail|error|reject|stall|denied|crash/.test(text)) return { Icon: AlertTriangle, cls: 'text-[var(--danger)]' }
   if (/verif|check|test|lint|typecheck|smoke/.test(text)) return { Icon: ShieldCheck, cls: 'text-[var(--success)]' }
@@ -592,25 +950,46 @@ function ActivityTimeline({ activity, running, outcome }: { activity: Activity[]
 
 /** The hero: a browser-chrome workspace around the live preview. */
 function PreviewWorkspace({
-  runId, files, selected, onSelect, codePath, onCloseCode, url, epoch, onReload, loading, error, live, className = '',
+  runId, projectId, files, selected, onSelect, codePath, diffChange, compareCheckpointId, onCloseCode, url, epoch, hmr = false, onReload, loading, error, live, className = '',
+  inspectMode = false, onToggleInspect, iframeRef,
 }: {
   runId: string
+  projectId: string | null
   files: string[]
   selected: string | null
   onSelect: (path: string) => void
   codePath: string | null
+  diffChange: FileChange | null
+  compareCheckpointId: string | null
   onCloseCode: () => void
   url: string | null
   epoch: number
+  hmr?: boolean
   onReload: () => void
   loading: boolean
   error: string | null
   live: boolean
   className?: string
+  inspectMode?: boolean
+  onToggleInspect?: () => void
+  iframeRef?: React.RefObject<HTMLIFrameElement | null>
 }) {
-  const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop')
+  const [device, setDevice] = useState<PreviewDevice>('desktop')
+  const [customWidth, setCustomWidth] = useState<number>(1024)
+  const [showCustom, setShowCustom] = useState(false)
+  const [routeInput, setRouteInput] = useState(selected || 'index.html')
+  const [navHistory, setNavHistory] = useState<string[]>([selected || 'index.html'])
+  const [historyIndex, setHistoryIndex] = useState(0)
   const [filesOpen, setFilesOpen] = useState(false)
+  const [seoOpen, setSeoOpen] = useState(false)
+  const [seo, setSeo] = useState<PreviewMeta | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const routes = useMemo(() => previewRouteOptions(files), [files])
+  const maxWidth = previewMaxWidth(device, customWidth)
+
+  useEffect(() => {
+    if (selected) setRouteInput(selected)
+  }, [selected])
 
   useEffect(() => {
     if (!filesOpen) return
@@ -621,19 +1000,83 @@ function PreviewWorkspace({
     return () => document.removeEventListener('mousedown', close)
   }, [filesOpen])
 
+  useEffect(() => {
+    if (!seoOpen || !projectId) return
+    let cancelled = false
+    void getPreviewMeta(projectId, normalizePreviewRoute(routeInput))
+      .then((meta) => { if (!cancelled) setSeo(meta) })
+      .catch(() => { if (!cancelled) setSeo(null) })
+    return () => { cancelled = true }
+  }, [seoOpen, projectId, routeInput])
+
+  const navigateTo = (raw: string, push = true) => {
+    const path = normalizePreviewRoute(raw)
+    setRouteInput(path)
+    onSelect(path)
+    if (!push) return
+    setNavHistory((prev) => {
+      const next = [...prev.slice(0, historyIndex + 1), path]
+      setHistoryIndex(next.length - 1)
+      return next
+    })
+  }
+
+  const goBack = () => {
+    if (historyIndex <= 0) return
+    const next = historyIndex - 1
+    setHistoryIndex(next)
+    const path = navHistory[next]!
+    setRouteInput(path)
+    onSelect(path)
+  }
+
+  const goForward = () => {
+    if (historyIndex >= navHistory.length - 1) return
+    const next = historyIndex + 1
+    setHistoryIndex(next)
+    const path = navHistory[next]!
+    setRouteInput(path)
+    onSelect(path)
+  }
+
   return (
     <section className={`${panelCls} overflow-hidden flex flex-col min-w-0 min-h-[78vh] ${className}`}>
-      {/* Browser chrome */}
-      <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[var(--border-subtle)] shrink-0">
+      <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[var(--border-subtle)] shrink-0 flex-wrap">
         <span className="flex items-center gap-1.5 mr-1 shrink-0" aria-hidden>
           <i className="w-2.5 h-2.5 rounded-full bg-[var(--danger)] opacity-70 block" />
           <i className="w-2.5 h-2.5 rounded-full bg-[var(--warning)] opacity-70 block" />
           <i className="w-2.5 h-2.5 rounded-full bg-[var(--success)] opacity-70 block" />
         </span>
-        <div className="flex-1 min-w-0 flex items-center gap-1.5 rounded-lg bg-[var(--bg-sunken)] border border-[var(--border-subtle)] px-2.5 py-1.5 text-ui-xs text-[var(--ink-secondary)]">
+        <button type="button" onClick={goBack} disabled={historyIndex <= 0} title="Back" className="p-1.5 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] disabled:opacity-40 transition shrink-0">
+          <ArrowLeft size={13} aria-hidden />
+        </button>
+        <button type="button" onClick={goForward} disabled={historyIndex >= navHistory.length - 1} title="Forward" className="p-1.5 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] disabled:opacity-40 transition shrink-0">
+          <ArrowRight size={13} aria-hidden />
+        </button>
+        <div className="flex-1 min-w-[12rem] flex items-center gap-1.5 rounded-lg bg-[var(--bg-sunken)] border border-[var(--border-subtle)] px-2 py-1 text-ui-xs text-[var(--ink-secondary)]">
           {live ? <Loader2 size={11} className="animate-spin shrink-0 text-[var(--accent-text)]" aria-hidden /> : <Monitor size={11} className="shrink-0" aria-hidden />}
-          <span className="truncate font-mono text-2xs">{selected || 'preview'}</span>
+          <input
+            value={routeInput}
+            onChange={(e) => setRouteInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') navigateTo(routeInput) }}
+            list="loopit-preview-routes"
+            placeholder="index.html"
+            className="flex-1 min-w-0 bg-transparent font-mono text-2xs text-[var(--ink-primary)] focus:outline-none"
+            aria-label="Preview URL path"
+          />
+          <datalist id="loopit-preview-routes">
+            {routes.map((route) => <option key={route} value={route} />)}
+          </datalist>
         </div>
+        <select
+          className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-sunken)] px-1.5 py-1 text-3xs text-[var(--ink-secondary)]"
+          value={routes.includes(routeInput) ? routeInput : ''}
+          onChange={(e) => { if (e.target.value) navigateTo(e.target.value) }}
+          aria-label="Route picker"
+        >
+          <option value="">Route…</option>
+          {routes.map((route) => <option key={route} value={route}>{route}</option>)}
+        </select>
         {!!files.length && (
           <div className="relative shrink-0" ref={menuRef}>
             <button type="button" className={btnGhost} onClick={() => setFilesOpen((v) => !v)} aria-expanded={filesOpen}>
@@ -655,23 +1098,34 @@ function PreviewWorkspace({
             )}
           </div>
         )}
-        <button
-          type="button"
-          onClick={() => setDevice('desktop')}
-          aria-pressed={device === 'desktop'}
-          title="Desktop width"
-          className={`p-1.5 rounded-lg transition shrink-0 ${device === 'desktop' ? 'text-[var(--accent-text)] bg-[var(--accent-soft)]' : 'text-[var(--ink-muted)] hover:bg-[var(--bg-hover)]'}`}
-        >
+        <button type="button" onClick={() => setDevice('desktop')} aria-pressed={device === 'desktop'} title="Desktop width" className={`p-1.5 rounded-lg transition shrink-0 ${device === 'desktop' ? 'text-[var(--accent-text)] bg-[var(--accent-soft)]' : 'text-[var(--ink-muted)] hover:bg-[var(--bg-hover)]'}`}>
           <Monitor size={13} aria-hidden />
         </button>
-        <button
-          type="button"
-          onClick={() => setDevice('mobile')}
-          aria-pressed={device === 'mobile'}
-          title="Mobile width"
-          className={`p-1.5 rounded-lg transition shrink-0 ${device === 'mobile' ? 'text-[var(--accent-text)] bg-[var(--accent-soft)]' : 'text-[var(--ink-muted)] hover:bg-[var(--bg-hover)]'}`}
-        >
+        <button type="button" onClick={() => setDevice('tablet')} aria-pressed={device === 'tablet'} title="Tablet width (768)" className={`p-1.5 rounded-lg transition shrink-0 ${device === 'tablet' ? 'text-[var(--accent-text)] bg-[var(--accent-soft)]' : 'text-[var(--ink-muted)] hover:bg-[var(--bg-hover)]'}`}>
+          <Tablet size={13} aria-hidden />
+        </button>
+        <button type="button" onClick={() => setDevice('mobile')} aria-pressed={device === 'mobile'} title="Mobile width" className={`p-1.5 rounded-lg transition shrink-0 ${device === 'mobile' ? 'text-[var(--accent-text)] bg-[var(--accent-soft)]' : 'text-[var(--ink-muted)] hover:bg-[var(--bg-hover)]'}`}>
           <Smartphone size={13} aria-hidden />
+        </button>
+        <button type="button" onClick={() => { setDevice('custom'); setShowCustom((v) => !v) }} aria-pressed={device === 'custom'} title="Custom width" className={`px-1.5 py-1 rounded-lg text-3xs transition shrink-0 ${device === 'custom' ? 'text-[var(--accent-text)] bg-[var(--accent-soft)]' : 'text-[var(--ink-muted)] hover:bg-[var(--bg-hover)]'}`}>
+          Custom
+        </button>
+        {showCustom && device === 'custom' && (
+          <input
+            type="number"
+            min={320}
+            max={2400}
+            value={customWidth}
+            onChange={(e) => setCustomWidth(Number(e.target.value) || 1024)}
+            className="w-16 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-sunken)] px-1.5 py-1 text-3xs font-mono"
+            aria-label="Custom preview width"
+          />
+        )}
+        <button type="button" onClick={() => setSeoOpen((v) => !v)} aria-pressed={seoOpen} title="Social / SEO card" className={`px-1.5 py-1 rounded-lg text-3xs transition shrink-0 ${seoOpen ? 'text-[var(--accent-text)] bg-[var(--accent-soft)]' : 'text-[var(--ink-muted)] hover:bg-[var(--bg-hover)]'}`}>
+          SEO
+        </button>
+        <button type="button" onClick={onToggleInspect} aria-pressed={inspectMode} title="Click to edit (select an element)" className={`p-1.5 rounded-lg transition shrink-0 ${inspectMode ? 'text-[var(--accent-text)] bg-[var(--accent-soft)]' : 'text-[var(--ink-muted)] hover:bg-[var(--bg-hover)]'}`}>
+          <Crosshair size={13} aria-hidden />
         </button>
         <button type="button" onClick={onReload} title="Reload preview" className="p-1.5 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] transition shrink-0">
           <RotateCw size={13} aria-hidden />
@@ -683,9 +1137,16 @@ function PreviewWorkspace({
         )}
       </div>
 
-      {/* Stage */}
+      {seoOpen && (
+        <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-tint)] px-3 py-2 text-2xs shrink-0">
+          <p className="font-medium text-[var(--ink-primary)]">{seo?.og_title || seo?.title || 'Untitled preview'}</p>
+          <p className="mt-0.5 text-[var(--ink-muted)]">{seo?.description || 'No meta description yet.'}</p>
+          {seo?.og_image && <p className="mt-0.5 truncate font-mono text-3xs text-[var(--ink-secondary)]">og:image {seo.og_image}</p>}
+        </div>
+      )}
+
       <div className="relative flex-1 min-h-0 bg-[var(--bg-sunken)] flex justify-center">
-        <div className="h-full w-full transition-[max-width] duration-300" style={{ maxWidth: device === 'mobile' ? 390 : undefined }}>
+        <div className="h-full w-full transition-[max-width] duration-300" style={{ maxWidth }}>
           {error && <p className="m-3 text-ui-sm text-[var(--danger)]" role="alert">{error}</p>}
           {!error && loading && !url && <LoadingState label="Loading preview…" />}
           {!error && !url && !loading && (
@@ -696,18 +1157,40 @@ function PreviewWorkspace({
           )}
           {url && (
             <iframe
-              key={`${url}:${epoch}`}
+              ref={iframeRef}
+              key={previewIframeKey({ url, epoch, hmr })}
               title="Build preview"
               sandbox={PREVIEW_SANDBOX}
               referrerPolicy="no-referrer"
               src={url}
               className="h-full w-full border-0 bg-white"
+              onLoad={() => {
+                if (!inspectMode || !iframeRef?.current?.contentWindow) return
+                iframeRef.current.contentWindow.postMessage(
+                  { source: 'loopit-parent', type: 'inspect-mode', enabled: true },
+                  '*',
+                )
+              }}
             />
           )}
         </div>
 
-        {/* Code drawer (non-HTML files) */}
-        {codePath && <CodeDrawer runId={runId} path={codePath} onClose={onCloseCode} />}
+        {codePath && (
+          <CodeEditorDrawer
+            runId={runId}
+            projectId={projectId}
+            files={files}
+            path={codePath}
+            diffChange={diffChange}
+            compareCheckpointId={compareCheckpointId}
+            onClose={onCloseCode}
+            onSelectPath={(path) => onSelect(path)}
+            live={live}
+            onSaved={() => {
+              if (!hmr) onReload()
+            }}
+          />
+        )}
       </div>
     </section>
   )
@@ -769,7 +1252,7 @@ function RetryButton({ run }: { run: RunSummary | null | undefined }) {
       disabled={start.isPending}
       onClick={async () => {
         try {
-          const created = await start.mutateAsync({ prompt: run.prompt })
+          const created = await start.mutateAsync({ prompt: run.prompt, projectId: run.project_id })
           router.push(`/build/?run=${encodeURIComponent(created.run_id)}`)
         } catch (cause) { toast.push('error', toUserFacingError(cause).message) }
       }}
@@ -779,37 +1262,111 @@ function RetryButton({ run }: { run: RunSummary | null | undefined }) {
   )
 }
 
-/** Replit-style bottom workspace: Chat (always-on) and Terminal tabs. */
+/** Replit-style bottom workspace: Chat, Console, Database, Security, Tests, Terminal. */
 function RunWorkspace({
-  runId, projectId, messages, streamingText, terminalHistory, onSetTerminalHistory, onSendMessage, onResend, sendBusy, terminalOpen, onToggleTerminal, composerRef,
+  runId, projectId, previewUrl, messages, streamingText, terminalHistory, onSetTerminalHistory, consoleEntries, onSendMessage, onResend, onFixError, sendBusy, terminalAllowed, terminalOpen, onToggleTerminal, composerRef, gates, gatesBusy, onGateDecision,
+  inspectTarget, onClearInspect, onVisualEdit,
 }: {
   runId: string
   projectId: string | null
+  previewUrl: string | null
   messages: ChatMessage[]
   streamingText: string | null
   terminalHistory: TerminalEntry[]
   onSetTerminalHistory: React.Dispatch<React.SetStateAction<TerminalEntry[]>>
+  consoleEntries: ConsoleEntry[]
   onSendMessage: (text: string) => void
   onResend: (text: string) => void
+  onFixError: (text: string) => void
   sendBusy: boolean
+  terminalAllowed: boolean
   terminalOpen: boolean
   onToggleTerminal: () => void
   composerRef: React.RefObject<HTMLTextAreaElement | null>
+  gates: ApprovalGate[]
+  gatesBusy: boolean
+  onGateDecision: (gate: ApprovalGate, approved: boolean) => void
+  inspectTarget: InspectTarget | null
+  onClearInspect: () => void
+  onVisualEdit: (kind: 'text' | 'color' | 'spacing' | 'class', value: string) => void | Promise<void>
 }) {
+  const [tab, setTab] = useState<'chat' | 'console' | 'database' | 'security' | 'tests' | 'terminal'>('chat')
+  const active = terminalAllowed && terminalOpen ? 'terminal' : tab === 'terminal' ? 'chat' : tab
   return (
     <section className={`${panelCls} mt-4 overflow-hidden flex flex-col`}>
-      <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-3 py-2 shrink-0">
-        <RunWorkspaceTab active={!terminalOpen} onClick={() => { if (terminalOpen) onToggleTerminal() }} icon={Send} label="Chat" />
-        <RunWorkspaceTab active={terminalOpen} onClick={() => { if (!terminalOpen) onToggleTerminal() }} icon={Terminal} label="Terminal" />
+      <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-3 py-2 shrink-0 flex-wrap">
+        <RunWorkspaceTab active={active === 'chat'} onClick={() => { setTab('chat'); if (terminalOpen) onToggleTerminal() }} icon={Send} label="Chat" />
+        <RunWorkspaceTab active={active === 'console'} onClick={() => { setTab('console'); if (terminalOpen) onToggleTerminal() }} icon={AlertTriangle} label="Console" />
+        <RunWorkspaceTab active={active === 'database'} onClick={() => { setTab('database'); if (terminalOpen) onToggleTerminal() }} icon={Database} label="Database" />
+        <RunWorkspaceTab active={active === 'security'} onClick={() => { setTab('security'); if (terminalOpen) onToggleTerminal() }} icon={Shield} label="Security" />
+        <RunWorkspaceTab active={active === 'tests'} onClick={() => { setTab('tests'); if (terminalOpen) onToggleTerminal() }} icon={FlaskConical} label="Tests" />
+        {terminalAllowed && (
+          <RunWorkspaceTab active={active === 'terminal'} onClick={() => { setTab('terminal'); if (!terminalOpen) onToggleTerminal() }} icon={Terminal} label="Terminal" />
+        )}
       </div>
       <div className="min-h-[220px] max-h-[40vh] flex flex-col">
-        {terminalOpen ? (
-          <RunTerminal projectId={projectId} history={terminalHistory} onHistoryChange={onSetTerminalHistory} />
+        {active === 'terminal' ? (
+          <TerminalPane projectId={projectId} history={terminalHistory} onHistoryChange={onSetTerminalHistory} />
+        ) : active === 'console' ? (
+          <RunConsole entries={consoleEntries} onFixError={onFixError} />
+        ) : active === 'database' ? (
+          <DatabasePanel projectId={projectId} />
+        ) : active === 'security' ? (
+          <SecurityPanel projectId={projectId} />
+        ) : active === 'tests' ? (
+          <BrowserTestsPanel projectId={projectId} previewUrl={previewUrl} />
         ) : (
-          <RunChat messages={messages} streamingText={streamingText} onSend={onSendMessage} onResend={onResend} busy={sendBusy} composerRef={composerRef} />
+          <RunChat
+            messages={messages}
+            streamingText={streamingText}
+            onSend={onSendMessage}
+            onResend={onResend}
+            busy={sendBusy}
+            composerRef={composerRef}
+            gates={gates}
+            gatesBusy={gatesBusy}
+            onGateDecision={onGateDecision}
+            inspectTarget={inspectTarget}
+            onClearInspect={onClearInspect}
+            onVisualEdit={onVisualEdit}
+          />
         )}
       </div>
     </section>
+  )
+}
+
+function RunConsole({ entries, onFixError }: { entries: ConsoleEntry[]; onFixError: (text: string) => void }) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [entries.length])
+  return (
+    <div className="flex flex-1 min-h-0 flex-col">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto bg-black p-3 font-mono text-2xs space-y-2">
+        {entries.length === 0 && (
+          <p className="text-[var(--ink-muted)]">Preview console and sandbox logs appear here.</p>
+        )}
+        {entries.map((entry) => (
+          <div key={entry.id} className="group">
+            <div className={`whitespace-pre-wrap break-words ${entry.level === 'error' ? 'text-red-400' : entry.level === 'warn' ? 'text-amber-300' : 'text-zinc-300'}`}>
+              <span className="opacity-50">[{entry.source}/{entry.level}] </span>
+              {entry.text}
+            </div>
+            {(entry.level === 'error' || entry.level === 'warn') && (
+              <button
+                type="button"
+                onClick={() => onFixError(entry.text)}
+                className="mt-1 hidden text-3xs text-[var(--accent-text)] group-hover:inline-flex items-center gap-1"
+              >
+                <Sparkles size={9} /> Fix this error
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -827,33 +1384,66 @@ function RunWorkspaceTab({ active, onClick, icon: Icon, label }: { active: boole
   )
 }
 
-function RunChat({ messages, streamingText, onSend, onResend, busy, composerRef }: {
+function RunChat({ messages, streamingText, onSend, onResend, busy, composerRef, gates = [], gatesBusy = false, onGateDecision, inspectTarget = null, onClearInspect, onVisualEdit }: {
   messages: ChatMessage[]
   streamingText: string | null
   onSend: (text: string) => void
   onResend: (text: string) => void
   busy: boolean
   composerRef: React.RefObject<HTMLTextAreaElement | null>
+  gates?: ApprovalGate[]
+  gatesBusy?: boolean
+  onGateDecision?: (gate: ApprovalGate, approved: boolean) => void
+  inspectTarget?: InspectTarget | null
+  onClearInspect?: () => void
+  onVisualEdit?: (kind: 'text' | 'color' | 'spacing' | 'class', value: string) => void | Promise<void>
 }) {
   const [text, setText] = useState('')
+  const [editValue, setEditValue] = useState('')
+  const [editKind, setEditKind] = useState<'text' | 'color' | 'spacing'>('text')
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [messages.length])
+  }, [messages.length, gates.length])
+
+  useEffect(() => {
+    if (inspectTarget?.text) {
+      setEditValue(inspectTarget.text)
+      setEditKind('text')
+    }
+  }, [inspectTarget])
 
   const submit = () => {
     if (!text.trim() || busy) return
-    onSend(text)
+    const payload = inspectTarget
+      ? `${text.trim()}\n\n(editing ${inspectTarget.tag || 'element'}${inspectTarget.loc ? ` at ${inspectTarget.loc}` : ''}: ${inspectTarget.selector})`
+      : text
+    onSend(payload)
     setText('')
+    onClearInspect?.()
   }
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto p-3 space-y-3">
-        {messages.length === 0 && (
+        {messages.length === 0 && gates.length === 0 && (
           <p className="text-2xs text-[var(--ink-muted)]">Steer the builder while it runs, or continue after it stops.</p>
+        )}
+        {gates.length > 0 && onGateDecision && (
+          <div className="space-y-2">
+            {gates.map((gate) => (
+              <article key={gate.gate_id} className="rounded-xl border border-[var(--accent-soft-border)] bg-[var(--accent-soft)] p-3">
+                <p className="text-ui-xs font-medium text-[var(--accent-text)]">{gateTitle(gate.action)}</p>
+                {gate.reason && <p className="mt-1 text-2xs text-[var(--ink-secondary)]">{gate.reason}</p>}
+                <div className="mt-2 flex gap-2">
+                  <button type="button" className={`${btnPrimary} text-2xs`} disabled={gatesBusy} onClick={() => onGateDecision(gate, true)}>Approve</button>
+                  <button type="button" className={`${btnOutline} text-2xs`} disabled={gatesBusy} onClick={() => onGateDecision(gate, false)}>Decline</button>
+                </div>
+              </article>
+            ))}
+          </div>
         )}
         {messages.map((m) => (
           <div key={m.id} className={`group flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -895,13 +1485,45 @@ function RunChat({ messages, streamingText, onSend, onResend, busy, composerRef 
         )}
       </div>
       <div className="border-t border-[var(--border-subtle)] p-3 shrink-0">
+        {inspectTarget && onClearInspect && (
+          <>
+            <EditingElementChip target={inspectTarget} onClear={onClearInspect} />
+            {onVisualEdit && (
+              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                <select
+                  value={editKind}
+                  onChange={(e) => setEditKind(e.target.value as typeof editKind)}
+                  className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-sunken)] px-1.5 py-1 text-3xs"
+                >
+                  <option value="text">Text</option>
+                  <option value="color">Colour</option>
+                  <option value="spacing">Spacing</option>
+                </select>
+                <input
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  placeholder={editKind === 'color' ? '#333 or blue' : editKind === 'spacing' ? 'p-4 or 1rem' : 'New text'}
+                  className={`${textareaCls} min-h-0 flex-1 py-1 text-2xs`}
+                />
+                <button
+                  type="button"
+                  className={btnOutline}
+                  disabled={!editValue.trim() || busy}
+                  onClick={() => { void onVisualEdit(editKind, editValue.trim()) }}
+                >
+                  Apply
+                </button>
+              </div>
+            )}
+          </>
+        )}
         <div className="flex items-end gap-2">
           <textarea
             ref={composerRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
-            placeholder="Tell the builder what to change…"
+            placeholder={inspectTarget ? 'Describe the change for this element…' : 'Tell the builder what to change…'}
             rows={1}
             className={`${textareaCls} min-h-[40px] max-h-32 flex-1 resize-none py-2.5`}
           />
@@ -919,94 +1541,67 @@ function RunChat({ messages, streamingText, onSend, onResend, busy, composerRef 
   )
 }
 
-function RunTerminal({ projectId, history, onHistoryChange }: { projectId: string | null; history: TerminalEntry[]; onHistoryChange: React.Dispatch<React.SetStateAction<TerminalEntry[]>> }) {
-  const exec = useExecCommand(projectId)
-  const [command, setCommand] = useState('')
-  const scrollRef = useRef<HTMLDivElement>(null)
+function DatabasePanel({ projectId }: { projectId: string | null }) {
+  const [tables, setTables] = useState<Array<{ name: string; schema?: string; rls?: boolean }>>([])
+  const [meta, setMeta] = useState<{ schema?: string; storage_prefix?: string; provider?: string; note?: string }>({})
+  const [selected, setSelected] = useState<string | null>(null)
+  const [browse, setBrowse] = useState<{ columns: string[]; rows: unknown[]; note?: string } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [history.length, exec.isPending])
+    if (!projectId) return
+    setLoading(true)
+    void getProjectDatabase(projectId)
+      .then((body) => {
+        setTables(body.tables ?? [])
+        setMeta({ schema: body.schema, storage_prefix: body.storage_prefix, provider: body.provider })
+        setError(null)
+      })
+      .catch((cause) => setError(toUserFacingError(cause).message))
+      .finally(() => setLoading(false))
+  }, [projectId])
 
-  const run = () => {
-    const trimmed = command.trim()
-    if (!trimmed || exec.isPending || !projectId) return
-    setCommand('')
-    exec.mutate({ command: trimmed, timeoutSeconds: 60 }, {
-      onSuccess: (result) => onHistoryChange((prev) => [...prev, {
-        id: `${Date.now()}`,
-        command: result.command,
-        stdout: result.stdout,
-        stderr: result.stderr,
-        exitCode: result.exit_code,
-        duration: result.duration_seconds,
-      }]),
-    })
-  }
+  useEffect(() => {
+    if (!projectId || !selected) { setBrowse(null); return }
+    void getProjectDatabaseTable(projectId, selected)
+      .then((body) => setBrowse({ columns: body.columns, rows: body.rows, note: body.note }))
+      .catch((cause) => setError(toUserFacingError(cause).message))
+  }, [projectId, selected])
 
+  if (!projectId) return <p className="p-3 text-2xs text-[var(--ink-muted)]">No project yet.</p>
   return (
-    <div className="flex flex-1 min-h-0 flex-col">
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto bg-black p-3 font-mono text-2xs">
-        {history.length === 0 && <p className="text-[var(--ink-muted)]">Run shell commands in your project workspace. Same machine the builder uses.</p>}
-        {history.map((h) => (
-          <div key={h.id} className="mb-3">
-            <div className="flex items-center gap-2 text-[var(--accent-text)]">
-              <span className="text-[var(--success)]">$</span>
-              <span>{h.command}</span>
-              <span className="ml-auto text-[var(--ink-muted)]">{h.duration.toFixed(2)}s</span>
-            </div>
-            {h.stdout && <pre className="mt-1 whitespace-pre-wrap text-[var(--ink-secondary)]">{h.stdout}</pre>}
-            {h.stderr && <pre className="mt-1 whitespace-pre-wrap text-[var(--danger)]">{h.stderr}</pre>}
-            <div className={`mt-1 text-3xs ${h.exitCode === 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>exit {h.exitCode}</div>
-          </div>
-        ))}
-        {exec.isPending && <p className="text-[var(--ink-muted)] flex items-center gap-2"><Loader2 size={11} className="animate-spin" /> Running…</p>}
-      </div>
-      <div className="border-t border-[var(--border-subtle)] p-3 shrink-0 bg-[var(--bg-base)]">
-        <div className="flex items-center gap-2">
-          <span className="text-[var(--success)] font-mono text-ui-xs">$</span>
-          <input
-            value={command}
-            onChange={(e) => setCommand(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') run() }}
-            placeholder="Type a command and press Enter"
-            disabled={exec.isPending}
-            className="flex-1 bg-transparent text-ui-xs text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] focus:outline-none font-mono"
-          />
+    <div className="flex flex-1 min-h-0 flex-col p-3 gap-2 overflow-auto">
+      {loading && <p className="text-2xs text-[var(--ink-muted)]">Loading schema…</p>}
+      {error && <p className="text-2xs text-[var(--danger)]">{error}</p>}
+      <p className="text-3xs text-[var(--ink-muted)]">
+        {meta.schema ? `Schema ${meta.schema}` : 'Database'}
+        {meta.provider ? ` · ${meta.provider}` : ''}
+        {meta.storage_prefix ? ` · storage ${meta.storage_prefix}` : ''}
+      </p>
+      {!tables.length && !loading && (
+        <EmptyState title="No tables yet" body="Approve a provision gate during a build to create RLS-backed tables." />
+      )}
+      <div className="flex flex-wrap gap-1.5">
+        {tables.map((table) => (
           <button
+            key={table.name}
             type="button"
-            onClick={run}
-            disabled={exec.isPending || !command.trim()}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-fill)] px-3 py-1.5 text-ui-xs font-medium text-white hover:bg-[var(--accent-fill-hover)] disabled:opacity-50 transition"
+            className={`${selected === table.name ? btnPrimary : btnGhost} text-2xs`}
+            onClick={() => setSelected(table.name)}
           >
-            Run
+            {table.name}{table.rls ? ' · RLS' : ''}
           </button>
+        ))}
+      </div>
+      {browse && (
+        <div className="rounded-lg border border-[var(--border-subtle)] p-2 text-2xs">
+          <p className="font-medium text-[var(--ink-primary)]">{selected}</p>
+          <p className="mt-1 text-[var(--ink-muted)]">Columns: {browse.columns.join(', ') || '—'}</p>
+          {browse.note && <p className="mt-1 text-[var(--ink-muted)]">{browse.note}</p>}
+          {browse.rows.length === 0 && <p className="mt-1 text-[var(--ink-muted)]">No rows.</p>}
         </div>
-      </div>
-    </div>
-  )
-}
-
-/** A slide-over code viewer so source files never replace the live preview. */
-function CodeDrawer({ runId, path, onClose }: { runId: string; path: string; onClose: () => void }) {
-  const fileQuery = useFileContent(runId, path)
-  return (
-    <div className="absolute inset-y-0 right-0 w-full sm:w-[440px] max-w-full flex flex-col border-l border-[var(--border-subtle)] bg-[var(--bg-base)] shadow-panel">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-subtle)] shrink-0">
-        <FileCode2 size={13} className="text-[var(--accent-text)] shrink-0" aria-hidden />
-        <span className="flex-1 min-w-0 truncate font-mono text-ui-xs text-[var(--ink-primary)]">{path}</span>
-        <button type="button" onClick={onClose} aria-label="Close file" className="p-1 rounded-lg text-[var(--ink-muted)] hover:bg-[var(--bg-hover)] transition">
-          <X size={14} aria-hidden />
-        </button>
-      </div>
-      <div className="flex-1 min-h-0 overflow-auto">
-        {fileQuery.isPending && <LoadingState label="Reading file…" />}
-        {fileQuery.isError && <p className="m-3 text-ui-xs text-[var(--danger)]">{toUserFacingError(fileQuery.error).message}</p>}
-        {fileQuery.data != null && (
-          <pre className="p-4 text-2xs leading-relaxed text-[var(--ink-secondary)] whitespace-pre-wrap break-words font-mono">{fileQuery.data}</pre>
-        )}
-      </div>
+      )}
     </div>
   )
 }

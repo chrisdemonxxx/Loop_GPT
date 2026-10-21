@@ -12,6 +12,9 @@ import { createHmac, timingSafeEqual } from 'crypto'
 export const LOOPIT_IDENTITY_TTL_SECONDS = 900
 /** Same scopes AuthService.login puts on a customer token. */
 export const LOOPIT_IDENTITY_SCOPES = ['api', 'runs'] as const
+/** Unlocks the Build terminal (host shell on the engine). Loop-GPT admins only
+ *  until per-project sandboxes exist; the engine refuses `/exec` without it. */
+export const LOOPIT_TERMINAL_SCOPE = 'build:terminal'
 
 export type WorkspaceMemberRole = 'owner' | 'editor' | 'viewer'
 export type LoopitRole = 'owner' | 'admin' | 'member' | 'viewer'

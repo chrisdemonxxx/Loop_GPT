@@ -1,12 +1,19 @@
-# Minimal Loop-IT stack for the Loop-GPT side-by-side deploy.
-# Build context is the nested Loop-it/ tree. This file does not start Temporal
-# and does not create cloud resources. See README.md before pointing Railway
-# at it.
+# Loop-IT stack for the Loop-GPT side-by-side deploy (Phase 1.1 runtime).
+# Build context is the nested Loop-it/ tree. This file does not embed a Temporal
+# server — point LOOPIT_TEMPORAL_ADDRESS at Temporal Cloud (or a self-hosted
+# frontend) and enable the orchestrator profile. See README.md and ENV.md.
 #
-# Scheduler is LOOPIT_SANDBOX_PROVIDER=e2b (no Docker socket). Durable runs are
-# off (LOOPIT_RUN_EXECUTION_MODE=local). Set LOOPIT_TEMPORAL_ADDRESS and switch
-# the mode to orchestrator when either Temporal Cloud or a self-hosted frontend
-# is ready; both use the same three LOOPIT_TEMPORAL_* variables.
+# Offline / mock (no cloud creds):
+#   LOOPIT_SANDBOX_PROVIDER=memory   (default here)
+#   LOOPIT_RUN_EXECUTION_MODE=local  (default)
+#   omit E2B_API_KEY / LOOPIT_E2B_TEMPLATE_ID / LOOPIT_TEMPORAL_ADDRESS
+#
+# Live E2B + Temporal:
+#   LOOPIT_SANDBOX_PROVIDER=e2b
+#   E2B_API_KEY=...  LOOPIT_E2B_TEMPLATE_ID=...
+#   LOOPIT_TEMPORAL_ADDRESS=<cloud-frontend>
+#   LOOPIT_RUN_EXECUTION_MODE=orchestrator
+#   docker compose --profile orchestrator -f deploy/loopit/docker-compose.yml up --build
 
 name: loopit-sidebyside
 
@@ -59,6 +66,33 @@ services:
     networks:
       - control-plane
 
+  # Default-deny HTTP egress with npm/pypi (and friends) allowlist. Sandboxes
+  # should reach package registries only through this proxy (I3).
+  egress-proxy:
+    build:
+      context: ../../Loop-it
+      dockerfile: services/egress-proxy/Dockerfile
+    environment:
+      PORT: ${EGRESS_PROXY_PORT:-8002}
+      LOOPIT_EGRESS_PORT: ${EGRESS_PROXY_PORT:-8002}
+      LOOPIT_EGRESS_ADMIN_PORT: ${EGRESS_ADMIN_PORT:-8128}
+      LOOPIT_ROUTER_HOSTNAME: ${LOOPIT_ROUTER_HOSTNAME:-router-svc}
+      LOOPIT_EGRESS_ALLOW_PACKAGE_REGISTRIES: ${LOOPIT_EGRESS_ALLOW_PACKAGE_REGISTRIES:-1}
+      LOOPIT_AUDIT_DSN: ${LOOPIT_AUDIT_DSN:-}
+      LOOPIT_AUDIT_EPHEMERAL: ${LOOPIT_AUDIT_EPHEMERAL:-1}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      <<: *python-healthcheck
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/healthz'' % os.environ.get(''LOOPIT_EGRESS_ADMIN_PORT'', ''8128''), timeout=3).read()"',
+        ]
+    networks:
+      - control-plane
+
   scheduler:
     build:
       context: ../../Loop-it
@@ -68,20 +102,59 @@ services:
       LOOPIT_SCHEDULER_PORT: ${SCHEDULER_PORT:-8004}
       LOOPIT_LEASE_TOKEN_SECRET: ${LOOPIT_LEASE_TOKEN_SECRET:?set LOOPIT_LEASE_TOKEN_SECRET}
       LOOPIT_SERVICE_TOKEN: ${LOOPIT_SERVICE_TOKEN:?set LOOPIT_SERVICE_TOKEN}
-      LOOPIT_SANDBOX_PROVIDER: e2b
-      LOOPIT_E2B_TEMPLATE_ID: ${LOOPIT_E2B_TEMPLATE_ID:?set LOOPIT_E2B_TEMPLATE_ID}
-      E2B_API_KEY: ${E2B_API_KEY:?set E2B_API_KEY}
+      # memory = offline mock leases (no E2B). e2b = live sandboxes (needs key + template).
+      LOOPIT_SANDBOX_PROVIDER: ${LOOPIT_SANDBOX_PROVIDER:-memory}
+      LOOPIT_E2B_TEMPLATE_ID: ${LOOPIT_E2B_TEMPLATE_ID:-}
+      E2B_API_KEY: ${E2B_API_KEY:-}
+      # Warm pool (scheduler/pool.py). Target 0 in memory mode to avoid noise.
+      LOOPIT_SANDBOX_POOL_TARGET_SIZE: ${LOOPIT_SANDBOX_POOL_TARGET_SIZE:-0}
+      LOOPIT_SANDBOX_POOL_MAX_LIVE: ${LOOPIT_SANDBOX_POOL_MAX_LIVE:-50}
+      LOOPIT_SANDBOX_POOL_MAX_IDLE_SECONDS: ${LOOPIT_SANDBOX_POOL_MAX_IDLE_SECONDS:-900}
       LOOPIT_SCHEDULER_STORE_DSN: ${LOOPIT_SCHEDULER_STORE_DSN:-${DATABASE_URL}}
       LOOPIT_AUDIT_DSN: ${LOOPIT_AUDIT_DSN:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
+      egress-proxy:
+        condition: service_healthy
     healthcheck:
       <<: *python-healthcheck
       test:
         [
           'CMD-SHELL',
           'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/healthz'' % os.environ.get(''PORT'', ''8004''), timeout=3).read()"',
+        ]
+    networks:
+      - control-plane
+
+  workspace-dispatch:
+    build:
+      context: ../../Loop-it
+      dockerfile: services/workspace-dispatch/Dockerfile
+    environment:
+      PORT: ${WORKSPACE_DISPATCH_PORT:-8005}
+      LOOPIT_WORKSPACE_DISPATCH_PORT: ${WORKSPACE_DISPATCH_PORT:-8005}
+      LOOPIT_SCHEDULER_URL: ${LOOPIT_SCHEDULER_URL:-http://scheduler:8004}
+      LOOPIT_LEASE_TOKEN_SECRET: ${LOOPIT_LEASE_TOKEN_SECRET:?set LOOPIT_LEASE_TOKEN_SECRET}
+      LOOPIT_SERVICE_TOKEN: ${LOOPIT_SERVICE_TOKEN:?set LOOPIT_SERVICE_TOKEN}
+      LOOPIT_SANDBOX_SIGNING_KEY: ${LOOPIT_SANDBOX_SIGNING_KEY:?set LOOPIT_SANDBOX_SIGNING_KEY}
+      LOOPIT_SANDBOX_PROVIDER: ${LOOPIT_SANDBOX_PROVIDER:-memory}
+      LOOPIT_AUDIT_DSN: ${LOOPIT_AUDIT_DSN:-}
+      LOOPIT_STORE_DSN: ${LOOPIT_STORE_DSN:-${DATABASE_URL}}
+      LOOPIT_CHECKPOINT_BLOB_DIR: ${LOOPIT_CHECKPOINT_BLOB_DIR:-/var/lib/loopit/checkpoint-blobs}
+      LOOPIT_VERIFY_STACK: ${LOOPIT_VERIFY_STACK:-node}
+      LOOPIT_VERIFY_SMOKE_URL: ${LOOPIT_VERIFY_SMOKE_URL:-http://localhost:3000}
+    volumes:
+      - checkpoint-blobs:/var/lib/loopit/checkpoint-blobs
+    depends_on:
+      scheduler:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/healthz'' % os.environ.get(''PORT'', ''8005''), timeout=3).read()"',
         ]
     networks:
       - control-plane
@@ -96,7 +169,8 @@ services:
       LOOPIT_PREVIEW_SIGNING_KEY: ${LOOPIT_PREVIEW_SIGNING_KEY:?set LOOPIT_PREVIEW_SIGNING_KEY}
       LOOPIT_PREVIEW_DOMAIN: ${LOOPIT_PREVIEW_DOMAIN:-.preview.loopit.dev}
       LOOPIT_PREVIEW_ROUTES: ${LOOPIT_PREVIEW_ROUTES:-[]}
-      LOOPIT_AUDIT_DSN: ${LOOPIT_AUDIT_DSN:?set LOOPIT_AUDIT_DSN}
+      LOOPIT_AUDIT_DSN: ${LOOPIT_AUDIT_DSN:-}
+      LOOPIT_AUDIT_EPHEMERAL: ${LOOPIT_AUDIT_EPHEMERAL:-1}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -107,6 +181,32 @@ services:
           'CMD-SHELL',
           'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/healthz'' % os.environ.get(''PORT'', ''8003''), timeout=3).read()"',
         ]
+    networks:
+      - control-plane
+
+  # Temporal worker. Requires a reachable Temporal frontend (Cloud recommended).
+  # Start with: docker compose --profile orchestrator ...
+  orchestrator:
+    profiles: ['orchestrator']
+    build:
+      context: ../../Loop-it
+      dockerfile: services/orchestrator/Dockerfile
+    environment:
+      LOOPIT_SERVICE_TOKEN: ${LOOPIT_SERVICE_TOKEN:?set LOOPIT_SERVICE_TOKEN}
+      LOOPIT_SCHEDULER_URL: ${LOOPIT_SCHEDULER_URL:-http://scheduler:8004}
+      LOOPIT_ROUTER_URL: ${LOOPIT_ROUTER_URL:-http://router-svc:8001}
+      LOOPIT_WORKSPACE_DISPATCH_URL: ${LOOPIT_WORKSPACE_DISPATCH_URL:-http://workspace-dispatch:8005/dispatch}
+      LOOPIT_TEMPORAL_ADDRESS: ${LOOPIT_TEMPORAL_ADDRESS:?set LOOPIT_TEMPORAL_ADDRESS for orchestrator profile}
+      LOOPIT_TEMPORAL_NAMESPACE: ${LOOPIT_TEMPORAL_NAMESPACE:-default}
+      LOOPIT_TEMPORAL_TASK_QUEUE: ${LOOPIT_TEMPORAL_TASK_QUEUE:-loopit-runs}
+      LOOPIT_GATE_PRESET: ${LOOPIT_GATE_PRESET:-builder}
+    depends_on:
+      router-svc:
+        condition: service_healthy
+      scheduler:
+        condition: service_healthy
+      workspace-dispatch:
+        condition: service_healthy
     networks:
       - control-plane
 
@@ -124,14 +224,18 @@ services:
       LOOPIT_TEMPORAL_TASK_QUEUE: ${LOOPIT_TEMPORAL_TASK_QUEUE:-loopit-runs}
       LOOPIT_STORE_DSN: ${LOOPIT_STORE_DSN:-${DATABASE_URL}}
       LOOPIT_ROUTER_URL: ${LOOPIT_ROUTER_URL:-http://router-svc:8001}
+      LOOPIT_EGRESS_PROXY_URL: ${LOOPIT_EGRESS_PROXY_URL:-http://egress-proxy:8002}
       LOOPIT_PREVIEW_PROXY_URL: ${LOOPIT_PREVIEW_PROXY_URL:-http://preview-proxy:8003}
       LOOPIT_SCHEDULER_URL: ${LOOPIT_SCHEDULER_URL:-http://scheduler:8004}
+      LOOPIT_WORKSPACE_DISPATCH_URL: ${LOOPIT_WORKSPACE_DISPATCH_URL:-http://workspace-dispatch:8005/dispatch}
+      LOOPIT_SERVICE_TOKEN: ${LOOPIT_SERVICE_TOKEN:?set LOOPIT_SERVICE_TOKEN}
       LOOPIT_IDENTITY_ISSUER: ${LOOPIT_IDENTITY_ISSUER:-loopit-gateway}
       LOOPIT_IDENTITY_AUDIENCE: ${LOOPIT_IDENTITY_AUDIENCE:-loopit-control-plane}
       LOOPIT_IDENTITY_KID: ${LOOPIT_IDENTITY_KID:-dev}
       LOOPIT_IDENTITY_SECRET: ${LOOPIT_IDENTITY_SECRET:?set LOOPIT_IDENTITY_SECRET}
       LOOPIT_PREVIEW_SIGNING_KEY: ${LOOPIT_PREVIEW_SIGNING_KEY:?set LOOPIT_PREVIEW_SIGNING_KEY}
       LOOPIT_PROJECTS: ${LOOPIT_PROJECTS:-/var/lib/loopit/projects}
+      LOOPIT_USAGE_URL: ${LOOPIT_USAGE_URL:-}
       HF_TOKEN: ${HF_TOKEN:-}
       HF_BASE_URL: ${HF_BASE_URL:-https://router.huggingface.co}
       HF_BILL_TO: ${HF_BILL_TO:-}
@@ -143,6 +247,10 @@ services:
       router-svc:
         condition: service_healthy
       scheduler:
+        condition: service_healthy
+      workspace-dispatch:
+        condition: service_healthy
+      egress-proxy:
         condition: service_healthy
       preview-proxy:
         condition: service_healthy
@@ -156,8 +264,30 @@ services:
     networks:
       - control-plane
 
+  # Chat bridge: start_run / get_run MCP tools for Loop-GPT when LOOPIT_MCP_URL is set.
+  loopit-mcp:
+    build:
+      context: ../../Loop-it
+      dockerfile: services/loopit-mcp/Dockerfile
+    environment:
+      PORT: ${LOOPIT_MCP_PORT:-8010}
+      LOOPIT_API_BASE_URL: ${LOOPIT_API_BASE_URL:-http://api:8000}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/healthz'' % os.environ.get(''PORT'', ''8010''), timeout=3).read()"',
+        ]
+    networks:
+      - control-plane
+
 volumes:
   loopit-projects:
+  checkpoint-blobs:
 
 networks:
   control-plane:

@@ -12,6 +12,7 @@ const config = {
 
 const usage = vi.hoisted(() => ({
   recordLoopitUsage: vi.fn(),
+  readLoopitCredits: vi.fn(),
 }))
 
 vi.mock('../../services/prisma', () => ({
@@ -21,7 +22,11 @@ vi.mock('../../services/prisma', () => ({
 
 vi.mock('../../services/loopitUsage', async () => {
   const actual = await vi.importActual<typeof import('../../services/loopitUsage')>('../../services/loopitUsage')
-  return { ...actual, recordLoopitUsage: usage.recordLoopitUsage }
+  return {
+    ...actual,
+    recordLoopitUsage: usage.recordLoopitUsage,
+    readLoopitCredits: usage.readLoopitCredits,
+  }
 })
 
 import loopitRoutes from '../loopit'
@@ -41,7 +46,10 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
 })
 afterAll(async () => { await new Promise<void>((resolve) => server.close(() => resolve())) })
-beforeEach(() => { usage.recordLoopitUsage.mockReset() })
+beforeEach(() => {
+  usage.recordLoopitUsage.mockReset()
+  usage.readLoopitCredits.mockReset()
+})
 
 function token(org: string): string {
   return mintLoopitIdentityToken({
@@ -63,6 +71,28 @@ const event = {
   sandboxSeconds: 120,
   runId: 'run-1',
 }
+
+describe('GET /api/loopit/credits', () => {
+  it('returns the token workspace billing balance', async () => {
+    usage.readLoopitCredits.mockResolvedValue({
+      workspaceId: 'ws-a',
+      ownerId: 'owner-a',
+      credits: 7,
+      unlimited: false,
+    })
+    const res = await fetch(`${base}/api/loopit/credits`, {
+      headers: { authorization: `Bearer ${token('ws-a')}` },
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({
+      workspaceId: 'ws-a',
+      ownerId: 'owner-a',
+      credits: 7,
+      unlimited: false,
+    })
+    expect(usage.readLoopitCredits).toHaveBeenCalledWith('ws-a')
+  })
+})
 
 describe('POST /api/loopit/usage', () => {
   it('bills the token workspace and rejects another tenant id', async () => {
