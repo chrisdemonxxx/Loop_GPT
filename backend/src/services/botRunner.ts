@@ -281,6 +281,7 @@ export async function executeBotTask(
     const isTeach = task.kind === 'teach'
     // skill_saved is emitted only from the distill turn, after takeover release.
     let teachDistilling = false
+    let skillSaved = false
     const emit = (event: AgentEvent) => {
       if (event.type === 'final') {
         finalContent = event.content
@@ -293,6 +294,7 @@ export async function executeBotTask(
       if (teachDistilling && event.type === 'tool_result' && event.name === 'create_skill' && !event.isError) {
         const skill = event.data && typeof event.data === 'object' ? (event.data as { skill?: { id?: string; name?: string } }).skill : undefined
         if (skill?.id) {
+          skillSaved = true
           run.emit({ type: 'skill_saved', skillId: String(skill.id), ...(skill.name ? { name: String(skill.name) } : {}) })
         }
       }
@@ -455,8 +457,13 @@ export async function executeBotTask(
         await run.fail('Teach session ended without a demonstration — no takeover happened during the wait window', true)
         return failAgentTask(claim, 'BOT_TEACH_NO_DEMO', 'Operator never took over')
       }
-      // A release with almost no demo is not a skill. Do not call create_skill.
-      if (recording.length < 2 || steps.length < 1) {
+      // Stop can land between polls. Count the release frame before deciding
+      // the demo is empty, so a click-then-Stop still has a screenshot.
+      try { recording.push({ at: Date.now(), png: await computer.captureSilent() }) } catch { /* transient */ }
+      steps = await loadTeachSteps(run.runId)
+      // One screenshot and one stored step is a demo. No takeover and zero
+      // steps never reach create_skill.
+      if (recording.length < 1 || steps.length < 1) {
         if (reservationId) await cleanupDailyReservation(reservationId)
         await run.fail('Nothing was recorded. Take over, show the task on screen, and perform at least one click, key, or typed step before you release.')
         return failAgentTask(claim, 'BOT_TEACH_NOTHING_RECORDED', 'Nothing was recorded')
@@ -491,8 +498,25 @@ export async function executeBotTask(
       teachDistilling = true
       try {
         await runAgentOnce(messages, systemPrompt, runNames)
+        // The distill turn can describe the demo and never call the tool.
+        // One more turn, granted only create_skill, uses the same log and frames.
+        if (!skillSaved) {
+          const retryPrompt = [
+            systemPrompt,
+            'The previous turn did not save a skill. Call create_skill now — it is the only tool available.',
+            'Use the operator step log and the recorded frames in the conversation. Do not ask questions.',
+          ].join('\n\n')
+          await runAgentOnce(messages, retryPrompt, ['create_skill'])
+        }
       } finally {
         teachDistilling = false
+      }
+      if (!skillSaved) {
+        const message = 'The skill was not saved. The demonstration was recorded, but create_skill did not store a skill.'
+        emit({ type: 'error', message })
+        if (reservationId) await cleanupDailyReservation(reservationId)
+        await run.fail(message)
+        return failAgentTask(claim, 'BOT_TEACH_SKILL_NOT_SAVED', 'The skill was not saved')
       }
     } else {
       await runAgentOnce(messages, systemPrompt, runNames)

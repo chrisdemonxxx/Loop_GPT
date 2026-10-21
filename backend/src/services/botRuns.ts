@@ -337,24 +337,48 @@ function teachStepsOf(computer: unknown): unknown[] | undefined {
   return Array.isArray(steps) && steps.length ? steps : undefined
 }
 
-/** Worker side: merge session metadata into the live view + the row.
- *  Teach steps live on the same JSON blob; a metadata patch must not wipe them. */
-export async function setRunComputer(runId: string, patch: RunComputerInfo): Promise<void> {
-  const merged: RunComputerInfo = { ...(runComputers.get(runId) || {}), ...patch }
-  let steps = teachStepsOf(merged)
-  if (prisma) {
-    try {
-      const row = await prisma.botRun.findUnique({ where: { id: runId }, select: { computer: true } })
-      const stored = teachStepsOf(row?.computer)
-      if (stored && (!steps || stored.length > steps.length)) steps = stored
-    } catch { /* session metadata still writes */ }
+function asComputerRecord(value: unknown): RunComputerInfo {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return { ...(value as RunComputerInfo) }
+}
+
+/** The longer list wins. A metadata patch must not replace steps the API appended. */
+function longerTeachSteps(...lists: Array<unknown[] | undefined>): unknown[] | undefined {
+  let best: unknown[] | undefined
+  for (const list of lists) {
+    if (!list || list.length === 0) continue
+    if (!best || list.length > best.length) best = list
   }
+  return best
+}
+
+function mergeRunComputer(memory: RunComputerInfo, stored: RunComputerInfo, patch: RunComputerInfo): RunComputerInfo {
+  const merged: RunComputerInfo = { ...memory, ...stored, ...patch }
+  const steps = longerTeachSteps(teachStepsOf(memory), teachStepsOf(stored), teachStepsOf(patch))
   if (steps) merged.teachSteps = steps
-  runComputers.set(runId, merged)
-  if (!prisma) return
+  else delete merged.teachSteps
+  return merged
+}
+
+/** Worker side: merge session metadata into the live view + the row.
+ *  Teach steps live on the same JSON blob. Re-read and write inside the
+ *  BotRun row lock so this cannot replace steps recordTeachStep just stored. */
+export async function setRunComputer(runId: string, patch: RunComputerInfo): Promise<void> {
+  const memory = runComputers.get(runId) || {}
+  if (!prisma) {
+    runComputers.set(runId, mergeRunComputer(memory, {}, patch))
+    return
+  }
   try {
-    await prisma.botRun.update({ where: { id: runId }, data: { computer: merged as any } })
-  } catch { /* best effort; the run still serves */ }
+    const merged = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "BotRun" WHERE "id" = ${runId} FOR UPDATE`
+      const row = await tx.botRun.findUnique({ where: { id: runId }, select: { computer: true } })
+      const next = mergeRunComputer(memory, asComputerRecord(row?.computer), patch)
+      await tx.botRun.update({ where: { id: runId }, data: { computer: next as any } })
+      return next
+    })
+    runComputers.set(runId, merged)
+  } catch { /* locked write failed; do not replace the row from the in-memory copy */ }
 }
 
 /** Worker side (ComputerSession): poll the cross-process takeover flag. */

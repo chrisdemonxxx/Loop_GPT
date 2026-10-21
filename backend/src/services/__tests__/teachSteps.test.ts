@@ -20,6 +20,7 @@ vi.mock('../prisma', () => ({
   },
 }))
 
+import { setRunComputer } from '../botRuns'
 import { clearTeachSteps, loadTeachSteps, recordTeachStep } from '../teachSteps'
 
 const click = { at: 10, kind: 'click' as const, x: 640, y: 400 }
@@ -86,5 +87,25 @@ describe('recordTeachStep', () => {
     const result = await recordTeachStep('run-1', 'someone-else', click)
     expect(result).toMatchObject({ ok: false, status: 404 })
     expect(update).not.toHaveBeenCalled()
+  })
+
+  it('a computer-metadata write does not drop steps already stored', async () => {
+    const typed = { at: 11, kind: 'key' as const, key: 'Enter' }
+    findUnique.mockResolvedValue(row({ computer: { sandboxId: 'sbx-1', teachSteps: [click] } }))
+    await setRunComputer('run-meta', { viewUrl: 'https://v' })
+
+    findUnique.mockResolvedValue(row({
+      computer: { sandboxId: 'sbx-1', viewUrl: 'https://v', teachSteps: [click, typed] },
+    }))
+    await setRunComputer('run-meta', { minutes: 4, endedAt: '2026-10-20T00:00:00.000Z' })
+
+    const last = update.mock.calls.at(-1)?.[0].data.computer
+    expect(last.teachSteps).toEqual([click, typed])
+    expect(last.minutes).toBe(4)
+    expect(last.sandboxId).toBe('sbx-1')
+    expect(last.viewUrl).toBe('https://v')
+    const lockSql = queryRaw.mock.calls.map((call) => String(call[0]))
+    expect(lockSql.some((sql) => sql.includes('FOR UPDATE'))).toBe(true)
+    expect(lockSql.filter((sql) => sql.includes('FOR UPDATE'))).toHaveLength(2)
   })
 })

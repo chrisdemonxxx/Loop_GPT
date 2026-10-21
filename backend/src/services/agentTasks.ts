@@ -343,6 +343,7 @@ export const BOT_PERMANENT_FAILURES = [
   'BOT_COMPUTER_TTL',
   'BOT_COMPUTER_QUOTA',
   'BOT_TEACH_NOTHING_RECORDED',
+  'BOT_TEACH_SKILL_NOT_SAVED',
 ] as const
 
 /** Failure recording with deterministic DB-clock backoff; mirrors the settlement

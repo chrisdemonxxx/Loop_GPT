@@ -317,6 +317,93 @@ describe('teach record then distill', () => {
     expect(savedSkills()).toEqual([])
     expect(failAgentTask).toHaveBeenCalledWith(claim, 'BOT_TEACH_NOTHING_RECORDED', 'Nothing was recorded')
     const session = await computerStart.mock.results[0].value
-    expect(session.captureSilent).toHaveBeenCalledTimes(2)
+    // Two polls while takeover is on, plus the release frame.
+    expect(session.captureSilent).toHaveBeenCalledTimes(3)
+  })
+
+  it('distills one screenshot and one stored step', async () => {
+    noteTeachStep('run-1', { at: 1, kind: 'click', x: 12, y: 34 })
+    scriptTakeover([true, false])
+    const captureSilent = vi.fn()
+      .mockRejectedValueOnce(new Error('transient'))
+      .mockResolvedValue(Buffer.from('png'))
+    computerStart.mockResolvedValue({
+      info: { sandboxId: 'sbx-fake', streamAuthKey: 'key', viewUrl: '/view', interactiveUrl: '/live' },
+      screen: { width: 1366, height: 768 },
+      minutes: () => 1,
+      close: vi.fn(async () => undefined),
+      captureSilent,
+    })
+    let phase = 0
+    runAgent.mockImplementation(async (opts: { ctx: { emit: (e: unknown) => void } }) => {
+      phase += 1
+      if (phase === 1) {
+        opts.ctx.emit({ type: 'final', content: 'Ready', metadata: {} })
+        return { content: 'Ready', steps: [], toolsUsed: [] }
+      }
+      opts.ctx.emit(skillResult('sk-one', 'One Step'))
+      opts.ctx.emit({ type: 'final', content: 'Saved', metadata: {} })
+      return { content: 'Saved', steps: [], toolsUsed: ['create_skill'] }
+    })
+
+    const outcome = await executeBotTask(claim as any, { leaseMs: 60_000, teachPollMs: 0 })
+
+    expect(outcome).toBe('succeeded')
+    expect(runAgent).toHaveBeenCalledTimes(2)
+    expect(captureSilent).toHaveBeenCalledTimes(2)
+    const distilled = promptText(runAgent.mock.calls[1][0])
+    expect(distilled).toContain('click 12,34')
+    expect(distilled).toContain('1 frames were recorded')
+    expect(savedSkills()).toEqual([{ type: 'skill_saved', skillId: 'sk-one', name: 'One Step' }])
+    expect(failAgentTask).not.toHaveBeenCalled()
+  })
+
+  it('retries create_skill once when the distill turn does not save a skill', async () => {
+    noteTeachStep('run-1', { at: 1, kind: 'click', x: 640, y: 400 })
+    scriptTakeover([true, false])
+    let phase = 0
+    runAgent.mockImplementation(async (opts: { ctx: { emit: (e: unknown) => void } }) => {
+      phase += 1
+      if (phase < 3) {
+        opts.ctx.emit({ type: 'final', content: phase === 1 ? 'Ready' : 'Described only', metadata: {} })
+        return { content: 'No skill', steps: [], toolsUsed: [] }
+      }
+      opts.ctx.emit(skillResult('sk-retry', 'Retry'))
+      opts.ctx.emit({ type: 'final', content: 'Saved', metadata: {} })
+      return { content: 'Saved', steps: [], toolsUsed: ['create_skill'] }
+    })
+
+    const outcome = await executeBotTask(claim as any, { leaseMs: 60_000, teachPollMs: 0 })
+
+    expect(outcome).toBe('succeeded')
+    expect(runAgent).toHaveBeenCalledTimes(3)
+    expect(runAgent.mock.calls[2][0].toolNames).toEqual(['create_skill'])
+    expect(promptText(runAgent.mock.calls[2][0])).toContain('click 640,400')
+    expect(savedSkills()).toEqual([{ type: 'skill_saved', skillId: 'sk-retry', name: 'Retry' }])
+  })
+
+  it('fails the run when the retry also does not save a skill', async () => {
+    noteTeachStep('run-1', { at: 1, kind: 'click', x: 640, y: 400 })
+    scriptTakeover([true, false])
+    runAgent.mockImplementation(async (opts: { ctx: { emit: (e: unknown) => void } }) => {
+      opts.ctx.emit({ type: 'final', content: 'No skill', metadata: {} })
+      return { content: 'No skill', steps: [], toolsUsed: [] }
+    })
+
+    const outcome = await executeBotTask(claim as any, { leaseMs: 60_000, teachPollMs: 0 })
+
+    expect(outcome).toBe('dead_letter')
+    expect(runAgent).toHaveBeenCalledTimes(3)
+    expect(runAgent.mock.calls[0][0].toolNames).not.toContain('create_skill')
+    expect(runAgent.mock.calls[2][0].toolNames).toEqual(['create_skill'])
+    expect(savedSkills()).toEqual([])
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'error',
+      message: expect.stringMatching(/skill was not saved/i),
+    }))
+    expect(failRun).toHaveBeenCalledWith(expect.stringMatching(/skill was not saved/i))
+    expect(failAgentTask).toHaveBeenCalledWith(claim, 'BOT_TEACH_SKILL_NOT_SAVED', 'The skill was not saved')
+    expect(completeAgentTask).not.toHaveBeenCalled()
+    expect(completeRun).not.toHaveBeenCalled()
   })
 })
