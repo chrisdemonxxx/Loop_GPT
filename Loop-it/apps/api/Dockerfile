@@ -8,7 +8,15 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PROJECT_ENVIRONMENT=/app/.venv
 WORKDIR /app
 COPY . .
-RUN uv sync --frozen --no-dev --no-editable --package loopit-api --package loopit-store
+# uv.lock still omits packages the API imports at boot (git sync, hosting,
+# patch, local domains). Name them explicitly so a frozen sync installs them.
+RUN uv sync --frozen --no-dev --no-editable \
+    --package loopit-api \
+    --package loopit-store \
+    --package loopit-deployer \
+    --package loopit-patch \
+    --package loopit-domains \
+    --package loopit-verify
 
 FROM ${UV_IMAGE} AS runtime
 ENV PATH="/app/.venv/bin:${PATH}" \

@@ -89,7 +89,7 @@ export function SecurityPanel({ projectId }: { projectId: string | null }) {
           {busy ? <Loader2 size={11} className="animate-spin mr-1 inline" /> : null}
           Scan now
         </button>
-        {scan?.passed === true && <Badge tone="success">Passed</Badge>}
+        {scan?.passed === true && <Badge tone="green">Passed</Badge>}
         {scan?.passed === false && <Badge tone="rose">Blocking</Badge>}
       </div>
       {error && <p className="text-2xs text-[var(--danger)]">{error}</p>}
