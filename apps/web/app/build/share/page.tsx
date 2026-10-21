@@ -27,7 +27,7 @@ function ShareRoute() {
   if (!shareId) {
     return (
       <AppPage title="Shared app" back={{ href: '/build', label: 'Build' }}>
-        <ErrorNotice error={{ kind: 'not_found', title: 'Missing share', message: 'Add ?id= to the URL.', action: 'Open a share link from project settings.' }} />
+        <ErrorNotice error={{ kind: 'unknown', title: 'Missing share', message: 'Add ?id= to the URL.', action: 'Open a share link from project settings.' }} />
       </AppPage>
     )
   }

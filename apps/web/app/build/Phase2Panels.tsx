@@ -221,7 +221,7 @@ function TestRunReplayCard({ run, onClose }: { run: BrowserTestRun; onClose: () 
         </button>
       </div>
       <div className="mt-2 flex flex-wrap gap-1.5">
-        <Badge tone={run.status === 'passed' ? 'success' : 'rose'}>{run.status}</Badge>
+        <Badge tone={run.status === 'passed' ? 'green' : 'rose'}>{run.status}</Badge>
         <Badge tone="neutral">{run.mode}</Badge>
         {run.test_user?.email && <Badge tone="neutral">signed in as {run.test_user.email}</Badge>}
       </div>

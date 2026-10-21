@@ -70,7 +70,7 @@ export function ConnectorsPanel({ projectId }: { projectId: string }) {
               <div className="flex flex-wrap items-center gap-2">
                 <Cable size={12} className="text-[var(--ink-secondary)]" />
                 <span className="text-ui-xs font-medium text-[var(--ink-primary)]">{row.label || row.kind}</span>
-                <Badge tone={configured ? 'success' : row.enabled ? 'neutral' : 'neutral'}>
+                <Badge tone={configured ? 'green' : 'neutral'}>
                   {configured ? 'Configured' : row.enabled ? 'Stub' : 'Off'}
                 </Badge>
                 <button
