@@ -3,7 +3,6 @@
 # are not collapsed into one unknown command. gRPC stays on 7233. The UI
 # listens on 8233, which is the Railway health-check port.
 FROM temporalio/temporal:latest
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
+COPY --chmod=755 start.sh /start.sh
 EXPOSE 7233 8233
 ENTRYPOINT ["/start.sh"]
