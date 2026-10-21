@@ -110,6 +110,9 @@ def test_e2b_workspace_can_checkpoint_selected_files() -> None:
     manifest = workspace.store_blobs_for_paths(Writer(), ["index.html"])
     assert stored["index.html"] == b"Hello from the sandbox"
     assert manifest["index.html"] == "sha"
+    command, _env, stdin = session.calls[0]
+    assert command.startswith("python - ")
+    compile(stdin, "<checkpoint>", "exec")
 
 
 def test_workspace_factory_selects_e2b(monkeypatch: pytest.MonkeyPatch) -> None:

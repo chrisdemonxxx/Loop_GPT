@@ -97,33 +97,21 @@ class E2BRuntimeWorkspace(RemoteWorkspace):
         self._workspace = workspace
 
     def snapshot_manifest(self) -> Mapping[str, str]:
-        return _json_map(
-            self._session.run(
-                "python -c " + repr(_MANIFEST_SCRIPT) + f" {self._workspace}",
-                env={},
-            )
-        )
+        return _json_map(self._run_python(_MANIFEST_SCRIPT, self._workspace))
 
     def snapshot_state(self) -> Mapping[str, str]:
-        return _json_map(
-            self._session.run(
-                "python -c " + repr(_STATE_SCRIPT) + f" {self._workspace}",
-                env={},
-            )
-        )
+        return _json_map(self._run_python(_STATE_SCRIPT, self._workspace))
+
+    def _run_python(self, script: str, *args: str) -> str:
+        # The script goes on stdin. A shell-quoted python -c argument turns
+        # the script's newlines into line-continuation backslashes.
+        command = "python - " + " ".join(shlex.quote(arg) for arg in args)
+        return self._session.run(command, env={}, stdin=script)
 
     def snapshot_contents_for_paths(self, paths: Sequence[str]) -> Mapping[str, bytes]:
         if not paths:
             return {}
-        command = (
-            "python -c "
-            + shlex.quote(_CONTENTS_SCRIPT)
-            + " "
-            + shlex.quote(self._workspace)
-            + " "
-            + shlex.quote(json.dumps(list(paths)))
-        )
-        raw = self._session.run(command, env={})
+        raw = self._run_python(_CONTENTS_SCRIPT, self._workspace, json.dumps(list(paths)))
         decoded = json.loads(raw.strip().splitlines()[-1] if raw.strip() else "{}")
         if not isinstance(decoded, Mapping):
             raise WorkspaceUnavailable("sandbox checkpoint contents were invalid")
@@ -233,7 +221,7 @@ _STATE_SCRIPT = (
     "        rel=os.path.relpath(path,root).replace(os.sep,'/')\n"
     "        item=os.stat(path)\n"
     "        state[rel]=f'{item.st_size}:{item.st_mtime_ns}:{item.st_ctime_ns}'\n"
-        "print(json.dumps(state, sort_keys=True))"
+    "print(json.dumps(state, sort_keys=True))"
 )
 _CONTENTS_SCRIPT = (
     "import base64,json,os,sys;root=sys.argv[1];paths=json.loads(sys.argv[2]);contents={};\n"
@@ -247,7 +235,7 @@ _CONTENTS_SCRIPT = (
     "        continue\n"
     "    with open(path,'rb') as handle:\n"
     "        contents['/'.join(parts)]=base64.b64encode(handle.read()).decode('ascii')\n"
-    "print(json.dumps(contents, sort_keys=True))"
+    "print(json.dumps(contents, sort_keys=True))\n"
 )
 
 
