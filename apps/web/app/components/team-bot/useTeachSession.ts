@@ -3,17 +3,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   enqueueBotTask, getBotTask, getBotComputer, setBotTakeover, cancelBotTask, streamBotRun,
-  type BotComputer, type BotEvent,
+  appendBotTeachStep,
+  type BotComputer, type BotEvent, type BotTeachStep,
 } from '../../lib/bot'
 
 /**
- * The Grok-style "Teach a task" session machine:
- *   idle → (⏺ click) starting → computer boots, bot waits → waiting
- *   waiting → (operator takes over) recording (frames accumulate live)
- *   recording → (⏸ Stop / Release) distilling → skill_saved → done → idle
- * Success is driven by the explicit `skill_saved` event (not a timer).
+ * Teach recording:
+ *   idle → Start recording → starting (enqueue kind=teach if needed)
+ *   starting → takeover on → recording (clicks/keys/frames; no skill yet)
+ *   recording → Stop → distilling → skill_saved → done → idle
+ * skill_saved is ignored unless Stop has moved the phase to distilling.
+ * Cancel never writes a skill.
  */
 export type TeachPhase = 'idle' | 'starting' | 'waiting' | 'recording' | 'distilling' | 'done' | 'failed'
+
+export type TeachOperatorInput = Omit<BotTeachStep, 'at'>
 
 export interface TeachSessionState {
   phase: TeachPhase
@@ -22,19 +26,25 @@ export interface TeachSessionState {
   runId: string | null
   computer: BotComputer | null
   frames: number
+  steps: number
   error: string
   skillId: string | null
+  skillName: string | null
   start: (goal: string) => Promise<void>
   takeOver: () => Promise<void>
+  /** Release takeover and distill. Only valid while recording. */
   stop: () => Promise<void>
   cancel: () => Promise<void>
   reset: () => void
+  /** Post one operator input while recording. No-op in every other phase. */
+  reportInput: (input: TeachOperatorInput) => void
 }
 
-/** The session object components consume (AgentComputerTab's teach pill). */
+/** The session object components consume (AgentComputerTab). */
 export type TeachSession = TeachSessionState
 
 const FRAME_RE = /Recording the demonstration…\s*(\d+) frame/
+const NOTHING_RECORDED_RE = /nothing was recorded/i
 const START_TIMEOUT_MS = 90_000
 const DISTILL_TIMEOUT_MS = 120_000
 
@@ -45,17 +55,25 @@ export function useTeachSession(onSkillReady?: (skillId?: string) => void, botId
   const [runId, setRunId] = useState<string | null>(null)
   const [computer, setComputer] = useState<BotComputer | null>(null)
   const [frames, setFrames] = useState(0)
+  const [steps, setSteps] = useState(0)
   const [error, setError] = useState('')
   const [skillId, setSkillId] = useState<string | null>(null)
+  const [skillName, setSkillName] = useState<string | null>(null)
   const stopStreamRef = useRef<(() => void) | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const computerPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const phaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const doneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const taskIdRef = useRef<string | null>(null)
+  const runIdRef = useRef<string | null>(null)
   const phaseRef = useRef<TeachPhase>('idle')
+  /** True only after the operator presses Stop. Early skill_saved must not finish the session. */
+  const distillArmedRef = useRef(false)
 
-  useEffect(() => { phaseRef.current = phase }, [phase])
+  const movePhase = useCallback((next: TeachPhase) => {
+    phaseRef.current = next
+    setPhase(next)
+  }, [])
 
   const clearTimers = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
@@ -67,58 +85,129 @@ export function useTeachSession(onSkillReady?: (skillId?: string) => void, botId
 
   const fail = useCallback((message: string) => {
     clearTimers()
+    distillArmedRef.current = false
+    setSkillId(null)
+    setSkillName(null)
     setError(message)
-    setPhase('failed')
-  }, [clearTimers])
+    movePhase('failed')
+  }, [clearTimers, movePhase])
 
   const reset = useCallback(() => {
     clearTimers()
-    setPhase('idle'); setGoal(null); setTaskId(null); setRunId(null)
+    distillArmedRef.current = false
+    movePhase('idle'); setGoal(null); setTaskId(null); setRunId(null)
     taskIdRef.current = null
-    setComputer(null); setFrames(0); setError(''); setSkillId(null)
-  }, [clearTimers])
+    runIdRef.current = null
+    setComputer(null); setFrames(0); setSteps(0); setError(''); setSkillId(null); setSkillName(null)
+  }, [clearTimers, movePhase])
+
+  const armDistillTimeout = useCallback(() => {
+    if (phaseTimerRef.current) clearTimeout(phaseTimerRef.current)
+    phaseTimerRef.current = setTimeout(() => {
+      if (phaseRef.current === 'distilling') {
+        fail('The skill did not save in time. Try teaching again.')
+      }
+    }, DISTILL_TIMEOUT_MS)
+  }, [fail])
 
   const handleEvent = useCallback((event: BotEvent) => {
+    const message = event.message || ''
+    if (NOTHING_RECORDED_RE.test(message)) {
+      setSkillId(null)
+      setSkillName(null)
+      fail(message)
+      return
+    }
     if (event.type === 'skill_saved') {
+      // A model turn can emit this during boot, before the operator has recorded anything.
+      if (phaseRef.current !== 'distilling' || !distillArmedRef.current) return
       const id = event.skillId || (event.data as { skillId?: string } | undefined)?.skillId || null
+      const name = event.name || (event.data as { name?: string } | undefined)?.name || null
       setSkillId(id)
+      setSkillName(name)
       if (phaseTimerRef.current) { clearTimeout(phaseTimerRef.current); phaseTimerRef.current = null }
       onSkillReady?.(id || undefined)
-      setPhase('done')
+      movePhase('done')
       if (doneTimerRef.current) clearTimeout(doneTimerRef.current)
       doneTimerRef.current = setTimeout(() => reset(), 3500)
       return
     }
     if (event.type === 'status') {
-      const msg = event.message || ''
-      const m = FRAME_RE.exec(msg)
-      if (m) { setFrames(Number(m[1])); setPhase('recording'); return }
-      if (/Waiting for the operator/i.test(msg)) setPhase((p) => (p === 'recording' ? p : 'waiting'))
+      const m = FRAME_RE.exec(message)
+      if (m) {
+        setFrames(Number(m[1]))
+        if (phaseRef.current !== 'distilling' && phaseRef.current !== 'done' && phaseRef.current !== 'failed') {
+          movePhase('recording')
+        }
+        return
+      }
+      if (/Waiting for the operator/i.test(message)) {
+        if (phaseRef.current === 'recording' || phaseRef.current === 'distilling' || phaseRef.current === 'done' || phaseRef.current === 'failed') return
+        movePhase('waiting')
+      }
       return
     }
     if (event.type === 'final' || event.type === 'done') {
-      // Distilling until skill_saved lands — do not treat this as success.
-      setPhase((p) => (p === 'failed' || p === 'done' ? p : 'distilling'))
-      if (phaseTimerRef.current) clearTimeout(phaseTimerRef.current)
-      phaseTimerRef.current = setTimeout(() => {
-        if (phaseRef.current === 'distilling') {
-          fail('The skill did not save in time. Try teaching again.')
-        }
-      }, DISTILL_TIMEOUT_MS)
+      // Stop is what enters distilling. A phase-1 final must not finish the skill.
+      if (phaseRef.current === 'distilling') armDistillTimeout()
       return
     }
     if (event.type === 'error') {
-      fail(event.message || 'The teach session failed.')
+      fail(message || 'The teach session failed.')
     }
-  }, [onSkillReady, reset, fail])
+  }, [onSkillReady, reset, fail, movePhase, armDistillTimeout])
+
+  /** Takeover on, then recording. Does not enqueue and does not save a skill. */
+  const armRecording = useCallback(async (id: string) => {
+    try {
+      await setBotTakeover(id, true)
+    } catch (err: any) {
+      if (phaseRef.current === 'failed' || phaseRef.current === 'idle') return
+      setError(err?.message || 'Takeover failed — the session may already be over.')
+      movePhase('waiting')
+      return
+    }
+    if (phaseRef.current !== 'starting' && phaseRef.current !== 'waiting' && phaseRef.current !== 'recording') return
+    if (phaseTimerRef.current) { clearTimeout(phaseTimerRef.current); phaseTimerRef.current = null }
+    setComputer((cur) => (cur ? { ...cur, takeoverRequested: true } : cur))
+    movePhase('recording')
+  }, [movePhase])
+
+  const attachRun = useCallback((id: string) => {
+    setRunId(id)
+    runIdRef.current = id
+    stopStreamRef.current = streamBotRun(id, handleEvent, undefined, (msg) => {
+      fail(msg)
+    })
+    const pullComputer = async () => {
+      const c = await getBotComputer(id).catch(() => null)
+      if (!c?.sandboxId) return
+      setComputer({
+        ...c,
+        takeoverRequested: phaseRef.current === 'recording' ? true : c.takeoverRequested,
+      })
+    }
+    void pullComputer()
+    if (computerPollRef.current) clearInterval(computerPollRef.current)
+    computerPollRef.current = setInterval(() => { void pullComputer() }, 5000)
+  }, [handleEvent, fail])
 
   const start = useCallback(async (teachGoal: string) => {
-    if (phase !== 'idle' && phase !== 'failed') return
+    const current = phaseRef.current
+    if (current === 'recording' || current === 'distilling' || current === 'done' || current === 'starting') return
+    if (current === 'waiting' && runIdRef.current) {
+      setError('')
+      await armRecording(runIdRef.current)
+      return
+    }
     clearTimers()
+    distillArmedRef.current = false
     setError('')
     setSkillId(null)
+    setSkillName(null)
     setFrames(0)
-    setPhase('starting')
+    setSteps(0)
+    movePhase('starting')
     setGoal(teachGoal)
     phaseTimerRef.current = setTimeout(() => {
       if (phaseRef.current === 'starting' || phaseRef.current === 'waiting') {
@@ -136,7 +225,6 @@ export function useTeachSession(onSkillReady?: (skillId?: string) => void, botId
       const id = res.task.id
       setTaskId(id)
       taskIdRef.current = id
-      // Wait for the worker to claim the task and spawn a run.
       pollRef.current = setInterval(async () => {
         try {
           const detail = await getBotTask(id)
@@ -153,59 +241,59 @@ export function useTeachSession(onSkillReady?: (skillId?: string) => void, botId
           const run = detail.runs?.[0]
           if (!run) return
           if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
-          setRunId(run.id)
-          stopStreamRef.current = streamBotRun(run.id, handleEvent, undefined, (msg) => {
-            fail(msg)
-          })
-          const comp = await getBotComputer(run.id).catch(() => null)
-          if (comp?.sandboxId) setComputer(comp)
-          computerPollRef.current = setInterval(async () => {
-            const c = await getBotComputer(run.id).catch(() => null)
-            if (c?.sandboxId) setComputer(c)
-          }, 5000)
+          attachRun(run.id)
+          await armRecording(run.id)
         } catch { /* keep polling — worker picks tasks up every few seconds */ }
       }, 2000)
     } catch (err: any) {
       fail(err?.message || 'Could not start the teach session.')
     }
-  }, [phase, handleEvent, botId, clearTimers, fail])
+  }, [armRecording, attachRun, botId, clearTimers, fail, movePhase])
 
   const takeOver = useCallback(async () => {
-    if (!runId) return
-    try {
-      await setBotTakeover(runId, true)
-      setComputer((cur) => (cur ? { ...cur, takeoverRequested: true } : cur))
-    } catch (err: any) {
-      setError(err?.message || 'Takeover failed — the session may already be over.')
-    }
-  }, [runId])
+    const id = runIdRef.current
+    if (!id) return
+    await armRecording(id)
+  }, [armRecording])
 
-  /** Stop = Release: the operator hands the computer back, the bot distills
-   *  the recorded frames into a Skill. */
+  /** Stop ends the recording: release control, distill, wait for skill_saved. */
   const stop = useCallback(async () => {
-    if (!runId) return
-    setPhase('distilling')
-    if (phaseTimerRef.current) clearTimeout(phaseTimerRef.current)
-    phaseTimerRef.current = setTimeout(() => {
-      if (phaseRef.current === 'distilling') {
-        fail('The skill did not save in time. Try teaching again.')
-      }
-    }, DISTILL_TIMEOUT_MS)
+    const id = runIdRef.current
+    if (!id || phaseRef.current !== 'recording') return
+    distillArmedRef.current = true
+    movePhase('distilling')
+    armDistillTimeout()
     try {
-      await setBotTakeover(runId, false)
-    } catch { /* the run may already be over — skill_saved resolves it */ }
+      await setBotTakeover(id, false)
+    } catch { /* the run may already be over — skill_saved or an error resolves it */ }
     setComputer((cur) => (cur ? { ...cur, takeoverRequested: false } : cur))
-  }, [runId, fail])
+  }, [armDistillTimeout, movePhase])
 
   const cancel = useCallback(async () => {
     const id = taskIdRef.current
+    distillArmedRef.current = false
     clearTimers()
     if (id) await cancelBotTask(id).catch(() => {})
-    setPhase('failed')
+    setSkillId(null)
+    setSkillName(null)
     setError('Teach session cancelled.')
-  }, [clearTimers])
+    movePhase('failed')
+  }, [clearTimers, movePhase])
+
+  const reportInput = useCallback((input: TeachOperatorInput) => {
+    const id = runIdRef.current
+    if (phaseRef.current !== 'recording' || !id) return
+    void appendBotTeachStep(id, { at: Date.now(), ...input })
+      .then((res) => {
+        if (res?.stored === true) setSteps((n) => n + 1)
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => clearTimers, [clearTimers])
 
-  return { phase, goal, taskId, runId, computer, frames, error, skillId, start, takeOver, stop, cancel, reset }
+  return {
+    phase, goal, taskId, runId, computer, frames, steps, error, skillId, skillName,
+    start, takeOver, stop, cancel, reset, reportInput,
+  }
 }

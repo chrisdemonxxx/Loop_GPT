@@ -219,21 +219,23 @@ function AgentsPageInner() {
   const botName = activeBot?.name || 'Loop Bot'
 
   return (
-    <AppPage width="fill" title={botName} documentTitle={botName}>
-      {/* Slim status strip — actions live in the computer view. */}
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-[var(--border-subtle)] shrink-0 min-h-[38px]">
-        {anyActive && (
-          <span className="flex items-center gap-1.5 text-ui-xs text-[var(--accent-text)]">
-            <Loader2 size={11} className="animate-spin" aria-hidden /> working
-          </span>
-        )}
-        {loadError && (
-          <span className="ml-auto text-ui-xs text-[var(--danger)] flex items-center gap-2" role="alert">
-            {loadError}
-            <button type="button" onClick={() => { void tasksQuery.refetch() }} className="text-[var(--accent-text)] hover:underline">Retry</button>
-          </span>
-        )}
-      </div>
+    <AppPage width="fill" documentTitle={botName}>
+      {/* Status strip only while a task is running or a load error is showing. */}
+      {(anyActive || loadError) && (
+        <div className="flex items-center gap-3 px-4 py-2 border-b border-[var(--border-subtle)] shrink-0 min-h-[38px]">
+          {anyActive && (
+            <span className="flex items-center gap-1.5 text-ui-xs text-[var(--accent-text)]">
+              <Loader2 size={11} className="animate-spin" aria-hidden /> working
+            </span>
+          )}
+          {loadError && (
+            <span className="ml-auto text-ui-xs text-[var(--danger)] flex items-center gap-2" role="alert">
+              {loadError}
+              <button type="button" onClick={() => { void tasksQuery.refetch() }} className="text-[var(--accent-text)] hover:underline">Retry</button>
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Two panes: chat left, profile right */}
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_400px]">
@@ -252,7 +254,7 @@ function AgentsPageInner() {
         />
 
         {/* ── Profile panel ── */}
-        <aside className="flex flex-col min-h-0 border-t lg:border-t-0 lg:border-l border-[var(--border-subtle)] bg-[var(--bg-sunken)] max-lg:max-h-[58dvh]">
+        <aside className="flex flex-col min-h-0 overflow-hidden border-t lg:border-t-0 lg:border-l border-[var(--border-subtle)] bg-[var(--bg-sunken)] max-lg:max-h-[58dvh]">
           <div className="flex flex-col items-center pt-7 pb-4 px-4 shrink-0">
             <div className="w-16 h-16 rounded-[22px] bg-[var(--accent-soft)] border border-[var(--accent-soft-border)] flex items-center justify-center">
               <Bot size={30} className="text-[var(--accent-text)]" aria-hidden />
@@ -284,6 +286,7 @@ function AgentsPageInner() {
             ))}
           </div>
 
+          {(tab === 'details' || tab === 'library') && (
           <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
             {tab === 'details' && (
               <div className="space-y-4">
@@ -331,8 +334,8 @@ function AgentsPageInner() {
                   <Sparkles size={18} className="text-[var(--ink-muted)] mb-2" aria-hidden />
                   <p className="text-ui-sm text-[var(--ink-muted)] leading-relaxed">
                     Nothing taught yet. Open the Computer, enlarge it, press{' '}
-                    <span className="text-[var(--ink-secondary)]">Teach a task</span> and drive the work once — the
-                    recording becomes a one-click skill here.
+                    <span className="text-[var(--ink-secondary)]">Start recording</span> and drive the work once — the
+                    recording becomes a skill here when you press Stop.
                   </p>
                 </div>
               ) : (
@@ -343,26 +346,28 @@ function AgentsPageInner() {
                 </div>
               )
             )}
-
-            {/* Skip embedded mount while expanded — avoids duplicate status probes. */}
-            {tab === 'computer' && !computerExpanded && (
-              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] overflow-hidden h-[46vh]">
-                <AgentComputerTab session={teach} onExpand={() => setComputerExpanded(true)} />
-              </div>
-            )}
-
-            {tab === 'files' && (
-              <div className="h-[52vh] min-h-0">
-                <BotFilesPanel onWakeComputer={() => { void wakeBotComputer('default').catch(() => undefined) }} />
-              </div>
-            )}
           </div>
+          )}
+
+          {/* Skip embedded mount while expanded — avoids duplicate status probes. */}
+          {tab === 'computer' && !computerExpanded && (
+            <div className="flex-1 min-h-0 flex flex-col px-4 py-4">
+              <AgentComputerTab botName={botName} session={teach} onExpand={() => setComputerExpanded(true)} />
+            </div>
+          )}
+
+          {tab === 'files' && (
+            <div className="flex-1 min-h-0 flex flex-col px-4 py-4">
+              <BotFilesPanel onWakeComputer={() => { void wakeBotComputer('default').catch(() => undefined) }} />
+            </div>
+          )}
         </aside>
       </div>
 
       {/* Enlarged computer — full-window stream with the teach pill */}
       {computerExpanded && (
         <AgentComputerTab
+          botName={botName}
           session={teach}
           expanded
           onCollapse={() => setComputerExpanded(false)}

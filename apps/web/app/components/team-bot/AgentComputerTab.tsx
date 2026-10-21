@@ -1,27 +1,26 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Monitor, Loader2, MousePointer2, Square, RefreshCw, Power, Maximize2, X, Circle, GraduationCap } from 'lucide-react'
+import { Ghost, Monitor, Loader2, Power, Maximize2, X } from 'lucide-react'
 import { getBotBox, wakeBotComputer, BotApiError, type BotBox } from '../../lib/bot'
 import { Dialog } from '@loop/ui'
 import { BotScreen } from './BotScreen'
 import type { TeachSession } from './useTeachSession'
 
 /**
- * The agent's persistent computer, two presentations of the same stream:
+ * The agent's persistent computer:
  *
- *  - embedded (Computer tab in the profile panel): small live screen with an
- *    ⤢ expand button — Grok's "create bot" panel view.
- *  - expanded (onExpand → shared Dialog, full-bleed): the screen enlarges to
- *    fill the window; header carries the "⏺ Teach a task" pill and the
- *    collapse ✕ — Grok's full-desktop view.
+ *  - embedded: black stage, centered 16:9 screen, caption "{Bot}'s screen",
+ *    and an on-screen Watching / Take control pill.
+ *  - expanded: the same stage, plus the record bar (Start recording, or
+ *    frame/step count and Stop while a teach recording is running).
  *
- * Stream is view-only unless the user explicitly takes over. Opening the tab
- * does a status GET only; Wake boots the box (POST). No keepalive polling —
- * that previously kept the VM awake from the Computer tab alone.
+ * Stop on the pill releases control. While a recording is active, Stop ends
+ * the recording and distills — it does not save a skill on the first click.
  */
 export function AgentComputerTab({
   session,
+  botName = 'Loop Bot',
   onExpand,
   expanded = false,
   onCollapse,
@@ -29,6 +28,7 @@ export function AgentComputerTab({
   autoProbe = true,
 }: {
   session: TeachSession
+  botName?: string
   onExpand?: () => void
   expanded?: boolean
   onCollapse?: () => void
@@ -105,245 +105,241 @@ export function AgentComputerTab({
     void wake()
   }, [expanded]) // eslint-disable-line react-hooks/exhaustive-deps -- wake once on expand
 
-  const teachActive = session.phase === 'waiting' || session.phase === 'recording'
+  const teachStream = session.phase === 'starting' || session.phase === 'waiting' || session.phase === 'recording' || session.phase === 'distilling'
   const comp = session.computer
-  const viewUrl = teachActive && comp?.viewUrl ? comp.viewUrl : box?.viewUrl || null
-  const interactiveUrl = teachActive && comp?.interactiveUrl ? comp.interactiveUrl : (box?.interactiveUrl || null)
+  const viewUrl = (teachStream && comp?.viewUrl) || box?.viewUrl || null
+  const interactiveUrl = (teachStream && comp?.interactiveUrl) || box?.interactiveUrl || null
 
-  // View-only unless the user has taken over (teach takeover or explicit drive).
-  const showInteractive = !!(
-    (teachActive && comp?.takeoverRequested && interactiveUrl)
-    || (!teachActive && driving && interactiveUrl)
-  )
+  const recording = session.phase === 'recording'
+  const inControl = recording || driving || !!(session.phase === 'waiting' && comp?.takeoverRequested)
+  const showInteractive = !!(inControl && interactiveUrl)
   const shownUrl = showInteractive ? interactiveUrl : viewUrl
 
-  /** One click: wake the box and start recording the operator's workflow. */
-  const startTeach = () => {
-    void wake().then(() => {
+  /** Enqueue a teach run if needed, take over, and record. Does not save a skill. */
+  const startRecording = () => {
+    void wake().finally(() => {
       void session.start('Watch the operator demonstrate a workflow on this computer and learn it as a reusable skill.')
     })
   }
 
-  const screen = (
-    <>
-      {/* Screen */}
-      <div className="relative flex-1 min-h-0 bg-black">
-        {shownUrl ? (
-          <BotScreen key={`${shownUrl}:${showInteractive ? 'i' : 'v'}`} url={shownUrl} interactive={!!showInteractive} />
-        ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 text-center px-6">
-            {booting ? (
-              <>
-                <LoadingDots />
-                <p className="text-ui-sm text-[var(--ink-secondary)]">{box?.resumed === false ? 'Starting desktop' : 'Waking the bot computer…'}</p>
-              </>
-            ) : error ? (
-              <>
-                <Monitor size={22} className="text-[var(--ink-muted)]" aria-hidden />
-                <p className="text-ui-sm text-[var(--danger)] max-w-sm">{error}</p>
-                <button type="button" onClick={() => void wake()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
-                  <Power size={12} aria-hidden /> Wake the computer
-                </button>
-              </>
+  const takeControl = () => {
+    if (session.phase === 'waiting' || session.phase === 'starting') void session.takeOver()
+    setDriving(true)
+  }
+
+  const stopControl = () => {
+    setDriving(false)
+    if (session.phase === 'recording') void session.stop()
+  }
+
+  const stage = (
+    <div className="flex flex-col flex-1 min-h-0">
+      <div className={`relative flex-1 min-h-0 bg-black overflow-hidden ${expanded ? '' : 'rounded-xl border border-[var(--border-subtle)]'}`}>
+        {/* Query box is absolutely filled so size containment cannot collapse the flex stage. */}
+        <div className="absolute inset-0" style={{ containerType: 'size' }}>
+        <div
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 aspect-video overflow-hidden bg-black"
+          style={{ width: 'min(100cqw, calc(100cqh * 16 / 9))' }}
+        >
+          <div className="absolute inset-0">
+            {shownUrl ? (
+              <BotScreen
+                key={`${shownUrl}:${showInteractive ? 'i' : 'v'}`}
+                url={shownUrl}
+                interactive={!!showInteractive}
+                onOperatorInput={recording && showInteractive ? session.reportInput : undefined}
+              />
             ) : (
-              <>
-                <Monitor size={22} className="text-[var(--ink-muted)]" aria-hidden />
-                <p className="text-ui-sm text-[var(--ink-secondary)]">{box?.alive ? 'Stream offline — wake to reconnect.' : 'The computer is asleep.'}</p>
-                <button type="button" onClick={() => void wake()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
-                  <Power size={12} aria-hidden /> Wake the computer
-                </button>
-              </>
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 text-center px-6 bg-black">
+                {booting || session.phase === 'starting' ? (
+                  <>
+                    <Ghost size={28} className="text-white/80" aria-hidden />
+                    <p className="text-ui-sm text-white/80">Waking up…</p>
+                  </>
+                ) : error ? (
+                  <>
+                    <Monitor size={22} className="text-white/50" aria-hidden />
+                    <p className="text-ui-sm text-[var(--danger)] max-w-sm">{error}</p>
+                    <button type="button" onClick={() => void wake()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
+                      <Power size={12} aria-hidden /> Wake the computer
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <Monitor size={22} className="text-white/50" aria-hidden />
+                    <p className="text-ui-sm text-white/70">{box?.alive ? 'Stream offline — wake to reconnect.' : 'The computer is asleep.'}</p>
+                    <button type="button" onClick={() => void wake()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
+                      <Power size={12} aria-hidden /> Wake the computer
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
+            {shownUrl && (
+              <ControlPill
+                driving={inControl}
+                takeDisabled={!interactiveUrl && session.phase !== 'waiting'}
+                onTakeControl={takeControl}
+                onStop={stopControl}
+              />
+            )}
+
+            {!expanded && onExpand && (
+              <button
+                type="button"
+                onClick={() => { onExpand(); if (!box?.viewUrl) void wake() }}
+                aria-label="Enlarge the computer view"
+                title="Enlarge"
+                className="absolute top-2 right-2 z-20 p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition"
+              >
+                <Maximize2 size={14} aria-hidden />
+              </button>
             )}
           </div>
-        )}
-
-        {/* Teach overlays */}
-        {session.phase === 'waiting' && (
-          <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/85 to-transparent">
-            <div className="flex items-center gap-3 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-overlay)] px-3.5 py-2.5">
-              <MousePointer2 size={14} className="text-[var(--warning)] shrink-0" aria-hidden />
-              <div className="flex-1 min-w-0">
-                <p className="text-ui-sm text-[var(--ink-primary)]">Ready when you are — take over and show the bot how it&apos;s done.</p>
-                <p className="text-2xs text-[var(--ink-muted)]">It records your screen until you press Stop.</p>
-              </div>
-              <button type="button" onClick={() => void session.takeOver()} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs font-medium text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
-                <MousePointer2 size={12} aria-hidden /> Take over
-              </button>
-              <button type="button" onClick={() => void session.cancel()} className="shrink-0 px-2 py-1.5 text-2xs text-[var(--ink-muted)] hover:text-[var(--danger)]">Cancel</button>
-            </div>
-          </div>
-        )}
-        {session.phase === 'recording' && (
-          <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/85 to-transparent">
-            <div className="flex items-center gap-3 rounded-xl border border-[var(--danger-soft-border)] bg-[var(--danger-soft)] px-3.5 py-2.5">
-              <span className="w-2 h-2 rounded-full bg-[var(--danger)] animate-pulse shrink-0" aria-hidden />
-              <p className="flex-1 text-ui-sm text-[var(--ink-primary)]">Recording — drive the computer; the bot is watching.</p>
-              <button type="button" onClick={() => void session.stop()} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs font-medium text-white bg-[var(--danger-strong)] hover:bg-[var(--danger-strong-hover)] transition">
-                <Square size={11} aria-hidden /> Stop
-              </button>
-            </div>
-          </div>
-        )}
-        {session.phase === 'starting' && (
-          <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/85 to-transparent">
-            <div className="flex items-center gap-3 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-overlay)] px-3.5 py-2.5">
-              <Loader2 size={14} className="animate-spin text-[var(--accent-text)] shrink-0" aria-hidden />
-              <p className="flex-1 text-ui-sm text-[var(--ink-primary)]">Starting the teach session…</p>
-              <button type="button" onClick={() => void session.cancel()} className="shrink-0 px-2 py-1.5 text-2xs text-[var(--ink-muted)] hover:text-[var(--danger)]">Cancel</button>
-            </div>
-          </div>
-        )}
+        </div>
+        </div>
       </div>
 
-      {/* Status strip */}
-      <div className="flex items-center gap-2 px-3 py-2 border-t border-[var(--border-subtle)] text-2xs text-[var(--ink-muted)] shrink-0">
-        <span className={`w-1.5 h-1.5 rounded-full ${box?.alive ? 'bg-[var(--success)]' : 'bg-[var(--ink-muted)]'}`} aria-hidden />
-        <span className="font-mono truncate">{box?.sandboxId ? `loop-bot-vm-${box.sandboxId.slice(0, 8)}` : 'loop-bot-vm'}</span>
-        <span className="opacity-50">·</span>
-        <span>{box?.alive ? (box.resumed ? 'resumed' : 'always on') : booting ? 'waking…' : 'asleep'}</span>
-        {!teachActive && interactiveUrl && (
-          <button
-            type="button"
-            onClick={() => setDriving((v) => !v)}
-            className="ml-1 px-1.5 py-0.5 rounded text-2xs border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] transition"
-          >
-            {driving ? 'Release' : 'Take over'}
-          </button>
-        )}
-        <span className="ml-auto font-mono opacity-50">{box?.workspaceDir || '/workspace'}</span>
-        <button type="button" onClick={() => void (shownUrl ? probe() : wake())} aria-label="Refresh the stream" className="p-1 rounded text-[var(--ink-muted)] hover:text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition">
-          <RefreshCw size={12} aria-hidden />
-        </button>
-      </div>
-    </>
+      {!expanded && (
+        <div className="shrink-0 pt-2 text-center">
+          <p className="text-ui-xs text-[var(--ink-muted)]">{botName}&apos;s screen</p>
+          {session.phase === 'failed' && session.error && (
+            <p className="mt-1 text-ui-xs text-[var(--danger)]">{session.error}</p>
+          )}
+          {session.phase === 'done' && (
+            <p className="mt-1 text-ui-xs text-[var(--success)]">
+              Skill saved{session.skillName ? ` · ${session.skillName}` : ''}
+            </p>
+          )}
+        </div>
+      )}
+
+    </div>
   )
 
-  // ── Expanded: full-window Dialog with teach pill + collapse ─────────────
   if (expanded) {
     return (
       <Dialog
         open
         onClose={() => { onCollapse?.() }}
-        ariaLabel="Loop Bot computer"
+        ariaLabel={`${botName}'s computer`}
         scrimClassName="bg-[var(--bg-base)] !p-0"
         panelClassName="w-full h-full rounded-none border-none bg-[var(--bg-base)] p-0 shadow-none outline-none flex flex-col"
       >
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-subtle)] shrink-0">
-          <Monitor size={15} className="text-[var(--ink-muted)]" aria-hidden />
-          <span className="text-ui-sm font-medium text-[var(--ink-secondary)]">Loop Bot&apos;s computer</span>
-          <div className="ml-auto flex items-center gap-2">
-            <TeachPill session={session} onStart={startTeach} />
-            <button
-              type="button"
-              onClick={onCollapse}
-              aria-label="Shrink the computer view"
-              className="p-2 rounded-lg text-[var(--ink-muted)] hover:text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition"
-            >
-              <X size={16} aria-hidden />
-            </button>
-          </div>
-        </div>
-        {screen}
+        <RecordBar
+          session={session}
+          botName={botName}
+          onStart={startRecording}
+          onStop={stopControl}
+          onClose={onCollapse}
+        />
+        {stage}
       </Dialog>
     )
   }
 
-  // ── Embedded: small stream + expand button ─────────────────────────────────
+  return stage
+}
+
+/** On-screen pill. Stop releases control, and ends the recording when one is active. */
+function ControlPill({
+  driving, takeDisabled, onTakeControl, onStop,
+}: {
+  driving: boolean
+  takeDisabled?: boolean
+  onTakeControl: () => void
+  onStop: () => void
+}) {
   return (
-    <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-subtle)] shrink-0">
-        <span className="text-ui-xs text-[var(--ink-secondary)] font-medium">Its screen — live</span>
-        <div className="ml-auto flex items-center gap-1">
-          <TeachPill session={session} onStart={startTeach} compact />
-          {onExpand && (
-            <button
-              type="button"
-              onClick={() => { onExpand(); if (!box?.viewUrl) void wake() }}
-              aria-label="Enlarge the computer view"
-              title="Enlarge"
-              className="p-1.5 rounded-lg text-[var(--ink-muted)] hover:text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition"
-            >
-              <Maximize2 size={13} aria-hidden />
-            </button>
-          )}
-        </div>
-      </div>
-      {screen}
+    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 rounded-full bg-black/75 border border-white/15 pl-3 pr-1 py-1 shadow-lg">
+      {driving ? (
+        <>
+          <span className="text-ui-xs text-white pr-1">You&apos;re in control</span>
+          <button
+            type="button"
+            onClick={onStop}
+            className="rounded-full bg-white text-black px-3 py-1 text-ui-xs font-medium hover:bg-white/90 transition"
+          >
+            Stop
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="text-ui-xs text-white/80 pr-1">Watching</span>
+          <button
+            type="button"
+            onClick={onTakeControl}
+            disabled={takeDisabled}
+            className="rounded-full bg-white text-black px-3 py-1 text-ui-xs font-medium hover:bg-white/90 transition disabled:opacity-40"
+          >
+            Take control
+          </button>
+        </>
+      )}
     </div>
   )
 }
 
-/** The record-dot teach pill — one click starts recording, one click stops. */
-function TeachPill({ session, onStart, compact = false }: { session: TeachSession; onStart: () => void; compact?: boolean }) {
-  const { phase, frames, error } = session
-  const base = compact ? 'px-2 py-1 text-2xs gap-1' : 'px-3 py-1.5 text-ui-xs gap-1.5'
-
-  if (phase === 'starting' || phase === 'waiting') {
-    return (
-      <span className={`flex items-center rounded-lg font-medium text-[var(--danger)] bg-[var(--danger-soft)] border border-[var(--danger-soft-border)] ${base}`}>
-        <Loader2 size={compact ? 10 : 12} className="animate-spin" aria-hidden />
-        {phase === 'starting' ? 'Booting…' : 'Take over'}
-      </span>
-    )
-  }
-  if (phase === 'recording') {
-    return (
+function RecordBar({
+  session, botName, onStart, onStop, onClose,
+}: {
+  session: TeachSession
+  botName: string
+  onStart: () => void
+  onStop: () => void
+  onClose?: () => void
+}) {
+  const recording = session.phase === 'recording'
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border-subtle)] shrink-0">
+      {recording ? (
+        <>
+          <span className="w-2 h-2 rounded-full bg-[var(--danger)] animate-pulse shrink-0" aria-hidden />
+          <span className="text-ui-sm text-[var(--ink-primary)]">
+            {session.frames} {session.frames === 1 ? 'frame' : 'frames'} · {session.steps} {session.steps === 1 ? 'step' : 'steps'}
+          </span>
+          <button
+            type="button"
+            onClick={onStop}
+            className="ml-auto px-3 py-1.5 rounded-lg text-ui-xs font-medium text-white bg-[var(--danger-strong)] hover:bg-[var(--danger-strong-hover)] transition"
+          >
+            Stop
+          </button>
+        </>
+      ) : (
+        <>
+          <p className={`flex-1 min-w-0 text-ui-sm leading-snug ${session.phase === 'failed' ? 'text-[var(--danger)]' : 'text-[var(--ink-secondary)]'}`}>
+            {session.phase === 'failed'
+              ? session.error
+              : session.phase === 'distilling'
+                ? 'Saving skill…'
+                : session.phase === 'done'
+                  ? `Skill saved${session.skillName ? ` · ${session.skillName}` : ''}`
+                  : `Record yourself doing a task. ${botName} learns the steps and can run them again on its own.`}
+          </p>
+          {session.phase === 'distilling' ? (
+            <Loader2 size={16} className="animate-spin text-[var(--accent-text)] shrink-0" aria-hidden />
+          ) : session.phase === 'done' ? null : (
+            <button
+              type="button"
+              onClick={onStart}
+              disabled={session.phase === 'starting'}
+              className="shrink-0 px-3 py-1.5 rounded-lg text-ui-xs font-medium text-white bg-[var(--danger-strong)] hover:bg-[var(--danger-strong-hover)] transition disabled:opacity-60"
+            >
+              {session.phase === 'starting' ? 'Starting…' : 'Start recording'}
+            </button>
+          )}
+        </>
+      )}
       <button
         type="button"
-        onClick={() => void session.stop()}
-        className={`flex items-center rounded-lg font-medium text-white bg-[var(--danger-strong)] hover:bg-[var(--danger-strong-hover)] transition ${base}`}
-        title="Stop — the bot converts the recording into a skill"
+        onClick={onClose}
+        aria-label="Close the computer view"
+        className="p-2 rounded-lg text-[var(--ink-muted)] hover:text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition shrink-0"
       >
-        <Square size={compact ? 9 : 11} className="fill-current" aria-hidden />
-        Stop{!compact && ` · ${frames}f`}
+        <X size={16} aria-hidden />
       </button>
-    )
-  }
-  if (phase === 'distilling') {
-    return (
-      <span className={`flex items-center rounded-lg font-medium text-[var(--accent-text)] bg-[var(--accent-soft)] border border-[var(--accent-soft-border)] ${base}`}>
-        <Loader2 size={compact ? 10 : 12} className="animate-spin" aria-hidden /> Saving skill…
-      </span>
-    )
-  }
-  if (phase === 'done') {
-    return (
-      <span className={`flex items-center rounded-lg font-medium text-[var(--success)] bg-[var(--bg-tint)] border border-[var(--border-subtle)] ${base}`}>
-        <GraduationCap size={compact ? 10 : 12} aria-hidden /> Skill saved
-      </span>
-    )
-  }
-  if (phase === 'failed') {
-    return (
-      <button type="button" onClick={session.reset} title={error} className={`flex items-center rounded-lg font-medium text-[var(--danger)] bg-[var(--danger-soft)] border border-[var(--danger-soft-border)] ${base}`}>
-        Retry
-      </button>
-    )
-  }
-  return (
-    <button
-      type="button"
-      onClick={onStart}
-      title="Start recording — drive the computer through the task once and it becomes a skill"
-      className={`flex items-center rounded-lg font-medium text-[var(--ink-secondary)] bg-[var(--bg-hover-strong)] border border-[var(--border-strong)] hover:bg-[var(--bg-hover)] transition ${base}`}
-    >
-      <Circle size={compact ? 8 : 10} className="fill-[var(--danger)] text-[var(--danger)]" aria-hidden />
-      Teach a task
-    </button>
-  )
-}
-
-/** Grok's "Starting desktop" three-dot loader. */
-function LoadingDots() {
-  return (
-    <div className="flex items-center gap-1.5" aria-hidden>
-      {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          className="w-2 h-2 rounded-full bg-[var(--ink-muted)] animate-bounce"
-          style={{ animationDelay: `${i * 0.15}s`, animationDuration: '0.9s' }}
-        />
-      ))}
     </div>
   )
 }

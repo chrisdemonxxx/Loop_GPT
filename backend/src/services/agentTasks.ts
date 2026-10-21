@@ -342,6 +342,7 @@ export const BOT_PERMANENT_FAILURES = [
   'BOT_OUT_OF_CREDITS',
   'BOT_COMPUTER_TTL',
   'BOT_COMPUTER_QUOTA',
+  'BOT_TEACH_NOTHING_RECORDED',
 ] as const
 
 /** Failure recording with deterministic DB-clock backoff; mirrors the settlement
@@ -353,13 +354,13 @@ export async function failAgentTask(claim: AgentTaskClaim, code: string, message
     UPDATE "AgentTask"
     SET "status" = CASE
           WHEN "cancelRequested" = true OR ${code} = 'BOT_TASK_CANCELLED' THEN 'cancelled'
-          WHEN ${code} IN ('BOT_TASK_INVALID', 'BOT_COMPUTER_UNCONFIGURED', 'BOT_OUT_OF_CREDITS', 'BOT_COMPUTER_TTL', 'BOT_COMPUTER_QUOTA') THEN 'dead_letter'
+          WHEN ${code} IN (${Prisma.join(BOT_PERMANENT_FAILURES)}) THEN 'dead_letter'
           WHEN "attempts" >= ${AGENT_TASK_MAX_ATTEMPTS} THEN 'dead_letter'
           ELSE 'queued' END,
         "nextAttemptAt" = CASE
           WHEN "cancelRequested" = true OR ${code} = 'BOT_TASK_CANCELLED'
                OR "attempts" >= ${AGENT_TASK_MAX_ATTEMPTS}
-               OR ${code} IN ('BOT_TASK_INVALID', 'BOT_COMPUTER_UNCONFIGURED', 'BOT_OUT_OF_CREDITS', 'BOT_COMPUTER_TTL', 'BOT_COMPUTER_QUOTA') THEN "nextAttemptAt"
+               OR ${code} IN (${Prisma.join(BOT_PERMANENT_FAILURES)}) THEN "nextAttemptAt"
           -- A paused routine (PAUSED_AT) must stay paused through backoff.
           WHEN "nextAttemptAt" >= '2099-01-01'::timestamptz THEN "nextAttemptAt"
           ELSE statement_timestamp() + (LEAST(300000, 1000 * power(2, LEAST("attempts" - 1, 9))) * interval '1 millisecond') END,

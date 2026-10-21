@@ -14,6 +14,7 @@ import {
   enqueueAgentTask,
   failAgentTask,
   getAgentTask,
+  BOT_PERMANENT_FAILURES,
   isCancelRequested,
   listAgentTasks,
   parseScheduleMs,
@@ -157,7 +158,7 @@ describe('complete / fail', () => {
   })
 
   it('permanent failure codes dead-letter on the FIRST attempt (no retries)', async () => {
-    for (const code of ['BOT_TASK_INVALID', 'BOT_COMPUTER_UNCONFIGURED', 'BOT_OUT_OF_CREDITS']) {
+    for (const code of BOT_PERMANENT_FAILURES) {
       const task = await enqueue()
       const claim = await claimOne()
       expect((await raw(task.id)).attempts).toBe(1)
@@ -167,6 +168,37 @@ describe('complete / fail', () => {
       expect(row.failures, code).toBe(1)
       expect(row.lastErrorCode).toBe(code)
     }
+  })
+
+  it('pause-during-run sticks on complete (scheduled routine stays at PAUSED_AT)', async () => {
+    const pausedAt = new Date('2099-12-31T00:00:00Z')
+    const task = await enqueue({ kind: 'scheduled', schedule: '5m' })
+    const claim = await claimOne()
+    await db.agentTask.update({ where: { id: task.id }, data: { nextAttemptAt: pausedAt } })
+    expect(await completeAgentTask(claim)).toBe('succeeded')
+    const row = await raw(task.id)
+    expect(row.status).toBe('queued')
+    expect(row.nextAttemptAt.getTime()).toBe(pausedAt.getTime())
+  })
+
+  it('pause-during-run sticks on fail (backoff must not un-pause)', async () => {
+    const pausedAt = new Date('2099-12-31T00:00:00Z')
+    const task = await enqueue({ kind: 'scheduled', schedule: '5m' })
+    const claim = await claimOne()
+    await db.agentTask.update({ where: { id: task.id }, data: { nextAttemptAt: pausedAt } })
+    expect(await failAgentTask(claim, 'BOT_RUN_FAILED', 'transient')).toBe('retry')
+    const row = await raw(task.id)
+    expect(row.status).toBe('queued')
+    expect(row.nextAttemptAt.getTime()).toBe(pausedAt.getTime())
+  })
+
+  it('delete-during-run (cancelRequested) sticks on complete', async () => {
+    const task = await enqueue({ kind: 'scheduled', schedule: '5m' })
+    const claim = await claimOne()
+    const cancelled = await cancelAgentTask(task.id)
+    expect(cancelled).toEqual({ cancelled: true, immediate: false })
+    expect(await completeAgentTask(claim)).toBe('cancelled')
+    expect((await raw(task.id)).status).toBe('cancelled')
   })
 })
 

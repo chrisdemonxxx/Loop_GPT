@@ -102,6 +102,13 @@ describe('computer enqueue gate (fail fast)', () => {
   })
 
   it('names the permanent failure codes (no pointless retries)', () => {
-    expect(BOT_PERMANENT_FAILURES).toEqual(['BOT_TASK_INVALID', 'BOT_COMPUTER_UNCONFIGURED', 'BOT_OUT_OF_CREDITS'])
+    expect([...BOT_PERMANENT_FAILURES]).toEqual([
+      'BOT_TASK_INVALID',
+      'BOT_COMPUTER_UNCONFIGURED',
+      'BOT_OUT_OF_CREDITS',
+      'BOT_COMPUTER_TTL',
+      'BOT_COMPUTER_QUOTA',
+      'BOT_TEACH_NOTHING_RECORDED',
+    ])
   })
 })

@@ -204,6 +204,22 @@ router.post('/runs/:runId/takeover', asyncHandler(async (req, res) => {
   res.json({ takeoverRequested: takeover, interactiveUrl: takeover ? info?.interactiveUrl || null : null })
 }))
 
+/** POST /api/bot/runs/:runId/teach-steps — append one operator input event.
+ *  Body: { at, kind: 'click'|'key'|'type', x?, y?, key?, text? }.
+ *  x/y are framebuffer pixels (1366×768), not CSS pixels.
+ *  An owned, still-running teach run stores the step even if takeover has
+ *  not been persisted yet. { ok: true, stored: false } means this is not a
+ *  live teach run (or the step log is full) and the step was not kept. */
+router.post('/runs/:runId/teach-steps', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { recordTeachStep } = await import('../services/teachSteps')
+  const result = await recordTeachStep(req.params.runId, (req as any).userId, req.body)
+  if (!result.ok) {
+    return res.status(result.status).json({ error: result.error, ...(result.code ? { code: result.code } : {}) })
+  }
+  res.json({ ok: true, stored: result.stored })
+}))
+
 /** GET /api/bot/memory?botId= — one bot's remembered notes (its long-term
  *  memory file, mirrored from the box). */
 router.get('/memory', asyncHandler(async (req, res) => {

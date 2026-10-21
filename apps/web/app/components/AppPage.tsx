@@ -160,10 +160,14 @@ export function AppPage({
     ? <PageHeader title={title} description={description} back={back} actions={actions} meta={meta} icon={icon} />
     : null)
   if (width === 'fill') {
+    // Keep the shared title/actions row (Stop / Continue / Publish on /build).
     return (
       <div className="h-dvh flex flex-col bg-[var(--bg-base)] text-slate-200 overflow-hidden">
         <AppBar />
-        <div className="flex-1 min-h-0 flex flex-col">{children}</div>
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div className="mx-auto w-full max-w-[1600px] px-5 pt-6 shrink-0">{heading}</div>
+          <div className="flex-1 min-h-0 flex flex-col px-5 pb-[max(1rem,env(safe-area-inset-bottom))]">{children}</div>
+        </div>
       </div>
     )
   }

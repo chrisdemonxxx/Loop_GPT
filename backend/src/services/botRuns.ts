@@ -322,15 +322,34 @@ export interface RunComputerInfo {
   endedAt?: string
   minutes?: number
   takeoverRequested?: boolean
+  /** Teach operator input mirrored by the API (framebuffer steps). Preserved
+   *  across session metadata writes so a worker in another process can read it. */
+  teachSteps?: unknown[]
   /** Run status as of the DB read (the worker owns lifecycle transitions). */
   runStatus?: string
 }
 
 const runComputers = new Map<string, RunComputerInfo>()
 
-/** Worker side: merge session metadata into the live view + the row. */
+function teachStepsOf(computer: unknown): unknown[] | undefined {
+  if (!computer || typeof computer !== 'object' || Array.isArray(computer)) return undefined
+  const steps = (computer as { teachSteps?: unknown }).teachSteps
+  return Array.isArray(steps) && steps.length ? steps : undefined
+}
+
+/** Worker side: merge session metadata into the live view + the row.
+ *  Teach steps live on the same JSON blob; a metadata patch must not wipe them. */
 export async function setRunComputer(runId: string, patch: RunComputerInfo): Promise<void> {
-  const merged = { ...(runComputers.get(runId) || {}), ...patch }
+  const merged: RunComputerInfo = { ...(runComputers.get(runId) || {}), ...patch }
+  let steps = teachStepsOf(merged)
+  if (prisma) {
+    try {
+      const row = await prisma.botRun.findUnique({ where: { id: runId }, select: { computer: true } })
+      const stored = teachStepsOf(row?.computer)
+      if (stored && (!steps || stored.length > steps.length)) steps = stored
+    } catch { /* session metadata still writes */ }
+  }
+  if (steps) merged.teachSteps = steps
   runComputers.set(runId, merged)
   if (!prisma) return
   try {

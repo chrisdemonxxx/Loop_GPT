@@ -83,6 +83,21 @@ export const wakeBotComputer = (taskType: BotBoxTaskType = 'default') =>
 export const setBotTakeover = (runId: string, takeover: boolean) =>
   req<{ takeoverRequested: boolean; interactiveUrl: string | null }>('POST', `/api/bot/runs/${runId}/takeover`, { takeover })
 
+/** One operator input during a teach recording. Coordinates are framebuffer pixels (1366×768), not CSS pixels. */
+export interface BotTeachStep {
+  at: number
+  kind: 'click' | 'key' | 'type'
+  x?: number
+  y?: number
+  key?: string
+  text?: string
+}
+
+/** Append a click, key, or typed run to the teach timeline. The runner distills these after Stop.
+ *  stored is true only when the server kept the step on a live teach run. */
+export const appendBotTeachStep = (runId: string, step: BotTeachStep) =>
+  req<{ ok: true; stored: boolean }>('POST', `/api/bot/runs/${runId}/teach-steps`, step)
+
 export const getBotQuota = () => req<BotQuota>('GET', '/api/bot/quota')
 
 // ── Box files — the operator and the bot share one filesystem ───────────────

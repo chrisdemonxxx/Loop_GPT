@@ -264,8 +264,8 @@ export function BotProfilePanel({ bot, onLabel }: {
 
   return (
     <>
-      <aside aria-label={`${bot.name} profile`} className="hidden lg:flex w-[300px] shrink-0 h-full flex-col border-l border-white/[0.06] bg-[#0c0c0e]">
-        <div className="px-4 pt-5 pb-3">
+      <aside aria-label={`${bot.name} profile`} className="hidden lg:flex w-[300px] shrink-0 h-full min-h-0 flex-col overflow-hidden border-l border-white/[0.06] bg-[#0c0c0e]">
+        <div className="px-4 pt-5 pb-3 shrink-0">
           <BotAvatar name={bot.name} color={bot.avatarColor} working={bot.working} size={44} />
           <div className="mt-3 text-[16px] font-medium text-slate-100">{bot.name}</div>
           <input
@@ -277,11 +277,12 @@ export function BotProfilePanel({ bot, onLabel }: {
             className="mt-1 w-full bg-transparent text-[12px] text-slate-400 placeholder-slate-600 focus:outline-none"
           />
         </div>
-        <div className="px-3 flex gap-1 text-[12px] flex-wrap">
+        <div className="px-3 flex gap-1 text-[12px] flex-wrap shrink-0">
           {(['details', 'library', 'computer', 'files'] as const).map((id) => (
             <button key={id} type="button" onClick={() => setTab(id)} className={`px-2.5 py-1 rounded-lg capitalize ${tab === id ? 'bg-white/[0.08] text-slate-100' : 'text-slate-500'}`} aria-pressed={tab === id}>{id}</button>
           ))}
         </div>
+        {(tab === 'details' || tab === 'library') && (
         <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 text-[13px] text-slate-300">
           {tab === 'details' && (
             <div className="space-y-2">
@@ -291,7 +292,7 @@ export function BotProfilePanel({ bot, onLabel }: {
           )}
           {tab === 'library' && (
             skills.length === 0
-              ? <p className="text-slate-500">No skills yet. Teach a task and it lands here.</p>
+              ? <p className="text-slate-500">No skills yet. Start recording on the computer and it lands here after you stop.</p>
               : (
                 <ul className="space-y-2">
                   {skills.map((s) => (
@@ -315,24 +316,26 @@ export function BotProfilePanel({ bot, onLabel }: {
                 </ul>
               )
           )}
-          {tab === 'computer' && !computerExpanded && (
-            <div className="h-56 rounded-xl border border-white/10 overflow-hidden">
-              <AgentComputerTab
-                session={teach}
-                onExpand={() => setComputerExpanded(true)}
-              />
-            </div>
-          )}
-          {tab === 'files' && (
-            <div className="h-64 min-h-0">
-              <BotFilesPanel />
-            </div>
-          )}
-          {teach.error && tab === 'computer' && <p className="mt-2 text-[12px] text-rose-300">{teach.error}</p>}
         </div>
+        )}
+        {tab === 'computer' && !computerExpanded && (
+          <div className="flex-1 min-h-0 flex flex-col px-4 py-3">
+            <AgentComputerTab
+              botName={bot.name}
+              session={teach}
+              onExpand={() => setComputerExpanded(true)}
+            />
+          </div>
+        )}
+        {tab === 'files' && (
+          <div className="flex-1 min-h-0 flex flex-col px-4 py-3">
+            <BotFilesPanel />
+          </div>
+        )}
       </aside>
       {computerExpanded && (
         <AgentComputerTab
+          botName={bot.name}
           session={teach}
           expanded
           onCollapse={() => setComputerExpanded(false)}
