@@ -67,9 +67,12 @@ from loopit_store import (
     AuditStore,
     InMemoryAuditStore,
     InMemoryProjectStore,
+    CheckpointRecord,
+    InMemoryCheckpointStore,
     InMemoryQuotaStore,
     InMemoryRunStore,
     PostgresAuditStore,
+    PostgresCheckpointStore,
     PostgresProjectStore,
     PostgresQuotaStore,
     PostgresRunStore,
@@ -605,6 +608,7 @@ def create_app(
     quota_store: QuotaStore
     project_store: ProjectStore
     run_store: RunStore
+    checkpoint_store: PostgresCheckpointStore | InMemoryCheckpointStore
     if auth_dsn:
         conn = connect(auth_dsn)
         auth_repo = PostgresAuthRepository(conn)
@@ -612,12 +616,14 @@ def create_app(
         quota_store = PostgresQuotaStore(conn)
         project_store = PostgresProjectStore(conn)
         run_store = PostgresRunStore(conn)
+        checkpoint_store = PostgresCheckpointStore(conn)
     else:
         auth_repo = InMemoryAuthRepository()
         audit_store = InMemoryAuditStore()
         quota_store = InMemoryQuotaStore()
         project_store = InMemoryProjectStore()
         run_store = InMemoryRunStore()
+        checkpoint_store = InMemoryCheckpointStore()
 
     def _on_run_finished(state: RunState) -> None:
         try:
@@ -1034,6 +1040,20 @@ def create_app(
         if resolved_execution_mode == "orchestrator":
             project_id = body.project_id or f"proj_{secrets.token_hex(6)}"
             _catalog_start(project_id=project_id, prompt=body.prompt, stack=body.stack, tier=body.tier)
+            # Leases reference a real checkpoint row. "root" is not one, and
+            # the foreign key rejects the sandbox assignment.
+            checkpoint_id = f"ckpt_{secrets.token_hex(8)}"
+            checkpoint_store.create(
+                CheckpointRecord(
+                    checkpoint_id=checkpoint_id,
+                    tenant_id=request_actor.actor.tenant_id,
+                    project_id=project_id,
+                    manifest={},
+                    label="initial scaffold",
+                    created_by_run_id=run_id,
+                    verified=True,
+                )
+            )
             status = await (await _orchestrator()).start(
                 RunWorkflowInput(
                     prompt=body.prompt,
@@ -1041,6 +1061,7 @@ def create_app(
                     actor_id=request_actor.actor.subject,
                     project_id=project_id,
                     run_id=run_id,
+                    base_checkpoint_id=checkpoint_id,
                     difficulty=body.difficulty,  # type: ignore[arg-type]
                     budget=WorkflowBudget(max_iterations=body.max_iterations or 12),
                     stack=body.stack,

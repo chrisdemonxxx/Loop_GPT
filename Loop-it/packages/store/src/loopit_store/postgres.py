@@ -574,29 +574,33 @@ class PostgresAppendOnlyAuditSink(_Store):
 
 class PostgresLeaseStore(_Store):
     def create(self, lease: LeaseRecord) -> LeaseRecord:
-        row = self._conn.execute(
-            """
-            INSERT INTO sandbox_leases (
-                lease_id, tenant_id, run_id, project_id, sandbox_id, base_checkpoint_id,
-                expires_at, caps, allowed_tools, status, created_at, released_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING *
-            """,
-            (
-                lease.lease_id,
-                lease.tenant_id,
-                lease.run_id,
-                lease.project_id,
-                lease.sandbox_id,
-                lease.base_checkpoint_id,
-                lease.expires_at,
-                Jsonb(lease.caps),
-                list(lease.allowed_tools),
-                lease.status,
-                lease.created_at,
-                lease.released_at,
-            ),
-        ).fetchone()
+        try:
+            row = self._conn.execute(
+                """
+                INSERT INTO sandbox_leases (
+                    lease_id, tenant_id, run_id, project_id, sandbox_id, base_checkpoint_id,
+                    expires_at, caps, allowed_tools, status, created_at, released_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    lease.lease_id,
+                    lease.tenant_id,
+                    lease.run_id,
+                    lease.project_id,
+                    lease.sandbox_id,
+                    lease.base_checkpoint_id,
+                    lease.expires_at,
+                    Jsonb(lease.caps),
+                    list(lease.allowed_tools),
+                    lease.status,
+                    lease.created_at,
+                    lease.released_at,
+                ),
+            ).fetchone()
+        except Exception:
+            self._conn.rollback()
+            raise
         if row is None:
             self._conn.rollback()
             raise RuntimeError("lease insert returned no row")
