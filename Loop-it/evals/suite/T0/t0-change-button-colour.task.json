@@ -1,0 +1,10 @@
+{
+  "task_id": "t0-change-button-colour",
+  "tier": "T0",
+  "prompt": "Change the primary button colour to #1f6feb.",
+  "checks": ["build_succeeds", "css_contains_primary_colour"],
+  "budget_credits": 0.05,
+  "max_wall_clock_seconds": 300,
+  "tags": ["styling", "single-file"],
+  "origin": "authored"
+}

@@ -1,0 +1,16 @@
+{
+  "task_id": "t1-notes-crud",
+  "tier": "T1",
+  "prompt": "A notes app: create, edit, and delete notes, with a searchable list.",
+  "checks": [
+    "build_succeeds",
+    "unit_tests_pass",
+    "e2e_create_note",
+    "e2e_edit_note",
+    "e2e_search_filters_list"
+  ],
+  "budget_credits": 0.7,
+  "max_wall_clock_seconds": 900,
+  "tags": ["crud", "search"],
+  "origin": "authored"
+}

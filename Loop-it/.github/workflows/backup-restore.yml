@@ -1,0 +1,82 @@
+name: Backup and restore drill
+
+on:
+  schedule:
+    - cron: '15 2 * * *'
+    - cron: '45 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      run_restore_drill:
+        description: Restore the latest backup into scratch DB and verify it
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  backup:
+    name: Control-plane backup
+    runs-on: ubuntu-latest
+    environment: staging
+    outputs:
+      backup_dir: ${{ steps.backup.outputs.backup_dir }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --dev
+      - name: Run backup
+        id: backup
+        shell: bash
+        env:
+          CONTROL_PLANE_DATABASE_URL: ${{ secrets.CONTROL_PLANE_DATABASE_URL }}
+          LOOPIT_CHECKPOINT_ROOT: ${{ vars.LOOPIT_CHECKPOINT_ROOT }}
+          LOOPIT_AUDIT_WORM_ROOT: ${{ vars.LOOPIT_AUDIT_WORM_ROOT }}
+        run: |
+          set -euo pipefail
+          dir="artifacts/control-plane-backup/${GITHUB_RUN_ID}"
+          uv run python scripts/backup_control_plane.py --out "$dir"
+          echo "backup_dir=$dir" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: control-plane-backup-${{ github.run_id }}
+          path: artifacts/control-plane-backup/${{ github.run_id }}
+          if-no-files-found: ignore
+
+  restore-drill:
+    name: Scratch restore drill
+    runs-on: ubuntu-latest
+    environment: staging
+    needs: [backup]
+    if: github.event_name == 'schedule' && github.event.schedule == '45 3 * * 0' || github.event_name == 'workflow_dispatch' && inputs.run_restore_drill
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --dev
+      - uses: actions/download-artifact@v4
+        with:
+          name: control-plane-backup-${{ github.run_id }}
+          path: artifacts/control-plane-backup/${{ github.run_id }}
+      - name: Restore and verify
+        env:
+          SCRATCH_DATABASE_URL: ${{ secrets.SCRATCH_DATABASE_URL }}
+        run: >
+          uv run python scripts/restore_control_plane.py
+          --backup-dir artifacts/control-plane-backup/${{ github.run_id }}
+          --target-dsn "$SCRATCH_DATABASE_URL"
+          --reset-schema

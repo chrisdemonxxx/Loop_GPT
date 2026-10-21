@@ -1,0 +1,122 @@
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub Environment to roll back
+        type: choice
+        required: true
+        default: staging
+        options:
+          - staging
+          - prod
+      service:
+        description: Service to roll back
+        type: choice
+        required: true
+        options:
+          - router-svc
+          - egress-proxy
+          - scheduler
+          - preview-proxy
+          - api
+          - web
+      target_release:
+        description: Fly release version, image reference, or release image tag to deploy
+        type: string
+        required: true
+
+concurrency:
+  group: rollback-${{ github.event.inputs.environment }}-${{ github.event.inputs.service }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  TARGET_ENVIRONMENT: ${{ github.event.inputs.environment }}
+  SERVICE: ${{ github.event.inputs.service }}
+  TARGET_RELEASE: ${{ github.event.inputs.target_release }}
+
+jobs:
+  rollback:
+    name: Roll back ${{ github.event.inputs.service }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master as of 2026-09-03
+      - name: Resolve service config
+        id: svc
+        shell: bash
+        env:
+          FLY_ROUTER_SVC_APP: ${{ vars.FLY_ROUTER_SVC_APP }}
+          FLY_EGRESS_PROXY_APP: ${{ vars.FLY_EGRESS_PROXY_APP }}
+          FLY_SCHEDULER_APP: ${{ vars.FLY_SCHEDULER_APP }}
+          FLY_PREVIEW_PROXY_APP: ${{ vars.FLY_PREVIEW_PROXY_APP }}
+          FLY_API_APP: ${{ vars.FLY_API_APP }}
+          FLY_WEB_APP: ${{ vars.FLY_WEB_APP }}
+          ROUTER_SVC_HEALTH_URL: ${{ vars.ROUTER_SVC_HEALTH_URL }}
+          EGRESS_PROXY_HEALTH_URL: ${{ vars.EGRESS_PROXY_HEALTH_URL }}
+          SCHEDULER_HEALTH_URL: ${{ vars.SCHEDULER_HEALTH_URL }}
+          PREVIEW_PROXY_HEALTH_URL: ${{ vars.PREVIEW_PROXY_HEALTH_URL }}
+          API_HEALTH_URL: ${{ vars.API_HEALTH_URL }}
+          WEB_HEALTH_URL: ${{ vars.WEB_HEALTH_URL }}
+        run: |
+          set -euo pipefail
+          case "$SERVICE" in
+            router-svc) config=infra/fly/fly.router-svc.toml; app="$FLY_ROUTER_SVC_APP"; health="$ROUTER_SVC_HEALTH_URL" ;;
+            egress-proxy) config=infra/fly/fly.egress-proxy.toml; app="$FLY_EGRESS_PROXY_APP"; health="$EGRESS_PROXY_HEALTH_URL" ;;
+            scheduler) config=infra/fly/fly.scheduler.toml; app="$FLY_SCHEDULER_APP"; health="$SCHEDULER_HEALTH_URL" ;;
+            preview-proxy) config=infra/fly/fly.preview-proxy.toml; app="$FLY_PREVIEW_PROXY_APP"; health="$PREVIEW_PROXY_HEALTH_URL" ;;
+            api) config=infra/fly/fly.api.toml; app="$FLY_API_APP"; health="$API_HEALTH_URL" ;;
+            web) config=infra/fly/fly.web.toml; app="$FLY_WEB_APP"; health="$WEB_HEALTH_URL" ;;
+            *) echo "unknown service: $SERVICE" >&2; exit 1 ;;
+          esac
+          test -n "$app" || { echo "Fly app variable for $SERVICE is not configured" >&2; exit 1; }
+          echo "config=$config" >> "$GITHUB_OUTPUT"
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "health=$health" >> "$GITHUB_OUTPUT"
+      - name: Resolve target image
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET_RELEASE" == ghcr.io/* || "$TARGET_RELEASE" == registry.fly.io/* ]]; then
+            image="$TARGET_RELEASE"
+          elif [[ "$TARGET_RELEASE" == v* || "$TARGET_RELEASE" =~ ^[0-9]+$ ]]; then
+            image="registry.fly.io/${{ steps.svc.outputs.app }}:$TARGET_RELEASE"
+          else
+            image="ghcr.io/${GITHUB_REPOSITORY,,}/${SERVICE}:$TARGET_RELEASE"
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+      - name: Deploy rollback image
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: >
+          flyctl deploy --config "${{ steps.svc.outputs.config }}"
+          --app "${{ steps.svc.outputs.app }}"
+          --image "${{ steps.target.outputs.image }}"
+          --strategy immediate
+          --wait-timeout 600
+      - name: Verify /healthz
+        shell: bash
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          APP: ${{ steps.svc.outputs.app }}
+          HEALTH_URL: ${{ steps.svc.outputs.health }}
+        run: |
+          set -euo pipefail
+          flyctl checks list --app "$APP"
+          if [[ -n "$HEALTH_URL" ]]; then
+            curl --fail --silent --show-error --max-time 15 "$HEALTH_URL"
+          fi
+          {
+            echo "## Rollback complete"
+            echo ""
+            echo "- Service: $SERVICE"
+            echo "- App: $APP"
+            echo "- Target: $TARGET_RELEASE"
+            echo "- Image: ${{ steps.target.outputs.image }}"
+          } >> "$GITHUB_STEP_SUMMARY"

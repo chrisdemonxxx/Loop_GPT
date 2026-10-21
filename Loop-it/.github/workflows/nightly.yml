@@ -1,0 +1,53 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  evals:
+    name: Full eval harness (T0-T3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: uv sync --dev
+      - name: Run eval tiers
+        run: >
+          uv run python -m loopit_evals.cli run
+          --tiers T0,T1,T2,T3
+          --baseline evals/results/baseline.json
+          --tolerance 0.05
+        env:
+          LOOPIT_ROUTER_URL: ${{ secrets.LOOPIT_ROUTER_URL }}
+          LOOPIT_ROUTER_TOKEN: ${{ secrets.LOOPIT_ROUTER_TOKEN }}
+      - name: Publish KPI report
+        if: always()
+        run: >
+          uv run python -m loopit_evals.cli report --format markdown
+          >> $GITHUB_STEP_SUMMARY
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: evals/results/
+
+  redteam:
+    name: Red-team (full suite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: uv sync --dev
+      - name: Sandbox escape / metadata / cross-tenant / injection
+        run: uv run pytest evals/redteam -v

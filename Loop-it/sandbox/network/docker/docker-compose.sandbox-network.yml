@@ -1,0 +1,24 @@
+services:
+  sandbox:
+    image: loopit-sandbox:dev
+    init: true
+    networks:
+      - sandbox_internal
+    environment:
+      HTTP_PROXY: http://egress-proxy:3128
+      HTTPS_PROXY: http://egress-proxy:3128
+      ALL_PROXY: http://egress-proxy:3128
+      NO_PROXY: 127.0.0.1,localhost,::1
+    dns:
+      - 127.0.0.11
+
+  egress-proxy:
+    image: loopit-egress-proxy:dev
+    networks:
+      - sandbox_internal
+      - egress_uplink
+
+networks:
+  sandbox_internal:
+    internal: true
+  egress_uplink: {}

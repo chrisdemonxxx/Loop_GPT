@@ -1,0 +1,23 @@
+[project]
+name = "loopit-planner"
+version = "0.0.0"
+description = "Structured DAG planner, parallel fork executor, and merge gate for Loop-it."
+requires-python = ">=3.11"
+dependencies = [
+    "jsonschema>=4.23",
+    "loopit-agent-core",
+    "loopit-checkpoint",
+    "loopit-policy",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loopit_planner"]
+
+[tool.uv.sources]
+loopit-agent-core = { workspace = true }
+loopit-checkpoint = { workspace = true }
+loopit-policy = { workspace = true }

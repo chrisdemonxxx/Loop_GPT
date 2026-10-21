@@ -1,0 +1,20 @@
+[project]
+name = "loopit-auth"
+version = "0.1.0"
+description = "Self-hosted authentication, RBAC, signed gateway identity, and preflight guards."
+requires-python = ">=3.11"
+dependencies = [
+    "loopit-agent-core",
+    "loopit-store",
+]
+
+[tool.uv.sources]
+loopit-agent-core = { workspace = true }
+loopit-store = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loopit_auth"]

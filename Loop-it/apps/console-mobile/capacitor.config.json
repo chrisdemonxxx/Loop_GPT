@@ -1,0 +1,8 @@
+{
+  "appId": "dev.loopit.console",
+  "appName": "Loop-it Console",
+  "webDir": "../web/dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

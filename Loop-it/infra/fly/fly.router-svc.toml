@@ -1,0 +1,25 @@
+app = "loopit-router-svc"
+primary_region = "iad"
+kill_signal = "SIGINT"
+kill_timeout = "5s"
+
+[build]
+  dockerfile = "services/router-svc/Dockerfile"
+
+[env]
+  PORT = "8001"
+  LOOPIT_ROUTER_PORT = "8001"
+  LOOPIT_MODEL_UPSTREAM_BASE_URL = "https://router.huggingface.co"
+
+[checks.healthz]
+  port = 8001
+  type = "http"
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "20s"
+  path = "/healthz"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256

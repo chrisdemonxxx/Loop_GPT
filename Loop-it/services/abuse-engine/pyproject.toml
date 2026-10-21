@@ -1,0 +1,28 @@
+[project]
+name = "loopit-abuse"
+version = "0.1.0"
+description = "Infrastructure abuse signal ingestion and automated T0-T3 response ladder."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "httpx>=0.28",
+    "loopit-agent-core",
+    "loopit-auth",
+    "loopit-store",
+    "loopit-telemetry",
+    "pydantic>=2.0",
+    "uvicorn>=0.30",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loopit_abuse"]
+
+[tool.uv.sources]
+loopit-agent-core = { workspace = true }
+loopit-auth = { workspace = true }
+loopit-store = { workspace = true }
+loopit-telemetry = { workspace = true }

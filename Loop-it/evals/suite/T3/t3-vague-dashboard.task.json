@@ -1,0 +1,15 @@
+{
+  "task_id": "t3-vague-dashboard",
+  "tier": "T3",
+  "prompt": "Make me a dashboard for my business.",
+  "checks": [
+    "clarifying_questions_asked",
+    "plan_is_approved_before_build",
+    "build_succeeds",
+    "e2e_renders_at_least_one_real_metric"
+  ],
+  "budget_credits": 4.0,
+  "max_wall_clock_seconds": 2700,
+  "tags": ["ambiguous", "planning"],
+  "origin": "authored"
+}

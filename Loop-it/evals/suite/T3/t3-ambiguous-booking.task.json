@@ -1,0 +1,15 @@
+{
+  "task_id": "t3-ambiguous-booking",
+  "tier": "T3",
+  "prompt": "I need something to manage bookings for my studio.",
+  "checks": [
+    "clarifying_questions_asked",
+    "plan_is_approved_before_build",
+    "build_succeeds",
+    "e2e_core_booking_flow"
+  ],
+  "budget_credits": 4.0,
+  "max_wall_clock_seconds": 2700,
+  "tags": ["ambiguous", "planning"],
+  "origin": "authored"
+}

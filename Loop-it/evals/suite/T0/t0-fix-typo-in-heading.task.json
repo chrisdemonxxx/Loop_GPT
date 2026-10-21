@@ -1,0 +1,10 @@
+{
+  "task_id": "t0-fix-typo-in-heading",
+  "tier": "T0",
+  "prompt": "The homepage heading says 'Wlecome'. Fix the spelling.",
+  "checks": ["build_succeeds", "heading_text_is_correct"],
+  "budget_credits": 0.05,
+  "max_wall_clock_seconds": 300,
+  "tags": ["copy", "single-file"],
+  "origin": "authored"
+}

@@ -1,0 +1,53 @@
+[project]
+name = "loopit-api"
+version = "0.0.0"
+description = "Local preview API over the agent loop"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "jsonschema>=4.23",
+    "loopit-auth",
+    "loopit-checkpoint",
+    "loopit-deployer",
+    "loopit-domains",
+    "loopit-gitsync",
+    "loopit-orchestrator",
+    "loopit-preview",
+    "loopit-provision",
+    # live_model_factory imports loopit_router lazily; undeclared, it is absent
+    # from the api image and the container crashes on boot in live mode.
+    "loopit-router",
+    "loopit-secrets-broker",
+    "loopit-store",
+    "loopit-telemetry",
+    "loopit-verify",
+    "uvicorn>=0.30",
+    "pydantic>=2.7",
+    # A parser, not a runtime. Generated JavaScript has to be checked for
+    # syntax before a run is called verified, and tree-sitter builds a tree and
+    # stops — it has no evaluator, so nothing the agent wrote can run (I1).
+    "tree-sitter>=0.23",
+    "tree-sitter-javascript>=0.23",
+]
+
+[tool.uv.sources]
+loopit-auth = { workspace = true }
+loopit-checkpoint = { workspace = true }
+loopit-deployer = { workspace = true }
+loopit-domains = { workspace = true }
+loopit-gitsync = { workspace = true }
+loopit-orchestrator = { workspace = true }
+loopit-preview = { workspace = true }
+loopit-provision = { workspace = true }
+loopit-router = { workspace = true }
+loopit-secrets-broker = { workspace = true }
+loopit-store = { workspace = true }
+loopit-telemetry = { workspace = true }
+loopit-verify = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loopit_api"]

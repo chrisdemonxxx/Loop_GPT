@@ -1,0 +1,17 @@
+{
+  "task_id": "t1-todo-app",
+  "tier": "T1",
+  "prompt": "Build a todo app where I can add, complete, and delete items. Items must survive a page refresh.",
+  "checks": [
+    "build_succeeds",
+    "unit_tests_pass",
+    "e2e_add_item",
+    "e2e_complete_item",
+    "e2e_delete_item",
+    "e2e_persists_across_reload"
+  ],
+  "budget_credits": 0.6,
+  "max_wall_clock_seconds": 900,
+  "tags": ["crud", "persistence"],
+  "origin": "authored"
+}

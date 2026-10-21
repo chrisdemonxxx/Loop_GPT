@@ -1,0 +1,60 @@
+# Optional portal overlay. Does not replace apps/web.
+#   docker compose -f docker-compose.yml -f docker-compose.librechat.yml up
+#
+# I5: LibreChat must not receive LOOPIT_MODEL_API_KEY, HF_TOKEN, or any upstream
+# model credential. Chat goes to router-svc with a Loop-it identity JWT.
+# Build actions go to loopit-mcp.
+
+name: loop-it
+
+services:
+  librechat-mongo:
+    image: mongo:7.0.14@sha256:0032d2ca20db5fa34926f196c8a43b74e34ed239a7f2453ff1505b6f12ba8ea6
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: loopit
+      MONGO_INITDB_ROOT_PASSWORD: ${LIBRECHAT_MONGO_PASSWORD:?set LIBRECHAT_MONGO_PASSWORD}
+      MONGO_INITDB_DATABASE: LibreChat
+    volumes:
+      - librechat-mongo:/data/db
+    networks:
+      - control-plane
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.adminCommand({ ping: 1 })']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  librechat:
+    image: ghcr.io/danny-avila/librechat:v0.8.7@sha256:c5db3331b845e1f289f8d04c0c77936c4bbe372f76730a804abc1c37e44d23a9
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3080
+      MONGO_URI: mongodb://loopit:${LIBRECHAT_MONGO_PASSWORD:?set LIBRECHAT_MONGO_PASSWORD}@librechat-mongo:27017/LibreChat?authSource=admin
+      DOMAIN_CLIENT: ${LOOPIT_PORTAL_URL:-http://127.0.0.1:3080}
+      DOMAIN_SERVER: ${LOOPIT_PORTAL_URL:-http://127.0.0.1:3080}
+      CONFIG_PATH: /app/librechat.yaml
+      JWT_SECRET: ${LIBRECHAT_JWT_SECRET:?set LIBRECHAT_JWT_SECRET (32+ chars; not a model key)}
+      JWT_REFRESH_SECRET: ${LIBRECHAT_JWT_REFRESH_SECRET:?set LIBRECHAT_JWT_REFRESH_SECRET}
+      CREDS_KEY: ${LIBRECHAT_CREDS_KEY:?set LIBRECHAT_CREDS_KEY (32-byte hex)}
+      CREDS_IV: ${LIBRECHAT_CREDS_IV:?set LIBRECHAT_CREDS_IV (16-byte hex)}
+    volumes:
+      - ./deploy/librechat/librechat.yaml:/app/librechat.yaml:ro
+      - ./deploy/librechat/custom.css:/app/client/public/assets/loopit.css:ro
+    ports:
+      - '127.0.0.1:${LIBRECHAT_PUBLISHED_PORT:-3080}:3080'
+    depends_on:
+      librechat-mongo:
+        condition: service_healthy
+      loopit-mcp:
+        condition: service_healthy
+      router-svc:
+        condition: service_healthy
+    networks:
+      - control-plane
+
+volumes:
+  librechat-mongo:
+
+networks:
+  control-plane:

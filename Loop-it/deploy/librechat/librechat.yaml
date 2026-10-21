@@ -1,0 +1,50 @@
+# LibreChat overlay for Loop-it. MIT portal; do not fork into apps/web.
+# I5: this file must never contain Hugging Face / OpenAI / Anthropic API keys.
+# Chat completions go to Loop-it router-svc. Build actions go through loopit-mcp.
+
+version: 1.2.8
+cache: true
+interface:
+  customWelcome: "Loop-it Console. Authenticate with a Loop-it JWT, then Build with Loop-it."
+  privacyPolicy:
+    externalUrl: "http://api:8000/api/legal/aup"
+    openNewTab: true
+  mcpServers:
+    use: true
+    create: false
+    share: false
+mcpSettings:
+  allowedDomains:
+    - "loopit-mcp"
+    - "http://loopit-mcp:8010"
+    - "http://loopit-mcp:8010/mcp"
+mcpServers:
+  loopit:
+    type: streamable-http
+    url: http://loopit-mcp:8010/mcp
+    timeout: 120000
+    initTimeout: 20000
+    serverInstructions: true
+    headers:
+      Authorization: "Bearer {{LOOPIT_ACCESS_TOKEN}}"
+      Accept: "application/json, text/event-stream"
+    customUserVars:
+      LOOPIT_ACCESS_TOKEN:
+        title: "Loop-it access token"
+        description: "JWT from Loop-it POST /api/auth/login. Not a model API key. Router-svc owns upstream credentials."
+endpoints:
+  custom:
+    - name: "Loop-it"
+      apiKey: "user_provided"
+      baseURL: "http://router-svc:8001/v1"
+      models:
+        default:
+          - "loopit"
+        fetch: false
+      titleConvo: true
+      modelDisplayLabel: "Loop-it Router"
+      dropParams:
+        - "user"
+        - "stop"
+      customParams:
+        defaultParamsEndpoint: "openai"

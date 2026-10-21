@@ -1,0 +1,14 @@
+{
+  "uid": "loopit-agent-run-funnel",
+  "title": "Loop-it Agent Run Funnel",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "tags": ["loopit", "agent"],
+  "panels": [
+    {"type":"timeseries","title":"Iterations per build","gridPos":{"x":0,"y":0,"w":12,"h":8},"targets":[{"datasource":{"type":"prometheus","uid":"Prometheus"},"expr":"histogram_quantile(0.95, sum(rate(loopit_iterations_per_build_bucket[5m])) by (le, project_id))","legendFormat":"{{project_id}}"}]},
+    {"type":"timeseries","title":"Tokens per task","gridPos":{"x":12,"y":0,"w":12,"h":8},"targets":[{"datasource":{"type":"prometheus","uid":"Prometheus"},"expr":"sum(rate(loopit_tokens_per_task_sum[5m])) by (run_id)","legendFormat":"{{run_id}}"}]},
+    {"type":"timeseries","title":"Sandbox cold start p95 (ms)","gridPos":{"x":0,"y":8,"w":12,"h":8},"targets":[{"datasource":{"type":"prometheus","uid":"Prometheus"},"expr":"histogram_quantile(0.95, sum(rate(loopit_sandbox_cold_start_ms_bucket[5m])) by (le))","legendFormat":"cold start"}]},
+    {"type":"stat","title":"Eval success rate","gridPos":{"x":12,"y":8,"w":12,"h":8},"targets":[{"datasource":{"type":"prometheus","uid":"Prometheus"},"expr":"sum(rate(loopit_eval_result_total{success=\"True\"}[1h])) / sum(rate(loopit_eval_result_total[1h]))","legendFormat":"success rate"}]}
+  ]
+}

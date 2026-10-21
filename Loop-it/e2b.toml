@@ -1,0 +1,4 @@
+# Loop-IT sandbox template for E2B. Built from the repository root so the
+# Dockerfile's COPY lines (packages/*, sandbox/agent-runtime, warmup) resolve.
+template_id = "loopit-sandbox"
+dockerfile = "sandbox/image/Dockerfile"

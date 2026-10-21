@@ -1,0 +1,18 @@
+{
+  "event_id": "ev_1",
+  "occurred_at": "2026-08-23T00:00:00Z",
+  "type": "tool.called",
+  "actor": {
+    "kind": "agent",
+    "id": "task-agent-3"
+  },
+  "tenant_id": "t_1",
+  "project_id": "p_1",
+  "run_id": "r_1",
+  "plane": "data",
+  "outcome": "success",
+  "detail": {
+    "tool": "apply_patch",
+    "hunks": 2
+  }
+}

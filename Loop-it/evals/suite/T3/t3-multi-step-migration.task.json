@@ -1,0 +1,16 @@
+{
+  "task_id": "t3-multi-step-migration",
+  "tier": "T3",
+  "prompt": "Add multi-currency support to the existing invoicing app without breaking existing invoices.",
+  "checks": [
+    "plan_is_approved_before_build",
+    "build_succeeds",
+    "unit_tests_pass",
+    "existing_invoices_still_render",
+    "migration_is_reversible"
+  ],
+  "budget_credits": 4.5,
+  "max_wall_clock_seconds": 2700,
+  "tags": ["planning", "migration", "backwards-compatibility"],
+  "origin": "authored"
+}

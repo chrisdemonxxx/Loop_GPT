@@ -1,0 +1,31 @@
+# Production overlay for self-hosted agency pilots.
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+#
+# Does not replace Temporal Cloud / a real cluster. `temporal start-dev` in the
+# base compose is local-only; set LOOPIT_TEMPORAL_ADDRESS to Temporal Cloud or
+# a HA cluster before multi-host. See docs/self-hosting.md.
+
+name: loop-it
+
+services:
+  api:
+    environment:
+      LOOPIT_ENV: production
+      LOOPIT_REQUIRE_AUP: "1"
+      LOOPIT_DEV_SINGLE_TENANT: "0"
+      LOOPIT_AUDIT_EPHEMERAL: "0"
+      LOOPIT_RUN_EXECUTION_MODE: orchestrator
+      LOOPIT_CORS_ORIGINS: ${LOOPIT_CORS_ORIGINS:-https://console.loopit.example}
+
+  orchestrator:
+    environment:
+      LOOPIT_GATE_PRESET: ${LOOPIT_GATE_PRESET:-builder}
+
+  scheduler:
+    environment:
+      LOOPIT_SANDBOX_PROVIDER: ${LOOPIT_SANDBOX_PROVIDER:-docker}
+      LOOPIT_E2B_TEMPLATE_ID: ${LOOPIT_E2B_TEMPLATE_ID:-}
+
+  workspace-dispatch:
+    environment:
+      LOOPIT_SANDBOX_PROVIDER: ${LOOPIT_SANDBOX_PROVIDER:-docker}

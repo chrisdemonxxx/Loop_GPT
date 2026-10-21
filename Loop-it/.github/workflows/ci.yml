@@ -1,0 +1,173 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  typescript:
+    name: TypeScript (lint / typecheck / test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  python:
+    name: Python (lint / typecheck / test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --all-extras --dev
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy
+      - run: uv run pytest
+
+  contracts:
+    name: Contracts (schemas valid + in sync)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --dev
+      - name: Validate every JSON Schema in packages/contracts
+        run: uv run python packages/contracts/validate_schemas.py
+
+  invariants:
+    name: Invariant guards + self-host preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --dev
+      - name: Static invariant guards
+        run: uv run python scripts/check_invariants.py
+      # Synthetic high-entropy fixtures: not real credentials, used only by this
+      # job. Do not replace with low-entropy filler like "xxxx" - the placeholder
+      # detector correctly rejects those and would leave this gate permanently red.
+      - name: Self-host preflight blocks unsafe launch config
+        env:
+          LOOPIT_ENV: dev
+          LOOPIT_PUBLIC_URL: http://localhost:8080
+          LOOPIT_POSTGRES_DSN: postgresql://loopit:b93fb52f3aff945840545d07@localhost:5432/loopit
+          LOOPIT_STORE_DSN: postgresql://loopit:b93fb52f3aff945840545d07@localhost:5432/loopit
+          LOOPIT_AUDIT_DSN: postgresql://loopit_audit_writer:d5e622b2ccd2f738f59d126d@localhost:5432/loopit
+          LOOPIT_AUDIT_ROLE_PASSWORD: d5e622b2ccd2f738f59d126d
+          LOOPIT_TEMPORAL_ADDRESS: localhost:7233
+          LOOPIT_REDIS_URL: redis://localhost:6379/0
+          LOOPIT_OBJECT_STORAGE_ENDPOINT: http://localhost:9000
+          LOOPIT_OBJECT_STORAGE_BUCKET: loopit-local
+          LOOPIT_MODEL_ENDPOINT: https://router.huggingface.co
+          LOOPIT_SANDBOX_PROVIDER: docker
+          POSTGRES_PASSWORD: b93fb52f3aff945840545d07
+          LOOPIT_IDENTITY_SECRET: 926d5bb57e804db838ef094e0f260cba784a88f8
+          LOOPIT_OPERATOR_IDENTITY_SECRET: 7e440f0c8be1047333f493284fed0984d455ff7e
+          LOOPIT_PREVIEW_SIGNING_KEY: 2cf39187763895351fb66bd7c897d958cf405e82
+          LOOPIT_LEASE_TOKEN_SECRET: f1663e811899d8a44cfc13f7dffbce41d1538620
+          LOOPIT_SERVICE_TOKEN: b3dee5e5528a9412b322dc79e63e63bc29e74d59
+          LOOPIT_MODEL_API_KEY: ae3562a8bf3d49114a159785df752d8c74c058ce
+          LOOPIT_SANDBOX_SIGNING_KEY: 01a8ab8f23cc198a7133a33bf034d5bd907aaff0
+          GRAFANA_ADMIN_PASSWORD: e0da30e21d274c08aede63d5
+        run: uv run python scripts/selfhost_preflight.py
+
+  secrets-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  redteam-fast:
+    name: Red-team (fast subset)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --dev
+      - name: Egress policy + metadata-block unit checks (I3 / I4)
+        run: uv run pytest evals/redteam -m "fast"
+
+  container-images:
+    name: Container images (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: api
+            dockerfile: apps/api/Dockerfile
+          - image: web
+            dockerfile: apps/web/Dockerfile
+          - image: router-svc
+            dockerfile: services/router-svc/Dockerfile
+          - image: egress-proxy
+            dockerfile: services/egress-proxy/Dockerfile
+          - image: preview-proxy
+            dockerfile: services/preview-proxy/Dockerfile
+          - image: scheduler
+            dockerfile: services/scheduler/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/${{ matrix.image }}" >> "$GITHUB_OUTPUT"
+      - name: Build image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ github.sha }}
+            ${{ steps.image.outputs.name }}:latest
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

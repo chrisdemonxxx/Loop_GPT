@@ -1,0 +1,307 @@
+"""Render fail-closed sandbox network policy.
+
+This package owns the packet-level guardrail below ``services/egress-proxy``:
+the proxy decides which HTTP(S) requests are allowed, while these rules make
+direct egress and cloud metadata paths unreachable even if sandbox code tries
+to bypass process-level proxy settings.
+"""
+
+from __future__ import annotations
+
+import ipaddress
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Literal
+
+IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
+IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+DEFAULT_METADATA_NETWORKS: tuple[IPNetwork, ...] = (
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("fd00:ec2::/32"),
+    ipaddress.ip_network("fe80::/10"),
+)
+
+PRIVATE_V4_NETWORKS: tuple[ipaddress.IPv4Network, ...] = (
+    ipaddress.IPv4Network("10.0.0.0/8"),
+    ipaddress.IPv4Network("172.16.0.0/12"),
+    ipaddress.IPv4Network("192.168.0.0/16"),
+    ipaddress.IPv4Network("100.64.0.0/10"),
+)
+
+PRIVATE_V6_NETWORKS: tuple[ipaddress.IPv6Network, ...] = (ipaddress.IPv6Network("fc00::/7"),)
+
+
+class NetworkPolicyError(ValueError):
+    """The requested network posture is unsafe and must not be rendered."""
+
+
+class ProbeKind(StrEnum):
+    """Kinds of live probes future harnesses can execute inside a sandbox."""
+
+    METADATA = "metadata"
+    DIRECT_IP_EGRESS = "direct_ip_egress"
+    DNS_BYPASS = "dns_bypass"
+
+
+@dataclass(frozen=True, slots=True)
+class Endpoint:
+    """An IP/port endpoint used by the sandbox firewall."""
+
+    addr: str
+    port: int
+
+    @property
+    def ip(self) -> IPAddress:
+        try:
+            return ipaddress.ip_address(self.addr)
+        except ValueError as exc:
+            raise NetworkPolicyError(f"{self.addr!r} is not an IP literal") from exc
+
+    def validate(self, name: str, *, may_be_private: bool = True) -> None:
+        if not 1 <= self.port <= 65535:
+            raise NetworkPolicyError(f"{name} port must be in 1..65535")
+        address = self.ip
+        if address.is_unspecified or address.is_multicast:
+            raise NetworkPolicyError(f"{name} address must be a routable IP literal")
+        denied = _first_matching_network(address, DEFAULT_METADATA_NETWORKS)
+        if denied is not None:
+            raise NetworkPolicyError(f"{name} points at blocked metadata/link-local range {denied}")
+        if not may_be_private and _first_matching_network(address, PRIVATE_V4_NETWORKS):
+            raise NetworkPolicyError(f"{name} must not be RFC1918/private address space")
+
+
+@dataclass(frozen=True, slots=True)
+class NetworkPolicyConfig:
+    """Typed inputs for rendering the sandbox nftables ruleset."""
+
+    egress_proxy: Endpoint
+    resolver: Endpoint
+    router: Endpoint | None = None
+    default_policy: Literal["deny"] | str = "deny"
+    block_metadata: bool = True
+    metadata_networks: tuple[IPNetwork, ...] = field(
+        default_factory=lambda: DEFAULT_METADATA_NETWORKS
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Probe:
+    """A required negative probe for red-team or live network checks."""
+
+    name: str
+    kind: ProbeKind
+    target: str
+    port: int
+    protocol: Literal["tcp", "udp", "http", "https"]
+    must_fail: bool
+    expected_reason: str
+
+
+def validate_config(config: NetworkPolicyConfig) -> None:
+    """Refuse to render anything other than fail-closed default-deny."""
+    if config.default_policy != "deny":
+        raise NetworkPolicyError("sandbox network default_policy must be 'deny'")
+    if not config.block_metadata:
+        raise NetworkPolicyError("metadata/link-local blocking is mandatory and fail-closed")
+
+    missing = [
+        network for network in DEFAULT_METADATA_NETWORKS if network not in config.metadata_networks
+    ]
+    if missing:
+        rendered = ", ".join(str(network) for network in missing)
+        raise NetworkPolicyError(f"metadata deny set is incomplete: missing {rendered}")
+
+    config.egress_proxy.validate("egress_proxy")
+    config.resolver.validate("resolver")
+    if config.resolver.port != 53:
+        raise NetworkPolicyError("resolver must be the designated DNS endpoint on port 53")
+    if config.router is not None:
+        config.router.validate("router")
+
+
+def render_nftables(config: NetworkPolicyConfig) -> str:
+    """Render an nftables ruleset for one sandbox/microVM."""
+    validate_config(config)
+    proxy = config.egress_proxy
+    resolver = config.resolver
+    router = config.router
+
+    proxy_rule = _tcp_accept_rule(proxy, "egress proxy")
+    router_rule = (
+        _tcp_accept_rule(router, "router-svc model path")
+        if router
+        else "        # router-svc disabled"
+    )
+    dns_rules = _dns_accept_rules(resolver)
+    metadata_v4 = _format_networks(config.metadata_networks, version=4)
+    metadata_v6 = _format_networks(config.metadata_networks, version=6)
+
+    return f"""#!/usr/sbin/nft -f
+# Loop-it sandbox network policy. Generated by loopit_sandbox_network.
+# Invariants: I3 default-deny egress, I4 metadata blocked fail-closed, I5 model
+# traffic reaches only router-svc through the pinned egress path.
+
+flush ruleset
+
+define EGRESS_PROXY_ADDR = {proxy.addr}
+define EGRESS_PROXY_PORT = {proxy.port}
+define DNS_RESOLVER_ADDR = {resolver.addr}
+define DNS_RESOLVER_PORT = {resolver.port}
+define ROUTER_SVC_ADDR = {_render_optional_addr(router)}
+define ROUTER_SVC_PORT = {_render_optional_port(router)}
+
+table inet loopit_sandbox {{
+    set metadata_v4 {{
+        type ipv4_addr
+        flags interval
+        elements = {{ {metadata_v4} }}
+    }}
+
+    set metadata_v6 {{
+        type ipv6_addr
+        flags interval
+        elements = {{ {metadata_v6} }}
+    }}
+
+    set private_v4 {{
+        type ipv4_addr
+        flags interval
+        elements = {{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10 }}
+    }}
+
+    set private_v6 {{
+        type ipv6_addr
+        flags interval
+        elements = {{ fc00::/7 }}
+    }}
+
+    chain input {{
+        type filter hook input priority filter; policy drop;
+        iifname "lo" accept
+        ct state established,related accept
+    }}
+
+    chain forward {{
+        type filter hook forward priority filter; policy drop;
+    }}
+
+    chain output {{
+        type filter hook output priority filter; policy drop;
+
+        oifname "lo" accept
+        ct state established,related accept
+
+        # I4: cloud metadata and link-local provider fabric are blocked before
+        # any local/private exceptions. metadata.google.internal resolves into
+        # these ranges and the egress proxy also denies provider metadata names.
+        ip daddr @metadata_v4 drop
+        ip6 daddr @metadata_v6 drop
+
+        # I3/I5: the only non-DNS egress path is the logging proxy, plus the
+        # optional internal router-svc endpoint when the provider requires a
+        # direct sandbox-to-router hop.
+{proxy_rule}
+{router_rule}
+
+        # DNS may reach only the designated resolver. Any direct query to
+        # another resolver is a DNS-bypass attempt and falls through to drop.
+{dns_rules}
+
+        # Private/provider fabric stays closed except explicit rules above.
+        ip daddr @private_v4 drop
+        ip6 daddr @private_v6 drop
+
+        # I3: policy drop below is intentional. No public IP, HTTP(S), or other
+        # protocol is reachable directly from sandbox code.
+    }}
+}}
+"""
+
+
+def verification_probes(config: NetworkPolicyConfig) -> tuple[Probe, ...]:
+    """Return required negative probes shaped for red-team/live check harnesses."""
+    validate_config(config)
+    bypass_resolver = "8.8.8.8" if config.resolver.addr != "8.8.8.8" else "1.1.1.1"
+    return (
+        Probe(
+            name="aws-imds-v4",
+            kind=ProbeKind.METADATA,
+            target="169.254.169.254",
+            port=80,
+            protocol="http",
+            must_fail=True,
+            expected_reason="metadata/link-local drop",
+        ),
+        Probe(
+            name="aws-imds-v6",
+            kind=ProbeKind.METADATA,
+            target="fd00:ec2::254",
+            port=80,
+            protocol="http",
+            must_fail=True,
+            expected_reason="metadata/link-local drop",
+        ),
+        Probe(
+            name="direct-public-https",
+            kind=ProbeKind.DIRECT_IP_EGRESS,
+            target="93.184.216.34",
+            port=443,
+            protocol="https",
+            must_fail=True,
+            expected_reason="default-deny output",
+        ),
+        Probe(
+            name="dns-bypass",
+            kind=ProbeKind.DNS_BYPASS,
+            target=bypass_resolver,
+            port=53,
+            protocol="udp",
+            must_fail=True,
+            expected_reason="DNS allowed only to designated resolver",
+        ),
+    )
+
+
+def _first_matching_network(
+    address: IPAddress, networks: tuple[IPNetwork, ...]
+) -> IPNetwork | None:
+    for network in networks:
+        if address.version == network.version and address in network:
+            return network
+    return None
+
+
+def _tcp_accept_rule(endpoint: Endpoint, label: str) -> str:
+    family = "ip6" if endpoint.ip.version == 6 else "ip"
+    return f"        {family} daddr ${label_var(label)} tcp dport ${label_port_var(label)} accept"
+
+
+def _dns_accept_rules(endpoint: Endpoint) -> str:
+    family = "ip6" if endpoint.ip.version == 6 else "ip"
+    return "\n".join(
+        (
+            f"        {family} daddr $DNS_RESOLVER_ADDR udp dport $DNS_RESOLVER_PORT accept",
+            f"        {family} daddr $DNS_RESOLVER_ADDR tcp dport $DNS_RESOLVER_PORT accept",
+        )
+    )
+
+
+def _format_networks(networks: tuple[IPNetwork, ...], *, version: Literal[4, 6]) -> str:
+    return ", ".join(str(network) for network in networks if network.version == version)
+
+
+def label_var(label: str) -> str:
+    return "ROUTER_SVC_ADDR" if label.startswith("router") else "EGRESS_PROXY_ADDR"
+
+
+def label_port_var(label: str) -> str:
+    return "ROUTER_SVC_PORT" if label.startswith("router") else "EGRESS_PROXY_PORT"
+
+
+def _render_optional_addr(endpoint: Endpoint | None) -> str:
+    return endpoint.addr if endpoint is not None else "192.0.2.0"
+
+
+def _render_optional_port(endpoint: Endpoint | None) -> int:
+    return endpoint.port if endpoint is not None else 0

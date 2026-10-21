@@ -1,0 +1,11 @@
+{
+  "id": "dashboard-with-charts",
+  "stack": "react-postgres",
+  "prompt_seed": "Build an analytics dashboard with protected routes, seeded metrics, filters, and accessible chart summaries.",
+  "expected_dag": [
+    {"id": "metrics-schema", "kind": "add-table-rls", "depends_on": []},
+    {"id": "seed", "kind": "seed-data", "depends_on": ["metrics-schema"]},
+    {"id": "charts", "kind": "add-route", "depends_on": ["seed"]}
+  ],
+  "verification": {"commands": ["pnpm lint", "pnpm typecheck", "pnpm test"], "browser_flows": ["login-view-dashboard-filter"]}
+}

@@ -1,0 +1,17 @@
+{
+  "task_id": "t2-auth-and-ownership",
+  "tier": "T2",
+  "prompt": "A bookmark manager with email sign-up and sign-in. Users may only see their own bookmarks.",
+  "checks": [
+    "build_succeeds",
+    "unit_tests_pass",
+    "e2e_signup_then_signin",
+    "e2e_user_cannot_read_other_users_rows",
+    "passwords_are_hashed",
+    "session_cookie_is_httponly"
+  ],
+  "budget_credits": 1.8,
+  "max_wall_clock_seconds": 1800,
+  "tags": ["auth", "authorization", "multi-user"],
+  "origin": "authored"
+}

@@ -1,0 +1,425 @@
+{
+    "schema_version":  1,
+    "models":  [
+                   {
+                       "model_id":  "loopit/small",
+                       "base_model":  "loopit/small-base",
+                       "derivative_lineage":  [
+
+                                              ],
+                       "license_id":  "apache-2.0",
+                       "license_url":  "https://www.apache.org/licenses/LICENSE-2.0",
+                       "field_of_use_restrictions":  [
+
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve license and notice text."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include Apache-2.0 license when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-01",
+                       "verifier":  "loopit-governance-fixture"
+                   },
+                   {
+                       "model_id":  "loopit/coder",
+                       "base_model":  "loopit/coder-base",
+                       "derivative_lineage":  [
+
+                                              ],
+                       "license_id":  "apache-2.0",
+                       "license_url":  "https://www.apache.org/licenses/LICENSE-2.0",
+                       "field_of_use_restrictions":  [
+
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve license and notice text."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include Apache-2.0 license when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-01",
+                       "verifier":  "loopit-governance-fixture"
+                   },
+                   {
+                       "model_id":  "loopit/planner",
+                       "base_model":  "loopit/planner-base",
+                       "derivative_lineage":  [
+
+                                              ],
+                       "license_id":  "apache-2.0",
+                       "license_url":  "https://www.apache.org/licenses/LICENSE-2.0",
+                       "field_of_use_restrictions":  [
+
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve license and notice text."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include Apache-2.0 license when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-01",
+                       "verifier":  "loopit-governance-fixture"
+                   },
+                   {
+                       "model_id":  "Qwen/Qwen3.5-9B:deepinfra",
+                       "base_model":  "Qwen/Qwen3.5-9B",
+                       "derivative_lineage":  [
+
+                                              ],
+                       "license_id":  "apache-2.0",
+                       "license_url":  "https://www.apache.org/licenses/LICENSE-2.0",
+                       "field_of_use_restrictions":  [
+
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve license and notice text."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include Apache-2.0 license when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-01",
+                       "verifier":  "loopit-governance-fixture"
+                   },
+                   {
+                       "model_id":  "Qwen/Qwen3.5-9B:ovhcloud",
+                       "base_model":  "Qwen/Qwen3.5-9B",
+                       "derivative_lineage":  [
+
+                                              ],
+                       "license_id":  "apache-2.0",
+                       "license_url":  "https://www.apache.org/licenses/LICENSE-2.0",
+                       "field_of_use_restrictions":  [
+
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve license and notice text."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include Apache-2.0 license when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-01",
+                       "verifier":  "loopit-governance-fixture"
+                   },
+                   {
+                       "model_id":  "Qwen/Qwen3.6-27B:deepinfra",
+                       "base_model":  "Qwen/Qwen3.6-27B",
+                       "derivative_lineage":  [
+
+                                              ],
+                       "license_id":  "apache-2.0",
+                       "license_url":  "https://www.apache.org/licenses/LICENSE-2.0",
+                       "field_of_use_restrictions":  [
+
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve license and notice text."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include Apache-2.0 license when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-01",
+                       "verifier":  "loopit-governance-fixture"
+                   },
+                   {
+                       "model_id":  "Qwen/Qwen3.6-27B:ovhcloud",
+                       "base_model":  "Qwen/Qwen3.6-27B",
+                       "derivative_lineage":  [
+
+                                              ],
+                       "license_id":  "apache-2.0",
+                       "license_url":  "https://www.apache.org/licenses/LICENSE-2.0",
+                       "field_of_use_restrictions":  [
+
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve license and notice text."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include Apache-2.0 license when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-01",
+                       "verifier":  "loopit-governance-fixture"
+                   },
+                   {
+                       "model_id":  "zai-org/GLM-5.2:deepinfra",
+                       "base_model":  "zai-org/GLM-5.2",
+                       "derivative_lineage":  [
+
+                                              ],
+                       "license_id":  "mit",
+                       "license_url":  "https://opensource.org/license/mit/",
+                       "field_of_use_restrictions":  [
+
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve copyright and license notice."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include MIT license when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-01",
+                       "verifier":  "loopit-governance-fixture"
+                   },
+                   {
+                       "model_id":  "zai-org/GLM-5.2:fireworks-ai",
+                       "base_model":  "zai-org/GLM-5.2",
+                       "derivative_lineage":  [
+
+                                              ],
+                       "license_id":  "mit",
+                       "license_url":  "https://opensource.org/license/mit/",
+                       "field_of_use_restrictions":  [
+
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve copyright and license notice."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include MIT license when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-01",
+                       "verifier":  "loopit-governance-fixture"
+                   },
+                   {
+                       "model_id":  "zai-org/GLM-5.3-Flash:baseten",
+                       "base_model":  "zai-org/GLM-5.3-Flash",
+                       "derivative_lineage":  [
+
+                                              ],
+                       "license_id":  "mit",
+                       "license_url":  "https://opensource.org/license/mit/",
+                       "field_of_use_restrictions":  [
+
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve copyright and license notice."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include MIT license when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-04",
+                       "verifier":  "loopit-operator"
+                   },
+                   {
+                       "model_id":  "zai-org/GLM-5.3-Flash:fireworks-ai",
+                       "base_model":  "zai-org/GLM-5.3-Flash",
+                       "derivative_lineage":  [
+
+                                              ],
+                       "license_id":  "mit",
+                       "license_url":  "https://opensource.org/license/mit/",
+                       "field_of_use_restrictions":  [
+
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve copyright and license notice."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include MIT license when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-04",
+                       "verifier":  "loopit-operator"
+                   },
+                   {
+                       "model_id":  "Qwen/Qwen3.8-27B:deepinfra",
+                       "base_model":  "Qwen/Qwen3.8-27B",
+                       "derivative_lineage":  [
+
+                                              ],
+                       "license_id":  "apache-2.0",
+                       "license_url":  "https://www.apache.org/licenses/LICENSE-2.0",
+                       "field_of_use_restrictions":  [
+
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve license and notice text."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include Apache-2.0 license when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-04",
+                       "verifier":  "loopit-operator"
+                   },
+                   {
+                       "model_id":  "Qwen/Qwen3.8-27B:ovhcloud",
+                       "base_model":  "Qwen/Qwen3.8-27B",
+                       "derivative_lineage":  [
+
+                                              ],
+                       "license_id":  "apache-2.0",
+                       "license_url":  "https://www.apache.org/licenses/LICENSE-2.0",
+                       "field_of_use_restrictions":  [
+
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve license and notice text."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include Apache-2.0 license when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-04",
+                       "verifier":  "loopit-operator"
+                   },
+                   {
+                       "model_id":  "zai-org/GLM-5.3:baseten",
+                       "base_model":  "zai-org/GLM-5.3",
+                       "derivative_lineage":  [
+
+                                              ],
+                       "license_id":  "glm-5.3",
+                       "license_url":  "https://huggingface.co/zai-org/GLM-5.3/blob/main/LICENSE",
+                       "field_of_use_restrictions":  [
+                                                         "Model-as-a-Service operators above USD 10 billion aggregate revenue in any consecutive 12 months must pass Z.AI security review before commercial use."
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve copyright notice and GLM-5.3 license text."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include the GLM-5.3 License when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-04",
+                       "verifier":  "loopit-operator"
+                   },
+                   {
+                       "model_id":  "zai-org/GLM-5.3:fireworks-ai",
+                       "base_model":  "zai-org/GLM-5.3",
+                       "derivative_lineage":  [
+
+                                              ],
+                       "license_id":  "glm-5.3",
+                       "license_url":  "https://huggingface.co/zai-org/GLM-5.3/blob/main/LICENSE",
+                       "field_of_use_restrictions":  [
+                                                         "Model-as-a-Service operators above USD 10 billion aggregate revenue in any consecutive 12 months must pass Z.AI security review before commercial use."
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve copyright notice and GLM-5.3 license text."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include the GLM-5.3 License when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-04",
+                       "verifier":  "loopit-operator"
+                   },
+                   {
+                       "model_id":  "NousResearch/Hermes-3-Llama-3.1-70B:deepinfra",
+                       "base_model":  "NousResearch/Hermes-3-Llama-3.1-70B",
+                       "derivative_lineage":  [
+                                                  "meta-llama/Meta-Llama-3.1-70B"
+                                              ],
+                       "license_id":  "llama-3.1-community",
+                       "license_url":  "https://www.llama.com/llama3_1/license/",
+                       "field_of_use_restrictions":  [
+                                                         "Llama Acceptable Use Policy"
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve license and notice text."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include Llama 3.1 Community License when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-04",
+                       "verifier":  "loopit-operator"
+                   },
+                   {
+                        "model_id":  "huihui-ai/Huihui-GLM-5.3-Flash-abliterated-GGUF",
+                        "base_model":  "zai-org/GLM-5.3-Flash",
+                        "derivative_lineage":  [
+                                                   "zai-org/GLM-5.3-Flash"
+                                               ],
+                        "license_id":  "mit",
+                        "license_url":  "https://opensource.org/license/mit/",
+                        "field_of_use_restrictions":  [
+
+                                                      ],
+                        "commercial_use":  true,
+                        "attribution_requirements":  [
+                                                         "Preserve copyright and license notice."
+                                                     ],
+                        "redistribution_requirements":  [
+                                                            "Include MIT license when redistributing weights."
+                                                        ],
+                        "last_verified":  "2026-10-10",
+                        "verifier":  "loopit-operator"
+                   },
+                   {
+                        "model_id":  "s-zaizen/DeepSeek-V4.1-Flash-Abliterated",
+                        "base_model":  "deepseek-ai/DeepSeek-V4.1-Flash",
+                        "derivative_lineage":  [
+                                                   "deepseek-ai/DeepSeek-V4.1-Flash"
+                                               ],
+                        "license_id":  "apache-2.0",
+                        "license_url":  "https://www.apache.org/licenses/LICENSE-2.0",
+                        "field_of_use_restrictions":  [
+
+                                                      ],
+                        "commercial_use":  true,
+                        "attribution_requirements":  [
+                                                         "Preserve license and notice text."
+                                                     ],
+                        "redistribution_requirements":  [
+                                                            "Include Apache-2.0 license when redistributing weights."
+                                                        ],
+                        "last_verified":  "2026-10-10",
+                        "verifier":  "loopit-operator"
+                   },
+                   {
+                        "model_id":  "dealignai/GLM-5.3-CYBERSECURITY-FP8",
+                        "base_model":  "zai-org/GLM-5.3",
+                        "derivative_lineage":  [
+                                                   "zai-org/GLM-5.3"
+                                               ],
+                        "license_id":  "mit",
+                        "license_url":  "https://opensource.org/license/mit/",
+                        "field_of_use_restrictions":  [
+
+                                                      ],
+                        "commercial_use":  true,
+                        "attribution_requirements":  [
+                                                         "Preserve copyright and license notice."
+                                                     ],
+                        "redistribution_requirements":  [
+                                                            "Include MIT license when redistributing weights."
+                                                        ],
+                        "last_verified":  "2026-10-10",
+                        "verifier":  "loopit-operator"
+                   },
+                   {
+                       "model_id":  "alpindale/WizardLM-2-8x22B:novita",
+                       "base_model":  "alpindale/WizardLM-2-8x22B",
+                       "derivative_lineage":  [
+                                                  "mistralai/Mixtral-8x22B"
+                                              ],
+                       "license_id":  "apache-2.0",
+                       "license_url":  "https://www.apache.org/licenses/LICENSE-2.0",
+                       "field_of_use_restrictions":  [
+
+                                                     ],
+                       "commercial_use":  true,
+                       "attribution_requirements":  [
+                                                        "Preserve license and notice text."
+                                                    ],
+                       "redistribution_requirements":  [
+                                                           "Include Apache-2.0 license when redistributing weights."
+                                                       ],
+                       "last_verified":  "2026-09-04",
+                       "verifier":  "loopit-operator"
+                   }
+               ]
+}

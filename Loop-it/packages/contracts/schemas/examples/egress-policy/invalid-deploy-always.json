@@ -1,0 +1,10 @@
+{
+  "default_action": "deny",
+  "categories": [
+    {
+      "name": "deploy_targets",
+      "enabled": true,
+      "window": "always"
+    }
+  ]
+}

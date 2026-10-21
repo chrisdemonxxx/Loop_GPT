@@ -1,0 +1,15 @@
+{
+  "task_id": "t1-contact-form",
+  "tier": "T1",
+  "prompt": "Build a contact form that validates the email address and stores submissions.",
+  "checks": [
+    "build_succeeds",
+    "e2e_rejects_invalid_email",
+    "e2e_stores_valid_submission",
+    "no_secrets_in_client_bundle"
+  ],
+  "budget_credits": 0.6,
+  "max_wall_clock_seconds": 900,
+  "tags": ["forms", "validation"],
+  "origin": "authored"
+}

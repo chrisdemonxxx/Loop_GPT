@@ -1,0 +1,16 @@
+{
+  "event_id": "ev_2",
+  "occurred_at": "2026-08-23T00:00:01Z",
+  "type": "egress.denied",
+  "actor": {
+    "kind": "system",
+    "service": "egress-proxy"
+  },
+  "tenant_id": "t_1",
+  "plane": "data",
+  "outcome": "denied",
+  "detail": {
+    "host": "169.254.169.254",
+    "reason": "metadata_endpoint"
+  }
+}

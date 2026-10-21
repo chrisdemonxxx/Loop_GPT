@@ -1,0 +1,7 @@
+{
+  "call_id": "c1",
+  "tool": "apply_patch",
+  "args": {
+    "patch": "--- a/x\n+++ b/x\n"
+  }
+}

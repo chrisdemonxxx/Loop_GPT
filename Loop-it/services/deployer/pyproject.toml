@@ -1,0 +1,30 @@
+[project]
+name = "loopit-deployer"
+version = "0.1.0"
+description = "Generated-app production deploy orchestration for Fly-class hosts."
+requires-python = ">=3.11"
+dependencies = [
+    "loopit-checkpoint",
+    "loopit-gitsync",
+    "loopit-orchestrator",
+    "loopit-policy",
+    "loopit-provision",
+    "loopit-secrets-broker",
+    "loopit-store",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loopit_deployer"]
+
+[tool.uv.sources]
+loopit-checkpoint = { workspace = true }
+loopit-orchestrator = { workspace = true }
+loopit-policy = { workspace = true }
+loopit-provision = { workspace = true }
+loopit-secrets-broker = { workspace = true }
+loopit-gitsync = { workspace = true }
+loopit-store = { workspace = true }

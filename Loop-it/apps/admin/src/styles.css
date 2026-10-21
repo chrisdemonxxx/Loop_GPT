@@ -1,0 +1,11 @@
+body { margin: 0; background: #0f172a; color: #e5e7eb; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+input, select { border: 1px solid #334155; border-radius: 8px; padding: 0.6rem; }
+.admin-shell { display: grid; gap: 1rem; margin: 0 auto; max-width: 1180px; padding: 1.5rem; }
+.admin-hero { align-items: center; display: flex; gap: 1rem; justify-content: space-between; }
+.admin-hero h1 { margin: 0; }
+.login-box { align-items: center; display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; }
+.login-box input { min-width: 24rem; }
+.grid { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr) 22rem; }
+.switches { display: grid; gap: 0.75rem; }
+code { background: rgb(148 163 184 / 0.2); border-radius: 6px; padding: 0.1rem 0.35rem; }
+@media (max-width: 850px) { .admin-hero, .grid { display: grid; grid-template-columns: 1fr; } .login-box { justify-content: stretch; } .login-box input { min-width: 0; width: 100%; } }

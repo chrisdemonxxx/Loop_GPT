@@ -1,0 +1,13 @@
+/* Loop-it Console theme over LibreChat. MIT overlay; not a fork of apps/web. */
+:root {
+  --primary: #4c8dff;
+  --text-primary: #e6edf3;
+  --surface-primary: #0e1116;
+}
+body {
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+#root .nav-logo,
+header {
+  letter-spacing: 0.02em;
+}

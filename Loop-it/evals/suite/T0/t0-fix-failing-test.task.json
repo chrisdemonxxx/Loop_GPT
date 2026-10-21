@@ -1,0 +1,10 @@
+{
+  "task_id": "t0-fix-failing-test",
+  "tier": "T0",
+  "prompt": "One unit test fails because of an off-by-one in the pagination helper. Fix it.",
+  "checks": ["unit_tests_pass", "no_test_file_modified"],
+  "budget_credits": 0.08,
+  "max_wall_clock_seconds": 300,
+  "tags": ["bugfix", "self-correction"],
+  "origin": "authored"
+}

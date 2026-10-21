@@ -1,0 +1,14 @@
+{
+  "uid": "loopit-cost",
+  "title": "Loop-it Cost",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "tags": ["loopit", "cost"],
+  "panels": [
+    {"type":"stat","title":"cost_per_successful_deploy","gridPos":{"x":0,"y":0,"w":24,"h":6},"targets":[{"datasource":{"type":"prometheus","uid":"Prometheus"},"expr":"sum(loopit_deploy_cost_usd_total) / sum(loopit_deploy_count_total{success=\"True\"})","legendFormat":"USD/deploy"}]},
+    {"type":"timeseries","title":"Deploy cost by tenant","gridPos":{"x":0,"y":6,"w":12,"h":8},"targets":[{"datasource":{"type":"prometheus","uid":"Prometheus"},"expr":"sum(rate(loopit_deploy_cost_usd_total[1h])) by (tenant_id)","legendFormat":"{{tenant_id}}"}]},
+    {"type":"timeseries","title":"Deploy outcomes","gridPos":{"x":12,"y":6,"w":12,"h":8},"targets":[{"datasource":{"type":"prometheus","uid":"Prometheus"},"expr":"sum(rate(loopit_deploy_count_total[1h])) by (success)","legendFormat":"success={{success}}"}]},
+    {"type":"timeseries","title":"Recorded north-star histogram","gridPos":{"x":0,"y":14,"w":24,"h":8},"targets":[{"datasource":{"type":"prometheus","uid":"Prometheus"},"expr":"histogram_quantile(0.95, sum(rate(loopit_cost_per_successful_deploy_bucket[1h])) by (le))","legendFormat":"p95"}]}
+  ]
+}

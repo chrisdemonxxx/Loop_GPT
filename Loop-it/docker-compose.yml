@@ -1,0 +1,604 @@
+name: loop-it
+
+x-python-healthcheck: &python-healthcheck
+  interval: 30s
+  timeout: 5s
+  start_period: 20s
+  retries: 3
+
+x-control-urls: &control-urls
+  LOOPIT_API_BASE_URL: ${LOOPIT_API_BASE_URL:-http://api:8000}
+  LOOPIT_ROUTER_URL: ${LOOPIT_ROUTER_URL:-http://router-svc:8001}
+  LOOPIT_SCHEDULER_URL: ${LOOPIT_SCHEDULER_URL:-http://scheduler:8004}
+  LOOPIT_WORKSPACE_DISPATCH_URL: ${LOOPIT_WORKSPACE_DISPATCH_URL:-http://workspace-dispatch:8005/dispatch}
+
+x-required-operator-env:
+  LOOPIT_SANDBOX_SIGNING_KEY: ${LOOPIT_SANDBOX_SIGNING_KEY:?set LOOPIT_SANDBOX_SIGNING_KEY or run uv run python scripts/generate_secrets.py}
+
+# The local Docker sandbox provider deliberately gives these control-plane
+# services access to the host Docker daemon. That socket is effectively root on
+# the host: any process that can talk to it can start privileged containers or
+# mount host paths. Compose enables it only for the services that already create
+# or execute agent sandbox work, and operators should replace this with a
+# stronger sandbox provider for untrusted multi-tenant production.
+x-docker-socket-volume: &docker-socket-volume
+  - /var/run/docker.sock:/var/run/docker.sock
+x-docker-socket-groups: &docker-socket-groups
+  - '${DOCKER_SOCKET_GID:-0}'
+
+services:
+  postgres:
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-loopit}
+      POSTGRES_USER: ${POSTGRES_USER:-loopit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD or run uv run python scripts/generate_secrets.py}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - control-plane
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL or run uv run python scripts/generate_secrets.py}
+      LOOPIT_AUDIT_ROLE_PASSWORD: ${LOOPIT_AUDIT_ROLE_PASSWORD:?set LOOPIT_AUDIT_ROLE_PASSWORD or run uv run python scripts/generate_secrets.py}
+    command: ['sh', '-c', 'python -m loopit_store.migrate --dsn "$${DATABASE_URL}"']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+    networks:
+      - control-plane
+
+  router-svc:
+    build:
+      context: .
+      dockerfile: services/router-svc/Dockerfile
+    environment:
+      PORT: ${ROUTER_PORT:-8001}
+      LOOPIT_ROUTER_PORT: ${ROUTER_PORT:-8001}
+      LOOPIT_LEASE_TOKEN_SECRET: ${LOOPIT_LEASE_TOKEN_SECRET:?set LOOPIT_LEASE_TOKEN_SECRET or run uv run python scripts/generate_secrets.py}
+      LOOPIT_MODEL_UPSTREAM_BASE_URL: ${LOOPIT_MODEL_UPSTREAM_BASE_URL:-https://router.huggingface.co}
+      # huggingface = public Router GLM-5.3-Flash / Qwen3.8-27B / GLM-5.3 pins.
+      # huggingface-unrestricted = dedicated abliterated HF Endpoints, verified
+      # live 2026-10-10: GLM-5.3-Flash GGUF (llama.cpp), DeepSeek-V4.1-Flash
+      # abliterated, GLM-5.3-CYBERSECURITY (plan difficulty mapping).
+      LOOPIT_ROUTER_POLICY: ${LOOPIT_ROUTER_POLICY:-huggingface-unrestricted}
+      LOOPIT_ENDPOINT_GLM_FLASH_URL: ${LOOPIT_ENDPOINT_GLM_FLASH_URL:-https://6ac6f9bf904ec5f3ba7f4e6e.endpoints.huggingface.cloud}
+      LOOPIT_ENDPOINT_QWEN38_URL: ${LOOPIT_ENDPOINT_QWEN38_URL:-https://6ac9858de4d5812f4c1a9f75.endpoints.huggingface.cloud}
+      LOOPIT_ENDPOINT_GLM53_URL: ${LOOPIT_ENDPOINT_GLM53_URL:-https://6abc4c0daa7378123428663f.endpoints.huggingface.cloud}
+      HF_BILL_TO: ${HF_BILL_TO:-}
+      LOOPIT_MODEL_API_KEY: ${LOOPIT_MODEL_API_KEY:?set LOOPIT_MODEL_API_KEY or run uv run python scripts/generate_secrets.py}
+      LOOPIT_STORE_DSN: ${LOOPIT_STORE_DSN:?set LOOPIT_STORE_DSN or run uv run python scripts/generate_secrets.py}
+      LOOPIT_IDENTITY_ISSUER: ${LOOPIT_IDENTITY_ISSUER:-loopit-gateway}
+      LOOPIT_IDENTITY_AUDIENCE: ${LOOPIT_IDENTITY_AUDIENCE:-loopit-control-plane}
+      LOOPIT_IDENTITY_KID: ${LOOPIT_IDENTITY_KID:-dev}
+      LOOPIT_IDENTITY_SECRET: ${LOOPIT_IDENTITY_SECRET:?set LOOPIT_IDENTITY_SECRET or run uv run python scripts/generate_secrets.py}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      <<: *python-healthcheck
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/healthz'' % os.environ.get(''PORT'', ''8001''), timeout=3).read()"',
+        ]
+    networks:
+      - control-plane
+
+  egress-proxy:
+    build:
+      context: .
+      dockerfile: services/egress-proxy/Dockerfile
+    environment:
+      PORT: ${EGRESS_PROXY_PORT:-8002}
+      LOOPIT_EGRESS_PORT: ${EGRESS_PROXY_PORT:-8002}
+      LOOPIT_ROUTER_HOSTNAME: ${LOOPIT_ROUTER_HOSTNAME:-router.internal.loopit}
+      LOOPIT_AUDIT_DSN: ${LOOPIT_AUDIT_DSN:?set LOOPIT_AUDIT_DSN or run uv run python scripts/generate_secrets.py}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      <<: *python-healthcheck
+      # Probe the admin app, not the proxy port: the proxy port audits every
+      # request, so a health probe there both fails and writes audit noise.
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/healthz'' % os.environ.get(''LOOPIT_EGRESS_ADMIN_PORT'', ''8128''), timeout=3).read()"',
+        ]
+    networks:
+      - control-plane
+      - sandbox-internal
+
+  preview-proxy:
+    build:
+      context: .
+      dockerfile: services/preview-proxy/Dockerfile
+    environment:
+      PORT: ${PREVIEW_PROXY_PORT:-8003}
+      LOOPIT_PREVIEW_PORT: ${PREVIEW_PROXY_PORT:-8003}
+      LOOPIT_PREVIEW_SIGNING_KEY: ${LOOPIT_PREVIEW_SIGNING_KEY:?set LOOPIT_PREVIEW_SIGNING_KEY or run uv run python scripts/generate_secrets.py}
+      LOOPIT_PREVIEW_DOMAIN: ${LOOPIT_PREVIEW_DOMAIN:-.preview.loopit.dev}
+      LOOPIT_PREVIEW_ROUTES: ${LOOPIT_PREVIEW_ROUTES:-[]}
+      LOOPIT_AUDIT_DSN: ${LOOPIT_AUDIT_DSN:?set LOOPIT_AUDIT_DSN or run uv run python scripts/generate_secrets.py}
+    ports:
+      - '${PREVIEW_PROXY_PUBLISHED_PORT:-8003}:8003'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      <<: *python-healthcheck
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/healthz'' % os.environ.get(''PORT'', ''8003''), timeout=3).read()"',
+        ]
+    networks:
+      - control-plane
+      - sandbox-internal
+
+  app-proxy:
+    build:
+      context: .
+      dockerfile: services/app-proxy/Dockerfile
+    environment:
+      PORT: ${APP_PROXY_PORT:-8009}
+      LOOPIT_APP_PROXY_PORT: ${APP_PROXY_PORT:-8009}
+      LOOPIT_APP_PROXY_HOSTNAMES: ${LOOPIT_APP_PROXY_HOSTNAMES:-[]}
+      LOOPIT_APP_PROXY_BACKENDS: ${LOOPIT_APP_PROXY_BACKENDS:-[]}
+      LOOPIT_DOMAINS_URL: ${LOOPIT_DOMAINS_URL:-http://domains:8008}
+      LOOPIT_BILLING_URL: ${LOOPIT_BILLING_URL:-http://billing:8006}
+      LOOPIT_SERVICE_TOKEN: ${LOOPIT_SERVICE_TOKEN:?set LOOPIT_SERVICE_TOKEN or run uv run python scripts/generate_secrets.py}
+      LOOPIT_APP_PROXY_ROUTE_POSITIVE_TTL_SECONDS: ${LOOPIT_APP_PROXY_ROUTE_POSITIVE_TTL_SECONDS:-3}
+      LOOPIT_APP_PROXY_ROUTE_NEGATIVE_TTL_SECONDS: ${LOOPIT_APP_PROXY_ROUTE_NEGATIVE_TTL_SECONDS:-1}
+      LOOPIT_APP_PROXY_ROUTE_LOOKUP_TIMEOUT_SECONDS: ${LOOPIT_APP_PROXY_ROUTE_LOOKUP_TIMEOUT_SECONDS:-1.5}
+      LOOPIT_APP_PROXY_MAX_REQUEST_BYTES: ${LOOPIT_APP_PROXY_MAX_REQUEST_BYTES:-10485760}
+      LOOPIT_APP_PROXY_REQUEST_BODY_TIMEOUT_SECONDS: ${LOOPIT_APP_PROXY_REQUEST_BODY_TIMEOUT_SECONDS:-10}
+      LOOPIT_APP_PROXY_UPSTREAM_TIMEOUT_SECONDS: ${LOOPIT_APP_PROXY_UPSTREAM_TIMEOUT_SECONDS:-30}
+      LOOPIT_APP_PROXY_WEBSOCKET_OPEN_TIMEOUT_SECONDS: ${LOOPIT_APP_PROXY_WEBSOCKET_OPEN_TIMEOUT_SECONDS:-10}
+      LOOPIT_APP_PROXY_WEBSOCKET_IDLE_TIMEOUT_SECONDS: ${LOOPIT_APP_PROXY_WEBSOCKET_IDLE_TIMEOUT_SECONDS:-60}
+      LOOPIT_APP_PROXY_RATE_LIMIT_PER_MINUTE: ${LOOPIT_APP_PROXY_RATE_LIMIT_PER_MINUTE:-600}
+      LOOPIT_APP_PROXY_HOSTING_EGRESS_FLUSH_BYTES: ${LOOPIT_APP_PROXY_HOSTING_EGRESS_FLUSH_BYTES:-1000000}
+      LOOPIT_APP_PROXY_HOSTING_EGRESS_FLUSH_INTERVAL_SECONDS: ${LOOPIT_APP_PROXY_HOSTING_EGRESS_FLUSH_INTERVAL_SECONDS:-5}
+      LOOPIT_AUDIT_DSN: ${LOOPIT_AUDIT_DSN:?set LOOPIT_AUDIT_DSN or run uv run python scripts/generate_secrets.py}
+    command: ['sh', '-c', 'exec python -m loopit_app_proxy --host 0.0.0.0 --port $${PORT:-8009}']
+    ports:
+      - '${APP_PROXY_PUBLISHED_PORT:-8009}:8009'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      domains:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/healthz'' % os.environ.get(''PORT'', ''8009''), timeout=3).read()"',
+        ]
+    networks:
+      - control-plane
+      - sandbox-internal
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: services/scheduler/Dockerfile
+    environment:
+      PORT: ${SCHEDULER_PORT:-8004}
+      LOOPIT_SCHEDULER_PORT: ${SCHEDULER_PORT:-8004}
+      LOOPIT_LEASE_TOKEN_SECRET: ${LOOPIT_LEASE_TOKEN_SECRET:?set LOOPIT_LEASE_TOKEN_SECRET or run uv run python scripts/generate_secrets.py}
+      LOOPIT_SERVICE_TOKEN: ${LOOPIT_SERVICE_TOKEN:?set LOOPIT_SERVICE_TOKEN or run uv run python scripts/generate_secrets.py}
+      LOOPIT_SANDBOX_PROVIDER: ${LOOPIT_SANDBOX_PROVIDER:-docker}
+      LOOPIT_SANDBOX_IMAGE: ${LOOPIT_SANDBOX_IMAGE:-loopit-sandbox:latest}
+      # Route leased sandboxes onto sandbox-internal so builds can reach
+      # package registries (the network itself is defined at the bottom of
+      # this file; it is not `internal:` in local bring-up). Sandboxes remain
+      # isolated from the control-plane network. Note the compose project
+      # prefix: the scheduler talks to the Docker daemon directly, so the
+      # fully-qualified network name is required here.
+      LOOPIT_SANDBOX_DOCKER_NETWORK: ${LOOPIT_SANDBOX_DOCKER_NETWORK:-loop-it_sandbox-internal}
+      LOOPIT_SCHEDULER_STORE_DSN: ${LOOPIT_SCHEDULER_STORE_DSN:-}
+      LOOPIT_AUDIT_DSN: ${LOOPIT_AUDIT_DSN:-}
+      DOCKER_HOST: ${DOCKER_HOST:-unix:///var/run/docker.sock}
+    volumes: *docker-socket-volume
+    group_add: *docker-socket-groups
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      egress-proxy:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/healthz'' % os.environ.get(''PORT'', ''8004''), timeout=3).read()"',
+        ]
+    networks:
+      - control-plane
+      - sandbox-internal
+
+
+  workspace-dispatch:
+    build:
+      context: .
+      dockerfile: services/workspace-dispatch/Dockerfile
+    environment:
+      PORT: ${WORKSPACE_DISPATCH_PORT:-8005}
+      LOOPIT_WORKSPACE_DISPATCH_PORT: ${WORKSPACE_DISPATCH_PORT:-8005}
+      LOOPIT_SCHEDULER_URL: ${LOOPIT_SCHEDULER_URL:-http://scheduler:8004}
+      LOOPIT_LEASE_TOKEN_SECRET: ${LOOPIT_LEASE_TOKEN_SECRET:?set LOOPIT_LEASE_TOKEN_SECRET or run uv run python scripts/generate_secrets.py}
+      LOOPIT_SERVICE_TOKEN: ${LOOPIT_SERVICE_TOKEN:?set LOOPIT_SERVICE_TOKEN or run uv run python scripts/generate_secrets.py}
+      LOOPIT_SANDBOX_SIGNING_KEY: ${LOOPIT_SANDBOX_SIGNING_KEY:?set LOOPIT_SANDBOX_SIGNING_KEY or run uv run python scripts/generate_secrets.py}
+      LOOPIT_SANDBOX_PROVIDER: ${LOOPIT_SANDBOX_PROVIDER:-docker}
+      LOOPIT_AUDIT_DSN: ${LOOPIT_AUDIT_DSN:-}
+      LOOPIT_STORE_DSN: ${LOOPIT_STORE_DSN:?set LOOPIT_STORE_DSN or run uv run python scripts/generate_secrets.py}
+      LOOPIT_CHECKPOINT_BLOB_DIR: ${LOOPIT_CHECKPOINT_BLOB_DIR:-/var/lib/loopit/checkpoint-blobs}
+      LOOPIT_VERIFY_STACK: ${LOOPIT_VERIFY_STACK:-python}
+      LOOPIT_VERIFY_SMOKE_URL: ${LOOPIT_VERIFY_SMOKE_URL:-http://localhost:3000}
+      DOCKER_HOST: ${DOCKER_HOST:-unix:///var/run/docker.sock}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - checkpoint-blobs:/var/lib/loopit/checkpoint-blobs
+    group_add: *docker-socket-groups
+    ports:
+      - '127.0.0.1:${WORKSPACE_DISPATCH_PUBLISHED_PORT:-8005}:8005'
+    depends_on:
+      scheduler:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/healthz'' % os.environ.get(''PORT'', ''8005''), timeout=3).read()"',
+        ]
+    networks:
+      - control-plane
+      - sandbox-internal
+
+  billing:
+    build:
+      context: .
+      dockerfile: services/billing/Dockerfile
+    environment:
+      PORT: ${BILLING_PORT:-8006}
+      LOOPIT_STORE_DSN: ${LOOPIT_STORE_DSN:?set LOOPIT_STORE_DSN or run uv run python scripts/generate_secrets.py}
+      LOOPIT_IDENTITY_ISSUER: ${LOOPIT_IDENTITY_ISSUER:-loopit-gateway}
+      LOOPIT_IDENTITY_AUDIENCE: ${LOOPIT_IDENTITY_AUDIENCE:-loopit-control-plane}
+      LOOPIT_IDENTITY_KID: ${LOOPIT_IDENTITY_KID:-dev}
+      LOOPIT_IDENTITY_SECRET: ${LOOPIT_IDENTITY_SECRET:?set LOOPIT_IDENTITY_SECRET or run uv run python scripts/generate_secrets.py}
+      LOOPIT_SERVICE_TOKEN: ${LOOPIT_SERVICE_TOKEN:?set LOOPIT_SERVICE_TOKEN or run uv run python scripts/generate_secrets.py}
+      STRIPE_API_KEY: ${STRIPE_API_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:8080/billing/success}
+      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:8080/billing/cancel}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      <<: *python-healthcheck
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/healthz'' % os.environ.get(''PORT'', ''8006''), timeout=3).read()"',
+        ]
+    networks:
+      - control-plane
+
+  abuse-engine:
+    build:
+      context: .
+      dockerfile: services/abuse-engine/Dockerfile
+    environment:
+      <<: *control-urls
+      PORT: ${ABUSE_ENGINE_PORT:-8007}
+      LOOPIT_SERVICE_TOKEN: ${LOOPIT_SERVICE_TOKEN:?set LOOPIT_SERVICE_TOKEN or run uv run python scripts/generate_secrets.py}
+      LOOPIT_IDENTITY_ISSUER: ${LOOPIT_IDENTITY_ISSUER:-loopit-gateway}
+      LOOPIT_IDENTITY_AUDIENCE: ${LOOPIT_IDENTITY_AUDIENCE:-loopit-control-plane}
+      LOOPIT_IDENTITY_KID: ${LOOPIT_IDENTITY_KID:-dev}
+      LOOPIT_IDENTITY_SECRET: ${LOOPIT_IDENTITY_SECRET:?set LOOPIT_IDENTITY_SECRET or run uv run python scripts/generate_secrets.py}
+      LOOPIT_OPERATOR_IDENTITY_ISSUER: ${LOOPIT_OPERATOR_IDENTITY_ISSUER:-loopit-operator}
+      LOOPIT_OPERATOR_IDENTITY_AUDIENCE: ${LOOPIT_OPERATOR_IDENTITY_AUDIENCE:-loopit-platform-operator}
+      LOOPIT_OPERATOR_IDENTITY_KID: ${LOOPIT_OPERATOR_IDENTITY_KID:-operator-1}
+      LOOPIT_OPERATOR_IDENTITY_SECRET: ${LOOPIT_OPERATOR_IDENTITY_SECRET:?set LOOPIT_OPERATOR_IDENTITY_SECRET or run uv run python scripts/generate_secrets.py}
+      LOOPIT_ABUSE_DRY_RUN: ${LOOPIT_ABUSE_DRY_RUN:-0}
+      LOOPIT_AUTH_ADMIN_URL: ${LOOPIT_API_BASE_URL:-http://api:8000}
+      LOOPIT_RATE_LIMIT_URL: ${LOOPIT_API_BASE_URL:-http://api:8000}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      scheduler:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/healthz'' % os.environ.get(''PORT'', ''8007''), timeout=3).read()"',
+        ]
+    networks:
+      - control-plane
+
+  domains:
+    build:
+      context: .
+      dockerfile: services/domains/Dockerfile
+    environment:
+      PORT: ${DOMAINS_PORT:-8008}
+      LOOPIT_DOMAINS_PORT: ${DOMAINS_PORT:-8008}
+      LOOPIT_APPS_BASE_DOMAIN: ${LOOPIT_APPS_BASE_DOMAIN:-loopit.app}
+      LOOPIT_APP_PROXY_DNS_TARGET: ${LOOPIT_APP_PROXY_DNS_TARGET:-app-proxy}
+      LOOPIT_DOMAINS_DNS_PROVIDER: ${LOOPIT_DOMAINS_DNS_PROVIDER:-cloudflare}
+      # Local bring-up uses the memory DNS provider; the fail-closed factory
+      # requires this explicit opt-in. Empty/unset in production stays closed.
+      LOOPIT_DOMAINS_ALLOW_FAKE_PROVIDERS: ${LOOPIT_DOMAINS_ALLOW_FAKE_PROVIDERS:-}
+      LOOPIT_DOMAINS_PUBLIC_RESOLVER: ${LOOPIT_DOMAINS_PUBLIC_RESOLVER:-doh}
+      LOOPIT_DOMAINS_CERTIFICATE_PROVIDER: ${LOOPIT_DOMAINS_CERTIFICATE_PROVIDER:-disabled}
+      LOOPIT_DOMAINS_REGISTRAR_PROVIDER: ${LOOPIT_DOMAINS_REGISTRAR_PROVIDER:-disabled}
+      LOOPIT_DOMAINS_AUDIT_PROVIDER: ${LOOPIT_DOMAINS_AUDIT_PROVIDER:-postgres}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:?set CLOUDFLARE_API_TOKEN for domains DNS}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:?set CLOUDFLARE_ACCOUNT_ID for domains DNS}
+      LOOPIT_AUDIT_DSN: ${LOOPIT_AUDIT_DSN:?set LOOPIT_AUDIT_DSN or run uv run python scripts/generate_secrets.py}
+      LOOPIT_BILLING_URL: ${LOOPIT_BILLING_URL:-http://billing:8006}
+      LOOPIT_PLATFORM_HOSTNAMES: ${LOOPIT_PLATFORM_HOSTNAMES:-}
+      LOOPIT_SUBDOMAIN_BRAND_DENYLIST: ${LOOPIT_SUBDOMAIN_BRAND_DENYLIST:-}
+      LOOPIT_SERVICE_TOKEN: ${LOOPIT_SERVICE_TOKEN:?set LOOPIT_SERVICE_TOKEN or run uv run python scripts/generate_secrets.py}
+    ports:
+      - '127.0.0.1:${DOMAINS_PUBLISHED_PORT:-8008}:8008'
+    command: ['python', '-m', 'loopit_domains']
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      <<: *python-healthcheck
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/healthz'' % os.environ.get(''PORT'', ''8008''), timeout=3).read()"',
+        ]
+    networks:
+      - control-plane
+  temporal:
+    # start-dev is compose-only and loopback-published; replace before multi-host per docs/self-hosting.md#temporal-start-dev-replacement-path.
+    # start-dev is a temporal CLI command, not a temporal-server one: the
+    # temporalio/server image loads config/docker.yaml and demands a real
+    # datastore. admin-tools ships the CLI; its default cmd is sleep-infinity,
+    # so this command replaces it outright.
+    image: temporalio/admin-tools:1.31.2@sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107
+    # /var/lib/temporal is root-owned in the admin-tools image and the CLI
+    # cannot create the SQLite file there (surfaces as SQLITE_CANTOPEN). /tmp
+    # is writable; start-dev history is disposable by definition.
+    command: ['temporal', 'server', 'start-dev', '--ip', '0.0.0.0', '--db-filename', '/tmp/temporal.db']
+    ports:
+      - '127.0.0.1:${TEMPORAL_PUBLISHED_PORT:-7233}:7233'
+    volumes:
+      - temporal-data:/var/lib/temporal
+    healthcheck:
+      # admin-tools >= 1.24 ships the temporal CLI, not tctl.
+      test: ['CMD-SHELL', 'temporal workflow list --address 127.0.0.1:7233 >/dev/null 2>&1 || exit 1']
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 10
+    networks:
+      - control-plane
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
+    environment:
+      LOOPIT_SERVICE_TOKEN: ${LOOPIT_SERVICE_TOKEN:?set LOOPIT_SERVICE_TOKEN or run uv run python scripts/generate_secrets.py}
+      LOOPIT_SCHEDULER_URL: ${LOOPIT_SCHEDULER_URL:-http://scheduler:8004}
+      LOOPIT_ROUTER_URL: ${LOOPIT_ROUTER_URL:-http://router-svc:8001}
+      LOOPIT_TEMPORAL_ADDRESS: ${LOOPIT_TEMPORAL_ADDRESS:-temporal:7233}
+      LOOPIT_TEMPORAL_NAMESPACE: ${LOOPIT_TEMPORAL_NAMESPACE:-default}
+      LOOPIT_TEMPORAL_TASK_QUEUE: ${LOOPIT_TEMPORAL_TASK_QUEUE:-loopit-runs}
+      LOOPIT_WORKSPACE_DISPATCH_URL: ${LOOPIT_WORKSPACE_DISPATCH_URL:-http://workspace-dispatch:8005/dispatch}
+      # builder (default) auto-approves relative cat/tee heredoc writes and
+      # python file.py. strict keeps the read-only/verify allowlist only.
+      # I7 still gates deploy, egress, secrets, spend, and destructive shell.
+      LOOPIT_GATE_PRESET: ${LOOPIT_GATE_PRESET:-builder}
+    depends_on:
+      temporal:
+        condition: service_healthy
+      router-svc:
+        condition: service_healthy
+      scheduler:
+        condition: service_healthy
+      workspace-dispatch:
+        condition: service_healthy
+    networks:
+      - control-plane
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      PORT: ${API_PORT:-8000}
+      LOOPIT_ENV: ${LOOPIT_ENV:-dev}
+      LOOPIT_STORE_DSN: ${LOOPIT_STORE_DSN:?set LOOPIT_STORE_DSN or run uv run python scripts/generate_secrets.py}
+      LOOPIT_ROUTER_URL: ${LOOPIT_ROUTER_URL:-http://router-svc:8001}
+      LOOPIT_EGRESS_PROXY_URL: ${LOOPIT_EGRESS_PROXY_URL:-http://egress-proxy:8002}
+      LOOPIT_PREVIEW_PROXY_URL: ${LOOPIT_PREVIEW_PROXY_URL:-http://preview-proxy:8003}
+      LOOPIT_SCHEDULER_URL: ${LOOPIT_SCHEDULER_URL:-http://scheduler:8004}
+      # Orchestrator-mode runs start through Temporal; without these the client
+      # defaults to localhost:7233, which is wrong inside a container.
+      LOOPIT_TEMPORAL_ADDRESS: ${LOOPIT_TEMPORAL_ADDRESS:-temporal:7233}
+      LOOPIT_TEMPORAL_NAMESPACE: ${LOOPIT_TEMPORAL_NAMESPACE:-default}
+      LOOPIT_TEMPORAL_TASK_QUEUE: ${LOOPIT_TEMPORAL_TASK_QUEUE:-loopit-runs}
+      LOOPIT_IDENTITY_ISSUER: ${LOOPIT_IDENTITY_ISSUER:-loopit-gateway}
+      LOOPIT_IDENTITY_AUDIENCE: ${LOOPIT_IDENTITY_AUDIENCE:-loopit-control-plane}
+      LOOPIT_IDENTITY_KID: ${LOOPIT_IDENTITY_KID:-dev}
+      LOOPIT_IDENTITY_SECRET: ${LOOPIT_IDENTITY_SECRET:?set LOOPIT_IDENTITY_SECRET or run uv run python scripts/generate_secrets.py}
+      LOOPIT_PREVIEW_SIGNING_KEY: ${LOOPIT_PREVIEW_SIGNING_KEY:?set LOOPIT_PREVIEW_SIGNING_KEY or run uv run python scripts/generate_secrets.py}
+      LOOPIT_PROJECTS: ${LOOPIT_PROJECTS:-/var/lib/loopit/projects}
+      # Without HF_TOKEN the API boots in offline mode: runs use a scripted
+      # client and execution_mode falls back to "local", bypassing Temporal.
+      # The full stack must boot live so runs go through the orchestrator.
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_BASE_URL: ${HF_BASE_URL:-https://router.huggingface.co}
+      HF_BILL_TO: ${HF_BILL_TO:-}
+    volumes:
+      - loopit-projects:/var/lib/loopit/projects
+    ports:
+      - '${API_PUBLISHED_PORT:-8000}:8000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      router-svc:
+        condition: service_healthy
+      scheduler:
+        condition: service_healthy
+      preview-proxy:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/api/health'' % os.environ.get(''PORT'', ''8000''), timeout=3).read()"',
+        ]
+    networks:
+      - control-plane
+
+  loopit-mcp:
+    build:
+      context: .
+      dockerfile: services/loopit-mcp/Dockerfile
+    environment:
+      PORT: ${LOOPIT_MCP_PORT:-8010}
+      LOOPIT_API_BASE_URL: ${LOOPIT_API_BASE_URL:-http://api:8000}
+    ports:
+      - '127.0.0.1:${LOOPIT_MCP_PUBLISHED_PORT:-8010}:8010'
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      <<: *python-healthcheck
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import os, urllib.request; urllib.request.urlopen(''http://127.0.0.1:%s/healthz'' % os.environ.get(''PORT'', ''8010''), timeout=3).read()"',
+        ]
+    networks:
+      - control-plane
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      PORT: ${WEB_PORT:-8080}
+      LOOPIT_API_BASE_URL: ${LOOPIT_API_BASE_URL:-http://api:8000}
+      LOOPIT_PREVIEW_BASE_URL: ${LOOPIT_PREVIEW_PROXY_URL:-http://preview-proxy:8003}
+    ports:
+      - '${WEB_PUBLISHED_PORT:-8080}:8080'
+    depends_on:
+      api:
+        condition: service_healthy
+      preview-proxy:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:$${PORT}/healthz >/dev/null || exit 1']
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - control-plane
+
+  admin:
+    build:
+      context: .
+      dockerfile: apps/admin/Dockerfile
+    environment:
+      PORT: ${ADMIN_PORT:-8081}
+      LOOPIT_ADMIN_API_BASE_URL: ${LOOPIT_ADMIN_API_BASE_URL:-http://abuse-engine:8007}
+      LOOPIT_OPERATOR_IDENTITY_ISSUER: ${LOOPIT_OPERATOR_IDENTITY_ISSUER}
+      LOOPIT_OPERATOR_IDENTITY_AUDIENCE: ${LOOPIT_OPERATOR_IDENTITY_AUDIENCE}
+    ports:
+      - '127.0.0.1:${ADMIN_PUBLISHED_PORT:-8081}:8081'
+    depends_on:
+      abuse-engine:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:$${PORT}/healthz >/dev/null || exit 1']
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - control-plane
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.114.0@sha256:37fa87091cfaaec7234a27e4e395a40c31c2bfaea97a349a4afef6d9e9681197
+    command: ['--config=/etc/otelcol-contrib/config.yaml']
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+    volumes:
+      - ./infra/otel/collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - '127.0.0.1:${OTEL_COLLECTOR_GRPC_PORT:-4317}:4317'
+      - '127.0.0.1:${OTEL_COLLECTOR_HTTP_PORT:-4318}:4318'
+      - '127.0.0.1:${OTEL_COLLECTOR_PROM_PORT:-9464}:9464'
+    networks:
+      - control-plane
+
+  prometheus:
+    image: prom/prometheus:v2.55.1@sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3
+    command: ['--config.file=/etc/prometheus/prometheus.yml']
+    volumes:
+      - ./infra/otel/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - '127.0.0.1:${PROMETHEUS_PORT:-9090}:9090'
+    depends_on:
+      - otel-collector
+    networks:
+      - control-plane
+
+  grafana:
+    image: grafana/grafana-oss:11.3.0@sha256:a0f881232a6fb71a0554a47d0fe2203b6888fe77f4cefb7ea62bed7eb54e13c3
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_ANONYMOUS_ENABLED:-false}
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD or run uv run python scripts/generate_secrets.py}
+    volumes:
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./infra/otel/grafana-provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - '127.0.0.1:${GRAFANA_PORT:-3000}:3000'
+    depends_on:
+      - prometheus
+    networks:
+      - control-plane
+
+volumes:
+  postgres-data:
+  loopit-projects:
+  temporal-data:
+  checkpoint-blobs:
+
+networks:
+  control-plane:
+  sandbox-internal:
+    # Intentionally NOT `internal: true` in local bring-up: local runs compile
+    # and self-test (corepack/npm/pip hit their registries) without a host-side
+    # egress shim. Sandboxes stay isolated from the control-plane network --
+    # this only opens outbound internet. Tighten by reinstating
+    # `internal: true` and fronting registries with egress-proxy for
+    # production parity.
+    driver: bridge

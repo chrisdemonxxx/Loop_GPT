@@ -1,0 +1,13 @@
+[project]
+name = "loopit-policy"
+version = "0.1.0"
+description = "Pure-Python policy rules for action gating, egress categories, quotas, and failures."
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loopit_policy"]

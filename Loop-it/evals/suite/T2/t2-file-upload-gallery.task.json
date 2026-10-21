@@ -1,0 +1,15 @@
+{
+  "task_id": "t2-file-upload-gallery",
+  "tier": "T2",
+  "prompt": "An image gallery with uploads, thumbnails, and delete. Reject non-image files.",
+  "checks": [
+    "build_succeeds",
+    "e2e_upload_and_render",
+    "e2e_rejects_non_image",
+    "upload_size_is_capped"
+  ],
+  "budget_credits": 1.8,
+  "max_wall_clock_seconds": 1800,
+  "tags": ["uploads", "validation"],
+  "origin": "authored"
+}

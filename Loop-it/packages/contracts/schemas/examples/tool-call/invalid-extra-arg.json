@@ -1,0 +1,7 @@
+{
+  "tool": "apply_patch",
+  "args": {
+    "patch": "x",
+    "force": true
+  }
+}

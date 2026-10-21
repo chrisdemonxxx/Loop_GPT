@@ -1,0 +1,11 @@
+{
+  "id": "multi-tenant-saas-starter",
+  "stack": "react-postgres",
+  "prompt_seed": "Build a multi-tenant SaaS starter with organizations, member invitations, tenant-scoped records, and admin-only settings.",
+  "expected_dag": [
+    {"id": "tenant-schema", "kind": "add-table-rls", "depends_on": []},
+    {"id": "membership", "kind": "wire-auth", "depends_on": ["tenant-schema"]},
+    {"id": "admin-settings", "kind": "add-route", "depends_on": ["membership"]}
+  ],
+  "verification": {"commands": ["pnpm lint", "pnpm typecheck", "pnpm test"], "browser_flows": ["owner-invites-member", "tenant-isolation"]}
+}

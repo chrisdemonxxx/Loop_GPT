@@ -1,0 +1,25 @@
+app = "loopit-scheduler"
+primary_region = "iad"
+kill_signal = "SIGINT"
+kill_timeout = "5s"
+
+[build]
+  dockerfile = "services/scheduler/Dockerfile"
+
+[env]
+  PORT = "8004"
+  LOOPIT_SCHEDULER_PORT = "8004"
+  LOOPIT_EGRESS_PROXY_URL = "http://loopit-egress-proxy.internal:8002"
+
+[checks.healthz]
+  port = 8004
+  type = "http"
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "20s"
+  path = "/healthz"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256

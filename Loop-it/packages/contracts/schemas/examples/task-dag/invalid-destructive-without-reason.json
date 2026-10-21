@@ -1,0 +1,14 @@
+{
+  "plan_id": "p2",
+  "goal": "drop table",
+  "nodes": [
+    {
+      "id": "drop",
+      "kind": "add_table",
+      "goal": "Drop users table",
+      "dag_parents": [],
+      "expected_verification": ["L1_tests"],
+      "destructive": true
+    }
+  ]
+}

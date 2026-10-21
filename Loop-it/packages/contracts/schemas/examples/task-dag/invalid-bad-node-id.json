@@ -1,0 +1,14 @@
+{
+  "plan_id": "p3",
+  "goal": "x",
+  "nodes": [
+    {
+      "id": "Bad Id",
+      "kind": "add_ui_page",
+      "goal": "x",
+      "dag_parents": [],
+      "expected_verification": ["L1_tests"],
+      "destructive": false
+    }
+  ]
+}

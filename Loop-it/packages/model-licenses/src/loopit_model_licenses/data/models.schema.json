@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://loop-it.dev/schemas/model-license-register.schema.json",
+  "type": "object",
+  "required": ["schema_version", "models"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "model_id",
+          "base_model",
+          "derivative_lineage",
+          "license_id",
+          "license_url",
+          "field_of_use_restrictions",
+          "commercial_use",
+          "attribution_requirements",
+          "redistribution_requirements",
+          "last_verified",
+          "verifier"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "model_id": { "type": "string", "minLength": 1 },
+          "base_model": { "type": "string", "minLength": 1 },
+          "derivative_lineage": { "type": "array", "items": { "type": "string" } },
+          "license_id": { "type": "string", "minLength": 1 },
+          "license_url": { "type": "string", "format": "uri" },
+          "field_of_use_restrictions": { "type": "array", "items": { "type": "string" } },
+          "commercial_use": { "type": "boolean" },
+          "attribution_requirements": { "type": "array", "items": { "type": "string" } },
+          "redistribution_requirements": { "type": "array", "items": { "type": "string" } },
+          "last_verified": { "type": "string", "format": "date" },
+          "verifier": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

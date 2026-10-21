@@ -1,0 +1,11 @@
+{
+  "id": "crud-app-with-auth",
+  "stack": "react-postgres",
+  "prompt_seed": "Build a CRUD task tracker with signup, login, task ownership, and row-level security on every table.",
+  "expected_dag": [
+    {"id": "schema", "kind": "add-table-rls", "depends_on": []},
+    {"id": "auth", "kind": "wire-auth", "depends_on": ["schema"]},
+    {"id": "ui", "kind": "add-route", "depends_on": ["auth"]}
+  ],
+  "verification": {"commands": ["pnpm lint", "pnpm typecheck", "pnpm test"], "browser_flows": ["signup-login-create-readback"]}
+}

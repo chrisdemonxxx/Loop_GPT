@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://loop-it.dev/schemas/tool-call.schema.json",
+  "title": "ToolCall",
+  "description": "A single least-privilege tool invocation emitted by a task agent. Tool calls are produced with constrained/structured decoding and validated on receipt; they are never free-form parsed (Doc 04 §3).",
+  "type": "object",
+  "required": ["tool", "args"],
+  "properties": {
+    "call_id": {
+      "type": "string",
+      "description": "Idempotency key for the call. Retries reuse it."
+    },
+    "tool": {
+      "type": "string",
+      "enum": [
+        "read_file",
+        "search_code",
+        "apply_patch",
+        "run_shell",
+        "install_package",
+        "start_dev_server",
+        "read_logs",
+        "browser",
+        "provision",
+        "deploy",
+        "request_secret"
+      ]
+    },
+    "args": { "type": "object" },
+    "reason": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Agent's stated reason. Advisory only; never used for authorization."
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "tool": { "const": "read_file" } }, "required": ["tool"] },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["path"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "$ref": "#/$defs/projectPath" },
+              "start_line": { "type": "integer", "minimum": 1 },
+              "end_line": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "tool": { "const": "search_code" } }, "required": ["tool"] },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["query"],
+            "additionalProperties": false,
+            "properties": {
+              "query": { "type": "string", "minLength": 1, "maxLength": 1000 },
+              "glob": { "type": "string" },
+              "max_results": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "tool": { "const": "apply_patch" } }, "required": ["tool"] },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["patch"],
+            "additionalProperties": false,
+            "properties": {
+              "patch": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Unified diff. Every hunk is validated against the current file; mismatched context is rejected (stale-read protection, Doc 04 §6)."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "tool": { "const": "run_shell" } }, "required": ["tool"] },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["command"],
+            "additionalProperties": false,
+            "properties": {
+              "command": { "type": "string", "minLength": 1, "maxLength": 8000 },
+              "cwd": { "$ref": "#/$defs/projectPath" },
+              "timeout_seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1800,
+                "default": 300
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "tool": { "const": "install_package" } }, "required": ["tool"] },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["package"],
+            "additionalProperties": false,
+            "properties": {
+              "package": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "description": "Package name (and optional version), e.g. 'left-pad' or 'express@4'."
+              },
+              "manager": {
+                "type": "string",
+                "enum": ["npm", "pnpm", "yarn", "pip", "uv"],
+                "default": "npm"
+              },
+              "dev": { "type": "boolean", "default": false }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "tool": { "const": "start_dev_server" } }, "required": ["tool"] },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8000,
+                "description": "Foreground command that starts the app (default: npm run dev). Runs detached; logs go to the path used by read_logs."
+              },
+              "cwd": { "$ref": "#/$defs/projectPath" },
+              "log_path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "default": "/tmp/loopit-dev-server.log"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "tool": { "const": "read_logs" } }, "required": ["tool"] },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "default": "/tmp/loopit-dev-server.log"
+              },
+              "lines": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2000,
+                "default": 200
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "tool": { "const": "browser" } }, "required": ["tool"] },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["action"],
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "goto",
+                  "click",
+                  "fill",
+                  "assert_text",
+                  "screenshot",
+                  "console_errors",
+                  "smoke"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "description": "App-relative path; resolved against the authenticated preview proxy, never a raw port."
+              },
+              "selector": { "type": "string" },
+              "value": { "type": "string" },
+              "flow": { "type": "string", "description": "Named critical flow for action=smoke." }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "tool": { "const": "provision" } }, "required": ["tool"] },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["resource"],
+            "additionalProperties": false,
+            "properties": {
+              "resource": {
+                "type": "string",
+                "enum": ["table", "auth", "storage_bucket", "edge_function", "seed"]
+              },
+              "spec": {
+                "type": "object",
+                "description": "Resource spec. RLS is emitted by the provisioning tool, never requested by the agent (I9)."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "tool": { "const": "deploy" } }, "required": ["tool"] },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["target"],
+            "additionalProperties": false,
+            "properties": {
+              "target": { "type": "string", "enum": ["managed", "git", "user_cloud"] },
+              "environment": { "type": "string", "enum": ["preview", "prod"], "default": "prod" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "tool": { "const": "request_secret" } }, "required": ["tool"] },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+                "description": "Secret name the user must paste (never a VITE_ client key)."
+              },
+              "reason": { "type": "string", "maxLength": 1000 }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "projectPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$",
+      "description": "Project-relative path. Absolute paths and parent traversal are rejected."
+    }
+  }
+}

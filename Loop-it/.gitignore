@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.venv/
+__pycache__/
+*.py[cod]
+.uv/
+
+# Build output
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+
+# Env & secrets — NEVER commit (invariant I2 / Doc 06 §4)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Test & coverage
+coverage/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+playwright-report/
+test-results/
+
+# Eval + run artifacts
+evals/**/runs/
+evals/**/artifacts/
+.loopit/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Eval run output (the committed baseline lives at evals/results/baseline.json)
+evals/results/*
+!evals/results/baseline.json

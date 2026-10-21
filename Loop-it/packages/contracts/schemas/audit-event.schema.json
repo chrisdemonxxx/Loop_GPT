@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://loop-it.dev/schemas/audit-event.schema.json",
+  "title": "AuditEvent",
+  "description": "One append-only audit record. Every action, observation, tool call, model call, gate decision, and kill-switch trip emits one (I10, Doc 08 §6). Records are immutable; corrections are new records, never edits.",
+  "type": "object",
+  "required": ["event_id", "occurred_at", "type", "actor", "tenant_id"],
+  "additionalProperties": false,
+  "properties": {
+    "event_id": { "type": "string", "minLength": 1 },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "type": {
+      "type": "string",
+      "enum": [
+        "run.created",
+        "run.completed",
+        "run.failed",
+        "plan.generated",
+        "task.started",
+        "task.completed",
+        "tool.called",
+        "tool.rejected",
+        "model.called",
+        "sandbox.leased",
+        "sandbox.recycled",
+        "egress.allowed",
+        "egress.denied",
+        "gate.requested",
+        "gate.approved",
+        "gate.rejected",
+        "checkpoint.created",
+        "checkpoint.restored",
+        "secret.injected",
+        "secret.revoked",
+        "deploy.executed",
+        "killswitch.tripped",
+        "abuse.flagged",
+        "abuse.signal.ingested",
+        "abuse.action",
+        "abuse.allowlisted",
+        "abuse.operator.suspend",
+        "abuse.operator.unsuspend",
+        "abuse.operator.kill_sandbox",
+        "abuse.operator.throttle",
+        "quota.exceeded"
+      ]
+    },
+    "actor": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "enum": ["user", "agent", "system", "service"] },
+        "id": { "type": "string" },
+        "service": { "type": "string" }
+      }
+    },
+    "tenant_id": { "type": "string", "minLength": 1 },
+    "project_id": { "type": "string" },
+    "run_id": { "type": "string" },
+    "task_id": { "type": "string" },
+    "sandbox_lease_id": { "type": "string" },
+    "trace_id": {
+      "type": "string",
+      "description": "OTel trace id, to correlate audit with telemetry."
+    },
+    "plane": {
+      "type": "string",
+      "enum": ["control", "data", "deployment", "user_app"],
+      "description": "Which plane the event occurred in. Generated code must only ever produce data-plane events (I1)."
+    },
+    "outcome": { "type": "string", "enum": ["allowed", "denied", "success", "failure", "pending"] },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "cached_input_tokens": { "type": "integer", "minimum": 0 },
+        "credits": { "type": "number", "minimum": 0 },
+        "usd": { "type": "number", "minimum": 0 },
+        "model": { "type": "string" }
+      }
+    },
+    "detail": {
+      "type": "object",
+      "description": "Event-specific payload. MUST NOT contain secrets, credentials, or raw model API keys."
+    }
+  }
+}

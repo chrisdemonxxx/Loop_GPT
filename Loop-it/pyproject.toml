@@ -1,0 +1,235 @@
+[project]
+name = "loop-it"
+version = "0.0.0"
+description = "Loop-it — open, self-hosted, model-unrestricted AI app-building platform"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    "loopit-agent-core",
+    "loopit-agent-runtime",
+    "loopit-abuse",
+    "loopit-api",
+    "loopit-auth",
+    "loopit-billing",
+    "loopit-checkpoint",
+    "loopit-connectors",
+    "loopit-enterprise",
+    "loopit-deployer",
+    "loopit-gitsync",
+    "loopit-egress",
+    "loopit-evals",
+    "loopit-mcp",
+    "loopit-model-licenses",
+    "loopit-patch",
+    "loopit-planner",
+    "loopit-orchestrator",
+    "loopit-policy",
+    "loopit-preview",
+    "loopit-provision",
+    "loopit-router",
+    "loopit-sandbox-network",
+    "loopit-sandbox-sdk",
+    "loopit-scheduler",
+    "loopit-secrets-broker",
+    "loopit-store",
+    "loopit-tools",
+    "loopit-telemetry",
+    "loopit-verify",
+]
+
+[tool.uv.workspace]
+members = [
+    "services/orchestrator",
+    "services/preview-proxy",
+    "services/scheduler",
+    "services/egress-proxy",
+    "services/router-svc",
+    "services/abuse-engine",
+    "services/billing",
+    "services/secrets-broker",
+    "services/deployer",
+    "services/workspace-dispatch",
+    "services/loopit-mcp",
+    "services/domains",
+    "services/app-proxy",
+    "apps/api",
+    "packages/agent-core",
+    "packages/tools",
+    "packages/patch",
+    "packages/planner",
+    "packages/policy",
+    "packages/model-licenses",
+    "packages/store",
+    "packages/auth",
+    "packages/provision",
+    "packages/checkpoint",
+    "packages/connectors",
+    "packages/enterprise",
+    "packages/gitsync",
+    "packages/sandbox-sdk",
+    "packages/telemetry",
+    "sandbox/agent-runtime",
+    "packages/verify",
+    "sandbox/network",
+    "evals/harness",
+]
+
+[tool.uv.sources]
+loopit-agent-core = { workspace = true }
+loopit-agent-runtime = { workspace = true }
+loopit-abuse = { workspace = true }
+loopit-api = { workspace = true }
+loopit-auth = { workspace = true }
+loopit-billing = { workspace = true }
+loopit-checkpoint = { workspace = true }
+loopit-connectors = { workspace = true }
+loopit-enterprise = { workspace = true }
+loopit-deployer = { workspace = true }
+loopit-domains = { workspace = true }
+loopit-gitsync = { workspace = true }
+loopit-egress = { workspace = true }
+loopit-evals = { workspace = true }
+loopit-model-licenses = { workspace = true }
+loopit-patch = { workspace = true }
+loopit-planner = { workspace = true }
+loopit-orchestrator = { workspace = true }
+loopit-mcp = { workspace = true }
+loopit-policy = { workspace = true }
+loopit-preview = { workspace = true }
+loopit-provision = { workspace = true }
+loopit-router = { workspace = true }
+loopit-sandbox-network = { workspace = true }
+loopit-sandbox-sdk = { workspace = true }
+loopit-scheduler = { workspace = true }
+loopit-secrets-broker = { workspace = true }
+loopit-store = { workspace = true }
+loopit-tools = { workspace = true }
+loopit-telemetry = { workspace = true }
+loopit-verify = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "httpx2>=0.29",
+    "jsonschema>=4.23",
+    "mypy>=1.13",
+    "psycopg[binary]>=3.2",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "types-jsonschema>=4.23",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["node_modules", ".venv", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "S", "ASYNC", "RUF"]
+# S101: pytest asserts.
+# N818: our refusal exceptions read as statements at the raise site
+# (`raise QuotaExceeded(...)`, `raise BudgetExceeded(...)`), matching stdlib
+# precedent like StopIteration. The `-Error` suffix is used for fault types.
+ignore = ["S101", "N818"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S", "B"]
+"evals/redteam/**" = ["S", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+exclude = ["node_modules", ".venv", "dist"]
+# Default targets so a bare `uv run mypy` checks the same tree as CI. Without
+# this, `uv run mypy` fails with "Missing target module" and the type gate is
+# easy to skip by accident. `scripts/` is omitted: it is on mypy_path, so
+# passing it as a target too makes mypy see each file under two module names.
+files = ["services", "packages", "evals", "apps", "sandbox"]
+# Workspace packages are not installed when mypy runs in CI, so point it at the
+# same source roots pytest uses. Keep the two lists in step when adding a package.
+mypy_path = [
+    "packages/agent-core/src",
+    "packages/tools/src",
+    "packages/checkpoint/src",
+    "packages/connectors/src",
+    "packages/enterprise/src",
+    "packages/gitsync/src",
+    "packages/patch/src",
+    "packages/planner/src",
+    "packages/policy/src",
+    "packages/model-licenses/src",
+    "packages/store/src",
+    "packages/auth/src",
+    "packages/provision/src",
+    "packages/sandbox-sdk/src",
+    "packages/telemetry/src",
+    "sandbox/agent-runtime/src",
+    "packages/verify/src",
+    "sandbox/network/src",
+    "services/egress-proxy/src",
+    "services/router-svc/src",
+    "services/secrets-broker/src",
+    "services/deployer/src",
+    "services/preview-proxy/src",
+    "services/scheduler/src",
+    "services/abuse-engine/src",
+    "services/orchestrator/src",
+    "services/billing/src",
+    "services/workspace-dispatch/src",
+    "services/loopit-mcp/src",
+    "services/domains/src",
+    "services/app-proxy/src",
+    "evals/harness/src",
+    "apps/api/src",]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["services", "packages", "evals", "apps"]
+addopts = "-q"
+pythonpath = [
+    "packages/agent-core/src",
+    "packages/tools/src",
+    "packages/checkpoint/src",
+    "packages/connectors/src",
+    "packages/enterprise/src",
+    "packages/gitsync/src",
+    "packages/patch/src",
+    "packages/planner/src",
+    "packages/policy/src",
+    "packages/model-licenses/src",
+    "packages/store/src",
+    "packages/auth/src",
+    "packages/provision/src",
+    "packages/sandbox-sdk/src",
+    "packages/telemetry/src",
+    "sandbox/agent-runtime/src",
+    "packages/verify/src",
+    "sandbox/network/src",
+    "services/egress-proxy/src",
+    "services/router-svc/src",
+    "services/secrets-broker/src",
+    "services/deployer/src",
+    "services/preview-proxy/src",
+    "services/scheduler/src",
+    "services/abuse-engine/src",
+    "services/orchestrator/src",
+    "services/billing/src",
+    "services/workspace-dispatch/src",
+    "services/loopit-mcp/src",
+    "services/domains/src",
+    "services/app-proxy/src",
+    "evals/harness/src",
+    "apps/api/src",]
+markers = [
+    "fast: red-team checks cheap enough to run on every pull request",
+    "slow: full-suite checks reserved for the nightly run",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+

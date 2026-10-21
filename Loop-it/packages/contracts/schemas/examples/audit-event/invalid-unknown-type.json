@@ -1,0 +1,10 @@
+{
+  "event_id": "ev_3",
+  "occurred_at": "2026-08-23T00:00:02Z",
+  "type": "something.weird",
+  "actor": {
+    "kind": "user",
+    "id": "u1"
+  },
+  "tenant_id": "t_1"
+}

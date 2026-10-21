@@ -1,0 +1,434 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub Environment to deploy
+        type: choice
+        required: true
+        default: staging
+        options:
+          - staging
+          - prod
+      override_release_blockers:
+        description: Emergency override for eval/red-team infra outages only
+        type: boolean
+        required: true
+        default: false
+      override_reason:
+        description: Required when override_release_blockers is true
+        type: string
+        required: false
+        default: ''
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  NODE_VERSION: '22'
+  PYTHON_VERSION: '3.11'
+  TARGET_ENVIRONMENT: ${{ github.event.inputs.environment || 'staging' }}
+  OVERRIDE_RELEASE_BLOCKERS: ${{ github.event.inputs.override_release_blockers || 'false' }}
+  OVERRIDE_REASON: ${{ github.event.inputs.override_reason || '' }}
+
+jobs:
+  release-override-audit:
+    name: Release override audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate override input
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$OVERRIDE_RELEASE_BLOCKERS" == "true" ]]; then
+            if [[ -z "$OVERRIDE_REASON" ]]; then
+              echo "override_reason is required when override_release_blockers is true" >&2
+              exit 1
+            fi
+            {
+              echo "## Release blocker override used"
+              echo ""
+              echo "- Actor: ${GITHUB_ACTOR}"
+              echo "- Environment: ${TARGET_ENVIRONMENT}"
+              echo "- Reason: ${OVERRIDE_REASON}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Release blocker override not used."
+          fi
+
+  python-ci-gate:
+    name: Release blocker / Python full CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --all-extras --dev
+      - run: uv run pytest
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy services packages evals sandbox apps
+
+  typescript-ci-gate:
+    name: Release blocker / TypeScript full CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  contracts-gate:
+    name: Release blocker / Contracts schemas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --dev
+      - run: uv run python packages/contracts/validate_schemas.py
+
+  invariants-gate:
+    name: Release blocker / Invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --dev
+      - run: uv run python scripts/check_invariants.py
+
+  selfhost-preflight-gate:
+    name: Release blocker / Self-host preflight
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --dev
+      - name: Run self-host preflight
+        env:
+          LOOPIT_ENV: ${{ env.TARGET_ENVIRONMENT }}
+          LOOPIT_PUBLIC_URL: ${{ vars.LOOPIT_PUBLIC_URL }}
+          LOOPIT_POSTGRES_DSN: ${{ secrets.CONTROL_PLANE_DATABASE_URL }}
+          LOOPIT_STORE_DSN: ${{ secrets.CONTROL_PLANE_DATABASE_URL }}
+          LOOPIT_AUDIT_DSN: ${{ secrets.LOOPIT_AUDIT_DSN }}
+          LOOPIT_AUDIT_ROLE_PASSWORD: ${{ secrets.LOOPIT_AUDIT_ROLE_PASSWORD }}
+          LOOPIT_TEMPORAL_ADDRESS: ${{ vars.LOOPIT_TEMPORAL_ADDRESS }}
+          LOOPIT_REDIS_URL: ${{ secrets.LOOPIT_REDIS_URL }}
+          LOOPIT_OBJECT_STORAGE_ENDPOINT: ${{ vars.LOOPIT_OBJECT_STORAGE_ENDPOINT }}
+          LOOPIT_OBJECT_STORAGE_BUCKET: ${{ vars.LOOPIT_OBJECT_STORAGE_BUCKET }}
+          LOOPIT_MODEL_ENDPOINT: ${{ vars.LOOPIT_MODEL_ENDPOINT }}
+          LOOPIT_SANDBOX_PROVIDER: ${{ vars.LOOPIT_SANDBOX_PROVIDER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          LOOPIT_IDENTITY_SECRET: ${{ secrets.LOOPIT_IDENTITY_SECRET }}
+          LOOPIT_OPERATOR_IDENTITY_SECRET: ${{ secrets.LOOPIT_OPERATOR_IDENTITY_SECRET }}
+          LOOPIT_PREVIEW_SIGNING_KEY: ${{ secrets.LOOPIT_PREVIEW_SIGNING_KEY }}
+          LOOPIT_LEASE_TOKEN_SECRET: ${{ secrets.LOOPIT_LEASE_TOKEN_SECRET }}
+          LOOPIT_SERVICE_TOKEN: ${{ secrets.LOOPIT_SERVICE_TOKEN }}
+          LOOPIT_MODEL_API_KEY: ${{ secrets.LOOPIT_MODEL_API_KEY }}
+          LOOPIT_SANDBOX_SIGNING_KEY: ${{ secrets.LOOPIT_SANDBOX_SIGNING_KEY }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+          LOOPIT_ABUSE_DRY_RUN: ${{ vars.LOOPIT_ABUSE_DRY_RUN || '0' }}
+          LOOPIT_DEV_SINGLE_TENANT: ${{ vars.LOOPIT_DEV_SINGLE_TENANT || '0' }}
+        run: uv run python scripts/selfhost_preflight.py
+
+  eval-regression-gate:
+    name: Release blocker / Eval harness T0-T3
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    needs: [release-override-audit]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --all-extras --dev
+      - name: Fail closed when live eval configuration is absent
+        if: env.OVERRIDE_RELEASE_BLOCKERS != 'true'
+        shell: bash
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          LOOPIT_SANDBOX_PROVIDER: ${{ vars.LOOPIT_SANDBOX_PROVIDER }}
+        run: |
+          set -euo pipefail
+          test -n "$HF_TOKEN" || { echo "HF_TOKEN is required for release evals" >&2; exit 1; }
+          case "$LOOPIT_SANDBOX_PROVIDER" in
+            docker|e2b) ;;
+            *) echo "LOOPIT_SANDBOX_PROVIDER must be docker or e2b for release evals" >&2; exit 1 ;;
+          esac
+      - name: Run eval tiers
+        if: env.OVERRIDE_RELEASE_BLOCKERS != 'true'
+        run: >
+          uv run python -m loopit_evals.cli run
+          --executor real
+          --provider "${LOOPIT_SANDBOX_PROVIDER}"
+          --tiers T0,T1,T2,T3
+          --baseline evals/results/baseline.json
+          --tolerance 0.05
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_BILL_TO: ${{ vars.HF_BILL_TO }}
+          LOOPIT_ROUTER_BASE_URL: ${{ vars.LOOPIT_ROUTER_BASE_URL }}
+          LOOPIT_SANDBOX_PROVIDER: ${{ vars.LOOPIT_SANDBOX_PROVIDER }}
+          LOOPIT_SANDBOX_IMAGE: ${{ vars.LOOPIT_SANDBOX_IMAGE }}
+          LOOPIT_SANDBOX_DOCKER_NETWORK: ${{ vars.LOOPIT_SANDBOX_DOCKER_NETWORK }}
+          LOOPIT_E2B_TEMPLATE_ID: ${{ vars.LOOPIT_E2B_TEMPLATE_ID }}
+          LOOPIT_EVAL_CREDIT_LIMIT: ${{ vars.LOOPIT_EVAL_CREDIT_LIMIT }}
+      - name: Record manual override
+        if: env.OVERRIDE_RELEASE_BLOCKERS == 'true'
+        run: echo "Eval T0-T3 release blocker manually overridden by ${GITHUB_ACTOR}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload eval results
+        if: always() && env.OVERRIDE_RELEASE_BLOCKERS != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-eval-results
+          path: evals/results/
+
+  redteam-gate:
+    name: Release blocker / Full red-team suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    needs: [release-override-audit]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --all-extras --dev
+      - name: Fail closed when live red-team configuration is absent
+        if: env.OVERRIDE_RELEASE_BLOCKERS != 'true'
+        shell: bash
+        env:
+          LOOPIT_LIVE_SANDBOX_REDTEAM: ${{ vars.LOOPIT_LIVE_SANDBOX_REDTEAM }}
+          LOOPIT_SANDBOX_PROVIDER: ${{ vars.LOOPIT_SANDBOX_PROVIDER }}
+        run: |
+          set -euo pipefail
+          [[ "$LOOPIT_LIVE_SANDBOX_REDTEAM" == "1" ]] || {
+            echo "LOOPIT_LIVE_SANDBOX_REDTEAM=1 is required; skipping live red-team blocks deploys" >&2
+            exit 1
+          }
+          case "$LOOPIT_SANDBOX_PROVIDER" in
+            docker|e2b) ;;
+            *) echo "LOOPIT_SANDBOX_PROVIDER must be docker or e2b for release red-team" >&2; exit 1 ;;
+          esac
+      - name: Run full red-team suite
+        if: env.OVERRIDE_RELEASE_BLOCKERS != 'true'
+        run: uv run pytest evals/redteam -v
+        env:
+          LOOPIT_LIVE_SANDBOX_REDTEAM: ${{ vars.LOOPIT_LIVE_SANDBOX_REDTEAM }}
+          LOOPIT_SANDBOX_PROVIDER: ${{ vars.LOOPIT_SANDBOX_PROVIDER }}
+          LOOPIT_EGRESS_PROXY_ADDR: ${{ vars.LOOPIT_EGRESS_PROXY_ADDR }}
+          LOOPIT_SANDBOX_RESOLVER_ADDR: ${{ vars.LOOPIT_SANDBOX_RESOLVER_ADDR }}
+      - name: Record manual override
+        if: env.OVERRIDE_RELEASE_BLOCKERS == 'true'
+        run: echo "Full red-team release blocker manually overridden by ${GITHUB_ACTOR}." >> "$GITHUB_STEP_SUMMARY"
+
+  build-images:
+    name: Build and push image / ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs:
+      - python-ci-gate
+      - typescript-ci-gate
+      - contracts-gate
+      - invariants-gate
+      - selfhost-preflight-gate
+      - eval-regression-gate
+      - redteam-gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: router-svc
+            dockerfile: services/router-svc/Dockerfile
+          - service: egress-proxy
+            dockerfile: services/egress-proxy/Dockerfile
+          - service: scheduler
+            dockerfile: services/scheduler/Dockerfile
+          - service: preview-proxy
+            dockerfile: services/preview-proxy/Dockerfile
+          - service: api
+            dockerfile: apps/api/Dockerfile
+          - service: web
+            dockerfile: apps/web/Dockerfile
+    outputs:
+      image-tag: ${{ github.sha }}
+      registry: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/${{ matrix.service }}" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ github.sha }}
+            ${{ steps.image.outputs.name }}:${{ env.TARGET_ENVIRONMENT }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  migrate-control-plane:
+    name: Migrate control-plane database
+    runs-on: ubuntu-latest
+    needs: [build-images]
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --dev
+      - name: Run migrations
+        env:
+          CONTROL_PLANE_DATABASE_URL: ${{ secrets.CONTROL_PLANE_DATABASE_URL }}
+        run: uv run python -m loopit_store.migrate --dsn "$CONTROL_PLANE_DATABASE_URL"
+
+  deploy:
+    name: Deploy to Fly / ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: [migrate-control-plane]
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - service: router-svc
+            config: infra/fly/fly.router-svc.toml
+            app_var: FLY_ROUTER_SVC_APP
+            health_var: ROUTER_SVC_HEALTH_URL
+          - service: egress-proxy
+            config: infra/fly/fly.egress-proxy.toml
+            app_var: FLY_EGRESS_PROXY_APP
+            health_var: EGRESS_PROXY_HEALTH_URL
+          - service: scheduler
+            config: infra/fly/fly.scheduler.toml
+            app_var: FLY_SCHEDULER_APP
+            health_var: SCHEDULER_HEALTH_URL
+          - service: preview-proxy
+            config: infra/fly/fly.preview-proxy.toml
+            app_var: FLY_PREVIEW_PROXY_APP
+            health_var: PREVIEW_PROXY_HEALTH_URL
+          - service: api
+            config: infra/fly/fly.api.toml
+            app_var: FLY_API_APP
+            health_var: API_HEALTH_URL
+          - service: web
+            config: infra/fly/fly.web.toml
+            app_var: FLY_WEB_APP
+            health_var: WEB_HEALTH_URL
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master as of 2026-09-03
+      - name: Resolve app and image
+        id: deploy_vars
+        shell: bash
+        env:
+          APP_VAR_NAME: ${{ matrix.app_var }}
+          HEALTH_VAR_NAME: ${{ matrix.health_var }}
+          FLY_ROUTER_SVC_APP: ${{ vars.FLY_ROUTER_SVC_APP }}
+          FLY_EGRESS_PROXY_APP: ${{ vars.FLY_EGRESS_PROXY_APP }}
+          FLY_SCHEDULER_APP: ${{ vars.FLY_SCHEDULER_APP }}
+          FLY_PREVIEW_PROXY_APP: ${{ vars.FLY_PREVIEW_PROXY_APP }}
+          FLY_API_APP: ${{ vars.FLY_API_APP }}
+          FLY_WEB_APP: ${{ vars.FLY_WEB_APP }}
+          ROUTER_SVC_HEALTH_URL: ${{ vars.ROUTER_SVC_HEALTH_URL }}
+          EGRESS_PROXY_HEALTH_URL: ${{ vars.EGRESS_PROXY_HEALTH_URL }}
+          SCHEDULER_HEALTH_URL: ${{ vars.SCHEDULER_HEALTH_URL }}
+          PREVIEW_PROXY_HEALTH_URL: ${{ vars.PREVIEW_PROXY_HEALTH_URL }}
+          API_HEALTH_URL: ${{ vars.API_HEALTH_URL }}
+          WEB_HEALTH_URL: ${{ vars.WEB_HEALTH_URL }}
+        run: |
+          set -euo pipefail
+          app="${!APP_VAR_NAME:-}"
+          health="${!HEALTH_VAR_NAME:-}"
+          if [[ -z "$app" ]]; then
+            echo "$APP_VAR_NAME must be configured as an environment variable" >&2
+            exit 1
+          fi
+          image="ghcr.io/${GITHUB_REPOSITORY,,}/${{ matrix.service }}:${GITHUB_SHA}"
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "health=$health" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+      - name: Deploy canary
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: >
+          flyctl deploy --config "${{ matrix.config }}"
+          --app "${{ steps.deploy_vars.outputs.app }}"
+          --image "${{ steps.deploy_vars.outputs.image }}"
+          --strategy canary
+          --wait-timeout 600
+      - name: Verify /healthz
+        shell: bash
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          APP: ${{ steps.deploy_vars.outputs.app }}
+          HEALTH_URL: ${{ steps.deploy_vars.outputs.health }}
+        run: |
+          set -euo pipefail
+          flyctl checks list --app "$APP"
+          if [[ -n "$HEALTH_URL" ]]; then
+            for i in {1..30}; do
+              if curl --fail --silent --show-error --max-time 10 "$HEALTH_URL"; then
+                exit 0
+              fi
+              sleep 10
+            done
+            echo "health URL did not become ready: $HEALTH_URL" >&2
+            exit 1
+          fi
+          echo "No public health URL configured; Fly health checks above are the /healthz verifier."

@@ -1,0 +1,13 @@
+[project]
+name = "loopit-sandbox-sdk"
+version = "0.1.0"
+description = "Signed, least-privilege RPC between the control plane and a leased sandbox."
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loopit_sandbox_sdk"]

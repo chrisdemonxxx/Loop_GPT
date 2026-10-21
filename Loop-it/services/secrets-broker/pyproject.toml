@@ -1,0 +1,22 @@
+[project]
+name = "loopit-secrets-broker"
+version = "0.1.0"
+description = "JIT per-step secret injection: short-lived, single-step leases with a structural build↔prod firewall (Doc 06 §4, Doc 08 §5)."
+requires-python = ">=3.11"
+dependencies = [
+    "cryptography>=43",
+    "loopit-agent-core",
+    "loopit-store",
+    "psycopg[binary]>=3.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loopit_secrets"]
+
+[tool.uv.sources]
+loopit-agent-core = { workspace = true }
+loopit-store = { workspace = true }

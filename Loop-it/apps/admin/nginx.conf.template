@@ -1,0 +1,13 @@
+server {
+  listen       ${PORT};
+  server_name  _;
+  root /usr/share/nginx/html;
+  index index.html;
+
+  location = /healthz { access_log off; return 200 "ok\n"; }
+  location = /config.js {
+    default_type application/javascript;
+    return 200 "window.__LOOPIT_ADMIN_API_BASE_URL__='${LOOPIT_ADMIN_API_BASE_URL}';window.__LOOPIT_OPERATOR_IDENTITY_ISSUER__='${LOOPIT_OPERATOR_IDENTITY_ISSUER}';window.__LOOPIT_OPERATOR_IDENTITY_AUDIENCE__='${LOOPIT_OPERATOR_IDENTITY_AUDIENCE}';";
+  }
+  location / { try_files $uri $uri/ /index.html; }
+}

@@ -1,0 +1,31 @@
+[project]
+name = "loopit-scheduler"
+version = "0.0.0"
+description = "Sandbox scheduler: warm pool, leases, recycle-on-done"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "loopit-agent-core",
+    "loopit-sandbox-sdk",
+    "loopit-store",
+    "loopit-telemetry",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+docker = ["docker>=7.1"]
+e2b = ["e2b-code-interpreter>=2.0"]
+providers = ["docker>=7.1", "e2b-code-interpreter>=2.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loopit_scheduler"]
+
+[tool.uv.sources]
+loopit-agent-core = { workspace = true }
+loopit-sandbox-sdk = { workspace = true }
+loopit-store = { workspace = true }
+loopit-telemetry = { workspace = true }

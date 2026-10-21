@@ -1,0 +1,32 @@
+{
+  "plan_id": "p1",
+  "goal": "Add billing page and profile page",
+  "base_checkpoint_id": "ckpt_9",
+  "nodes": [
+    {
+      "id": "billing-page",
+      "kind": "add_ui_page",
+      "goal": "Add /billing route with plan list",
+      "dag_parents": [],
+      "expected_verification": ["L0_typecheck_lint", "L1_tests", "L2_browser_smoke"],
+      "destructive": false
+    },
+    {
+      "id": "profile-page",
+      "kind": "add_ui_page",
+      "goal": "Add /profile route with editable name",
+      "dag_parents": [],
+      "expected_verification": ["L0_typecheck_lint", "L1_tests", "L2_browser_smoke"],
+      "destructive": false
+    },
+    {
+      "id": "ship",
+      "kind": "deploy",
+      "goal": "Deploy to production",
+      "dag_parents": ["billing-page", "profile-page"],
+      "expected_verification": ["L0_typecheck_lint", "L1_tests", "L2_browser_smoke", "L2_5_sast"],
+      "destructive": true,
+      "destructive_reason": "Deploys to production; irreversible without rollback."
+    }
+  ]
+}

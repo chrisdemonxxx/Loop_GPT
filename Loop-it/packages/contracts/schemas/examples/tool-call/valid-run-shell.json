@@ -1,0 +1,8 @@
+{
+  "tool": "run_shell",
+  "args": {
+    "command": "pnpm test",
+    "cwd": "app",
+    "timeout_seconds": 600
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "default_action": "deny",
+  "log_all_requests": true,
+  "categories": [
+    {
+      "name": "package_registries",
+      "enabled": true,
+      "window": "always"
+    },
+    {
+      "name": "model_router",
+      "enabled": true,
+      "window": "always"
+    },
+    {
+      "name": "deploy_targets",
+      "enabled": false,
+      "window": "deploy_step_only"
+    }
+  ],
+  "extra_allow": ["api.stripe.com"]
+}

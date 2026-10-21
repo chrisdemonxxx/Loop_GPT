@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://loop-it.dev/schemas/egress-policy.schema.json",
+  "title": "EgressPolicy",
+  "description": "Default-deny egress policy for a sandbox lease (I3, Doc 02 §5). Anything not matched by an enabled category is denied. Link-local and metadata ranges are always denied and cannot be enabled.",
+  "type": "object",
+  "required": ["default_action", "categories"],
+  "additionalProperties": false,
+  "properties": {
+    "default_action": {
+      "type": "string",
+      "const": "deny",
+      "description": "Fixed. There is no allow-all posture; this is not configurable."
+    },
+    "categories": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/category" }
+    },
+    "extra_allow": {
+      "type": "array",
+      "description": "Per-project, opt-in, reviewed domains for APIs the build legitimately integrates. Logged on every request.",
+      "items": { "$ref": "#/$defs/domain" },
+      "uniqueItems": true,
+      "maxItems": 50
+    },
+    "log_all_requests": { "type": "boolean", "const": true }
+  },
+  "$defs": {
+    "category": {
+      "type": "object",
+      "required": ["name", "enabled"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": ["package_registries", "model_router", "app_apis", "deploy_targets"]
+        },
+        "enabled": { "type": "boolean" },
+        "window": {
+          "type": "string",
+          "enum": ["always", "deploy_step_only", "named_step_only"],
+          "default": "always",
+          "description": "deploy_targets must never be 'always' — they open only at explicit deploy time."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "name": { "const": "deploy_targets" } },
+            "required": ["name"]
+          },
+          "then": { "properties": { "window": { "const": "deploy_step_only" } } }
+        }
+      ]
+    },
+    "domain": {
+      "type": "string",
+      "pattern": "^(?!.*\\*\\*)[a-z0-9.*-]+\\.[a-z]{2,}$",
+      "maxLength": 253
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "tool": "browser",
+  "args": {
+    "action": "smoke",
+    "flow": "signup_login_create"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "task_id": "t0-add-page-title",
+  "tier": "T0",
+  "prompt": "Set the browser tab title to 'Loop-it Demo'.",
+  "checks": ["build_succeeds", "document_title_matches"],
+  "budget_credits": 0.05,
+  "max_wall_clock_seconds": 300,
+  "tags": ["metadata"],
+  "origin": "authored"
+}

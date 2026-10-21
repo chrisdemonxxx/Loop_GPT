@@ -1,0 +1,16 @@
+{
+  "task_id": "t2-relational-invoicing",
+  "tier": "T2",
+  "prompt": "An invoicing app: clients have many invoices, invoices have many line items, totals update live.",
+  "checks": [
+    "build_succeeds",
+    "unit_tests_pass",
+    "e2e_create_client_and_invoice",
+    "e2e_totals_recompute",
+    "db_has_foreign_keys"
+  ],
+  "budget_credits": 2.0,
+  "max_wall_clock_seconds": 1800,
+  "tags": ["relations", "state"],
+  "origin": "authored"
+}

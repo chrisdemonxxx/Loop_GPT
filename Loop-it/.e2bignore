@@ -1,0 +1,26 @@
+# E2B template-build context: everything the sandbox image COPYs, none of the
+# local toolchain state. Mirrors .dockerignore except sandbox/image, which the
+# template build DOES need (warmup scripts are baked into the image).
+.git
+.github
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.turbo
+.venv
+.loopit
+**/.DS_Store
+**/__pycache__
+**/*.pyc
+**/node_modules
+**/dist
+**/.turbo
+*.pdf
+.env
+.env.*
+!.env.example
+coverage
+htmlcov
+artifacts
+**/coverage
+**/htmlcov

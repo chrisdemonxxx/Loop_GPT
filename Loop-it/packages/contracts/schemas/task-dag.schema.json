@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://loop-it.dev/schemas/task-dag.schema.json",
+  "title": "TaskDAG",
+  "description": "Planner output: a directed acyclic graph of tasks with dependencies, fork points, expected verification, and destructiveness flags (Doc 04 §2). Generated with structured outputs and validated before execution.",
+  "type": "object",
+  "required": ["plan_id", "goal", "nodes"],
+  "additionalProperties": false,
+  "properties": {
+    "plan_id": { "type": "string", "minLength": 1 },
+    "goal": { "type": "string", "minLength": 1, "maxLength": 200000 },
+    "base_checkpoint_id": {
+      "type": "string",
+      "description": "Immutable checkpoint the whole plan forks from. Runs never execute against mutable current files."
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/taskNode" }
+    }
+  },
+  "$defs": {
+    "taskNode": {
+      "type": "object",
+      "required": ["id", "kind", "goal", "dag_parents", "expected_verification", "destructive"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "scaffold_project",
+            "add_table",
+            "add_api_route",
+            "add_ui_page",
+            "add_ui_component",
+            "wire_auth",
+            "add_dependency",
+            "write_tests",
+            "fix_verification_failure",
+            "deploy"
+          ],
+          "description": "Task kind from the supported stack's vocabulary. Determines the tool allowlist and the verification floor; the planner may raise verification but never lower it (P2-6)."
+        },
+        "goal": { "type": "string", "minLength": 1, "maxLength": 200000 },
+        "dag_parents": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+          "uniqueItems": true,
+          "description": "Node ids this task depends on. Empty means it may start from the base checkpoint. Cycles are rejected by the validator, not the schema."
+        },
+        "fork_checkpoint_id": {
+          "type": "string",
+          "description": "Green checkpoint this task's CoW fork is taken from. Omitted means the plan's base checkpoint."
+        },
+        "expected_verification": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "L0_typecheck_lint",
+              "L1_tests",
+              "L2_browser_smoke",
+              "L2_5_sast",
+              "L3_visual_diff"
+            ]
+          },
+          "description": "Verification layers that must be green for this task. Cheap layers gate expensive ones."
+        },
+        "destructive": {
+          "type": "boolean",
+          "description": "True if the task deletes data, alters production schema, deploys, spends money, writes externally, or rotates secrets. True forces a human confirmation gate (I7)."
+        },
+        "destructive_reason": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Required when destructive is true; shown to the human in the gate prompt."
+        },
+        "budget": { "$ref": "#/$defs/budget" }
+      },
+      "if": { "properties": { "destructive": { "const": true } }, "required": ["destructive"] },
+      "then": { "required": ["destructive_reason"] }
+    },
+    "budget": {
+      "type": "object",
+      "description": "Every loop is bounded (I12). Omitted fields inherit the Run-level budget.",
+      "additionalProperties": false,
+      "properties": {
+        "max_iterations": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "max_tokens": { "type": "integer", "minimum": 1 },
+        "max_wall_clock_seconds": { "type": "integer", "minimum": 1 },
+        "max_credits": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}
