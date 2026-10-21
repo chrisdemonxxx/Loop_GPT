@@ -103,10 +103,20 @@ class E2BRuntimeWorkspace(RemoteWorkspace):
         return _json_map(self._run_python(_STATE_SCRIPT, self._workspace))
 
     def _run_python(self, script: str, *args: str) -> str:
-        # The script goes on stdin. A shell-quoted python -c argument turns
-        # the script's newlines into line-continuation backslashes.
-        command = "python - " + " ".join(shlex.quote(arg) for arg in args)
-        return self._session.run(command, env={}, stdin=script)
+        # A shell-quoted python -c script turns newlines into line continuations,
+        # and E2B process start rejects a program read from stdin. Pass the
+        # program as one base64 argument instead.
+        encoded = base64.b64encode(script.encode()).decode()
+        command = " ".join(
+            [
+                "python",
+                "-c",
+                shlex.quote("import base64,sys; exec(base64.b64decode(sys.argv[1]))"),
+                shlex.quote(encoded),
+                *(shlex.quote(arg) for arg in args),
+            ]
+        )
+        return self._session.run(command, env={})
 
     def snapshot_contents_for_paths(self, paths: Sequence[str]) -> Mapping[str, bytes]:
         if not paths:
