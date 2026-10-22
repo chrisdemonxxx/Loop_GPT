@@ -64,6 +64,30 @@ export function openBotThread(id: string) {
   return req<{ id: string; title: string; botId: string; kind: string }>('POST', `/api/bots/${id}/thread`)
 }
 
+export interface BotThreadSummary {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+}
+
+export function listBotThreads(id: string) {
+  return req<{ threads: BotThreadSummary[] }>('GET', `/api/bots/${id}/threads`)
+}
+
+/** Always creates a conversation. Does not reopen the latest thread. */
+export function createBotThread(id: string) {
+  return req<{ id: string; title: string; botId: string; kind: string }>('POST', `/api/bots/${id}/threads`)
+}
+
+export function renameBotThread(id: string, title: string) {
+  return req<{ success: boolean }>('PATCH', `/api/conversations/${id}`, { title })
+}
+
+export function deleteBotThread(id: string) {
+  return req<{ success: boolean }>('DELETE', `/api/conversations/${id}`)
+}
+
 export function createBotGroup(botIds: string[], name?: string) {
   return req<{ id: string; title: string; kind: string; botIds: string[] }>('POST', '/api/bots/groups', { botIds, name })
 }

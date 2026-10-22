@@ -40,10 +40,11 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 export const enqueueBotTask = (input: EnqueueBotInput) =>
   req<EnqueueBotResult>('POST', '/api/bot/tasks', input)
 
-export const listBotTasks = (opts: { status?: string; limit?: number } = {}) => {
+export const listBotTasks = (opts: { status?: string; limit?: number; conversationId?: string } = {}) => {
   const params = new URLSearchParams()
   if (opts.status) params.set('status', opts.status)
   if (opts.limit) params.set('limit', String(opts.limit))
+  if (opts.conversationId) params.set('conversationId', opts.conversationId)
   return req<{ tasks: BotTask[] }>('GET', `/api/bot/tasks${params.size ? `?${params}` : ''}`)
 }
 

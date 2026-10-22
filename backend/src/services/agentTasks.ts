@@ -90,6 +90,8 @@ export const enqueueInput = z.object({
   skillId: z.string().regex(/^[a-zA-Z0-9-]{1,64}$/).optional(),
   /** Named bot this task runs as. Omitted → the owner's primary Loop Bot. */
   botId: z.string().min(1).max(80).optional(),
+  /** Bot thread this task belongs to. Stored on the AgentTask row. */
+  conversationId: z.string().trim().min(1).max(128).optional(),
   priority: z.number().int().min(-100).max(100).default(0),
 })
 
@@ -151,6 +153,21 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string, o
       botId = parsed.botId ?? null
     }
   }
+  let conversationId: string | null = null
+  if (parsed.conversationId) {
+    if (!ownerId) throw new AgentTaskError('invalid_request')
+    const thread = await database().conversation.findFirst({
+      where: {
+        id: parsed.conversationId,
+        userId: ownerId,
+        kind: 'bot',
+        ...(botId ? { botId } : {}),
+      },
+      select: { id: true },
+    })
+    if (!thread) throw new AgentTaskError('invalid_request')
+    conversationId = thread.id
+  }
   const created = await database().agentTask.create({
     data: {
       kind: parsed.kind,
@@ -163,6 +180,7 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string, o
       computer: computer ?? undefined,
       skillId: parsed.skillId ?? null,
       botId,
+      conversationId,
       priority: parsed.priority,
       createdBy,
       userId: ownerId,
@@ -202,11 +220,12 @@ export async function remainingVmMinutes(ownerId: string): Promise<number> {
   return remaining
 }
 
-export async function listAgentTasks(opts: { status?: string; limit?: number; scope?: TaskScope } = {}) {
+export async function listAgentTasks(opts: { status?: string; limit?: number; scope?: TaskScope; conversationId?: string } = {}) {
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200)
   const where: Record<string, unknown> = {}
   if (opts.status) where.status = opts.status
   if (opts.scope?.userId) where.userId = opts.scope.userId
+  if (opts.conversationId) where.conversationId = opts.conversationId
   return database().agentTask.findMany({
     where,
     orderBy: [{ status: 'asc' }, { priority: 'desc' }, { nextAttemptAt: 'asc' }],
@@ -215,7 +234,7 @@ export async function listAgentTasks(opts: { status?: string; limit?: number; sc
       id: true, kind: true, goal: true, status: true, schedule: true, model: true,
       priority: true, attempts: true, failures: true, nextAttemptAt: true,
       cancelRequested: true, lastErrorCode: true, createdBy: true, createdAt: true, updatedAt: true,
-      computer: true, userId: true, botId: true,
+      computer: true, userId: true, botId: true, conversationId: true,
     },
   })
 }

@@ -25,6 +25,7 @@ import { ComputerSession } from './computerSession'
 import { E2BDesktopError, attachDesktop } from './e2bDesktop'
 import { attachUserBoxFromDB, createBoxTaskFolder, extendUserBoxLease } from './botBox'
 import { COMPUTER_TOOL_NAMES, computerToolsForScreen } from '../agent/tools/computerTools'
+import { rememberFactTool } from '../agent/tools/metaTools'
 import { builtinToolNames } from '../agent'
 import { saveArtifact } from '../agent/artifacts'
 import { loadSkillsForUser } from '../agent/skills/skillLoader'
@@ -122,6 +123,28 @@ export async function attachBotIdentity(
   }
 }
 
+/** Catalog for one bot run. `remember_fact` is registered for named-bot runs
+ *  but is not in builtinTools(), so it has to be added when the name is on
+ *  the run or buildGrantedTools drops it. */
+export function botRunToolCatalog(
+  runNames: readonly string[],
+  parts: {
+    builtins: readonly ToolDefinition[]
+    computerTools?: readonly ToolDefinition[]
+    skillTool?: ToolDefinition
+  },
+): ToolDefinition[] {
+  const catalog: ToolDefinition[] = [
+    ...parts.builtins,
+    ...(parts.computerTools ?? []),
+    ...(parts.skillTool ? [parts.skillTool] : []),
+  ]
+  if (runNames.includes('remember_fact') && !catalog.some((tool) => tool.name === 'remember_fact')) {
+    catalog.push(rememberFactTool)
+  }
+  return catalog
+}
+
 /** Build the authorized tool grant from the FINAL name list (after identity /
  *  skill attachment). Remember_fact and skill tools must be in the grant or
  *  the runtime returns 403 when the model calls them. */
@@ -136,6 +159,21 @@ export function buildGrantedTools(
     if (tool && !granted.some((g) => g.name === tool.name)) granted.push(tool)
   }
   return granted
+}
+
+/** Names safe to pass into restrictRunContext. A name that was not granted is
+ *  left out so a missing tool cannot abort the computer. */
+export function grantedToolNamesForRun(
+  requested: readonly string[],
+  granted: readonly { name: string }[],
+): string[] {
+  const allowed = new Set(granted.map((tool) => tool.name))
+  const names: string[] = []
+  for (const name of requested) {
+    if (!allowed.has(name) || names.includes(name)) continue
+    names.push(name)
+  }
+  return names
 }
 
 export interface BotIdentity { userId: string; workspaceId: string; conversationId: string }
@@ -389,11 +427,7 @@ export async function executeBotTask(
     // are actually authorized — building earlier left them as names-only → 403.
     // Tool descriptions use the live xdpyinfo size so clicks match the canvas.
     const computerTools = computer ? computerToolsForScreen(screen) : []
-    const catalog: ToolDefinition[] = [
-      ...builtins,
-      ...computerTools,
-      ...(skillTool ? [skillTool] : []),
-    ]
+    const catalog = botRunToolCatalog(runNames, { builtins, computerTools, skillTool })
     const grantedTools = buildGrantedTools(runNames, catalog)
     const authorizedCtx = await authorizeRunContext(ctx, identity.workspaceId, grantedTools)
     run.emit({ type: 'run', runId: run.runId } as AgentEvent)
@@ -403,7 +437,7 @@ export async function executeBotTask(
       messages,
       provider: 'huggingface',
       model: runModel,
-      toolNames: names,
+      toolNames: grantedToolNamesForRun(names, grantedTools),
       systemPrompt: prompt,
       maxSteps: task.maxSteps ?? undefined,
       thinking: (task.thinking || undefined) as ThinkingInput,

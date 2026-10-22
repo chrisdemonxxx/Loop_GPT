@@ -86,9 +86,9 @@ router.get('/', authenticateToken, async (req, res) => {
     }
 
     const conversations = await prisma!.conversation.findMany({
-      // Incognito conversations stay out of the sidebar (brief A2.5); they
-      // remain reachable by id while active.
-      where: { userId, incognito: false },
+      // Chat's list only: ordinary chats. Incognito, bot threads, and build
+      // runs (loopitRunId) stay reachable by id but out of this list.
+      where: { userId, incognito: false, kind: 'chat', loopitRunId: null },
       // Pinned first (audit §8-13), then recency — the client groups by
       // date bucket from this order.
       orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
@@ -138,19 +138,19 @@ router.get('/search', authenticateToken, async (req, res) => {
     if (q.length < 2) return res.json([])
     const messages = await prisma!.message.findMany({
       where: {
-        conversation: { userId, incognito: false },
+        conversation: { userId, incognito: false, kind: 'chat', loopitRunId: null },
         content: { contains: q, mode: 'insensitive' },
       },
       select: {
         content: true,
         createdAt: true,
-        conversation: { select: { id: true, title: true, updatedAt: true, pinned: true } },
+        conversation: { select: { id: true, title: true, updatedAt: true, pinned: true, kind: true, loopitRunId: true } },
       },
       orderBy: { createdAt: 'desc' },
       take: 80,
     })
     // Newest match per conversation wins; snippet from that match.
-    const byConversation = new Map<string, { conversationId: string; title: string; updatedAt: string; pinned: boolean; snippet: string; matches: number }>()
+    const byConversation = new Map<string, { conversationId: string; title: string; updatedAt: string; pinned: boolean; snippet: string; matches: number; kind: string; loopitRunId: string | null }>()
     for (const m of messages) {
       const c = m.conversation
       const existing = byConversation.get(c.id)
@@ -162,6 +162,8 @@ router.get('/search', authenticateToken, async (req, res) => {
         title: c.title,
         updatedAt: c.updatedAt.toISOString(),
         pinned: c.pinned,
+        kind: c.kind,
+        loopitRunId: c.loopitRunId,
         snippet: `${start > 0 ? '…' : ''}${m.content.slice(start, start + 120).replace(/\s+/g, ' ')}${m.content.length > start + 120 ? '…' : ''}`,
         matches: 1,
       })

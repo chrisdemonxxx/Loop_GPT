@@ -230,20 +230,19 @@ export async function deleteBot(ownerId: string, id: string) {
   return { ok: true }
 }
 
-/** Find or create the 1:1 thread, and greet on the first open. */
-export async function openBotThread(ownerId: string, botId: string, userName?: string | null) {
+export interface BotThreadSummary {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+}
+
+async function insertBotThread(ownerId: string, bot: { id: string; name: string }, title: string, userName?: string | null) {
   const database = db()
-  const bot = await database.bot.findFirst({ where: { id: botId, ownerId } })
-  if (!bot) throw new BotError('not_found')
-  const existing = await database.conversation.findFirst({
-    where: { userId: ownerId, botId, kind: 'bot', incognito: false },
-    orderBy: { updatedAt: 'desc' },
-  })
-  if (existing) return existing
   const conversation = await database.conversation.create({
     data: {
       userId: ownerId,
-      title: bot.name,
+      title: title.slice(0, 120),
       botId: bot.id,
       kind: 'bot',
       botIds: [bot.id],
@@ -259,6 +258,45 @@ export async function openBotThread(ownerId: string, botId: string, userName?: s
   })
   await database.conversation.update({ where: { id: conversation.id }, data: { activeLeafId: hello.id } })
   return conversation
+}
+
+/** Always insert a new 1:1 thread. Does not reopen the latest one. */
+export async function createBotThread(ownerId: string, botId: string, userName?: string | null) {
+  const database = db()
+  const bot = await database.bot.findFirst({ where: { id: botId, ownerId } })
+  if (!bot) throw new BotError('not_found')
+  return insertBotThread(ownerId, bot, 'New chat', userName)
+}
+
+/** This bot's threads, newest first. */
+export async function listBotThreads(ownerId: string, botId: string): Promise<BotThreadSummary[]> {
+  const database = db()
+  const bot = await database.bot.findFirst({ where: { id: botId, ownerId }, select: { id: true } })
+  if (!bot) throw new BotError('not_found')
+  const threads = await database.conversation.findMany({
+    where: { userId: ownerId, botId, kind: 'bot', incognito: false },
+    orderBy: { updatedAt: 'desc' },
+    select: { id: true, title: true, createdAt: true, updatedAt: true },
+  })
+  return threads.map((thread) => ({
+    id: thread.id,
+    title: thread.title,
+    createdAt: thread.createdAt.toISOString(),
+    updatedAt: thread.updatedAt.toISOString(),
+  }))
+}
+
+/** Find or create the 1:1 thread, and greet on the first open. */
+export async function openBotThread(ownerId: string, botId: string, userName?: string | null) {
+  const database = db()
+  const bot = await database.bot.findFirst({ where: { id: botId, ownerId } })
+  if (!bot) throw new BotError('not_found')
+  const existing = await database.conversation.findFirst({
+    where: { userId: ownerId, botId, kind: 'bot', incognito: false },
+    orderBy: { updatedAt: 'desc' },
+  })
+  if (existing) return existing
+  return insertBotThread(ownerId, bot, bot.name, userName)
 }
 
 export async function createGroup(ownerId: string, botIds: string[], name?: string) {

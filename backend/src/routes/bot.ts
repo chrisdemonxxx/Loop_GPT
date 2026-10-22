@@ -98,7 +98,8 @@ router.get('/tasks', asyncHandler(async (req, res) => {
   const { listAgentTasks } = await import('../services/agentTasks')
   const status = typeof req.query.status === 'string' ? req.query.status : undefined
   const limit = Number(req.query.limit) || 50
-  res.json({ tasks: await listAgentTasks({ status, limit, scope: { userId: (req as any).userId } }) })
+  const conversationId = typeof req.query.conversationId === 'string' ? req.query.conversationId : undefined
+  res.json({ tasks: await listAgentTasks({ status, limit, conversationId, scope: { userId: (req as any).userId } }) })
 }))
 
 /** GET /api/bot/tasks/:id — your task, with its recent runs. */

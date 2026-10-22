@@ -217,6 +217,43 @@ describe('Sidebar ? recents copy and failures', () => {
   })
 })
 
+describe('Sidebar — chat sessions only', () => {
+  it('hides bot threads and build runs, and keeps pin, rename, and delete on chats', () => {
+    renderSidebar({
+      conversations: [
+        conv('chat', 'Ordinary chat', 0),
+        { ...conv('bot', 'Helm thread', 0), kind: 'bot', botId: 'bot-1' },
+        { ...conv('build', 'Build run', 0), loopitRunId: 'run_1' },
+        { ...conv('group', 'The group', 0), kind: 'group' },
+      ],
+    })
+    expect(screen.getByText('Ordinary chat')).toBeInTheDocument()
+    expect(screen.queryByText('Helm thread')).not.toBeInTheDocument()
+    expect(screen.queryByText('Build run')).not.toBeInTheDocument()
+    expect(screen.queryByText('The group')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'New session' })).toBeInTheDocument()
+    fireEvent.click(screen.getByTitle('Pin to top'))
+    expect(base.onPinConversation).toHaveBeenCalledWith('chat', true)
+    fireEvent.click(screen.getByTitle('Rename'))
+    expect(screen.getByDisplayValue('Ordinary chat')).toBeInTheDocument()
+  })
+
+  it('drops bot and build hits from message search', () => {
+    renderSidebar({
+      conversations: [],
+      searchQuery: 'zebra',
+      messageHits: [
+        { conversationId: 'bot', title: 'Bot hit', updatedAt: iso(0), pinned: false, snippet: 'zebra bot', matches: 1, kind: 'bot' },
+        { conversationId: 'build', title: 'Build hit', updatedAt: iso(0), pinned: false, snippet: 'zebra build', matches: 1, kind: 'chat', loopitRunId: 'run_9' },
+        { conversationId: 'chat', title: 'Chat hit', updatedAt: iso(0), pinned: false, snippet: 'zebra chat', matches: 1, kind: 'chat' },
+      ],
+    })
+    expect(screen.getByText('Chat hit')).toBeInTheDocument()
+    expect(screen.queryByText('Bot hit')).not.toBeInTheDocument()
+    expect(screen.queryByText('Build hit')).not.toBeInTheDocument()
+  })
+})
+
 describe('Sidebar workspace links', () => {
   it('points Files, Recents, and Customize at their routes and keeps one Projects section', () => {
     renderSidebar()

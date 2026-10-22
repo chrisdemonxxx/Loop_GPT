@@ -70,6 +70,11 @@ describe('enqueueInput schema', () => {
     expect(() => enqueueInput.parse({ ...base, computer: { ttlMinutes: 30 } })).toThrow()
   })
 
+  it('accepts a bot thread id on the enqueue body', () => {
+    expect(enqueueInput.parse({ ...base, conversationId: 'ckthread1', botId: 'bot_1' }).conversationId).toBe('ckthread1')
+    expect(() => enqueueInput.parse({ ...base, conversationId: '' })).toThrow()
+  })
+
   it('accepts teach tasks and skillId links; teach must carry a computer', () => {
     expect(enqueueInput.parse({ ...base, kind: 'teach', computer: { enabled: true } }).kind).toBe('teach')
     expect(enqueueInput.parse({ ...base, skillId: 'cold-email-writer' }).skillId).toBe('cold-email-writer')

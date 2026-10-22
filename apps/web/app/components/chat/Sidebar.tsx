@@ -24,6 +24,14 @@ export interface ConversationSearchHit {
   pinned: boolean
   snippet: string
   matches: number
+  kind?: string
+  loopitRunId?: string | null
+}
+
+/** Chat's session list: ordinary chats only. Bot threads and build runs stay out. */
+function isChatSession(row: { kind?: string; loopitRunId?: string | null }) {
+  if (row.loopitRunId) return false
+  return !row.kind || row.kind === 'chat'
 }
 
 interface SidebarProps {
@@ -103,17 +111,19 @@ export default function Sidebar({
   const { locale, setLocale, t } = useI18n()
 
   const q = searchQuery.trim().toLowerCase()
+  const chatSessions = useMemo(() => conversations.filter(isChatSession), [conversations])
+  const visibleHits = useMemo(() => messageHits.filter(isChatSession), [messageHits])
   const titleMatches = useMemo(
-    () => conversations.filter((c) => !q || (c.title || '').toLowerCase().includes(q)),
-    [conversations, q],
+    () => chatSessions.filter((c) => !q || (c.title || '').toLowerCase().includes(q)),
+    [chatSessions, q],
   )
   // A failed search must not hide the sessions that already loaded.
-  const listed = searchError ? conversations : titleMatches
+  const listed = searchError ? chatSessions : titleMatches
   /** Conversations found by message content only (not already in titleMatches). */
   const bodyOnly = useMemo(() => {
     const titleIds = new Set(titleMatches.map((c) => c.id))
-    return messageHits.filter((h) => !titleIds.has(h.conversationId))
-  }, [messageHits, titleMatches])
+    return visibleHits.filter((h) => !titleIds.has(h.conversationId))
+  }, [visibleHits, titleMatches])
 
   /** Grouping by pinned, then date bucket (server already orders each list). */
   const dateGroups = useMemo(() => {
@@ -331,13 +341,13 @@ export default function Sidebar({
         {sessionsPending && !searchQuery && (
           <p className="px-3 py-6 text-center text-[12px] text-slate-500">Loading…</p>
         )}
-        {sessionsError && !sessionsPending && conversations.length === 0 && !searchQuery && (
+        {sessionsError && !sessionsPending && chatSessions.length === 0 && !searchQuery && (
           <div className="px-3 py-6 text-center">
             <p className="text-xs text-rose-400">{"Couldn't load sessions."}</p>
             <button type="button" onClick={onRetrySessions} className="mt-2 text-xs text-rose-300 underline">Retry</button>
           </div>
         )}
-        {!sessionsError && !sessionsPending && !searchQuery && conversations.length === 0 && (
+        {!sessionsError && !sessionsPending && !searchQuery && chatSessions.length === 0 && (
           <p className="px-3 py-6 text-center text-[12px] text-slate-500">{t('noSessions')}</p>
         )}
       </div>

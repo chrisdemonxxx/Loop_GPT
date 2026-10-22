@@ -745,7 +745,7 @@ export default function ChatPage() {
   // against the standard 32k window (the large tier has more headroom).
   const contextTokens = Math.ceil(((messages as Message[]).reduce((n, m) => n + (m.content?.length || 0), 0) + chat.liveAnswer.length) / 4)
   const contextPct = Math.min(100, Math.round((contextTokens / 32_768) * 100))
-  const chatConversations = (conversations as Conversation[]).filter((c) => !c.kind || c.kind === 'chat')
+  const chatConversations = (conversations as Conversation[]).filter((c) => (!c.kind || c.kind === 'chat') && !c.loopitRunId)
   const listedActive = (conversations as Conversation[]).find((c) => c.id === currentConversationId)
   const activeConv = listedActive?.kind && listedActive.kind !== 'chat'
     ? listedActive

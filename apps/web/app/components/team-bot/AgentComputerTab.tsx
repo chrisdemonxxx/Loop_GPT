@@ -8,12 +8,11 @@ import { BotScreen } from './BotScreen'
 import type { TeachSession } from './useTeachSession'
 
 /**
- * The agent's persistent computer:
+ * The agent's persistent computer.
  *
- *  - embedded: black stage, centered 16:9 screen, caption "{Bot}'s screen",
- *    and an on-screen Watching / Take control pill.
- *  - expanded: the same stage, plus the record bar (Start recording, or
- *    frame/step count and Stop while a teach recording is running).
+ * Embedded and expanded, the stage is the 16:9 frame itself: edge to edge
+ * in the pane, with no taller black box around a smaller screen. The caption
+ * sits under the embedded frame. Expanded adds the record bar.
  *
  * Stop on the pill releases control. While a recording is active, Stop ends
  * the recording and distills — it does not save a skill on the first click.
@@ -132,77 +131,88 @@ export function AgentComputerTab({
     if (session.phase === 'recording') void session.stop()
   }
 
-  const stage = (
-    <div className="flex flex-col flex-1 min-h-0">
-      <div className={`relative flex-1 min-h-0 bg-black overflow-hidden ${expanded ? '' : 'rounded-xl border border-[var(--border-subtle)]'}`}>
-        {/* Query box is absolutely filled so size containment cannot collapse the flex stage. */}
-        <div className="absolute inset-0" style={{ containerType: 'size' }}>
-        <div
-          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 aspect-video overflow-hidden bg-black"
-          style={{ width: 'min(100cqw, calc(100cqh * 16 / 9))' }}
-        >
-          <div className="absolute inset-0">
-            {shownUrl ? (
-              <BotScreen
-                key={`${shownUrl}:${showInteractive ? 'i' : 'v'}`}
-                url={shownUrl}
-                interactive={!!showInteractive}
-                onOperatorInput={recording && showInteractive ? session.reportInput : undefined}
-              />
-            ) : (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 text-center px-6 bg-black">
-                {booting || session.phase === 'starting' ? (
-                  <>
-                    <Ghost size={28} className="text-white/80" aria-hidden />
-                    <p className="text-ui-sm text-white/80">Waking up…</p>
-                  </>
-                ) : error ? (
-                  <>
-                    <Monitor size={22} className="text-white/50" aria-hidden />
-                    <p className="text-ui-sm text-[var(--danger)] max-w-sm">{error}</p>
-                    <button type="button" onClick={() => void wake()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
-                      <Power size={12} aria-hidden /> Wake the computer
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <Monitor size={22} className="text-white/50" aria-hidden />
-                    <p className="text-ui-sm text-white/70">{box?.alive ? 'Stream offline — wake to reconnect.' : 'The computer is asleep.'}</p>
-                    <button type="button" onClick={() => void wake()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
-                      <Power size={12} aria-hidden /> Wake the computer
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-
-            {shownUrl && (
-              <ControlPill
-                driving={inControl}
-                takeDisabled={!interactiveUrl && session.phase !== 'waiting'}
-                onTakeControl={takeControl}
-                onStop={stopControl}
-              />
-            )}
-
-            {!expanded && onExpand && (
-              <button
-                type="button"
-                onClick={() => { onExpand(); if (!box?.viewUrl) void wake() }}
-                aria-label="Enlarge the computer view"
-                title="Enlarge"
-                className="absolute top-2 right-2 z-20 p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition"
-              >
-                <Maximize2 size={14} aria-hidden />
+  const screen = (
+    <div className="absolute inset-0">
+      {shownUrl ? (
+        <BotScreen
+          key={`${shownUrl}:${showInteractive ? 'i' : 'v'}`}
+          url={shownUrl}
+          interactive={!!showInteractive}
+          onOperatorInput={recording && showInteractive ? session.reportInput : undefined}
+        />
+      ) : (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 text-center px-6 bg-black">
+          {booting || session.phase === 'starting' ? (
+            <>
+              <Ghost size={28} className="text-white/80" aria-hidden />
+              <p className="text-ui-sm text-white/80">Waking up…</p>
+            </>
+          ) : error ? (
+            <>
+              <Monitor size={22} className="text-white/50" aria-hidden />
+              <p className="text-ui-sm text-[var(--danger)] max-w-sm">{error}</p>
+              <button type="button" onClick={() => void wake()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
+                <Power size={12} aria-hidden /> Wake the computer
               </button>
-            )}
-          </div>
+            </>
+          ) : (
+            <>
+              <Monitor size={22} className="text-white/50" aria-hidden />
+              <p className="text-ui-sm text-white/70">{box?.alive ? 'Stream offline — wake to reconnect.' : 'The computer is asleep.'}</p>
+              <button type="button" onClick={() => void wake()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
+                <Power size={12} aria-hidden /> Wake the computer
+              </button>
+            </>
+          )}
         </div>
+      )}
+
+      {shownUrl && (
+        <ControlPill
+          driving={inControl}
+          takeDisabled={!interactiveUrl && session.phase !== 'waiting'}
+          onTakeControl={takeControl}
+          onStop={stopControl}
+        />
+      )}
+
+      {!expanded && onExpand && (
+        <button
+          type="button"
+          onClick={() => { onExpand(); if (!box?.viewUrl) void wake() }}
+          aria-label="Enlarge the computer view"
+          title="Enlarge"
+          className="absolute top-2 right-2 z-20 p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition"
+        >
+          <Maximize2 size={14} aria-hidden />
+        </button>
+      )}
+    </div>
+  )
+
+  const frame = expanded ? (
+    <div className="relative flex-1 min-h-0 w-full">
+      {/* Transparent fit box. The black 16:9 element is the stage. */}
+      <div className="absolute inset-0" style={{ containerType: 'size' }}>
+        <div
+          className="absolute top-0 left-1/2 -translate-x-1/2 aspect-video overflow-hidden bg-black"
+          style={{ width: 'min(100cqw, calc(100cqh * 16 / 9))', height: 'min(100cqh, calc(100cqw * 9 / 16))' }}
+        >
+          {screen}
         </div>
       </div>
+    </div>
+  ) : (
+    <div className="relative w-full aspect-video overflow-hidden bg-black">
+      {screen}
+    </div>
+  )
 
+  const stage = (
+    <div className={`flex flex-col min-h-0 w-full ${expanded ? 'flex-1' : ''}`}>
+      {frame}
       {!expanded && (
-        <div className="shrink-0 pt-2 text-center">
+        <div className="shrink-0 px-4 pt-2 text-center">
           <p className="text-ui-xs text-[var(--ink-muted)]">{botName}&apos;s screen</p>
           {session.phase === 'failed' && session.error && (
             <p className="mt-1 text-ui-xs text-[var(--danger)]">{session.error}</p>
@@ -214,7 +224,6 @@ export function AgentComputerTab({
           )}
         </div>
       )}
-
     </div>
   )
 

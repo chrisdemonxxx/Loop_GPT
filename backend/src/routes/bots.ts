@@ -6,7 +6,7 @@ import express from 'express'
 import { authenticateTokenOrApiKey } from '../middleware/apiAuth'
 import { asyncHandler } from '../middleware/errorLogger'
 import { hasDb, prisma } from '../services/prisma'
-import { BotError, createBot, createGroup, deleteBot, listBots, openBotThread, updateBot } from '../services/bots'
+import { BotError, createBot, createBotThread, createGroup, deleteBot, listBotThreads, listBots, openBotThread, updateBot } from '../services/bots'
 
 const router = express.Router()
 router.use(authenticateTokenOrApiKey)
@@ -72,6 +72,28 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 router.delete('/:id', asyncHandler(async (req, res) => {
   try {
     res.json(await deleteBot((req as any).userId, req.params.id))
+  } catch (error) { return fail(res, error) }
+}))
+
+/** This bot's threads, newest first. */
+router.get('/:id/threads', asyncHandler(async (req, res) => {
+  try {
+    const threads = await listBotThreads((req as any).userId, req.params.id)
+    res.json({ threads })
+  } catch (error) { return fail(res, error) }
+}))
+
+/** Always insert a new thread. New chat must not reopen the latest one. */
+router.post('/:id/threads', asyncHandler(async (req, res) => {
+  try {
+    const userId = (req as any).userId as string
+    const conversation = await createBotThread(userId, req.params.id, await userName(userId))
+    res.status(201).json({
+      id: conversation.id,
+      title: conversation.title,
+      botId: conversation.botId,
+      kind: conversation.kind,
+    })
   } catch (error) { return fail(res, error) }
 }))
 

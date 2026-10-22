@@ -42,6 +42,7 @@ import {
 } from '@loop/loopit-client'
 import { useToast } from '../../lib/toast'
 import { AppPage } from '../../components/AppPage'
+import { BuildSessionRail } from '../SessionRail'
 import { CheckpointDialog, type CheckpointAction } from '../confirm'
 import {
   useBuildRun, useCancelRun, useCheckpointAction, useGateDecision,
@@ -366,7 +367,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
 
   if (!runId || runId === '_') {
     return (
-      <AppPage title="Build" back={BACK}>
+      <AppPage width="fill" title="Build" back={BACK} rail={<BuildSessionRail activeRunId={null} />}>
         <EmptyState title="Pick a build" body="Open a build from the board to see its progress and preview." action={<Link href="/build" className={btnPrimary}>Back to builds</Link>} />
       </AppPage>
     )
@@ -382,6 +383,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   return (
     <AppPage
       width="fill"
+      rail={<BuildSessionRail activeRunId={runId} />}
       back={projectId ? { href: `/build/projects/?id=${encodeURIComponent(projectId)}`, label: 'Project' } : BACK}
       title={title}
       documentTitle="Build"

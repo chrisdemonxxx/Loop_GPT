@@ -29,6 +29,8 @@ export interface BotTask {
   computer?: { enabled: boolean; ttlMinutes?: number } | null
   /** Named bot this task runs as. */
   botId?: string | null
+  /** Bot thread this task was enqueued into. */
+  conversationId?: string | null
   /** Audit trail — who enqueued the task. */
   createdBy?: string
   /** Latest run result text when the list/detail payload includes it. */
@@ -124,6 +126,8 @@ export interface EnqueueBotInput {
   skillId?: string
   /** Named bot this task runs as. Omitted → the owner's primary Loop Bot. */
   botId?: string
+  /** Bot thread the task is filed under. */
+  conversationId?: string
   priority?: number
 }
 

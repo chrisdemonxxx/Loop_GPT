@@ -140,7 +140,7 @@ const WIDTHS = { default: 'max-w-3xl', wide: 'max-w-6xl' } as const
  * other widths render a centred container with the standard padding.
  */
 export function AppPage({
-  children, width = 'default', title, documentTitle, description, back, actions, meta, icon, header,
+  children, width = 'default', title, documentTitle, description, back, actions, meta, icon, header, rail,
 }: {
   children: ReactNode
   width?: keyof typeof WIDTHS | 'fill'
@@ -154,6 +154,8 @@ export function AppPage({
   icon?: ReactNode
   /** Replaces the PageHeader (custom hero blocks). */
   header?: ReactNode
+  /** Full-height column under the app bar (Build's session list). */
+  rail?: ReactNode
 }) {
   useDocumentTitle(documentTitle ?? (typeof title === 'string' ? title : null))
   const heading = header ?? (title !== undefined
@@ -161,13 +163,23 @@ export function AppPage({
     : null)
   if (width === 'fill') {
     // Keep the shared title/actions row (Stop / Continue / Publish on /build).
+    const column = (
+      <>
+        <div className="mx-auto w-full max-w-[1600px] px-5 pt-6 shrink-0">{heading}</div>
+        <div className="flex-1 min-h-0 flex flex-col px-5 pb-[max(1rem,env(safe-area-inset-bottom))]">{children}</div>
+      </>
+    )
     return (
       <div className="h-dvh flex flex-col bg-[var(--bg-base)] text-slate-200 overflow-hidden">
         <AppBar />
-        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-          <div className="mx-auto w-full max-w-[1600px] px-5 pt-6 shrink-0">{heading}</div>
-          <div className="flex-1 min-h-0 flex flex-col px-5 pb-[max(1rem,env(safe-area-inset-bottom))]">{children}</div>
-        </div>
+        {rail ? (
+          <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden">
+            {rail}
+            <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">{column}</div>
+          </div>
+        ) : (
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">{column}</div>
+        )}
       </div>
     )
   }

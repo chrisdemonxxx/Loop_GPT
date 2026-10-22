@@ -1,11 +1,12 @@
 'use client'
 
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
-  Bot, Loader2, Sparkles, Trash2, Clock, Pause, Play, Plus,
+  Bot, Loader2, Sparkles, Trash2, Clock, Pause, Play, Plus, Pencil,
 } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ConfirmDialog } from '@loop/ui'
 import {
   enqueueBotTask, listBotTasks, cancelBotTask, getBotQuota, listBotSkills, deleteBotSkill,
   listBotRoutines, createBotRoutine, setBotRoutinePaused, deleteBotRoutine,
@@ -14,7 +15,8 @@ import {
 } from '../lib/bot'
 import { getStoredUser } from '../lib/api'
 import { getBotMemory } from '../lib/bot'
-import { listNamedBots, type NamedBot } from '../lib/namedBots'
+import { listNamedBots, listBotThreads, createBotThread, renameBotThread, deleteBotThread, type NamedBot, type BotThreadSummary } from '../lib/namedBots'
+import { COMPUTER_PANE_DEFAULT, COMPUTER_PANE_KEY, COMPUTER_PANE_MIN, clampComputerPaneWidth, computerPaneMax } from './computerPane'
 import RunViewer from '../components/team-bot/RunViewer'
 import { AgentComputerTab } from '../components/team-bot/AgentComputerTab'
 import { AgentChatPane } from '../components/team-bot/AgentChatPane'
@@ -23,16 +25,53 @@ import { useTeachSession } from '../components/team-bot/useTeachSession'
 import { AppPage } from '../components/AppPage'
 
 /**
- * Loop Bot (/agents) — Grok Bot layout:
- *   LEFT  — the chat thread: every instruction to the bot goes through the
- *           composer ("Message Loop Bot"); the bot answers with run updates.
- *   RIGHT — the bot's profile card: avatar, name, tabs Details / Library /
- *           Computer. The Computer tab streams its persistent box small, with
- *           an expand button that enlarges it to the full window (⤢).
+ * Loop Bot (/agents):
+ *   RAIL  — New chat plus this bot's threads (rename, delete).
+ *   CENTER — that thread's tasks. A message enqueues a task on the thread.
+ *   RIGHT — profile card. The column width is dragged and remembered.
+ *           Computer is a 16:9 frame, edge to edge in the pane.
  *
  * Accepts ?botId= to scope skills/memory/enqueue to a named bot (defaults to
- * the owner's primary).
+ * the owner's primary) and ?thread= for the open bot conversation.
  */
+
+function useComputerPaneWidth() {
+  const preferredRef = useRef(COMPUTER_PANE_DEFAULT)
+  const [width, setWidthState] = useState(COMPUTER_PANE_DEFAULT)
+  const widthRef = useRef(width)
+  widthRef.current = width
+
+  useEffect(() => {
+    try {
+      const saved = Number(localStorage.getItem(COMPUTER_PANE_KEY))
+      if (Number.isFinite(saved)) preferredRef.current = saved
+    } catch { /* private mode */ }
+    const sync = () => {
+      const clamped = clampComputerPaneWidth(preferredRef.current, window.innerWidth)
+      widthRef.current = clamped
+      setWidthState(clamped)
+    }
+    sync()
+    window.addEventListener('resize', sync)
+    return () => window.removeEventListener('resize', sync)
+  }, [])
+
+  const setWidth = useCallback((next: number) => {
+    const clamped = clampComputerPaneWidth(next, window.innerWidth)
+    preferredRef.current = clamped
+    widthRef.current = clamped
+    setWidthState(clamped)
+    try { localStorage.setItem(COMPUTER_PANE_KEY, String(clamped)) } catch { /* private mode */ }
+    return clamped
+  }, [])
+
+  return {
+    width,
+    setWidth,
+    widthRef,
+    max: () => computerPaneMax(typeof window === 'undefined' ? 1280 : window.innerWidth),
+  }
+}
 export default function AgentsPage() {
   return (
     <Suspense fallback={null}>
@@ -43,9 +82,13 @@ export default function AgentsPage() {
 
 function AgentsPageInner() {
   const router = useRouter()
+  const pathname = usePathname()
   const searchParams = useSearchParams()
   const botIdParam = searchParams.get('botId')
+  const threadParam = searchParams.get('thread')
   const queryClient = useQueryClient()
+  const computerPane = useComputerPaneWidth()
+  const [paneResizing, setPaneResizing] = useState(false)
   const [user, setUser] = useState<any>(null)
   const [traceTaskId, setTraceTaskId] = useState<string | null>(null)
   const [tab, setTab] = useState<'details' | 'library' | 'computer' | 'files'>('details')
@@ -78,12 +121,48 @@ function AgentsPageInner() {
   }, [botsQuery.data?.bots, botIdParam])
 
   const botId = activeBot?.id ?? null
+  const [openedThreadId, setOpenedThreadId] = useState<string | null>(null)
+  const [threadBotId, setThreadBotId] = useState(botId)
+  if (botId !== threadBotId) {
+    setThreadBotId(botId)
+    setOpenedThreadId(null)
+  }
+
+  const threadsQuery = useQuery<{ threads: BotThreadSummary[] }>({
+    queryKey: ['bot', 'threads', botId],
+    queryFn: () => listBotThreads(botId!),
+    enabled: typeof window !== 'undefined' && !!user && !!botId,
+    retry: false,
+  })
+  const threads = threadsQuery.data?.threads ?? []
+  const activeThreadId = useMemo(() => {
+    if (openedThreadId) return openedThreadId
+    if (!threadsQuery.isSuccess) return null
+    if (threadParam && threads.some((thread) => thread.id === threadParam)) return threadParam
+    return threads[0]?.id ?? null
+  }, [openedThreadId, threadParam, threads, threadsQuery.isSuccess])
+
+  const selectThread = useCallback((id: string) => {
+    setOpenedThreadId(id)
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('thread', id)
+    const q = params.toString()
+    router.replace(q ? `${pathname}?${q}` : pathname)
+  }, [pathname, router, searchParams])
 
   const tasksQuery = useQuery<{ tasks: BotTask[]; quota: BotQuota | null }>({
-    queryKey: ['bot', 'tasks'],
+    queryKey: ['bot', 'tasks', activeThreadId],
     queryFn: async () => {
-      const [t, q] = await Promise.all([listBotTasks({ limit: 100 }), getBotQuota().catch(() => null)])
-      return { tasks: t.tasks, quota: q }
+      const [t, q] = await Promise.all([
+        activeThreadId
+          ? listBotTasks({ limit: 100, conversationId: activeThreadId })
+          : Promise.resolve({ tasks: [] as BotTask[] }),
+        getBotQuota().catch(() => null),
+      ])
+      const tasks = activeThreadId
+        ? t.tasks.filter((task) => task.conversationId === activeThreadId)
+        : []
+      return { tasks, quota: q }
     },
     enabled: typeof window !== 'undefined' && !!user,
     retry: false,
@@ -188,19 +267,29 @@ function AgentsPageInner() {
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] }) },
   })
 
-  /** Chat is the instruction channel: a message = a one-shot task on the box. */
+  /** Chat is the instruction channel: a message = a one-shot task on this thread. */
   const sendInstruction = useMutation({
-    mutationFn: (text: string) =>
-      enqueueBotTask({
+    mutationFn: async (text: string) => {
+      let conversationId = activeThreadId
+      if (!conversationId) {
+        if (!botId) throw new Error('Loop Bot is still loading.')
+        const thread = await createBotThread(botId)
+        conversationId = thread.id
+        selectThread(thread.id)
+      }
+      return enqueueBotTask({
         goal: text,
         maxSteps: 16,
         computer: { enabled: true, ttlMinutes: 30 },
+        conversationId,
         ...(botId ? { botId } : {}),
-      }),
+      })
+    },
     onSuccess: (res) => {
       setSendError('')
       setSuggestedSkills(res.suggestedSkills || [])
       void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] })
+      void queryClient.invalidateQueries({ queryKey: ['bot', 'threads'] })
     },
     onError: (err: unknown) => {
       if (err instanceof BotApiError) {
@@ -217,6 +306,29 @@ function AgentsPageInner() {
   if (!user) return null
 
   const botName = activeBot?.name || 'Loop Bot'
+
+  const startThread = async () => {
+    if (!botId) return
+    try {
+      const thread = await createBotThread(botId)
+      selectThread(thread.id)
+      void queryClient.invalidateQueries({ queryKey: ['bot', 'threads', botId] })
+    } catch (err) {
+      setSendError((err as { message?: string })?.message || 'Could not start a chat.')
+    }
+  }
+
+  const renameThread = async (id: string, title: string) => {
+    await renameBotThread(id, title)
+    void queryClient.invalidateQueries({ queryKey: ['bot', 'threads', botId] })
+  }
+
+  const removeThread = async (id: string) => {
+    await deleteBotThread(id)
+    if (openedThreadId === id) setOpenedThreadId(null)
+    void queryClient.invalidateQueries({ queryKey: ['bot', 'threads', botId] })
+    void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] })
+  }
 
   return (
     <AppPage width="fill" documentTitle={botName}>
@@ -237,9 +349,20 @@ function AgentsPageInner() {
         </div>
       )}
 
-      {/* Two panes: chat left, profile right */}
-      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_400px]">
-        {/* ── Chat pane ── */}
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
+        <BotThreadRail
+          threads={threads}
+          activeId={activeThreadId}
+          pending={threadsQuery.isPending}
+          error={threadsQuery.isError ? ((threadsQuery.error as { message?: string })?.message || 'Could not load chats.') : ''}
+          onRetry={() => { void threadsQuery.refetch() }}
+          onNew={() => { void startThread() }}
+          onOpen={selectThread}
+          onRename={renameThread}
+          onDelete={removeThread}
+        />
+
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col">
         <AgentChatPane
           tasks={displayTasks}
           sending={sendInstruction.isPending}
@@ -252,9 +375,51 @@ function AgentsPageInner() {
           onTrace={(id) => setTraceTaskId(id)}
           onCancel={(id) => { cancel.mutate(id) }}
         />
+        </div>
+
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize computer pane"
+          aria-valuemin={COMPUTER_PANE_MIN}
+          aria-valuemax={computerPane.max()}
+          aria-valuenow={computerPane.width}
+          tabIndex={0}
+          title="Drag to resize"
+          onPointerDown={(e) => {
+            const handle = e.currentTarget
+            handle.setPointerCapture(e.pointerId)
+            const startX = e.clientX
+            const startW = computerPane.width
+            const move = (ev: PointerEvent) => computerPane.setWidth(startW + (startX - ev.clientX))
+            setPaneResizing(true)
+            const up = () => {
+              setPaneResizing(false)
+              handle.removeEventListener('pointermove', move)
+              handle.removeEventListener('pointerup', up)
+              handle.removeEventListener('pointercancel', up)
+            }
+            handle.addEventListener('pointermove', move)
+            handle.addEventListener('pointerup', up)
+            handle.addEventListener('pointercancel', up)
+          }}
+          onKeyDown={(e) => {
+            const step = e.shiftKey ? 24 : 8
+            if (e.key === 'ArrowLeft') { e.preventDefault(); computerPane.setWidth(computerPane.widthRef.current + step) }
+            else if (e.key === 'ArrowRight') { e.preventDefault(); computerPane.setWidth(computerPane.widthRef.current - step) }
+            else if (e.key === 'Home') { e.preventDefault(); computerPane.setWidth(COMPUTER_PANE_MIN) }
+            else if (e.key === 'End') { e.preventDefault(); computerPane.setWidth(computerPane.max()) }
+          }}
+          className="relative hidden lg:block shrink-0 w-1.5 cursor-col-resize touch-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--accent-fill)]"
+        >
+          <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[var(--border-subtle)]" />
+        </div>
 
         {/* ── Profile panel ── */}
-        <aside className="flex flex-col min-h-0 overflow-hidden border-t lg:border-t-0 lg:border-l border-[var(--border-subtle)] bg-[var(--bg-sunken)] max-lg:max-h-[58dvh]">
+        <aside
+          style={{ '--computer-pane': `${computerPane.width}px` } as CSSProperties}
+          className={`flex flex-col min-h-0 overflow-hidden border-t lg:border-t-0 lg:border-l border-[var(--border-subtle)] bg-[var(--bg-sunken)] max-lg:max-h-[58dvh] w-full lg:w-[var(--computer-pane)] lg:shrink-0 ${paneResizing ? '' : 'lg:transition-[width] duration-200 ease-out'}`}
+        >
           <div className="flex flex-col items-center pt-7 pb-4 px-4 shrink-0">
             <div className="w-16 h-16 rounded-[22px] bg-[var(--accent-soft)] border border-[var(--accent-soft-border)] flex items-center justify-center">
               <Bot size={30} className="text-[var(--accent-text)]" aria-hidden />
@@ -351,7 +516,7 @@ function AgentsPageInner() {
 
           {/* Skip embedded mount while expanded — avoids duplicate status probes. */}
           {tab === 'computer' && !computerExpanded && (
-            <div className="flex-1 min-h-0 flex flex-col px-4 py-4">
+            <div className="flex-1 min-h-0 flex flex-col">
               <AgentComputerTab botName={botName} session={teach} onExpand={() => setComputerExpanded(true)} />
             </div>
           )}
@@ -376,6 +541,129 @@ function AgentsPageInner() {
 
       {traceTaskId && <RunViewer taskId={traceTaskId} onClose={() => setTraceTaskId(null)} />}
     </AppPage>
+  )
+}
+
+function BotThreadRail({
+  threads, activeId, pending, error, onRetry, onNew, onOpen, onRename, onDelete,
+}: {
+  threads: BotThreadSummary[]
+  activeId: string | null
+  pending: boolean
+  error: string
+  onRetry: () => void
+  onNew: () => void
+  onOpen: (id: string) => void
+  onRename: (id: string, title: string) => Promise<void>
+  onDelete: (id: string) => Promise<void>
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState('')
+  const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  async function commitEdit() {
+    if (!editingId) return
+    const title = editingTitle.trim()
+    const id = editingId
+    if (!title) { setEditingId(null); return }
+    setBusy(true)
+    try {
+      await onRename(id, title)
+      setEditingId(null)
+    } catch { /* keep the editor open so the title isn't lost */ }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <aside aria-label="Bot chats" className="flex w-full lg:w-56 shrink-0 flex-col border-b lg:border-b-0 lg:border-r border-[var(--border-subtle)] bg-[var(--bg-sunken)] max-lg:max-h-48">
+      <div className="p-2 shrink-0">
+        <button
+          type="button"
+          onClick={onNew}
+          className="flex w-full items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-2.5 py-1.5 text-ui-xs font-medium text-[var(--ink-secondary)] hover:border-[var(--accent-soft-border)] hover:text-[var(--accent-text)] transition"
+        >
+          <Plus size={13} aria-hidden /> New chat
+        </button>
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-2 space-y-0.5">
+        {pending && threads.length === 0 && (
+          <p className="px-2 py-3 text-ui-xs text-[var(--ink-muted)] flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" aria-hidden /> Loading chats…</p>
+        )}
+        {error && (
+          <div className="px-2 py-3 text-ui-xs text-[var(--danger)]" role="alert">
+            {error}
+            <button type="button" onClick={onRetry} className="ml-2 text-[var(--accent-text)] hover:underline">Retry</button>
+          </div>
+        )}
+        {!pending && !error && threads.length === 0 && (
+          <p className="px-2 py-3 text-ui-xs text-[var(--ink-muted)]">No chats yet. New chat starts a fresh thread.</p>
+        )}
+        {threads.map((thread) => {
+          const active = thread.id === activeId
+          if (editingId === thread.id) {
+            return (
+              <input
+                key={thread.id}
+                value={editingTitle}
+                aria-label="Chat title"
+                autoFocus
+                disabled={busy}
+                onChange={(e) => setEditingTitle(e.target.value)}
+                onBlur={() => { void commitEdit() }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); void commitEdit() }
+                  if (e.key === 'Escape') setEditingId(null)
+                }}
+                className="w-full rounded-lg border border-[var(--accent-soft-border)] bg-[var(--bg-base)] px-2 py-1.5 text-ui-xs text-[var(--ink-primary)] focus:outline-none"
+              />
+            )
+          }
+          return (
+            <div key={thread.id} className={`group flex items-center gap-1 rounded-lg px-1.5 py-1 ${active ? 'bg-[var(--bg-hover-strong)]' : 'hover:bg-[var(--bg-hover)]'}`}>
+              <button
+                type="button"
+                onClick={() => onOpen(thread.id)}
+                className={`min-w-0 flex-1 truncate text-left text-ui-xs ${active ? 'text-[var(--ink-primary)] font-medium' : 'text-[var(--ink-secondary)]'}`}
+              >
+                {thread.title || 'New chat'}
+              </button>
+              <button
+                type="button"
+                aria-label={`Rename ${thread.title || 'chat'}`}
+                onClick={() => { setEditingId(thread.id); setEditingTitle(thread.title || '') }}
+                className="p-1 rounded text-[var(--ink-muted)] opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-[var(--ink-primary)]"
+              >
+                <Pencil size={11} aria-hidden />
+              </button>
+              <button
+                type="button"
+                aria-label={`Delete ${thread.title || 'chat'}`}
+                onClick={() => setDeleteId(thread.id)}
+                className="p-1 rounded text-[var(--ink-muted)] opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-[var(--danger)]"
+              >
+                <Trash2 size={11} aria-hidden />
+              </button>
+            </div>
+          )
+        })}
+      </div>
+      <ConfirmDialog
+        open={!!deleteId}
+        title="Delete this chat?"
+        body="The thread and its tasks leave this list."
+        confirmLabel="Delete"
+        tone="danger"
+        busy={busy}
+        onCancel={() => { if (!busy) setDeleteId(null) }}
+        onConfirm={() => {
+          if (!deleteId) return
+          const id = deleteId
+          setBusy(true)
+          void onDelete(id).then(() => setDeleteId(null)).finally(() => setBusy(false))
+        }}
+      />
+    </aside>
   )
 }
 

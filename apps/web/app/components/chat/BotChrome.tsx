@@ -319,7 +319,7 @@ export function BotProfilePanel({ bot, onLabel }: {
         </div>
         )}
         {tab === 'computer' && !computerExpanded && (
-          <div className="flex-1 min-h-0 flex flex-col px-4 py-3">
+          <div className="flex-1 min-h-0 flex flex-col">
             <AgentComputerTab
               botName={bot.name}
               session={teach}

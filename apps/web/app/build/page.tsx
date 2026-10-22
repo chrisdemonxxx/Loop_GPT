@@ -4,12 +4,12 @@ import { Suspense, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
 import RunView from './[runId]/RunView'
-import { Badge, EmptyState, LoadingState, SectionHeader, btnOutline, btnPrimary, cardCls, textareaCls } from '@loop/ui'
-import { isServiceMissing, isUnreachable, runTitle, toUserFacingError, type EffortTier, type RunMode, type RunSummary } from '@loop/loopit-client'
+import { LoadingState, btnOutline, btnPrimary, cardCls, textareaCls } from '@loop/ui'
+import { toUserFacingError, type EffortTier, type RunMode } from '@loop/loopit-client'
 import { AppPage } from '../components/AppPage'
-import { useBuildRuns, useStartBuild } from './hooks'
+import { useStartBuild } from './hooks'
 import { ErrorNotice } from './shell'
-import { formatWhen, statusLabel, statusTone } from './status'
+import { BuildSessionRail } from './SessionRail'
 import { ModeSwitch } from './ModeSwitch'
 import { CostTransparencyBar, EffortEstimateNotice, EffortSwitch } from './EffortSwitch'
 import { NotificationsBell } from './NotificationsBell'
@@ -39,13 +39,11 @@ function BuildRoute() {
 
 function BuildBoard() {
   const router = useRouter()
-  const runs = useBuildRuns()
   const start = useStartBuild()
   const [prompt, setPrompt] = useState('')
   const [mode, setMode] = useState<RunMode>('build')
   const [tier, setTier] = useState<EffortTier>('standard')
   const [attachments, setAttachments] = useState<BuildAttachment[]>([])
-  const list = runs.data ?? []
 
   async function addImages(files: File[]) {
     for (const file of files) {
@@ -75,14 +73,12 @@ function BuildBoard() {
     }
   }
 
-  const listError = runs.error
-  const facing = listError ? toUserFacingError(listError) : null
-  const offline = listError ? isUnreachable(listError) || isServiceMissing(listError) : false
-
   return (
     <AppPage
+      width="fill"
       title="Build"
       description="Describe an app in your own words. Loop plans it, builds it, and verifies it."
+      rail={<BuildSessionRail activeRunId={null} />}
       actions={(
         <div className="flex items-center gap-2">
           <NotificationsBell />
@@ -91,7 +87,7 @@ function BuildBoard() {
         </div>
       )}
     >
-      <form onSubmit={(event) => { void onSubmit(event) }} className={`${cardCls} p-4 space-y-3`}>
+      <form onSubmit={(event) => { void onSubmit(event) }} className={`${cardCls} max-w-3xl p-4 space-y-3`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <label className="text-ui-xs text-[var(--ink-muted)]">What should we build?</label>
           <div className="flex flex-wrap items-center gap-2">
@@ -154,57 +150,10 @@ function BuildBoard() {
       </form>
 
       {start.isError && (
-        <div className="mt-4">
+        <div className="mt-4 max-w-3xl">
           <ErrorNotice error={toUserFacingError(start.error)} />
         </div>
       )}
-
-      <div className="mt-8">
-        <SectionHeader title="Your builds" count={runs.isSuccess ? list.length : null} />
-        <div className="mt-3 space-y-2">
-          {runs.isPending && <LoadingState variant="card" label="Loading builds" />}
-          {facing && (
-            <ErrorNotice
-              error={offline ? {
-                kind: 'unavailable',
-                title: 'Build service unreachable',
-                message: 'The Build service is not reachable. It may not be deployed yet.',
-                action: 'Retry in a moment. Your other Loop pages keep working.',
-              } : facing}
-              onRetry={() => { void runs.refetch() }}
-            />
-          )}
-          {runs.isSuccess && list.length === 0 && (
-            <EmptyState
-              title="No builds yet"
-              body="Start with a prompt above, or use one of these."
-              action={(
-                <div className="flex flex-col gap-2">
-                  {SAMPLES.map((sample) => (
-                    <button key={sample} type="button" className="text-left text-ui-xs text-[var(--accent-text)] hover:underline" onClick={() => setPrompt(sample)}>
-                      {sample}
-                    </button>
-                  ))}
-                </div>
-              )}
-            />
-          )}
-          {runs.isSuccess && list.map((run) => <RunRow key={run.run_id} run={run} />)}
-        </div>
-      </div>
     </AppPage>
-  )
-}
-
-function RunRow({ run }: { run: RunSummary }) {
-  return (
-    <Link href={`/build/?run=${encodeURIComponent(run.run_id)}`} className={`block p-3.5 ${cardCls}`}>
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-ui-sm font-medium text-[var(--ink-primary)] line-clamp-2">{runTitle(run)}</p>
-        <Badge tone={statusTone(run.status)}>{statusLabel(run.status)}</Badge>
-      </div>
-      {run.summary && <p className="mt-1 line-clamp-1 text-ui-xs text-[var(--ink-muted)]">{run.summary}</p>}
-      <p className="mt-1 text-ui-xs text-[var(--ink-muted)]">Created {formatWhen(run.started_at)}</p>
-    </Link>
   )
 }
