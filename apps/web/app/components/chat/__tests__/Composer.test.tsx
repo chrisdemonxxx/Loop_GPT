@@ -1,7 +1,9 @@
+import { useLayoutEffect } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import Composer from '../Composer'
 import type { PendingAttachment } from '../../../chat/hooks'
+import { useDictation } from '../../../lib/voice'
 
 const attach = (over: Partial<PendingAttachment>): PendingAttachment => ({
   id: 'a1', kind: 'image', name: 'pic.png', file: new File([], 'pic.png'), progress: 0, status: 'uploading', ...over,
@@ -237,6 +239,54 @@ describe('hands-free voice mode toggle (§8-44)', () => {
   it('is hidden on unsupported browsers (no Web Speech API)', () => {
     renderComposer({ voiceModeSupported: false, onToggleVoiceMode: () => {} })
     expect(screen.queryByTestId('voice-mode-toggle')).not.toBeInTheDocument()
+  })
+
+  it('hides voice and mic until support is known, then shows them after mount', () => {
+    class FakeRecognition {
+      continuous = false
+      interimResults = false
+      lang = ''
+      start() {}
+      stop() {}
+      abort() {}
+      onresult: ((event: unknown) => void) | null = null
+      onerror: ((event: unknown) => void) | null = null
+      onend: (() => void) | null = null
+    }
+    const win = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }
+    const previous = win.SpeechRecognition
+    const previousWebkit = win.webkitSpeechRecognition
+    win.SpeechRecognition = FakeRecognition
+    win.webkitSpeechRecognition = FakeRecognition
+
+    const seen: Array<{ voice: boolean; mic: boolean }> = []
+    function Harness() {
+      const { supported } = useDictation({ onText: () => {} })
+      useLayoutEffect(() => {
+        seen.push({
+          voice: document.querySelector('[data-testid="voice-mode-toggle"]') != null,
+          mic: document.querySelector('button[aria-label="Dictate"]') != null,
+        })
+      })
+      return (
+        <I18nProvider>
+          <Composer {...base} voiceMode={false} voiceModeSupported={supported} onToggleVoiceMode={() => {}} />
+        </I18nProvider>
+      )
+    }
+
+    try {
+      render(<Harness />)
+      expect(seen[0]).toEqual({ voice: false, mic: false })
+      expect(seen.at(-1)).toEqual({ voice: true, mic: true })
+      expect(screen.getByTestId('voice-mode-toggle')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Dictate' })).toBeInTheDocument()
+    } finally {
+      if (previous === undefined) delete win.SpeechRecognition
+      else win.SpeechRecognition = previous
+      if (previousWebkit === undefined) delete win.webkitSpeechRecognition
+      else win.webkitSpeechRecognition = previousWebkit
+    }
   })
 })
 

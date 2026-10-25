@@ -270,8 +270,27 @@ describe('branch version arrows (§8-22)', () => {
     )
     expect(screen.getByTestId('version-arrows')).toBeInTheDocument()
     expect(screen.getByLabelText('Version 2 of 2')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /show next version/i })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /show previous version/i }))
     expect(select).toHaveBeenCalledWith('a-old')
+  })
+
+  it('omits the previous arrow on the first sibling', () => {
+    const select = vi.fn()
+    render(
+      <MessageList
+        messages={[branchedRows[0], branchedRows[1]]}
+        versions={{
+          'a-old': { index: 1, count: 2, prev: undefined, next: branchedRows[2] },
+        } as any}
+        onSelectVersion={select}
+        {...liveProps}
+      />,
+    )
+    expect(screen.getByLabelText('Version 1 of 2')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /show previous version/i })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /show next version/i }))
+    expect(select).toHaveBeenCalledWith('a-new')
   })
 
   it('hides the arrows on singleton rows', () => {

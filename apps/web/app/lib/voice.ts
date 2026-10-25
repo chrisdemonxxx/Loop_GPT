@@ -31,7 +31,9 @@ function getRecognition(): SpeechRecognitionLike | null {
 }
 
 export function useDictation({ onText, language }: { onText: (text: string, isFinal: boolean) => void; language?: string }) {
-  const [supported] = useState(() => !!getRecognition())
+  // False on the first render (server and client) so the mic and hands-free
+  // buttons do not appear only after hydration. The effect resolves support.
+  const [supported, setSupported] = useState(false)
   const [recording, setRecording] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const recRef = useRef<SpeechRecognitionLike | null>(null)
@@ -70,6 +72,7 @@ export function useDictation({ onText, language }: { onText: (text: string, isFi
     timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000)
   }, [language, stop])
 
+  useEffect(() => { setSupported(!!getRecognition()) }, [])
   useEffect(() => () => { stop() }, [stop])
 
   return { supported, recording, elapsed, start, stop }
@@ -159,7 +162,9 @@ export function saveServerVoice(id: string) {
 const SERVER_TTS_MAX = 4000
 
 export function useSpeech() {
-  const [hasBrowserTts] = useState(() => typeof window !== 'undefined' && !!window.speechSynthesis)
+  // Same first-render contract as dictation: browser speechSynthesis exists
+  // only on the client, so the flag stays false until after mount.
+  const [hasBrowserTts, setHasBrowserTts] = useState(false)
   const [speakingId, setSpeakingId] = useState<string | null>(null)
   const [paused, setPaused] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -262,9 +267,12 @@ export function useSpeech() {
     }
   }, [])
 
-  useEffect(() => () => {
-    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel()
-    if (audioRef.current) audioRef.current.pause()
+  useEffect(() => {
+    setHasBrowserTts(typeof window !== 'undefined' && !!window.speechSynthesis)
+    return () => {
+      if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel()
+      if (audioRef.current) audioRef.current.pause()
+    }
   }, [])
 
   // Read-aloud is always available: browser TTS or the backend fallback.

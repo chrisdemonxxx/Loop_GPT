@@ -1,5 +1,6 @@
-﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, renderHook, waitFor } from '@testing-library/react'
+﻿import { useLayoutEffect } from 'react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, render, renderHook, waitFor } from '@testing-library/react'
 import { loadTtsEngine, saveTtsEngine, useSpeech } from '../voice'
 
 /** Read-aloud engine chain (Â§8-45): the backend Kokoro voice is the primary
@@ -73,6 +74,18 @@ describe('engine preference storage', () => {
 })
 
 describe('useSpeech engine chain (Â§8-45)', () => {
+  it('keeps browser TTS unknown until after mount', () => {
+    const seen: boolean[] = []
+    function Probe() {
+      const speech = useSpeech()
+      useLayoutEffect(() => { seen.push(speech.browserTts) })
+      return null
+    }
+    render(<Probe />)
+    expect(seen[0]).toBe(false)
+    expect(seen.at(-1)).toBe(true)
+  })
+
   it('prefers the server voice by default (auto) and never touches browser TTS on success', async () => {
     const fetchMock = stubServer(true)
     const { result } = renderHook(() => useSpeech())

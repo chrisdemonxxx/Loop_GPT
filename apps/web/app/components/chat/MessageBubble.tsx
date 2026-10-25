@@ -27,21 +27,25 @@ function VersionArrows({ info, onSelect }: { info: BranchVersionInfo; onSelect?:
   const pick = (row?: Message) => row && onSelect?.(row.id)
   return (
     <span className="inline-flex items-center gap-0.5" data-testid="version-arrows">
-      <ActionBtn
-        onClick={() => pick(info.prev)}
-        title="Previous version"
-        ariaLabel={`Show previous version (${info.index - 1} of ${info.count})`}
-        icon={<ChevronLeft size={14} />}
-      />
+      {info.prev && (
+        <ActionBtn
+          onClick={() => pick(info.prev)}
+          title="Previous version"
+          ariaLabel={`Show previous version (${info.index - 1} of ${info.count})`}
+          icon={<ChevronLeft size={14} />}
+        />
+      )}
       <span className="text-[11px] text-slate-400 tabular-nums px-0.5 select-none" aria-label={`Version ${info.index} of ${info.count}`}>
         {info.index}/{info.count}
       </span>
-      <ActionBtn
-        onClick={() => pick(info.next)}
-        title="Next version"
-        ariaLabel={`Show next version (${info.index + 1} of ${info.count})`}
-        icon={<ChevronRight size={14} />}
-      />
+      {info.next && (
+        <ActionBtn
+          onClick={() => pick(info.next)}
+          title="Next version"
+          ariaLabel={`Show next version (${info.index + 1} of ${info.count})`}
+          icon={<ChevronRight size={14} />}
+        />
+      )}
     </span>
   )
 }
