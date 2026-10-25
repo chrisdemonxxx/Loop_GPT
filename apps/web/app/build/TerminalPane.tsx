@@ -132,7 +132,7 @@ function ExecTerminal({
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto bg-black p-3 font-mono text-2xs">
         {history.length === 0 && (
           <p className="text-[var(--ink-muted)]">
-            Commands run in this project's workspace.
+            Commands run in the project workspace.
             {detail ? ` ${detail}` : ' History is saved per project.'}
           </p>
         )}
