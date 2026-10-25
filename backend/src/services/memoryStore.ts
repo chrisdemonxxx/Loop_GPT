@@ -22,6 +22,7 @@ interface Conversation {
   userId: string
   createdAt: Date
   updatedAt: Date
+  incognito?: boolean
 }
 
 class MemoryStore {
@@ -33,7 +34,7 @@ class MemoryStore {
     this.users.add(userId)
   }
 
-  createConversation(userId: string, title: string): Conversation {
+  createConversation(userId: string, title: string, incognito = false): Conversation {
     const id = `conv-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
     const conversation: Conversation = {
       id,
@@ -41,6 +42,7 @@ class MemoryStore {
       userId,
       createdAt: new Date(),
       updatedAt: new Date(),
+      ...(incognito ? { incognito: true } : {}),
     }
     this.conversations.set(id, conversation)
     this.messages.set(id, [])

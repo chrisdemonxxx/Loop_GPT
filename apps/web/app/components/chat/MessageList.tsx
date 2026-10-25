@@ -62,6 +62,9 @@ interface MessageListProps {
   onEditMessage: (messageId: string, content: string) => void
   onRetryBefore: (beforeIndex: number) => void
   onStartPrompt?: (prompt: string) => void
+  /** Bot or group name for an empty thread. Plain chats keep the generic hero. */
+  welcomeHeadline?: string
+  welcomeNote?: string
   /** User row whose text currently lives in the composer. */
   editingMessageId?: string | null
   /** authorBotId → display name and color. */
@@ -79,6 +82,7 @@ export default function MessageList({
   versions, onSelectVersion, queued, onRemoveQueued,
   running, statusMsg, errorMsg, onClearError, mode, pendingApproval, onApprove, onDeny, toolCount, onOpenTools,
   onOpenArtifact, onOpenArtifactByName, onEditMessage, onRetryBefore, onStartPrompt,
+  welcomeHeadline, welcomeNote,
   editingMessageId, authors, liveAuthor,
 }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null)
@@ -164,7 +168,7 @@ export default function MessageList({
         </div>
       )}
       {showEmpty ? (
-        <ChatWelcome onStartPrompt={onStartPrompt} />
+        <ChatWelcome onStartPrompt={onStartPrompt} headline={welcomeHeadline} note={welcomeNote} />
       ) : (
         <div className="max-w-[48rem] mx-auto space-y-6">
           {virtualize ? (

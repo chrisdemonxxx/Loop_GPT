@@ -48,7 +48,11 @@ const NOTHING_RECORDED_RE = /nothing was recorded/i
 const START_TIMEOUT_MS = 90_000
 const DISTILL_TIMEOUT_MS = 120_000
 
-export function useTeachSession(onSkillReady?: (skillId?: string) => void, botId?: string | null): TeachSessionState {
+export function useTeachSession(
+  onSkillReady?: (skillId?: string) => void,
+  botId?: string | null,
+  conversationId?: string | null,
+): TeachSessionState {
   const [phase, setPhase] = useState<TeachPhase>('idle')
   const [goal, setGoal] = useState<string | null>(null)
   const [taskId, setTaskId] = useState<string | null>(null)
@@ -221,6 +225,7 @@ export function useTeachSession(onSkillReady?: (skillId?: string) => void, botId
         maxSteps: 16,
         computer: { enabled: true, ttlMinutes: 30 },
         ...(botId ? { botId } : {}),
+        ...(conversationId ? { conversationId } : {}),
       })
       const id = res.task.id
       setTaskId(id)
@@ -248,7 +253,7 @@ export function useTeachSession(onSkillReady?: (skillId?: string) => void, botId
     } catch (err: any) {
       fail(err?.message || 'Could not start the teach session.')
     }
-  }, [armRecording, attachRun, botId, clearTimers, fail, movePhase])
+  }, [armRecording, attachRun, botId, clearTimers, conversationId, fail, movePhase])
 
   const takeOver = useCallback(async () => {
     const id = runIdRef.current

@@ -213,16 +213,33 @@ export function resetBotIdentityCache() { identityPromise = undefined }
 
 /**
  * Run identity for a claimed task (B3). User-owned tasks run AS that user:
- * their personal workspace, their memory, their standing "Loop Bot"
- * conversation (the in-product result feed). System tasks (no owner) keep the
- * service account's "Ops Bot" conversation.
+ * their personal workspace and their memory. Results go to the task's
+ * conversation when that row belongs to the owner. The standing "Loop Bot"
+ * chat is only the fallback when the task has no thread (or the id is not
+ * theirs). System tasks (no owner) keep the service account's "Ops Bot"
+ * conversation.
  */
-export async function ensureRunIdentity(task: { userId: string | null }): Promise<BotIdentity> {
+export async function ensureRunIdentity(task: {
+  userId: string | null
+  conversationId?: string | null
+}): Promise<BotIdentity> {
   if (!task.userId) return ensureBotIdentity()
   if (!hasDb || !prisma) throw new AgentTaskError('unavailable')
   const user = await prisma.user.findUnique({ where: { id: task.userId } })
   if (!user) throw new AgentTaskError('invalid_request')
   const workspace = await ensurePersonalWorkspace(user.id)
+  if (task.conversationId) {
+    const owned = await prisma.conversation.findFirst({
+      where: { id: task.conversationId, userId: user.id },
+    })
+    if (owned) {
+      return {
+        userId: user.id,
+        workspaceId: owned.workspaceId || workspace.id,
+        conversationId: owned.id,
+      }
+    }
+  }
   let conversation = await prisma.conversation.findFirst({
     where: { userId: user.id, workspaceId: workspace.id, title: 'Loop Bot' },
   })
@@ -359,7 +376,10 @@ export async function executeBotTask(
           const boxRow = prisma
             ? await prisma.botBox.findUnique({ where: { userId: identity.userId }, select: { streamAuthKey: true } }).catch(() => null)
             : null
-          existingDesktop = await attachDesktop(sandboxId, { streamAuthKey: boxRow?.streamAuthKey })
+          existingDesktop = await attachDesktop(sandboxId, {
+            streamAuthKey: boxRow?.streamAuthKey,
+            timeoutMs: computerCfg.ttlMinutes * 60_000,
+          })
         }
       } catch {
         existingDesktop = undefined // fall back to a fresh dedicated VM
@@ -566,7 +586,8 @@ export async function executeBotTask(
         tokensIn: usage.tokensIn, tokensOut: usage.tokensOut, model: runModel,
       }).catch((error) => console.error('Bot reservation capture needs reconciliation:', reservationId, error))
     }
-    // The standing "Ops Bot" conversation is the operator-visible result feed.
+    // Task thread when the row belongs to the owner; otherwise the standing
+    // Loop Bot chat, or Ops Bot for a system task.
     await saveMessage(identity.conversationId, {
       role: 'assistant',
       content: finalContent || '(no response)',

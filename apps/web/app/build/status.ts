@@ -57,6 +57,25 @@ const LABELS: Record<string, string> = {
   canceled: 'Cancelled',
 }
 
+const STEPPER_DONE = new Set(['verified', 'merged', 'deployed', 'completed', 'success'])
+const STEPPER_VERIFY = new Set(['verifying', 'checkpointing', 'deploying'])
+const STEPPER_FAILED = new Set(['error', 'failed', 'budget_exceeded', 'stalled', 'cancelled', 'canceled'])
+
+/** Compact stage labels. Queued and awaiting approval are not shown as Building. */
+export function statusStepper(status: string): { steps: string[]; current: number; failed: boolean } {
+  const value = status.trim().toLowerCase()
+  const failed = STEPPER_FAILED.has(value)
+  if (value === 'queued') return { steps: ['Queued', 'Building', 'Verifying', 'Done'], current: 0, failed }
+  if (value === 'awaiting_approval' || value === 'awaiting_gate') {
+    return { steps: ['Needs approval', 'Building', 'Verifying', 'Done'], current: 0, failed }
+  }
+  const current = value === 'planning' ? 0
+    : STEPPER_DONE.has(value) ? 3
+    : STEPPER_VERIFY.has(value) ? 2
+    : 1
+  return { steps: ['Planning', 'Building', 'Verifying', 'Done'], current, failed }
+}
+
 /** Human label: "awaiting_approval" → "Needs approval", "running" → "Running". */
 export function statusLabel(status: string | null | undefined): string {
   const value = (status ?? '').trim()

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Plus, PanelLeft, Search, MessageSquare, Edit2, Trash2, Star, Share2, Check,
   Settings, CreditCard, ShieldCheck, LogOut, ChevronDown, Sparkles, FolderOpen, Terminal, Download, Bot, Blocks,
@@ -28,11 +28,17 @@ export interface ConversationSearchHit {
   loopitRunId?: string | null
 }
 
-/** Chat's session list: ordinary chats only. Bot threads and build runs stay out. */
-function isChatSession(row: { kind?: string; loopitRunId?: string | null }) {
-  if (row.loopitRunId) return false
+/** Chat's session list: ordinary chats, including ones tied to a build. Bot and group threads stay under Bots. */
+export function isChatSession(row: { kind?: string; loopitRunId?: string | null }) {
   return !row.kind || row.kind === 'chat'
 }
+
+const WORKSPACE_NAV = [
+  { href: '/chat', label: 'Chat', icon: MessageSquare },
+  ...(LOOPIT_ENABLED ? [{ href: '/build', label: 'Build', icon: Blocks }] : []),
+  { href: '/agents', label: 'Loop Bot', icon: Bot },
+  { href: '/artifacts', label: 'Files', icon: Download },
+]
 
 interface SidebarProps {
   conversations: Conversation[]
@@ -75,8 +81,6 @@ interface SidebarProps {
   onOpenGroup?: (group: BotGroup) => void
   onCreateBot?: () => void
   onCreateGroup?: () => void
-  /** "+" opens the start-a-chat picker when provided. */
-  onStartChat?: () => void
 }
 
 /** Bucket a conversation by recency (audit §8-13: grouped history render). */
@@ -100,8 +104,10 @@ export default function Sidebar({
   searchQuery, onSearchChange, messageHits = [],
   sessionsError = false, sessionsPending = false, onRetrySessions, searchError = false, onRetrySearch,
   onOpenProjects, onSelectProject, activeProjectName,
-  bots = [], groups = [], activeBotId, activeGroupId, onOpenBot, onOpenGroup, onCreateBot, onCreateGroup, onStartChat,
+  bots = [], groups = [], activeBotId, activeGroupId, onOpenBot, onOpenGroup, onCreateBot, onCreateGroup,
 }: SidebarProps) {
+  const [pathname, setPathname] = useState('')
+  useEffect(() => { setPathname(window.location?.pathname ?? '') }, [])
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [showUserMenu, setShowUserMenu] = useState(false)
@@ -188,27 +194,35 @@ export default function Sidebar({
       {/* Workspace nav — icon + label rows (was a 2×2 grid of bare text
           links that read as an afterthought). */}
       <nav aria-label="Workspace" className="px-3 pb-2 space-y-0.5 shrink-0">
-        {[
-          ...(LOOPIT_ENABLED ? [{ href: '/build', label: 'Build', icon: Blocks }] : []),
-          { href: '/agents', label: 'Loop Bot', icon: Bot },
-          { href: '/artifacts', label: 'Files', icon: Download },
-          { href: '/recents', label: 'Recents', icon: MessageSquare },
-          { href: '/customize', label: 'Customize', icon: Settings },
-        ].map(({ href, label, icon: Icon }) => (
-          <Link
-            key={href}
-            href={href}
-            className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-[12.5px] text-slate-300 hover:bg-white/[0.05] hover:text-slate-100 transition"
-          >
-            <Icon size={14} className="text-slate-500 shrink-0" /> {label}
-          </Link>
-        ))}
+        {WORKSPACE_NAV.map(({ href, label, icon: Icon }) => {
+          const path = pathname.replace(/\/+$/, '') || '/'
+          const active = path === href || path.startsWith(`${href}/`)
+          return (
+            <Link
+              key={href}
+              href={href}
+              aria-current={active ? 'page' : undefined}
+              className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-[12.5px] transition ${
+                active ? 'bg-white/[0.07] text-slate-100' : 'text-slate-300 hover:bg-white/[0.05] hover:text-slate-100'
+              }`}
+            >
+              <Icon size={14} className="text-slate-500 shrink-0" /> {label}
+            </Link>
+          )
+        })}
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-[12.5px] text-slate-300 hover:bg-white/[0.05] hover:text-slate-100 transition text-left"
+        >
+          <Settings size={14} className="text-slate-500 shrink-0" /> Settings
+        </button>
       </nav>
 
       {/* New chat + search */}
       <div className="px-3 space-y-2 shrink-0">
         <button
-          onClick={() => { if (onStartChat) onStartChat(); else { onSelectConversation(null); onClose() } }}
+          onClick={() => { onSelectConversation(null); onClose() }}
           className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-slate-100 hover:bg-white/[0.05] transition"
         >
           <Plus size={15} /> {t('newSession')}

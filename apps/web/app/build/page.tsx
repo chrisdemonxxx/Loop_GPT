@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useState, type FormEvent } from 'react'
+import { Suspense, useEffect, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
 import RunView from './[runId]/RunView'
@@ -39,8 +39,13 @@ function BuildRoute() {
 
 function BuildBoard() {
   const router = useRouter()
+  const params = useSearchParams()
   const start = useStartBuild()
-  const [prompt, setPrompt] = useState('')
+  const seededPrompt = params.get('prompt') ?? ''
+  const [prompt, setPrompt] = useState(seededPrompt)
+  useEffect(() => {
+    if (seededPrompt) setPrompt(seededPrompt)
+  }, [seededPrompt])
   const [mode, setMode] = useState<RunMode>('build')
   const [tier, setTier] = useState<EffortTier>('standard')
   const [attachments, setAttachments] = useState<BuildAttachment[]>([])
@@ -83,7 +88,7 @@ function BuildBoard() {
         <div className="flex items-center gap-2">
           <NotificationsBell />
           <Link href="/build/templates" className={btnOutline}>Templates</Link>
-          <Link href="/build/projects" className={btnOutline}>Projects</Link>
+          <Link href="/build/projects" className={btnOutline}>Build projects</Link>
         </div>
       )}
     >
@@ -101,7 +106,7 @@ function BuildBoard() {
           className={textareaCls}
           rows={3}
           value={prompt}
-          placeholder={mode === 'chat' ? 'Ask about an existing project…' : mode === 'plan' ? 'Describe what to plan…' : 'A customer intake form with an admin review table — or just “build this”'}
+          placeholder={mode === 'chat' ? 'Ask a question to start a new read-only run…' : mode === 'plan' ? 'Describe what to plan…' : 'A customer intake form with an admin review table — or just “build this”'}
           disabled={start.isPending}
           onChange={(event) => setPrompt(event.target.value)}
           onKeyDown={(event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void onSubmit(event as unknown as FormEvent) } }}
@@ -141,7 +146,7 @@ function BuildBoard() {
         </div>
         <div className="flex items-center justify-between gap-3">
           <p className="text-2xs text-[var(--ink-muted)]">
-            {mode === 'chat' ? 'Chat mode is read-only.' : mode === 'plan' ? 'Plan mode drafts a local task list (DAG execution needs orchestrator).' : 'Builds, verifies and previews — then you can publish. Paste images to attach. ⌘/Ctrl+Enter to start.'}
+            {mode === 'chat' ? 'Chat mode starts a new read-only run. Open a build project to ask about one that already exists.' : mode === 'plan' ? 'Plan mode drafts a task list you can approve before building.' : 'Builds, verifies and previews — then you can publish. Paste images to attach. ⌘/Ctrl+Enter to start.'}
           </p>
           <button type="submit" className={btnPrimary} disabled={start.isPending || !prompt.trim()}>
             {start.isPending ? 'Starting…' : mode === 'chat' ? 'Start chat' : mode === 'plan' ? 'Draft plan' : 'Start build'}

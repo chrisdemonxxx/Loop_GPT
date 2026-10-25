@@ -17,6 +17,7 @@ import {
 import { DiffView } from './DiffView'
 import { buildFileTree, filterFiles, languageForPath, type FileTreeNode } from './fileTree'
 import { useCheckpointFile, useFileContent } from './hooks'
+import { unifiedLineDiff } from './lineDiff'
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react').then((m) => m.default), {
   ssr: false,
@@ -50,6 +51,15 @@ export function CodeEditorDrawer({
   const checkpointQuery = useCheckpointFile(projectId, compareCheckpointId, path)
   const showDiff = !!diffChange?.diff
   const showCompare = !!compareCheckpointId && !showDiff
+  const [monacoTheme, setMonacoTheme] = useState<'vs' | 'vs-dark'>('vs-dark')
+  useEffect(() => {
+    const root = document.documentElement
+    const apply = () => setMonacoTheme(root.dataset.theme === 'light' ? 'vs' : 'vs-dark')
+    apply()
+    const observer = new MutationObserver(apply)
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => observer.disconnect()
+  }, [])
 
   const [search, setSearch] = useState('')
   const [draft, setDraft] = useState<string | null>(null)
@@ -115,7 +125,7 @@ export function CodeEditorDrawer({
           <span className="flex-1 min-w-0 truncate font-mono text-ui-xs text-[var(--ink-primary)]">
             {path}
             {showDiff && <span className="ml-2 text-[var(--ink-muted)]">diff</span>}
-            {showCompare && <span className="ml-2 text-[var(--ink-muted)]">vs checkpoint</span>}
+            {showCompare && <span className="ml-2 text-[var(--ink-muted)]">saved version and current</span>}
             {dirty && !showDiff && !showCompare && <span className="ml-2 text-[var(--warning)]">edited</span>}
           </span>
           {!showDiff && !showCompare && (
@@ -144,14 +154,7 @@ export function CodeEditorDrawer({
               {checkpointQuery.isPending && <LoadingState label="Loading checkpoint…" />}
               {checkpointQuery.isError && <p className="m-3 text-ui-xs text-[var(--danger)]">{toUserFacingError(checkpointQuery.error).message}</p>}
               {checkpointQuery.data != null && fileQuery.data != null && (
-                <DiffView
-                  diff={[
-                    `--- a/${path} (checkpoint)`,
-                    `+++ b/${path} (live)`,
-                    ...checkpointQuery.data.split('\n').map((line) => `- ${line}`),
-                    ...fileQuery.data.split('\n').map((line) => `+ ${line}`),
-                  ].join('\n')}
-                />
+                <SnapshotCompare path={path} before={checkpointQuery.data} after={fileQuery.data} />
               )}
             </div>
           )}
@@ -164,7 +167,7 @@ export function CodeEditorDrawer({
                   <MonacoEditor
                     height="100%"
                     language={languageForPath(path)}
-                    theme="vs-dark"
+                    theme={monacoTheme}
                     value={draft}
                     onChange={(value) => {
                       setDraft(value ?? '')
@@ -185,6 +188,23 @@ export function CodeEditorDrawer({
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function SnapshotCompare({ path, before, after }: { path: string; before: string; after: string }) {
+  const diff = unifiedLineDiff(path, before, after)
+  if (diff) return <DiffView diff={diff} />
+  return (
+    <div className="grid gap-3 p-3 md:grid-cols-2">
+      <section>
+        <h3 className="mb-1 text-3xs font-medium text-[var(--ink-muted)]">Saved version</h3>
+        <pre className="overflow-auto whitespace-pre-wrap break-words font-mono text-3xs text-[var(--ink-secondary)]">{before}</pre>
+      </section>
+      <section>
+        <h3 className="mb-1 text-3xs font-medium text-[var(--ink-muted)]">Current</h3>
+        <pre className="overflow-auto whitespace-pre-wrap break-words font-mono text-3xs text-[var(--ink-secondary)]">{after}</pre>
+      </section>
     </div>
   )
 }

@@ -5,7 +5,10 @@ import { Ghost, Monitor, Loader2, Power, Maximize2, X } from 'lucide-react'
 import { getBotBox, wakeBotComputer, BotApiError, type BotBox } from '../../lib/bot'
 import { Dialog } from '@loop/ui'
 import { BotScreen } from './BotScreen'
+import type { WatchTarget } from '../../agents/botTask'
 import type { TeachSession } from './useTeachSession'
+
+const COMPUTER_UNREACHABLE = 'The computer could not be reached. Retry in a minute.'
 
 /**
  * The agent's persistent computer.
@@ -25,6 +28,8 @@ export function AgentComputerTab({
   onCollapse,
   /** When false, skip the initial status probe (parent already owns wake). */
   autoProbe = true,
+  /** Set while Watch is showing this run's desktop. Absent on the persistent Computer tab. */
+  runView = null,
 }: {
   session: TeachSession
   botName?: string
@@ -32,6 +37,7 @@ export function AgentComputerTab({
   expanded?: boolean
   onCollapse?: () => void
   autoProbe?: boolean
+  runView?: WatchTarget | null
 }) {
   const [box, setBox] = useState<BotBox | null>(null)
   const [booting, setBooting] = useState(false)
@@ -47,7 +53,7 @@ export function AgentComputerTab({
       setBox(b)
     } catch (err: any) {
       if (err instanceof BotApiError && err.status === 404) {
-        setError('This backend does not have persistent boxes yet — the deployment is still rolling out. Retry in a minute.')
+        setError(COMPUTER_UNREACHABLE)
       } else {
         setError(err?.message || 'Could not read the bot computer status.')
       }
@@ -78,7 +84,7 @@ export function AgentComputerTab({
         }
       }
       if (err instanceof BotApiError && err.status === 404) {
-        setError('This backend does not have persistent boxes yet — the deployment is still rolling out. Retry in a minute.')
+        setError(COMPUTER_UNREACHABLE)
       } else if (err instanceof BotApiError && err.status === 402) {
         setError(err.message || "Today's dedicated-computer budget is used up. It resets with your daily credits.")
       } else if (err instanceof BotApiError && (err.status === 503 || /E2B/i.test(err.message || ''))) {
@@ -99,15 +105,16 @@ export function AgentComputerTab({
 
   // When the user expands, wake if we don't have a stream yet.
   useEffect(() => {
-    if (!expanded) return
+    if (!expanded || runView) return
     if (box?.viewUrl || box?.interactiveUrl) return
     void wake()
-  }, [expanded]) // eslint-disable-line react-hooks/exhaustive-deps -- wake once on expand
+  }, [expanded, runView]) // eslint-disable-line react-hooks/exhaustive-deps -- wake once on expand of the persistent box
 
   const teachStream = session.phase === 'starting' || session.phase === 'waiting' || session.phase === 'recording' || session.phase === 'distilling'
   const comp = session.computer
-  const viewUrl = (teachStream && comp?.viewUrl) || box?.viewUrl || null
-  const interactiveUrl = (teachStream && comp?.interactiveUrl) || box?.interactiveUrl || null
+  const watchingRun = !!runView
+  const viewUrl = (teachStream && comp?.viewUrl) || (watchingRun ? runView?.viewUrl : box?.viewUrl) || null
+  const interactiveUrl = (teachStream && comp?.interactiveUrl) || (watchingRun ? runView?.interactiveUrl : box?.interactiveUrl) || null
 
   const recording = session.phase === 'recording'
   const inControl = recording || driving || !!(session.phase === 'waiting' && comp?.takeoverRequested)
@@ -142,7 +149,12 @@ export function AgentComputerTab({
         />
       ) : (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 text-center px-6 bg-black">
-          {booting || session.phase === 'starting' ? (
+          {watchingRun && !shownUrl ? (
+            <>
+              <Ghost size={28} className="text-white/80" aria-hidden />
+              <p className="text-ui-sm text-white/80">The desktop is starting.</p>
+            </>
+          ) : booting || session.phase === 'starting' ? (
             <>
               <Ghost size={28} className="text-white/80" aria-hidden />
               <p className="text-ui-sm text-white/80">Waking up…</p>
@@ -214,6 +226,7 @@ export function AgentComputerTab({
       {!expanded && (
         <div className="shrink-0 px-4 pt-2 text-center">
           <p className="text-ui-xs text-[var(--ink-muted)]">{botName}&apos;s screen</p>
+          <p className="mt-1 text-2xs text-[var(--ink-muted)]">This desktop is shared across your bots.</p>
           {session.phase === 'failed' && session.error && (
             <p className="mt-1 text-ui-xs text-[var(--danger)]">{session.error}</p>
           )}

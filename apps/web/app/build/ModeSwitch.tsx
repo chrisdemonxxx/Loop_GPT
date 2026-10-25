@@ -5,7 +5,7 @@ import type { RunMode } from '@loop/loopit-client'
 const MODES: { id: RunMode; label: string; hint: string }[] = [
   { id: 'build', label: 'Build', hint: 'Write and verify code' },
   { id: 'chat', label: 'Chat', hint: 'Read-only Q&A' },
-  { id: 'plan', label: 'Plan', hint: 'Draft a task list (local stub)' },
+  { id: 'plan', label: 'Plan', hint: 'Draft a task list' },
 ]
 
 export function ModeSwitch({

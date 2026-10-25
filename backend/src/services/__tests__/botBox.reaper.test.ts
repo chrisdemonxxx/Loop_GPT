@@ -1,6 +1,7 @@
 /**
  * Orphan box reaper: sync-then-kill stale rows, skip freshly touched boxes.
- * Untracked provider sweep is gated off via isE2BConfigured=false.
+ * Stale-row cases keep the untracked sweep off (isE2BConfigured=false).
+ * The grace-period cases turn that sweep on.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -8,7 +9,9 @@ const findMany = vi.fn()
 const findUnique = vi.fn()
 const update = vi.fn()
 const connect = vi.fn()
+const list = vi.fn(() => ({ hasNext: false, nextItems: async () => [] as unknown[] }))
 const syncWorkspaceOut = vi.fn()
+const isE2BConfigured = vi.fn(() => false)
 
 vi.mock('../prisma', () => ({
   prisma: {
@@ -24,7 +27,7 @@ vi.mock('../prisma', () => ({
 
 vi.mock('../e2bDesktop', () => ({
   buildVncUrls: vi.fn(),
-  isE2BConfigured: () => false,
+  isE2BConfigured: () => isE2BConfigured(),
 }))
 
 vi.mock('../botMemory', () => ({
@@ -40,7 +43,7 @@ vi.mock('../workspaceSync', () => ({
 vi.mock('@e2b/desktop', () => ({
   Sandbox: {
     connect: (...args: unknown[]) => connect(...args),
-    list: vi.fn(() => ({ hasNext: false, nextItems: async () => [] })),
+    list: (...args: unknown[]) => list(...args),
   },
 }))
 
@@ -48,10 +51,23 @@ import { reapOrphanBoxes } from '../botBox'
 
 const STALE_MS = 3 * 60 * 60_000 // older than the 2h reaper window
 
+function sandboxPage(items: Array<{ sandboxId: string; startedAt?: Date }>) {
+  let pending = true
+  return {
+    get hasNext() { return pending },
+    async nextItems() {
+      pending = false
+      return items
+    },
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   update.mockResolvedValue({})
   syncWorkspaceOut.mockResolvedValue(1)
+  isE2BConfigured.mockReturnValue(false)
+  list.mockImplementation(() => ({ hasNext: false, nextItems: async () => [] }))
 })
 
 describe('reapOrphanBoxes', () => {
@@ -101,5 +117,41 @@ describe('reapOrphanBoxes', () => {
       where: { userId: 'u3' },
       data: { sandboxId: '' },
     })
+  })
+
+  it('does not kill an untracked sandbox that started just now', async () => {
+    isE2BConfigured.mockReturnValue(true)
+    findMany.mockResolvedValue([])
+    const kill = vi.fn(async () => undefined)
+    connect.mockResolvedValue({ kill })
+    list.mockImplementation((opts?: { query?: { metadata?: { loopGpt?: string } } }) => {
+      const tag = opts?.query?.metadata?.loopGpt
+      if (tag === 'bot-box') return sandboxPage([{ sandboxId: 'sbx-booting', startedAt: new Date() }])
+      if (tag === 'bot-desktop') return sandboxPage([{ sandboxId: 'sbx-desktop-booting', startedAt: new Date() }])
+      return sandboxPage([])
+    })
+
+    await reapOrphanBoxes()
+
+    expect(connect).not.toHaveBeenCalled()
+    expect(kill).not.toHaveBeenCalled()
+  })
+
+  it('kills an untracked sandbox that started more than 15 minutes ago', async () => {
+    isE2BConfigured.mockReturnValue(true)
+    findMany.mockResolvedValue([])
+    const kill = vi.fn(async () => undefined)
+    connect.mockResolvedValue({ kill })
+    const startedAt = new Date(Date.now() - 20 * 60 * 1000)
+    list.mockImplementation((opts?: { query?: { metadata?: { loopGpt?: string } } }) => {
+      const tag = opts?.query?.metadata?.loopGpt
+      if (tag === 'bot-box') return sandboxPage([{ sandboxId: 'sbx-stale-untracked', startedAt }])
+      return sandboxPage([])
+    })
+
+    await reapOrphanBoxes()
+
+    expect(connect).toHaveBeenCalledWith('sbx-stale-untracked')
+    expect(kill).toHaveBeenCalled()
   })
 })

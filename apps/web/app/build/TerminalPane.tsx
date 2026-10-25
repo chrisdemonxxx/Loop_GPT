@@ -132,7 +132,7 @@ function ExecTerminal({
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto bg-black p-3 font-mono text-2xs">
         {history.length === 0 && (
           <p className="text-[var(--ink-muted)]">
-            Offline exec — commands run in the project workspace.
+            Commands run in this project's workspace.
             {detail ? ` ${detail}` : ' History is saved per project.'}
           </p>
         )}
@@ -236,7 +236,7 @@ function PtyTerminal({
         socket.onerror = () => {
           if (!disposed) {
             setStatus('error')
-            setError('WebSocket failed — falling back is available by reopening Offline exec.')
+            setError('The terminal connection failed. Open the terminal again to retry.')
           }
         }
         socket.onclose = () => {

@@ -223,7 +223,32 @@ describe('executeBotTask happy path (fake E2B)', () => {
     expect(runAgent).toHaveBeenCalled()
     expect(completeAgentTask).toHaveBeenCalledWith(claim)
     expect(computerStart).not.toHaveBeenCalled()
-    expect(saveMessage).toHaveBeenCalled()
+    expect(saveMessage).toHaveBeenCalledWith('convo-1', expect.anything())
+  })
+
+  it('writes the result into the task conversation when it belongs to the owner', async () => {
+    findUniqueTask.mockResolvedValue(baseTask({ conversationId: 'thread-9' }))
+    findFirstConversation.mockImplementation(async (args: { where?: { id?: string; title?: string } }) => {
+      if (args?.where?.id === 'thread-9') {
+        return { id: 'thread-9', userId, workspaceId: 'ws-thread', title: 'Deploy notes' }
+      }
+      return { id: 'convo-1', userId, workspaceId: 'ws-1', title: 'Loop Bot' }
+    })
+    const outcome = await executeBotTask(claim as any, { leaseMs: 60_000 })
+    expect(outcome).toBe('succeeded')
+    expect(saveMessage).toHaveBeenCalledWith('thread-9', expect.anything())
+    expect(authorizeRunContext).toHaveBeenCalledWith(expect.anything(), 'ws-thread', expect.anything())
+  })
+
+  it('keeps Loop Bot when the task conversation is not the owner\'s', async () => {
+    findUniqueTask.mockResolvedValue(baseTask({ conversationId: 'foreign' }))
+    findFirstConversation.mockImplementation(async (args: { where?: { id?: string; title?: string } }) => {
+      if (args?.where?.id) return null
+      return { id: 'convo-1', userId, workspaceId: 'ws-1', title: 'Loop Bot' }
+    })
+    const outcome = await executeBotTask(claim as any, { leaseMs: 60_000 })
+    expect(outcome).toBe('succeeded')
+    expect(saveMessage).toHaveBeenCalledWith('convo-1', expect.anything())
   })
 
   it('provisions a dedicated computer via ComputerSession when no box is attached', async () => {

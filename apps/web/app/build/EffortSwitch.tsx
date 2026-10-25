@@ -27,7 +27,7 @@ export function EffortSwitch({
           <button
             key={option.id}
             type="button"
-            title={`${option.hint} · ~${formatCreditEstimate(option.estimateCredits)} credits`}
+            title={`${option.hint} · estimate ~${formatCreditEstimate(option.estimateCredits)} credits`}
             disabled={disabled}
             aria-pressed={active}
             onClick={() => onChange(option.id)}
@@ -56,14 +56,18 @@ export function CostTransparencyBar({
   iterations?: number | null
 }) {
   const option = effortOption(tier)
-  const perTurn = creditsSpent != null && iterations != null && iterations > 0
+  const measured = creditsSpent != null && iterations != null && iterations > 0
+  const perTurn = measured && creditsSpent != null && iterations != null
     ? creditsSpent / iterations
     : CREDITS_PER_TURN_HINT
   return (
     <span className="text-3xs text-[var(--ink-muted)]">
-      {option.label} · ~{formatCreditEstimate(perTurn)} credits/turn
+      {option.label}
+      {measured
+        ? ` · ${formatCreditEstimate(perTurn)} credits/turn`
+        : ` · estimate ~${formatCreditEstimate(perTurn)} credits/turn`}
       {creditsSpent != null && creditsSpent > 0 ? ` · ${formatCreditEstimate(creditsSpent)} spent` : ''}
-      {` · est. ${formatCreditEstimate(option.estimateCredits)}`}
+      {` · estimate ${formatCreditEstimate(option.estimateCredits)} credits`}
     </span>
   )
 }

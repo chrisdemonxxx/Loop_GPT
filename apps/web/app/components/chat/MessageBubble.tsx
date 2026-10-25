@@ -16,6 +16,7 @@ import { ArtifactCard } from './ArtifactCard'
 import TurnActivity from './TurnActivity'
 import { useSpeech } from '../../lib/voice'
 import { useToast } from '../../lib/toast'
+import { useI18n } from '../../lib/i18n'
 
 /** Long user messages truncate with an inline expander (audit §8-20). */
 const USER_TRUNCATE = 420
@@ -68,6 +69,7 @@ export function MessageBubble({
   /** Named bot that wrote this assistant row. */
   author?: { name: string; color: string } | null
 }) {
+  const { t } = useI18n()
   const [copied, setCopied] = useState(false)
   const [showPrompt, setShowPrompt] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -156,10 +158,10 @@ export function MessageBubble({
           )}
         </div>
         {onEdit && (
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity pr-1">
+          <div className="flex items-center gap-1 pr-1">
             {version && <VersionArrows info={version} onSelect={onSelectVersion} />}
-            <ActionBtn onClick={onEdit} title="Edit" icon={<Edit2 size={13} />} />
-            <ActionBtn onClick={copy} title="Copy" icon={copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />} />
+            <ActionBtn onClick={onEdit} title={t('editAction')} icon={<Edit2 size={13} />} />
+            <ActionBtn onClick={copy} title={t('copyAction')} icon={copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />} />
           </div>
         )}
       </motion.div>

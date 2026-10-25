@@ -7,16 +7,13 @@
  */
 
 import { useEffect, useState } from 'react'
-import { Loader2, Play, Shield, X } from 'lucide-react'
+import { Shield, X } from 'lucide-react'
 import { Badge, btnGhost, btnOutline, btnPrimary } from '@loop/ui'
 import {
   listBrowserTests,
-  runSecurityScan,
-  startBrowserTest,
   getSecurityScan,
   type BrowserTestRun,
   type SecurityScanResult,
-  toUserFacingError,
 } from '@loop/loopit-client'
 
 export type InspectTarget = {
@@ -54,8 +51,6 @@ export function EditingElementChip({
 
 export function SecurityPanel({ projectId }: { projectId: string | null }) {
   const [scan, setScan] = useState<SecurityScanResult | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!projectId) return
@@ -76,30 +71,16 @@ export function SecurityPanel({ projectId }: { projectId: string | null }) {
         <button
           type="button"
           className={btnOutline}
-          disabled={busy}
-          onClick={() => {
-            setBusy(true)
-            setError(null)
-            void runSecurityScan(projectId, { gate: 'deploy', force_offline: true })
-              .then(setScan)
-              .catch((cause) => setError(toUserFacingError(cause).message))
-              .finally(() => setBusy(false))
-          }}
+          disabled
+          title="Security scanning is not available until a live scanner is connected."
         >
-          {busy ? <Loader2 size={11} className="animate-spin mr-1 inline" /> : null}
           Scan now
         </button>
         {scan?.passed === true && <Badge tone="green">Passed</Badge>}
         {scan?.passed === false && <Badge tone="rose">Blocking</Badge>}
       </div>
-      {error && <p className="text-2xs text-[var(--danger)]">{error}</p>}
+      <p className="text-3xs text-[var(--ink-muted)]">Security scanning is not available until a live scanner is connected.</p>
       {scan?.summary && <p className="text-2xs text-[var(--ink-secondary)]">{scan.summary}</p>}
-      {scan?.mode && (
-        <p className="text-3xs text-[var(--ink-muted)]">
-          Mode: {scan.mode}
-          {scan.notes?.length ? ` · ${scan.notes.join('; ')}` : ''}
-        </p>
-      )}
       <ul className="space-y-2">
         {(scan?.findings ?? []).map((finding, index) => (
           <li
@@ -119,8 +100,8 @@ export function SecurityPanel({ projectId }: { projectId: string | null }) {
           </li>
         ))}
       </ul>
-      {!scan?.findings?.length && !busy && (
-        <p className="text-2xs text-[var(--ink-muted)]">No findings yet. Run a scan before publish; critical issues block publishing unless overridden.</p>
+      {!scan?.findings?.length && (
+        <p className="text-2xs text-[var(--ink-muted)]">No findings yet.</p>
       )}
     </div>
   )
@@ -128,15 +109,12 @@ export function SecurityPanel({ projectId }: { projectId: string | null }) {
 
 export function BrowserTestsPanel({
   projectId,
-  previewUrl,
 }: {
   projectId: string | null
   previewUrl: string | null
 }) {
   const [runs, setRuns] = useState<BrowserTestRun[]>([])
   const [selected, setSelected] = useState<BrowserTestRun | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
   const refresh = () => {
     if (!projectId) return
@@ -159,28 +137,13 @@ export function BrowserTestsPanel({
         <button
           type="button"
           className={btnPrimary}
-          disabled={busy}
-          onClick={() => {
-            setBusy(true)
-            setError(null)
-            void startBrowserTest(projectId, {
-              preview_url: previewUrl ?? undefined,
-              force_offline: true,
-              acceptance: ['page loads'],
-            })
-              .then((run) => {
-                setSelected(run)
-                refresh()
-              })
-              .catch((cause) => setError(toUserFacingError(cause).message))
-              .finally(() => setBusy(false))
-          }}
+          disabled
+          title="Browser tests are not available until a live runner is connected."
         >
-          {busy ? <Loader2 size={11} className="animate-spin mr-1 inline" /> : <Play size={11} className="mr-1 inline" />}
           Run test
         </button>
       </div>
-      {error && <p className="text-2xs text-[var(--danger)]">{error}</p>}
+      <p className="text-3xs text-[var(--ink-muted)]">Browser tests are not available until a live runner is connected.</p>
       <div className="grid gap-2 sm:grid-cols-2">
         <ul className="space-y-1.5">
           {runs.map((run) => (

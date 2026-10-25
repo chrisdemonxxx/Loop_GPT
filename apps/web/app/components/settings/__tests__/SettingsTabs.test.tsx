@@ -144,7 +144,7 @@ describe('SettingsPanel close and open paths', () => {
     fireEvent.click(backdrop)
     expect(onClose).toHaveBeenCalledTimes(3)
     onClose.mockClear()
-    fireEvent.click(screen.getByRole('dialog', { name: 'Agent settings' }))
+    fireEvent.click(screen.getByRole('dialog', { name: 'Settings' }))
     expect(onClose).not.toHaveBeenCalled()
   })
 
@@ -267,7 +267,7 @@ describe('review fixes', () => {
     { id: 'm1', content: 'I prefer concise answers', kind: 'explicit', source: 'user', tags: ['preference'], createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z' },
   ]
 
-  it('Escape closes a nested connector dialog without closing Agent settings', async () => {
+  it('Escape closes a nested connector dialog without closing Settings', async () => {
     const onClose = vi.fn()
     fetchMock.mockResolvedValue({
       ok: true,
@@ -283,7 +283,7 @@ describe('review fixes', () => {
     expect(await screen.findByRole('dialog', { name: 'Connect Slack' })).toBeInTheDocument()
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Connect Slack' })).not.toBeInTheDocument())
-    expect(screen.getByRole('dialog', { name: 'Agent settings' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument()
     expect(onClose).not.toHaveBeenCalled()
   })
 
@@ -297,7 +297,7 @@ describe('review fixes', () => {
     fireEvent.keyDown(input, { key: 'Escape' })
     expect(onClose).not.toHaveBeenCalled()
     expect(screen.queryByRole('textbox', { name: 'Edit memory' })).not.toBeInTheDocument()
-    expect(screen.getByRole('dialog', { name: 'Agent settings' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument()
     expect(screen.getByText('I prefer concise answers')).toBeInTheDocument()
   })
 

@@ -49,7 +49,8 @@ import {
   useGatesEnabled, usePreviewUrl, useRunStream, useSendRunMessage, useStartBuild, useTerminalAccess,
 } from '../hooks'
 import { ErrorNotice } from '../shell'
-import { formatWhen, gateTitle, isLiveStatus, statusLabel, statusTone } from '../status'
+import { formatWhen, gateTitle, isLiveStatus, statusLabel, statusStepper, statusTone } from '../status'
+import { runConversationId } from '../runLink'
 import { FileChangeChips } from '../DiffView'
 import { ModeSwitch } from '../ModeSwitch'
 import { CostTransparencyBar, EffortEstimateNotice, EffortSwitch } from '../EffortSwitch'
@@ -76,7 +77,7 @@ import {
 const PREVIEW_SANDBOX = 'allow-scripts allow-forms allow-popups'
 
 const BACK = { href: '/build', label: 'All builds' }
-const PROJECTS = { href: '/build/projects', label: 'Projects' }
+const PROJECTS = { href: '/build/projects', label: 'Build projects' }
 
 /** One bubble in the run's chat pane. `pending` marks an optimistic user
  *  bubble waiting for the stream's journaled echo to confirm it landed. */
@@ -346,7 +347,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
     })
   }
 
-  /** Plan-mode Approve: start a Build run with the plan goal (Temporal DAG deferred). */
+  /** Plan-mode Approve: start a Build run with the plan goal. */
   const handleApprovePlan = (background = false) => {
     const goal = ui.dag?.goal || ui.run?.prompt || query.data?.prompt
     if (!goal || !projectId || startBuild.isPending) return
@@ -377,6 +378,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const offline = fetchError ? isUnreachable(fetchError) || isServiceMissing(fetchError) : false
   const missing = fetchError instanceof ApiError && fetchError.status === 404 && !offline
   const title = runTitle(ui.run ?? query.data)
+  const conversationId = runConversationId(ui.run ?? query.data)
   const startedAt = ui.run?.started_at || query.data?.started_at
   const files = ui.run?.files ?? []
 
@@ -384,7 +386,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
     <AppPage
       width="fill"
       rail={<BuildSessionRail activeRunId={runId} />}
-      back={projectId ? { href: `/build/projects/?id=${encodeURIComponent(projectId)}`, label: 'Project' } : BACK}
+      back={projectId ? { href: `/build/projects/?id=${encodeURIComponent(projectId)}`, label: 'Build project' } : BACK}
       title={title}
       documentTitle="Build"
       meta={(
@@ -408,6 +410,9 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
       actions={(
         <div className="flex items-center gap-2">
           <NotificationsBell />
+          {conversationId && (
+            <Link href={`/chat/?conversation=${encodeURIComponent(conversationId)}`} className={btnGhost}>Open in Chat</Link>
+          )}
           <Link href={PROJECTS.href} className={btnGhost}>{PROJECTS.label}</Link>
           {live ? (
             <button
@@ -444,6 +449,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
         </div>
       )}
     >
+      <div className="flex-1 min-h-0 overflow-y-auto">
       {query.isPending && <LoadingState variant="card" label="Loading build" />}
 
       {fetchError && (
@@ -451,7 +457,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
           error={offline ? {
             kind: 'unavailable',
             title: 'Build service unreachable',
-            message: 'The Build service is not reachable. It may not be deployed yet.',
+            message: 'Build is unavailable right now.',
             action: 'Retry in a moment.',
           } : missing ? {
             kind: 'unknown',
@@ -537,9 +543,6 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
           )}
         </div>
       )}
-
-      {/* Local-mode gates cannot resume a run — hide the inert UI (B9). */}
-      {gatesEnabled && <GateList gates={ui.gates} busy={gateMutation.isPending} onDecision={decideGate} />}
 
       {(ui.run?.mode || query.data?.mode) === 'plan' && !live && (
         <section className="mt-4 rounded-xl border border-[var(--accent-soft-border)] bg-[var(--accent-soft)] p-4">
@@ -699,6 +702,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
         </>
       )}
 
+      </div>
       <CheckpointDialog
         action={action}
         busy={checkpointMutation.isPending}
@@ -732,16 +736,9 @@ function Elapsed({ since, live }: { since: string; live: boolean }) {
   return <span className="tabular-nums">{m > 0 ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`}</span>
 }
 
-/** Planning → Building → Verifying → Done, as a compact stepper. */
+/** Planning → Building → Verifying → Done. Queued and approval use their own labels. */
 function StatusStepper({ status }: { status: string }) {
-  const value = status.toLowerCase()
-  const failed = ['error', 'failed', 'budget_exceeded', 'stalled', 'cancelled', 'canceled'].includes(value)
-  const stage =
-    value === 'planning' ? 0
-    : ['verified', 'merged', 'deployed', 'completed', 'success'].includes(value) ? 3
-    : ['verifying', 'checkpointing', 'deploying'].includes(value) ? 2
-    : 1
-  const steps = ['Planning', 'Building', 'Verifying', 'Done']
+  const { steps, current: stage, failed } = statusStepper(status)
   return (
     <ol className="mt-4 flex items-center gap-1.5" aria-label="Build stage">
       {steps.map((label, index) => {
@@ -764,35 +761,6 @@ function StatusStepper({ status }: { status: string }) {
         )
       })}
     </ol>
-  )
-}
-
-/** Same layout and order as the chat approval card (TurnActivity): Approve first. */
-function GateList({ gates, busy, onDecision }: { gates: ApprovalGate[]; busy: boolean; onDecision: (gate: ApprovalGate, approved: boolean) => void }) {
-  if (!gates.length) return null
-  return (
-    <section className="mt-4 space-y-3" aria-label="Approval gates">
-      {gates.map((gate) => (
-        <article key={gate.gate_id} className="rounded-xl border border-[var(--accent-soft-border)] bg-[var(--accent-soft)] p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-ui-sm font-medium text-[var(--accent-text)]">Approval needed</h2>
-            {gate.destructive && <Badge tone="rose">Cannot be undone</Badge>}
-          </div>
-          <p className="mt-2 text-ui-sm text-[var(--ink-primary)]">{gateTitle(gate.action)}</p>
-          {gate.reason && <p className="mt-1 text-ui-sm text-[var(--ink-secondary)]">{gate.reason}</p>}
-          {gate.args && (
-            <details className="mt-3">
-              <summary className="cursor-pointer text-ui-xs text-[var(--ink-muted)] hover:text-[var(--ink-secondary)]">Technical details</summary>
-              <pre className="mt-2 overflow-auto rounded-lg bg-[var(--bg-sunken)] p-3 text-ui-xs text-[var(--ink-secondary)]">{JSON.stringify(gate.args, null, 2)}</pre>
-            </details>
-          )}
-          <div className="mt-3 flex gap-2">
-            <button type="button" className={`${btnPrimary} flex-1 sm:flex-none`} disabled={busy} onClick={() => onDecision(gate, true)}>Approve</button>
-            <button type="button" className={`${btnOutline} flex-1 sm:flex-none`} disabled={busy} onClick={() => onDecision(gate, false)}>Decline</button>
-          </div>
-        </article>
-      ))}
-    </section>
   )
 }
 
@@ -891,7 +859,11 @@ function activityIcon(item: Activity): { Icon: typeof FileText; cls: string } {
       ? { Icon: CheckCircle2, cls: 'text-[var(--success)]' }
       : { Icon: Sparkles, cls: 'text-[var(--accent-text)]' }
   }
-  // TODO(B24): remove English regex once every timeline row carries `kind`.
+  if (item.kind) {
+    return item.tone === 'good'
+      ? { Icon: CheckCircle2, cls: 'text-[var(--success)]' }
+      : { Icon: ChevronRight, cls: 'text-[var(--ink-muted)]' }
+  }
   const text = `${item.title} ${item.body ?? ''}`.toLowerCase()
   if (/fail|error|reject|stall|denied|crash/.test(text)) return { Icon: AlertTriangle, cls: 'text-[var(--danger)]' }
   if (/verif|check|test|lint|typecheck|smoke/.test(text)) return { Icon: ShieldCheck, cls: 'text-[var(--success)]' }
@@ -900,6 +872,11 @@ function activityIcon(item: Activity): { Icon: typeof FileText; cls: string } {
   if (/model|think|brief|plan/.test(text)) return { Icon: Sparkles, cls: 'text-[var(--accent-text)]' }
   if (/deploy|publish|live/.test(text)) return { Icon: Rocket, cls: 'text-[var(--success)]' }
   return { Icon: ChevronRight, cls: 'text-[var(--ink-muted)]' }
+}
+
+function formatActivityAt(at: string): string {
+  if (/^\d{4}-\d{2}-\d{2}/.test(at)) return formatWhen(at) || at
+  return at
 }
 
 function ActivityTimeline({ activity, running, outcome }: { activity: Activity[]; running: boolean; outcome: { status: string; summary: string | null; iterations?: number; credits?: number } | null }) {
@@ -932,7 +909,7 @@ function ActivityTimeline({ activity, running, outcome }: { activity: Activity[]
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline justify-between gap-2">
                   <strong className="text-ui-xs font-medium text-[var(--ink-primary)] truncate">{item.title}</strong>
-                  <span className="text-3xs text-[var(--ink-muted)] shrink-0">{item.at}</span>
+                  <span className="text-3xs text-[var(--ink-muted)] shrink-0">{formatActivityAt(item.at)}</span>
                 </div>
                 {item.body && <p className="mt-0.5 break-words text-2xs text-[var(--ink-muted)] line-clamp-2">{item.body}</p>}
               </div>
@@ -1264,7 +1241,7 @@ function RetryButton({ run }: { run: RunSummary | null | undefined }) {
   )
 }
 
-/** Replit-style bottom workspace: Chat, Console, Database, Security, Tests, Terminal. */
+/** Bottom workspace: instructions, console, database, security, tests, and terminal. */
 function RunWorkspace({
   runId, projectId, previewUrl, messages, streamingText, terminalHistory, onSetTerminalHistory, consoleEntries, onSendMessage, onResend, onFixError, sendBusy, terminalAllowed, terminalOpen, onToggleTerminal, composerRef, gates, gatesBusy, onGateDecision,
   inspectTarget, onClearInspect, onVisualEdit,
@@ -1297,7 +1274,7 @@ function RunWorkspace({
   return (
     <section className={`${panelCls} mt-4 overflow-hidden flex flex-col`}>
       <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-3 py-2 shrink-0 flex-wrap">
-        <RunWorkspaceTab active={active === 'chat'} onClick={() => { setTab('chat'); if (terminalOpen) onToggleTerminal() }} icon={Send} label="Chat" />
+        <RunWorkspaceTab active={active === 'chat'} onClick={() => { setTab('chat'); if (terminalOpen) onToggleTerminal() }} icon={Send} label="Workspace" />
         <RunWorkspaceTab active={active === 'console'} onClick={() => { setTab('console'); if (terminalOpen) onToggleTerminal() }} icon={AlertTriangle} label="Console" />
         <RunWorkspaceTab active={active === 'database'} onClick={() => { setTab('database'); if (terminalOpen) onToggleTerminal() }} icon={Database} label="Database" />
         <RunWorkspaceTab active={active === 'security'} onClick={() => { setTab('security'); if (terminalOpen) onToggleTerminal() }} icon={Shield} label="Security" />
@@ -1360,7 +1337,7 @@ function RunConsole({ entries, onFixError }: { entries: ConsoleEntry[]; onFixErr
               <button
                 type="button"
                 onClick={() => onFixError(entry.text)}
-                className="mt-1 hidden text-3xs text-[var(--accent-text)] group-hover:inline-flex items-center gap-1"
+                className="mt-1 inline-flex items-center gap-1 text-3xs text-[var(--accent-text)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
               >
                 <Sparkles size={9} /> Fix this error
               </button>
@@ -1462,7 +1439,7 @@ function RunChat({ messages, streamingText, onSend, onResend, busy, composerRef,
                   type="button"
                   onClick={() => onResend(m.text)}
                   title="Resend this instruction as a new run on the same project"
-                  className="mt-1 hidden items-center gap-1 text-3xs text-[var(--accent-text)] opacity-80 hover:opacity-100 group-hover:flex"
+                  className="mt-1 inline-flex items-center gap-1 text-3xs text-[var(--accent-text)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                 >
                   <RotateCw size={9} /> Resend
                 </button>
@@ -1498,7 +1475,7 @@ function RunChat({ messages, streamingText, onSend, onResend, busy, composerRef,
                   className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-sunken)] px-1.5 py-1 text-3xs"
                 >
                   <option value="text">Text</option>
-                  <option value="color">Colour</option>
+                  <option value="color">Color</option>
                   <option value="spacing">Spacing</option>
                 </select>
                 <input
@@ -1539,6 +1516,68 @@ function RunChat({ messages, streamingText, onSend, onResend, busy, composerRef,
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function cellText(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value)
+  try { return JSON.stringify(value) } catch { return '' }
+}
+
+function rowCells(row: unknown, columns: string[]): string[] {
+  if (Array.isArray(row)) return columns.map((_, index) => cellText(row[index]))
+  if (row && typeof row === 'object') {
+    const record = row as Record<string, unknown>
+    return columns.map((column) => cellText(record[column]))
+  }
+  return columns.map(() => cellText(row))
+}
+
+function DatabaseRows({
+  table,
+  columns,
+  rows,
+  note,
+}: {
+  table: string | null
+  columns: string[]
+  rows: unknown[]
+  note?: string
+}) {
+  const headers = columns.length > 0
+    ? columns
+    : rows[0] && typeof rows[0] === 'object' && !Array.isArray(rows[0])
+      ? Object.keys(rows[0] as object)
+      : []
+  return (
+    <div className="rounded-lg border border-[var(--border-subtle)] p-2 text-2xs">
+      <p className="font-medium text-[var(--ink-primary)]">{table}</p>
+      {note && <p className="mt-1 text-[var(--ink-muted)]">{note}</p>}
+      {rows.length === 0 && <p className="mt-1 text-[var(--ink-muted)]">No rows.</p>}
+      {rows.length > 0 && headers.length > 0 && (
+        <div className="mt-2 overflow-auto">
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr>
+                {headers.map((column) => (
+                  <th key={column} className="border-b border-[var(--border-subtle)] px-2 py-1 font-medium text-[var(--ink-muted)]">{column}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, index) => (
+                <tr key={index}>
+                  {rowCells(row, headers).map((cell, cellIndex) => (
+                    <td key={`${index}-${cellIndex}`} className="border-b border-[var(--border-subtle)] px-2 py-1 align-top text-[var(--ink-secondary)]">{cell || '—'}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
@@ -1597,12 +1636,7 @@ function DatabasePanel({ projectId }: { projectId: string | null }) {
         ))}
       </div>
       {browse && (
-        <div className="rounded-lg border border-[var(--border-subtle)] p-2 text-2xs">
-          <p className="font-medium text-[var(--ink-primary)]">{selected}</p>
-          <p className="mt-1 text-[var(--ink-muted)]">Columns: {browse.columns.join(', ') || '—'}</p>
-          {browse.note && <p className="mt-1 text-[var(--ink-muted)]">{browse.note}</p>}
-          {browse.rows.length === 0 && <p className="mt-1 text-[var(--ink-muted)]">No rows.</p>}
-        </div>
+        <DatabaseRows table={selected} columns={browse.columns} rows={browse.rows} note={browse.note} />
       )}
     </div>
   )

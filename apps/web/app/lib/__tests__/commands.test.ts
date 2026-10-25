@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseCommand, SLASH_COMMANDS, filterCommands, fuzzyMatch, SLASH_SECTIONS } from '../commands'
+import { agentsThreadHref, exactSlashAction, parseBotCommand, parseCommand, SLASH_COMMANDS, filterCommands, fuzzyMatch, SLASH_SECTIONS } from '../commands'
 
 describe('slash-command registry', () => {
   it('has the full Claude/Copilot-style command set', () => {
@@ -8,6 +8,14 @@ describe('slash-command registry', () => {
       '/chat', '/agent', '/research', '/image', '/video', '/create', '/memory']) expect(cmds).toContain(c)
     // '/model' was retired with the picker: the backend fleet router (Auto) picks per turn.
     expect(cmds).not.toContain('/model')
+    expect(exactSlashAction('/new')).toMatchObject({ cmd: '/new', kind: 'action' })
+    expect(exactSlashAction('  /export  ')).toMatchObject({ cmd: '/export' })
+    expect(exactSlashAction('/export notes')).toBeNull()
+    expect(exactSlashAction('/research')).toBeNull()
+    expect(parseBotCommand('/bot')).toEqual({ goal: '' })
+    expect(parseBotCommand('/bot  ship the notes')).toEqual({ goal: 'ship the notes' })
+    expect(parseBotCommand('/both')).toBeNull()
+    expect(agentsThreadHref('bot 1', 'thread/2')).toBe('/agents/?botId=bot%201&thread=thread%2F2')
     expect(SLASH_COMMANDS.length).toBeGreaterThanOrEqual(15)
   })
 

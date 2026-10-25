@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -91,5 +92,20 @@ describe('BuildPage', () => {
     view.rerender(<BuildPage />)
     expect(screen.getByTestId('run').textContent).toBe('run_b')
     expect(mounts.count).toBe(2)
+  })
+
+  it('seeds the composer from ?prompt=', () => {
+    nav.params = new URLSearchParams('prompt=Build%20a%20landing%20page')
+    render(<BuildPage />, { wrapper })
+    expect(screen.getByRole('textbox')).toHaveValue('Build a landing page')
+  })
+
+  it('describes chat mode as a new run', async () => {
+    nav.params = new URLSearchParams()
+    const user = userEvent.setup()
+    render(<BuildPage />, { wrapper })
+    await user.click(screen.getByRole('button', { name: 'Chat' }))
+    expect(screen.getByPlaceholderText(/new read-only run/i)).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(/existing project/i)).toBeNull()
   })
 })

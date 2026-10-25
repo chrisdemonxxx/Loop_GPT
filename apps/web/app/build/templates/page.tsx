@@ -44,7 +44,7 @@ export default function BuildTemplatesPage() {
       title="Templates"
       description="Curated starters and recipe scaffolds. Preview the prompt, then Remix to start a build."
       back={{ href: '/build', label: 'All builds' }}
-      actions={<Link href="/build/projects" className={btnOutline}>Projects</Link>}
+      actions={<Link href="/build/projects" className={btnOutline}>Build projects</Link>}
     >
       {facing && (
         <ErrorNotice
@@ -58,7 +58,7 @@ export default function BuildTemplatesPage() {
       )}
       {items === null && !error && <LoadingState variant="card" label="Loading templates" />}
       {items && items.length === 0 && (
-        <EmptyState title="No templates" body="Recipe JSON files will appear here when the engine can read stack-templates/recipes." />
+        <EmptyState title="No templates" body="Templates will show up here when starters are available." />
       )}
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         {(items ?? []).map((template) => (

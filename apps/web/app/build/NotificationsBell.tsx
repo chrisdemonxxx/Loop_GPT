@@ -34,10 +34,7 @@ export function NotificationsBell() {
         type="button"
         className={`${btnGhost} relative`}
         aria-label={unread ? `${unread} unread notifications` : 'Notifications'}
-        onClick={() => {
-          setOpen((prev) => !prev)
-          if (!open && unread > 0) markRead.mutate(null)
-        }}
+        onClick={() => setOpen((prev) => !prev)}
       >
         <Bell size={14} />
         {unread > 0 && (
@@ -73,13 +70,22 @@ export function NotificationsBell() {
           <div className="mt-3 max-h-48 space-y-2 overflow-auto">
             {(notes.data?.notifications ?? []).slice(0, 8).map((note) => (
               <div key={note.notification_id} className="rounded-lg border border-[var(--border-subtle)] px-2.5 py-2">
-                <p className="text-ui-xs text-[var(--ink-primary)]">{note.title}</p>
-                <p className="mt-0.5 text-3xs text-[var(--ink-muted)]">{note.body}</p>
+                <button
+                  type="button"
+                  className="w-full text-left"
+                  onClick={() => { if (!note.read) markRead.mutate(note.notification_id) }}
+                >
+                  <p className="text-ui-xs text-[var(--ink-primary)]">{note.title}</p>
+                  <p className="mt-0.5 text-3xs text-[var(--ink-muted)]">{note.body}</p>
+                </button>
                 {note.run_id && (
                   <Link
                     href={`/build/?run=${encodeURIComponent(note.run_id)}`}
                     className="mt-1 inline-block text-3xs text-[var(--accent-text)]"
-                    onClick={() => setOpen(false)}
+                    onClick={() => {
+                      if (!note.read) markRead.mutate(note.notification_id)
+                      setOpen(false)
+                    }}
                   >
                     Open run
                   </Link>

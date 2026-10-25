@@ -120,6 +120,13 @@ describe('long-user truncation (§8-20)', () => {
     expect(screen.getByText(/Show less/)).toBeInTheDocument()
   })
 
+  it('shows edit and copy on a user message without hover', () => {
+    render(<MessageBubble message={msg({ role: 'user', content: 'short and sweet' })} onEdit={() => {}} />)
+    const edit = screen.getByRole('button', { name: 'Edit' })
+    expect(edit.parentElement?.className || '').not.toMatch(/opacity-0/)
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument()
+  })
+
   it('leaves short user messages untruncated', () => {
     render(<MessageBubble message={msg({ role: 'user', content: 'short and sweet' })} />)
     expect(screen.getByText('short and sweet')).toBeInTheDocument()

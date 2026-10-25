@@ -58,6 +58,8 @@ describe('Composer', () => {
     expect(field).toHaveValue('/help draft')
     expect(field).toBeVisible()
     expect(screen.getByRole('menu', { name: 'Run settings' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Add attachments and actions' }))
+    expect(screen.getByRole('button', { name: /run settings/i })).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('disables Send with no input and enables it with text', () => {

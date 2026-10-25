@@ -1,8 +1,10 @@
 'use client'
 
 import { useRef, useState } from 'react'
+import Link from 'next/link'
 import { PanelLeft, FileDown, Sparkles, FlaskConical, Ghost, Sun, Moon, Monitor, MoreHorizontal, Keyboard } from 'lucide-react'
 import { useMenuDismiss } from '../../lib/useMenuDismiss'
+import { useI18n } from '../../lib/i18n'
 import type { ThemeChoice } from '../../lib/theme'
 
 /** The top bar: sidebar toggle, session title, the router's Auto chip,
@@ -20,6 +22,7 @@ export default function ChatHeader({
   onOpenSidebar,
   theme, onCycleTheme,
   onOpenShortcuts,
+  loopBotHref,
 }: {
   sidebarOpen: boolean
   convTitle?: string
@@ -39,7 +42,10 @@ export default function ChatHeader({
   /** §8-35: cycle light → dark → system. */
   onCycleTheme?: () => void
   onOpenShortcuts?: () => void
+  /** Bot or group thread → Loop Bot console for this thread. */
+  loopBotHref?: string | null
 }) {
+  const { t } = useI18n()
   const [moreOpen, setMoreOpen] = useState(false)
   const moreRef = useRef<HTMLDivElement>(null)
   useMenuDismiss(moreRef, moreOpen, () => setMoreOpen(false))
@@ -72,6 +78,11 @@ export default function ChatHeader({
         >
           <Sparkles size={11} className="text-[#e79d7f]" aria-hidden /> Auto
         </span>
+        {loopBotHref && (
+          <Link href={loopBotHref} className="text-[12px] text-[#e79d7f] hover:underline shrink-0 px-1">
+            Open in Loop Bot
+          </Link>
+        )}
         <div className="relative" ref={moreRef}>
           <button
             type="button"
@@ -96,8 +107,8 @@ export default function ChatHeader({
               </button>
               {hasMessages && (
                 <>
-                  <button role="menuitem" onClick={() => { setMoreOpen(false); onExport('md') }} className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/[0.05]"><FileDown size={14} /> Markdown (.md)</button>
-                  <button role="menuitem" onClick={() => { setMoreOpen(false); onExport('pdf') }} className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/[0.05]"><FileDown size={14} /> PDF (print)</button>
+                  <button role="menuitem" onClick={() => { setMoreOpen(false); onExport('md') }} className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/[0.05]"><FileDown size={14} /> {t('exportMarkdown')}</button>
+                  <button role="menuitem" onClick={() => { setMoreOpen(false); onExport('pdf') }} className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/[0.05]"><FileDown size={14} /> {t('exportPdf')}</button>
                 </>
               )}
               {artifactCount > 0 && (

@@ -318,6 +318,12 @@ export interface PendingAttachment {
   attachmentId?: string
 }
 
+/** Body for POST /api/conversations. Incognito must be set on create or the row stays in the sidebar. */
+export function conversationCreateBody(title: string, incognito: boolean): { title: string; incognito?: true } {
+  if (!incognito) return { title }
+  return { title, incognito: true }
+}
+
 /** Max four attachments per turn (matching the stream contract). */
 const MAX_ATTACHMENTS = 4
 
@@ -330,7 +336,7 @@ let attachmentSeq = 0
  * conversation (the upload routes accept 'new' and return its id); later
  * uploads and the eventual send reuse it.
  */
-export function useAttachments(currentConversationId: string | null) {
+export function useAttachments(currentConversationId: string | null, incognito = false) {
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   /** Conversation created by a 'new' upload (before the first send) — kept
    *  in a ref so concurrent uploads in one batch share the target. */
@@ -339,6 +345,9 @@ export function useAttachments(currentConversationId: string | null) {
   /** One in-flight conversation create, shared by every file in a batch.
    *  Parallel uploads used to each POST against 'new' and land in different chats. */
   const convGate = useRef<Promise<string> | null>(null)
+
+  const incognitoRef = useRef(incognito)
+  incognitoRef.current = incognito
 
   const ensureUploadConversation = useCallback(async () => {
     if (uploadConvRef.current) return uploadConvRef.current
@@ -350,7 +359,7 @@ export function useAttachments(currentConversationId: string | null) {
     if (!convGate.current) {
       convGate.current = axios.post(
         `${API_URL}/api/conversations`,
-        { title: 'New Chat' },
+        conversationCreateBody('New Chat', incognitoRef.current),
         { headers: authHeaders() },
       ).then((res) => {
         const id = String(res.data?.id || '')

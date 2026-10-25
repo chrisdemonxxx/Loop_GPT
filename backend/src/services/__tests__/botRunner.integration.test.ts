@@ -49,8 +49,38 @@ describe('ensureRunIdentity (B3)', () => {
     expect(again.conversationId).toBe(identity.conversationId)
   })
 
+  it('uses the task conversation when that thread belongs to the owner', async () => {
+    const thread = await db.conversation.create({
+      data: { userId, title: 'Deploy notes', kind: 'bot' },
+    })
+    const identity = await ensureRunIdentity({ userId, conversationId: thread.id })
+    expect(identity.userId).toBe(userId)
+    expect(identity.conversationId).toBe(thread.id)
+    const workspace = await db.workspace.findUniqueOrThrow({ where: { id: identity.workspaceId } })
+    expect(workspace.personalOwnerId).toBe(userId)
+
+    const standing = await ensureRunIdentity({ userId })
+    expect(standing.conversationId).not.toBe(thread.id)
+    const fallback = await db.conversation.findUniqueOrThrow({ where: { id: standing.conversationId } })
+    expect(fallback.title).toBe('Loop Bot')
+    expect(fallback.userId).toBe(userId)
+  })
+
+  it('falls back to Loop Bot when the conversation belongs to someone else', async () => {
+    const otherId = `${prefix}-other-${randomUUID()}`
+    await db.user.create({ data: { id: otherId, email: `${otherId}@example.test`, password: 'fixture', name: 'Other' } })
+    const foreign = await db.conversation.create({
+      data: { userId: otherId, title: 'Not yours', kind: 'bot' },
+    })
+    const identity = await ensureRunIdentity({ userId, conversationId: foreign.id })
+    expect(identity.conversationId).not.toBe(foreign.id)
+    const conversation = await db.conversation.findUniqueOrThrow({ where: { id: identity.conversationId } })
+    expect(conversation.title).toBe('Loop Bot')
+    expect(conversation.userId).toBe(userId)
+  })
+
   it('system tasks (no owner) keep the service account "Ops Bot" identity', async () => {
-    const identity = await ensureRunIdentity({ userId: null })
+    const identity = await ensureRunIdentity({ userId: null, conversationId: 'ignored-without-an-owner' })
     const botUser = await db.user.findUniqueOrThrow({ where: { id: identity.userId } })
     expect(botUser.email).toBe('ops-bot@loop-gpt.cyou')
     const conversation = await db.conversation.findUniqueOrThrow({ where: { id: identity.conversationId } })

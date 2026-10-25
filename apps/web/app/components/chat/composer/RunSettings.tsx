@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Zap, Brain, ChevronDown, Check } from 'lucide-react'
 import { THOUGHT_EFFORTS, type EffortValue } from './EffortSelector'
 import { RUN_MODES, type ToggleState } from './SlashPalette'
@@ -22,6 +22,8 @@ export function RunSettings({
   onRunModeChange,
   onWebSearchChange,
   onThinkingChange,
+  dismissSignal = 0,
+  onOpen,
 }: {
   runMode: 'auto' | 'plan' | 'step' | 'accept'
   webSearch: ToggleState
@@ -29,9 +31,18 @@ export function RunSettings({
   onRunModeChange: (mode: 'auto' | 'plan' | 'step' | 'accept') => void
   onWebSearchChange: (next: ToggleState) => void
   onThinkingChange: (next: EffortValue) => void
+  /** Bumps when another composer menu opens, so this one closes. */
+  dismissSignal?: number
+  onOpen?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const seenDismiss = useRef(dismissSignal)
+  useEffect(() => {
+    if (seenDismiss.current === dismissSignal) return
+    seenDismiss.current = dismissSignal
+    setOpen(false)
+  }, [dismissSignal])
 
   const customized = runMode !== 'auto' || webSearch !== 'auto' || thinking !== 'auto'
   const activeMode = RUN_MODES.find((m) => m.id === runMode) || RUN_MODES[0]
@@ -40,7 +51,11 @@ export function RunSettings({
     <div className="relative" ref={ref}>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen((v) => {
+          const next = !v
+          if (next) onOpen?.()
+          return next
+        })}
         aria-haspopup="menu"
         aria-expanded={open}
         title={`Run settings — Autonomy: ${activeMode.label} · Web: ${webSearch} · Reasoning: ${thinking}`}

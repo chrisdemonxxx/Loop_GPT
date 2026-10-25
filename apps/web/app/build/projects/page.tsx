@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useEffect, useState, type FormEvent } from 'react'
+import { Suspense, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Badge, EmptyState, LoadingState, SectionHeader, btnGhost, btnOutline, btnPrimary, cardCls, textareaCls } from '@loop/ui'
@@ -17,6 +17,7 @@ import {
   runTitle,
   setProjectVisibility,
   toUserFacingError,
+  unbindGitRemote,
   verifyProjectDomain,
   type DomainClaim,
   type EffortTier,
@@ -27,6 +28,9 @@ import {
 } from '@loop/loopit-client'
 import { AppPage } from '../../components/AppPage'
 import { useToast } from '../../lib/toast'
+import { BuildSessionRail } from '../SessionRail'
+import { NotificationsBell } from '../NotificationsBell'
+import { githubSyncConnected, gitsyncProvider } from '../githubSync'
 import { ErrorNotice } from '../shell'
 import { formatWhen, statusLabel, statusTone } from '../status'
 import { ModeSwitch } from '../ModeSwitch'
@@ -34,6 +38,7 @@ import { CostTransparencyBar, EffortEstimateNotice, EffortSwitch } from '../Effo
 import { AnalyticsPanel, CollaborationPanel, ConnectorsPanel } from '../Phase3Panels'
 import {
   useArchiveProject,
+  useBuildHealth,
   useBuildProject,
   useBuildProjects,
   useDuplicateProject,
@@ -49,9 +54,41 @@ import {
   type BuildAttachment,
 } from '../attachments'
 
+function ProjectsFrame({
+  title,
+  description,
+  back,
+  actions,
+  children,
+}: {
+  title: string
+  description?: string
+  back?: { href: string; label: string }
+  actions?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <AppPage
+      width="fill"
+      title={title}
+      description={description}
+      back={back}
+      rail={<BuildSessionRail activeRunId={null} />}
+      actions={(
+        <div className="flex items-center gap-2">
+          <NotificationsBell />
+          {actions}
+        </div>
+      )}
+    >
+      <div className="flex-1 min-h-0 overflow-y-auto">{children}</div>
+    </AppPage>
+  )
+}
+
 export default function BuildProjectsPage() {
   return (
-    <Suspense fallback={<AppPage title="Projects"><LoadingState variant="card" label="Loading projects" /></AppPage>}>
+    <Suspense fallback={<ProjectsFrame title="Build projects"><LoadingState variant="card" label="Loading projects" /></ProjectsFrame>}>
       <ProjectsRoute />
     </Suspense>
   )
@@ -64,7 +101,10 @@ function ProjectsRoute() {
 }
 
 function ProjectsBoard() {
-  const projects = useBuildProjects()
+  const router = useRouter()
+  const [showArchived, setShowArchived] = useState(false)
+  const [undoId, setUndoId] = useState<string | null>(null)
+  const projects = useBuildProjects(showArchived)
   const archive = useArchiveProject()
   const restore = useRestoreProject()
   const duplicate = useDuplicateProject()
@@ -74,11 +114,42 @@ function ProjectsBoard() {
   const offline = projects.error ? isUnreachable(projects.error) || isServiceMissing(projects.error) : false
 
   return (
-    <AppPage
-      title="Projects"
-      description="Continuous builds share one project workspace, preview, and LOOP.md knowledge."
+    <ProjectsFrame
+      title="Build projects"
+      description="Continuous builds share one project workspace, preview, and project notes."
       back={{ href: '/build', label: 'All builds' }}
     >
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <label className="inline-flex items-center gap-2 text-ui-xs text-[var(--ink-secondary)]">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(event) => setShowArchived(event.target.checked)}
+          />
+          Show archived
+        </label>
+      </div>
+      {undoId && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-sunken)] px-3 py-2">
+          <p className="text-ui-xs text-[var(--ink-secondary)]">Project archived.</p>
+          <button
+            type="button"
+            className={btnOutline}
+            disabled={restore.isPending}
+            onClick={async () => {
+              try {
+                await restore.mutateAsync(undoId)
+                setUndoId(null)
+                toast.push('success', 'Project restored')
+              } catch (cause) {
+                toast.push('error', toUserFacingError(cause).message)
+              }
+            }}
+          >
+            Undo
+          </button>
+        </div>
+      )}
       {facing && (
         <ErrorNotice
           error={offline ? {
@@ -121,7 +192,8 @@ function ProjectsBoard() {
                   onClick={async () => {
                     try {
                       await archive.mutateAsync(project.project_id)
-                      toast.push('success', 'Project archived (restore within 30 days)')
+                      setUndoId(project.project_id)
+                      toast.push('success', 'Project archived')
                     } catch (cause) {
                       toast.push('error', toUserFacingError(cause).message)
                     }
@@ -154,7 +226,7 @@ function ProjectsBoard() {
                   try {
                     const copy = await duplicate.mutateAsync(project.project_id)
                     toast.push('success', 'Project duplicated')
-                    window.location.href = `/build/projects/?id=${encodeURIComponent(copy.project_id)}`
+                    router.push(`/build/projects/?id=${encodeURIComponent(copy.project_id)}`)
                   } catch (cause) {
                     toast.push('error', toUserFacingError(cause).message)
                   }
@@ -166,7 +238,7 @@ function ProjectsBoard() {
           </div>
         ))}
       </div>
-    </AppPage>
+    </ProjectsFrame>
   )
 }
 
@@ -239,10 +311,15 @@ function ProjectVisibilityPanel({
 
 function ProjectGitPanel({ projectId }: { projectId: string }) {
   const toast = useToast()
+  const health = useBuildHealth()
   const [status, setStatus] = useState<GitSyncStatus | null>(null)
   const [owner, setOwner] = useState('')
   const [repo, setRepo] = useState('')
   const [busy, setBusy] = useState(false)
+  const connected = githubSyncConnected({
+    mode: status?.mode,
+    provider: gitsyncProvider(health.data),
+  })
 
   async function refresh() {
     try {
@@ -257,29 +334,32 @@ function ProjectGitPanel({ projectId }: { projectId: string }) {
   return (
     <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
       <SectionHeader title="GitHub sync" />
-      <p className="text-3xs text-[var(--ink-muted)]">
-        Two-way sync via gitsync. Offline uses a fake provider; live needs LOOPIT_GITHUB_TOKEN or the Loop-GPT GitHub connector vault.
-        Verified checkpoints auto-push when bound. Pull webhooks create a new checkpoint (conflicts → backup branch).
-      </p>
-      {status?.bound ? (
-        <p className="text-ui-xs">
-          Bound to <code>{status.owner}/{status.name}</code>
-          {status.last_commit_sha ? ` · ${status.last_commit_sha.slice(0, 8)}` : ''}
-          {status.mode ? ` · ${status.mode}` : ''}
-        </p>
-      ) : (
-        <div className="flex flex-wrap gap-2">
-          <input className={`${textareaCls} py-2 flex-1 min-w-[8rem]`} placeholder="owner" value={owner} onChange={(e) => setOwner(e.target.value)} />
-          <input className={`${textareaCls} py-2 flex-1 min-w-[8rem]`} placeholder="repo" value={repo} onChange={(e) => setRepo(e.target.value)} />
+      {!health.isFetched ? (
+        <p className="text-3xs text-[var(--ink-muted)]">Checking GitHub sync…</p>
+      ) : !connected ? (
+        <>
+          <p className="text-3xs text-[var(--ink-muted)]">GitHub sync is not connected.</p>
+          <div className="flex flex-wrap gap-2">
+            <input className={`${textareaCls} py-2 flex-1 min-w-[8rem]`} placeholder="owner" value="" disabled />
+            <input className={`${textareaCls} py-2 flex-1 min-w-[8rem]`} placeholder="repo" value="" disabled />
+            <button type="button" className={btnPrimary} disabled>Bind</button>
+          </div>
+        </>
+      ) : status?.bound ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-ui-xs">
+            Connected to <code>{status.owner}/{status.name}</code>
+            {status.last_commit_sha ? ` · ${status.last_commit_sha.slice(0, 8)}` : ''}
+          </p>
           <button
             type="button"
-            className={btnPrimary}
-            disabled={busy || !owner.trim() || !repo.trim()}
+            className={btnGhost}
+            disabled={busy}
             onClick={async () => {
               setBusy(true)
               try {
-                await bindGitRemote(projectId, owner.trim(), repo.trim())
-                toast.push('success', 'Repository bound')
+                await unbindGitRemote(projectId)
+                toast.push('success', 'GitHub repository disconnected')
                 await refresh()
               } catch (cause) {
                 toast.push('error', toUserFacingError(cause).message)
@@ -288,9 +368,36 @@ function ProjectGitPanel({ projectId }: { projectId: string }) {
               }
             }}
           >
-            Bind
+            Disconnect
           </button>
         </div>
+      ) : (
+        <>
+          <p className="text-3xs text-[var(--ink-muted)]">Connect a GitHub repository for this project.</p>
+          <div className="flex flex-wrap gap-2">
+            <input className={`${textareaCls} py-2 flex-1 min-w-[8rem]`} placeholder="owner" value={owner} onChange={(e) => setOwner(e.target.value)} />
+            <input className={`${textareaCls} py-2 flex-1 min-w-[8rem]`} placeholder="repo" value={repo} onChange={(e) => setRepo(e.target.value)} />
+            <button
+              type="button"
+              className={btnPrimary}
+              disabled={busy || !owner.trim() || !repo.trim()}
+              onClick={async () => {
+                setBusy(true)
+                try {
+                  await bindGitRemote(projectId, owner.trim(), repo.trim())
+                  toast.push('success', 'Repository connected')
+                  await refresh()
+                } catch (cause) {
+                  toast.push('error', toUserFacingError(cause).message)
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              Bind
+            </button>
+          </div>
+        </>
       )}
     </div>
   )
@@ -316,7 +423,7 @@ function ProjectDomainsPanel({ projectId }: { projectId: string }) {
     <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
       <SectionHeader title="Domains" />
       <p className="text-3xs text-[var(--ink-muted)]">
-        Connect a custom domain with a TXT ownership challenge (CNAME to the apps base). Offline verify seeds the fake resolver; live uses services/domains + TLS seam. Verified domains meter customDomainMonths when LOOPIT_USAGE_URL is set.
+        Connect a custom domain. Add the TXT record at your DNS host, then verify ownership.
       </p>
       <ul className="space-y-2">
         {claims.map((claim) => (
@@ -338,7 +445,7 @@ function ProjectDomainsPanel({ projectId }: { projectId: string }) {
                   onClick={async () => {
                     setBusy(true)
                     try {
-                      await verifyProjectDomain(projectId, claim.hostname, true)
+                      await verifyProjectDomain(projectId, claim.hostname, false)
                       toast.push('success', 'Domain verified')
                       await refresh()
                     } catch (cause) {
@@ -406,7 +513,7 @@ function ProjectSecretsPanel({ projectId }: { projectId: string }) {
   useEffect(() => { void refresh() }, [projectId])
 
   return (
-    <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
+    <div id="project-secrets" className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
       <SectionHeader title="Secrets" />
       <p className="text-3xs text-[var(--ink-muted)]">
         Injected into sandbox and deploy env only — never into the client bundle. Use UPPER_SNAKE names (not VITE_).
@@ -539,23 +646,23 @@ function ProjectView({ projectId }: { projectId: string }) {
   }
 
   if (query.isPending) {
-    return <AppPage title="Project" back={{ href: '/build/projects', label: 'Projects' }}><LoadingState variant="card" label="Loading project" /></AppPage>
+    return <ProjectsFrame title="Project" back={{ href: '/build/projects', label: 'Build projects' }}><LoadingState variant="card" label="Loading project" /></ProjectsFrame>
   }
   if (query.isError || !project) {
     return (
-      <AppPage title="Project" back={{ href: '/build/projects', label: 'Projects' }}>
+      <ProjectsFrame title="Project" back={{ href: '/build/projects', label: 'Build projects' }}>
         <ErrorNotice error={toUserFacingError(query.error ?? new Error('Project not found'))} />
-      </AppPage>
+      </ProjectsFrame>
     )
   }
 
   const runs = (project.runs ?? []) as RunSummary[]
 
   return (
-    <AppPage
+    <ProjectsFrame
       title={project.name}
-      description="Runs are turns in this project. Preview and LOOP.md stay with the workspace."
-      back={{ href: '/build/projects', label: 'Projects' }}
+      description="Builds in this project share the preview and project notes."
+      back={{ href: '/build/projects', label: 'Build projects' }}
       actions={(
         <Link href="/build" className={btnOutline}>Builds</Link>
       )}
@@ -665,7 +772,7 @@ function ProjectView({ projectId }: { projectId: string }) {
             ))}
           </div>
         )}
-        <p className="text-3xs text-[var(--ink-muted)]">Paste or drop images to attach (vision routing deferred — URLs are passed as text).</p>
+        <p className="text-3xs text-[var(--ink-muted)]">Paste or drop images to attach. They are sent with the build as links.</p>
         <div className="flex justify-end">
           <button type="submit" className={btnPrimary} disabled={start.isPending || !prompt.trim()}>
             {start.isPending ? 'Starting…' : mode === 'chat' ? 'Ask' : mode === 'plan' ? 'Draft plan' : 'Continue build'}
@@ -675,9 +782,9 @@ function ProjectView({ projectId }: { projectId: string }) {
       </form>
 
       <div className="mt-6">
-        <SectionHeader title="Turns" count={runs.length} />
+        <SectionHeader title="Builds" count={runs.length} />
         <div className="mt-3 space-y-2">
-          {runs.length === 0 && <EmptyState title="No runs yet" body="Start a turn above." />}
+          {runs.length === 0 && <EmptyState title="No builds yet" body="Start a build above." />}
           {runs.map((run) => (
             <Link key={run.run_id} href={`/build/?run=${encodeURIComponent(run.run_id)}`} className={`block p-3.5 ${cardCls}`}>
               <div className="flex items-start justify-between gap-3">
@@ -690,6 +797,6 @@ function ProjectView({ projectId }: { projectId: string }) {
           ))}
         </div>
       </div>
-    </AppPage>
+    </ProjectsFrame>
   )
 }

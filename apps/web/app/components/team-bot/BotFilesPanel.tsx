@@ -8,6 +8,7 @@ import {
   BotApiError, deleteBoxFile, listBoxFiles, readBoxFile, wakeBotComputer, writeBoxFile,
   type BoxFileEntry,
 } from '@loop/api-client'
+import { ConfirmDialog } from '@loop/ui'
 import { useToast } from '../../lib/toast'
 
 /**
@@ -27,6 +28,7 @@ export function BotFilesPanel({ onWakeComputer }: { onWakeComputer?: () => void 
   const [error, setError] = useState('')
   const [needsWake, setNeedsWake] = useState(false)
   const [waking, setWaking] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<BoxFileEntry | null>(null)
 
   const currentDir = `/workspace${path.length ? `/${path.join('/')}` : ''}`
 
@@ -146,13 +148,14 @@ export function BotFilesPanel({ onWakeComputer }: { onWakeComputer?: () => void 
     }
   }
 
-  const remove = async (entry: BoxFileEntry) => {
-    const ok = window.confirm(`Delete “${entry.name}”? This cannot be undone.`)
-    if (!ok) return
+  const confirmDelete = async () => {
+    const entry = pendingDelete
+    if (!entry) return
     setBusy(true)
     try {
       await deleteBoxFile(entry.path)
       if (openFile?.path === entry.path) setOpenFile(null)
+      setPendingDelete(null)
       await refresh(currentDir)
     } catch (err: any) {
       toast.push('error', err?.message || 'Delete failed.')
@@ -163,6 +166,7 @@ export function BotFilesPanel({ onWakeComputer }: { onWakeComputer?: () => void 
 
   return (
     <div className="flex flex-col h-full min-h-0">
+      <p className="px-1 pb-2 text-2xs text-[var(--ink-muted)]">This desktop is shared across your bots.</p>
       {/* Path bar */}
       <div className="flex items-center gap-1 px-1 pb-2 text-ui-xs text-[var(--ink-muted)] shrink-0 flex-wrap">
         <button type="button" onClick={() => setPath([])} className="text-[var(--accent-text)] hover:underline font-mono">workspace</button>
@@ -211,7 +215,7 @@ export function BotFilesPanel({ onWakeComputer }: { onWakeComputer?: () => void 
                 <span className="truncate font-mono text-2xs text-[var(--ink-primary)]">{entry.name}</span>
                 {entry.type === 'file' && <span className="ml-auto shrink-0 text-3xs text-[var(--ink-muted)]">{entry.size > 1024 ? `${(entry.size / 1024).toFixed(1)}k` : `${entry.size}b`}</span>}
               </button>
-              <button type="button" onClick={() => void remove(entry)} className="hidden shrink-0 text-[var(--ink-muted)] hover:text-[var(--danger)] group-hover:block" aria-label={`Delete ${entry.name}`}>
+              <button type="button" onClick={() => setPendingDelete(entry)} className="hidden shrink-0 text-[var(--ink-muted)] hover:text-[var(--danger)] group-hover:block" aria-label={`Delete ${entry.name}`}>
                 <Trash2 size={11} aria-hidden />
               </button>
             </div>
@@ -251,6 +255,16 @@ export function BotFilesPanel({ onWakeComputer }: { onWakeComputer?: () => void 
           )}
         </div>
       </div>
+      <ConfirmDialog
+        open={!!pendingDelete}
+        title={pendingDelete ? `Delete “${pendingDelete.name}”?` : 'Delete this file?'}
+        body="This cannot be undone."
+        confirmLabel="Delete"
+        tone="danger"
+        busy={busy}
+        onCancel={() => { if (!busy) setPendingDelete(null) }}
+        onConfirm={() => { void confirmDelete() }}
+      />
     </div>
   )
 }

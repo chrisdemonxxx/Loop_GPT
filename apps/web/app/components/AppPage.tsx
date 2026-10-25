@@ -122,7 +122,7 @@ export function PageHeader({
       {back && <div className="mb-3"><BackLink {...back} /></div>}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="flex items-center gap-2 text-xl font-semibold text-slate-100 break-words">{icon}{title}</h1>
+          <h1 className="flex items-center gap-2 text-xl font-semibold text-[var(--ink-primary)] break-words">{icon}{title}</h1>
           {description && <p className="mt-1 max-w-prose text-ui-sm leading-relaxed text-[var(--ink-secondary)]">{description}</p>}
           {meta && <div className="mt-2 flex flex-wrap items-center gap-2 text-ui-xs text-[var(--ink-muted)]">{meta}</div>}
         </div>

@@ -79,3 +79,22 @@ export function parseCommand(input: string): { mode: 'chat' | 'agent' | 'researc
   }
   return { mode: 'agent', text: input }
 }
+
+/** An action command whose whole line is only that command. */
+export function exactSlashAction(input: string): SlashCommandDef | null {
+  const line = input.trim().toLowerCase()
+  if (!line.startsWith('/')) return null
+  return SLASH_COMMANDS.find((d) => d.kind === 'action' && d.cmd === line) ?? null
+}
+
+/** `/bot` or `/bot <goal>`. Null when the line is a different command. */
+export function parseBotCommand(input: string): { goal: string } | null {
+  const match = input.trim().match(/^\/bot\b[ \t]*([\s\S]*)$/i)
+  if (!match) return null
+  return { goal: match[1].trim() }
+}
+
+/** Loop Bot console for one bot thread. */
+export function agentsThreadHref(botId: string, threadId: string): string {
+  return `/agents/?botId=${encodeURIComponent(botId)}&thread=${encodeURIComponent(threadId)}`
+}

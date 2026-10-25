@@ -5,10 +5,9 @@ import { ArrowUp, Bot, Clock, Loader2, Monitor, Square, GraduationCap } from 'lu
 import { BOT_STATUS_LABEL, type BotQuota, type BotSkillRef, type BotTask } from '../../lib/bot'
 
 /**
- * The Grok Bot chat pane: the ONLY way to instruct the agent. A message sent
- * here becomes a one-shot task on its computer; the thread renders each
- * instruction as a user bubble and the run's live state / outcome as the
- * bot's reply — same shape as Grok's "Message Helm" thread.
+ * Task thread for a named bot. A message becomes a one-shot task. The thread
+ * shows each instruction and the run's outcome. The greeting uses the bot's
+ * name when the thread's messages are not loaded here.
  */
 export function AgentChatPane({
   tasks,
@@ -16,24 +15,34 @@ export function AgentChatPane({
   sendError,
   quota,
   suggestedSkills,
+  attachedSkill,
+  botName = '',
+  requiresComputer = true,
   onSend,
   onWatch,
   onTrace,
   onCancel,
   onDismissSuggestions,
+  onAttachSkill,
 }: {
   tasks: BotTask[] | null
   sending: boolean
   sendError?: string
   quota?: BotQuota | null
   suggestedSkills?: BotSkillRef[]
+  attachedSkill?: BotSkillRef | null
+  /** Empty when the roster has not resolved a bot. */
+  botName?: string
+  /** When false, a missing computer quota does not block the composer. */
+  requiresComputer?: boolean
   onSend: (text: string) => Promise<void>
-  /** Active run → open the ONE computer surface (the bot's live screen). */
+  /** Active run → open that run's computer. */
   onWatch: (taskId: string) => void
   /** Finished run → open the run's written trace. */
   onTrace: (taskId: string) => void
   onCancel: (taskId: string) => void
   onDismissSuggestions?: () => void
+  onAttachSkill?: (skill: BotSkillRef | null) => void
 }) {
   const [draft, setDraft] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -51,8 +60,9 @@ export function AgentChatPane({
     el.scrollTop = el.scrollHeight
   }, [thread.length, thread[thread.length - 1]?.status, thread[thread.length - 1]?.result])
 
-  const computerBlocked = !!quota && (!quota.computerAllowed || !quota.computerConfigured)
-  const composerHint = !quota
+  const name = botName.trim()
+  const computerBlocked = requiresComputer && !!quota && (!quota.computerAllowed || !quota.computerConfigured)
+  const composerHint = !requiresComputer || !quota
     ? null
     : !quota.computerConfigured
       ? 'Computer provider is not configured on this deployment.'
@@ -83,8 +93,7 @@ export function AgentChatPane({
           <div className="flex items-start gap-3">
             <Avatar />
             <div className="rounded-2xl rounded-tl-md bg-[var(--bg-hover)] px-4 py-3 text-ui-base leading-relaxed text-[var(--ink-primary)]">
-              Hi — I&apos;m Loop Bot. Tell me what to take off your plate and I&apos;ll run it on my computer.
-              You can watch me work from the Computer tab, and teach me new skills there too.
+              {name ? `Hi — I'm ${name}. Tell me what to take off your plate.` : 'Tell me what to take off your plate.'}
             </div>
           </div>
 
@@ -98,12 +107,19 @@ export function AgentChatPane({
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {suggestedSkills.map((skill) => (
-                  <span key={skill.id} className="rounded-lg bg-[var(--bg-raised)] px-2 py-1 border border-[var(--accent-soft-border)]" title={skill.description}>
+                  <button
+                    key={skill.id}
+                    type="button"
+                    title={skill.description}
+                    aria-pressed={attachedSkill?.id === skill.id}
+                    onClick={() => onAttachSkill?.(attachedSkill?.id === skill.id ? null : skill)}
+                    className={`rounded-lg bg-[var(--bg-raised)] px-2 py-1 border border-[var(--accent-soft-border)] ${attachedSkill?.id === skill.id ? 'ring-1 ring-[var(--accent-fill)]' : ''}`}
+                  >
                     {skill.name}
-                  </span>
+                  </button>
                 ))}
               </div>
-              <p className="mt-1.5 text-2xs opacity-80">Re-send with a skill attached from the Library for a guided run.</p>
+              <p className="mt-1.5 text-2xs opacity-80">Attach a skill, then send. The next message runs with it.</p>
             </div>
           )}
 
@@ -128,14 +144,20 @@ export function AgentChatPane({
           {(sendError || composerHint) && (
             <p className="text-ui-xs text-[var(--danger)]" role="alert">{sendError || composerHint}</p>
           )}
+          {attachedSkill && (
+            <p className="flex items-center gap-2 text-ui-xs text-[var(--accent-text)]">
+              Next message uses {attachedSkill.name}.
+              <button type="button" onClick={() => onAttachSkill?.(null)} className="text-[var(--ink-muted)] hover:underline">Clear</button>
+            </p>
+          )}
           <div className={`flex items-end gap-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-3.5 py-2.5 focus-within:border-[var(--accent)] transition ${computerBlocked ? 'opacity-60' : ''}`}>
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() } }}
               rows={1}
-              placeholder={computerBlocked ? 'Computer unavailable' : 'Message Loop Bot'}
-              aria-label="Message Loop Bot"
+              placeholder={computerBlocked ? 'Computer unavailable' : (name ? `Message ${name}` : 'Message')}
+              aria-label={name ? `Message ${name}` : 'Message'}
               disabled={computerBlocked}
               className="flex-1 bg-transparent resize-none text-ui-base text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] focus:outline-none max-h-32 disabled:cursor-not-allowed"
             />

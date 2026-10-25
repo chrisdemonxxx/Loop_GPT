@@ -66,12 +66,14 @@ async function ensureDevUser(userId: string) {
 export async function getOrCreateConversation(
   userId: string,
   conversationId: string,
-  title: string
+  title: string,
+  options?: { incognito?: boolean },
 ): Promise<{ id: string; title: string; userId: string } | null> {
   if (typeof userId !== 'string' || !userId.trim()) return null
+  const incognito = options?.incognito === true
   if (USE_MEMORY_STORE) {
     memoryStore.ensureUser(userId)
-    if (conversationId === 'new') return memoryStore.createConversation(userId, title.slice(0, 50) || 'New Chat')
+    if (conversationId === 'new') return memoryStore.createConversation(userId, title.slice(0, 50) || 'New Chat', incognito)
     const conv = memoryStore.getConversation(conversationId)
     if (!conv || conv.userId !== userId) return null
     return conv
@@ -79,7 +81,9 @@ export async function getOrCreateConversation(
 
   await ensureDevUser(userId)
   if (conversationId === 'new') {
-    return prisma!.conversation.create({ data: { title: title.slice(0, 50) || 'New Chat', userId } })
+    return prisma!.conversation.create({
+      data: { title: title.slice(0, 50) || 'New Chat', userId, incognito },
+    })
   }
   return prisma!.conversation.findFirst({ where: { id: conversationId, userId } })
 }

@@ -1,7 +1,7 @@
 'use client'
 
 import {
-  Zap, ChevronDown, ClipboardCheck, Check, ListChecks, Search, MessageSquare,
+  Zap, ChevronDown, ClipboardCheck, Check, ListChecks, Search, MessageSquare, Bot,
   Paperclip, Plus, RotateCcw, X, Download as DownloadIcon, Camera, Blocks,
   FolderKanban, Puzzle, Cable, Image as ImageIcon, FilePlus,
 } from 'lucide-react'
@@ -14,7 +14,7 @@ const ICONS: Record<string, any> = {
   '/chat': MessageSquare, '/agent': Zap, '/research': Search, '/image': ImageIcon,
   '/video': Paperclip, '/create': FilePlus, '/memory': MessageSquare,
   '/new': Plus, '/undo': RotateCcw, '/retry': RotateCcw, '/stop': X, '/export': DownloadIcon,
-  '/screenshot': Camera, '/model': ChevronDown, '/settings': Search, '/help': Search,
+  '/screenshot': Camera, '/settings': Search, '/help': Search, '/bot': Bot,
   '/skills': Blocks, '/projects': FolderKanban, '/connectors': Cable, '/plugins': Puzzle,
 }
 function iconFor(def: SlashCommandDef) { return ICONS[def.cmd] || MessageSquare }

@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { motion } from 'framer-motion'
 import {
-  X, Wrench, Puzzle, Blocks, Cable, Brain, Palette, SunMoon,
+  ArrowLeft, X, Wrench, Puzzle, Blocks, Cable, Brain, Palette, SunMoon,
   Settings2, UserRound, ShieldCheck, CreditCard, Clock, Terminal,
 } from 'lucide-react'
 import MemoryTab from './settings/MemoryTab'
@@ -25,7 +26,7 @@ import { useFocusTrap } from '@loop/ui'
 interface Props { onClose: () => void; initialTab?: string; workspaceId?: string | null; asPage?: boolean }
 
 /**
- * Agent settings — one dialog, one visual system, every panel addressable by
+ * Settings — one dialog, one visual system, every panel addressable by
  * URL hash (S2, blueprint §8; contract team/CONTRACT_S2_SETTINGS.md).
  *
  * Tab groups (blueprint IA): Settings — general · account · privacy · billing ·
@@ -148,10 +149,17 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
         ref={dialogRef}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        role={asPage ? "main" : "dialog"} aria-modal={asPage ? undefined : true} aria-label="Agent settings"
+        role={asPage ? "main" : "dialog"} aria-modal={asPage ? undefined : true} aria-label="Settings"
       >
         <div className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-white/5">
-          <h2 className="text-lg font-semibold text-gradient">Agent settings</h2>
+          <div className="flex items-center gap-3 min-w-0">
+            {asPage && (
+              <Link href="/chat" aria-label="Back to Chat" className="inline-flex items-center gap-1.5 text-[13px] text-slate-400 hover:text-slate-100 transition">
+                <ArrowLeft size={14} aria-hidden /> Chat
+              </Link>
+            )}
+            <h2 className="text-lg font-semibold text-gradient">Settings</h2>
+          </div>
           <button onClick={close} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400" aria-label="Close settings"><X size={18} /></button>
         </div>
         {/* Tab strip: group labels inline (P1: groups were computed but never

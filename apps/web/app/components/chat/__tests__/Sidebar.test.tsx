@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, within } from '@testing-library/react'
-import Sidebar, { type ConversationSearchHit } from '../Sidebar'
+import Sidebar, { isChatSession, type ConversationSearchHit } from '../Sidebar'
 import type { Conversation } from '../types'
 
 /** Sidebar parity (audit §8-13..16): date-grouped history, pin float + star,
@@ -60,6 +60,26 @@ describe('Sidebar — one new session', () => {
     renderSidebar()
     expect(screen.getAllByRole('button', { name: 'New session' })).toHaveLength(1)
   })
+
+  it('starts a plain chat', () => {
+    const onSelectConversation = vi.fn()
+    const onClose = vi.fn()
+    renderSidebar({ onSelectConversation, onClose })
+    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    expect(onSelectConversation).toHaveBeenCalledWith(null)
+    expect(onClose).toHaveBeenCalled()
+  })
+})
+
+describe('isChatSession', () => {
+  it('keeps ordinary chats and build-linked chats, and drops bot and group threads', () => {
+    expect(isChatSession({ kind: 'chat' })).toBe(true)
+    expect(isChatSession({})).toBe(true)
+    expect(isChatSession({ kind: 'chat', loopitRunId: 'run_1' })).toBe(true)
+    expect(isChatSession({ loopitRunId: 'run_1' })).toBe(true)
+    expect(isChatSession({ kind: 'bot', loopitRunId: 'run_1' })).toBe(false)
+    expect(isChatSession({ kind: 'group' })).toBe(false)
+  })
 })
 
 describe('Sidebar — grouped history', () => {
@@ -96,7 +116,7 @@ describe('Sidebar — share', () => {
     expect(screen.queryByTitle('Link copied')).not.toBeInTheDocument()
     expect(screen.queryByText('No matching commands.')).not.toBeInTheDocument()
     expect(screen.queryByText('No sessions yet.')).not.toBeInTheDocument()
-    expect(screen.getByText('Chat')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Chat' })).toBeInTheDocument()
   })
 
   it('says the copy failed after a link exists and does not claim it was copied', async () => {
@@ -107,7 +127,7 @@ describe('Sidebar — share', () => {
     fireEvent.click(screen.getByTitle('Share public link'))
     expect(await screen.findByText("Couldn't copy the link.")).toBeInTheDocument()
     expect(screen.queryByTitle('Link copied')).not.toBeInTheDocument()
-    expect(screen.getByText('Chat')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Chat' })).toBeInTheDocument()
   })
 })
 
@@ -205,7 +225,7 @@ describe('Sidebar ? recents copy and failures', () => {
     expect(dialog).toBeInTheDocument()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     expect(base.onDeleteConversation).not.toHaveBeenCalled()
-    expect(screen.getByText('Chat')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Chat' })).toBeInTheDocument()
   })
 
   it('confirms delete through the dialog', () => {
@@ -218,7 +238,7 @@ describe('Sidebar ? recents copy and failures', () => {
 })
 
 describe('Sidebar — chat sessions only', () => {
-  it('hides bot threads and build runs, and keeps pin, rename, and delete on chats', () => {
+  it('hides bot and group threads, keeps build-linked chats, and keeps pin, rename, and delete on chats', () => {
     renderSidebar({
       conversations: [
         conv('chat', 'Ordinary chat', 0),
@@ -228,17 +248,18 @@ describe('Sidebar — chat sessions only', () => {
       ],
     })
     expect(screen.getByText('Ordinary chat')).toBeInTheDocument()
+    expect(screen.getByText('Build run')).toBeInTheDocument()
     expect(screen.queryByText('Helm thread')).not.toBeInTheDocument()
-    expect(screen.queryByText('Build run')).not.toBeInTheDocument()
     expect(screen.queryByText('The group')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New session' })).toBeInTheDocument()
-    fireEvent.click(screen.getByTitle('Pin to top'))
+    const ordinary = screen.getByRole('button', { name: 'Ordinary chat' }).closest('.group') as HTMLElement
+    fireEvent.click(within(ordinary).getByTitle('Pin to top'))
     expect(base.onPinConversation).toHaveBeenCalledWith('chat', true)
-    fireEvent.click(screen.getByTitle('Rename'))
+    fireEvent.click(within(ordinary).getByTitle('Rename'))
     expect(screen.getByDisplayValue('Ordinary chat')).toBeInTheDocument()
   })
 
-  it('drops bot and build hits from message search', () => {
+  it('drops bot hits from message search and keeps build-linked chats', () => {
     renderSidebar({
       conversations: [],
       searchQuery: 'zebra',
@@ -249,19 +270,24 @@ describe('Sidebar — chat sessions only', () => {
       ],
     })
     expect(screen.getByText('Chat hit')).toBeInTheDocument()
+    expect(screen.getByText('Build hit')).toBeInTheDocument()
     expect(screen.queryByText('Bot hit')).not.toBeInTheDocument()
-    expect(screen.queryByText('Build hit')).not.toBeInTheDocument()
   })
 })
 
 describe('Sidebar workspace links', () => {
-  it('points Files, Recents, and Customize at their routes and keeps one Projects section', () => {
+  it('matches the app bar and opens Settings from the nav', () => {
+    window.history.pushState({}, '', '/chat')
     renderSidebar()
     expect(screen.queryByRole('link', { name: 'Projects' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Recents' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Customize' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/chat')
+    expect(screen.getByRole('link', { name: 'Loop Bot' })).toHaveAttribute('href', '/agents')
     expect(screen.getByRole('link', { name: 'Files' })).toHaveAttribute('href', '/artifacts')
-    expect(screen.getByRole('link', { name: 'Recents' })).toHaveAttribute('href', '/recents')
-    expect(screen.getByRole('link', { name: 'Customize' })).toHaveAttribute('href', '/customize')
     expect(screen.getByRole('button', { name: /Projects/ })).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Settings' })[0])
+    expect(base.onOpenSettings).toHaveBeenCalled()
   })
 })
 

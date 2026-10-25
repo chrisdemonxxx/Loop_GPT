@@ -11,10 +11,10 @@ import ArtifactsPage from '../artifacts/page'
 import ArtifactPage from '../artifact/page'
 import { conversationIdFromLocation, useConversationQuery } from '../chat/conversationSelection'
 
-const nav = vi.hoisted(() => ({ push: vi.fn(), id: 'file-1' }))
+const nav = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), id: 'file-1' }))
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: nav.push }),
+  useRouter: () => ({ push: nav.push, replace: nav.replace }),
   useParams: () => ({ id: nav.id }),
 }))
 
@@ -62,6 +62,7 @@ function workspaceAxios() {
 
 beforeEach(() => {
   nav.push.mockReset()
+  nav.replace.mockReset()
   nav.id = 'file-1'
   http.get.mockReset()
   http.post.mockReset()
@@ -181,7 +182,8 @@ describe('/customize', () => {
   it('renders the same tabs as a page, not a dialog', async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => [] })
     render(<CustomizePage />)
-    expect(screen.getByRole('main', { name: 'Agent settings' })).toBeInTheDocument()
+    expect(screen.getByRole('main', { name: 'Settings' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Back to Chat' })).toHaveAttribute('href', '/chat')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     const tabs = screen.getAllByRole('tab').map((tab) => tab.textContent?.replace(/[^\w]+/g, ' ').trim())
     // Reflect was merged into Memory (redesign P1).
@@ -260,103 +262,8 @@ describe('/artifact/:id', () => {
 })
 
 describe('/recents', () => {
-  beforeEach(() => {
-    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {} })))
-  })
-
-  const row = {
-    id: 'c1',
-    title: 'Fresh chat',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    pinned: false,
-  }
-
-  it('opens a session on /chat, starts a new chat, and hides incognito', async () => {
-    http.get.mockImplementation((url: string) => {
-      if (String(url).includes('/search')) return Promise.resolve({ data: [] })
-      return Promise.resolve({ data: [row, { ...row, id: 'hidden', title: 'Secret', incognito: true }] })
-    })
+  it('redirects to chat', async () => {
     withQuery(<RecentsPage />)
-    expect(await screen.findByText('Fresh chat')).toBeInTheDocument()
-    expect(screen.queryByText('Secret')).not.toBeInTheDocument()
-    expect(screen.getByText('Today')).toBeInTheDocument()
-    fireEvent.click(screen.getByText('Fresh chat'))
-    expect(nav.push).toHaveBeenCalledWith('/chat?conversation=c1')
-    expect(http.post).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Show sidebar' }))
-    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
-    expect(nav.push).toHaveBeenCalledWith('/chat')
-    expect(String(http.get.mock.calls[0][0])).toContain('/api/conversations')
-    expect(String(http.get.mock.calls[0][0])).not.toMatch(/sort=/)
-  })
-
-  it('keeps search, share, and rename failures on the session row', async () => {
-    http.get.mockImplementation((url: string) => {
-      if (String(url).includes('/search')) return Promise.reject(new Error('search'))
-      return Promise.resolve({ data: [row] })
-    })
-    http.post.mockRejectedValue(new Error('share'))
-    http.patch.mockRejectedValue(new Error('rename'))
-    withQuery(<RecentsPage />)
-    expect(await screen.findByText('Fresh chat')).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText(/Search chats/), { target: { value: 'nope' } })
-    expect(await screen.findByText("Couldn't search chats.")).toBeInTheDocument()
-    expect(screen.queryByText(/No chats match/)).not.toBeInTheDocument()
-    expect(screen.getByText('Fresh chat')).toBeInTheDocument()
-    fireEvent.click(screen.getByTitle('Share public link'))
-    expect(await screen.findByText("Couldn't share this session.")).toBeInTheDocument()
-    expect(screen.queryByTitle('Link copied')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTitle('Rename'))
-    fireEvent.change(screen.getByDisplayValue('Fresh chat'), { target: { value: 'Better title' } })
-    fireEvent.blur(screen.getByDisplayValue('Better title'))
-    expect(await screen.findByDisplayValue('Better title')).toBeInTheDocument()
-  })
-
-  it('a failed first load is not an empty list', async () => {
-    http.get.mockRejectedValue(new Error('offline'))
-    withQuery(<RecentsPage />)
-    expect(await screen.findByText("Couldn't load sessions.")).toBeInTheDocument()
-    expect(screen.queryByText('No sessions yet.')).not.toBeInTheDocument()
-  })
-
-  it('a copy failure after a created link does not say the link was copied', async () => {
-    http.get.mockResolvedValue({ data: [row] })
-    http.post.mockResolvedValue({ data: { url: '/share/abc' } })
-    vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn(async () => { throw new Error('copy') }) } })
-    withQuery(<RecentsPage />)
-    expect(await screen.findByText('Fresh chat')).toBeInTheDocument()
-    fireEvent.click(screen.getByTitle('Share public link'))
-    expect(await screen.findByText("Couldn't copy the link.")).toBeInTheDocument()
-    expect(screen.queryByTitle('Link copied')).not.toBeInTheDocument()
-    expect(screen.getByText('Fresh chat')).toBeInTheDocument()
-  })
-
-  it('shows this user and their projects, and hide and sign out do something', async () => {
-    localStorage.setItem('authToken', token())
-    localStorage.setItem('token', 'session')
-    localStorage.setItem('user', JSON.stringify({ id: 'u1', email: 'ada@example.com', name: 'Ada' }))
-    http.post.mockResolvedValue({ data: {} })
-    http.get.mockImplementation((url: string) => {
-      const u = String(url)
-      if (u.endsWith('/api/workspaces')) return Promise.resolve({ data: { workspaces: [{ id: 'ws-1', personalOwnerId: 'u' }] } })
-      if (u.includes('/projects')) return Promise.resolve({ data: [{ id: 'p1', name: 'Thesis', _count: { conversations: 1, knowledgeChunks: 0 } }] })
-      if (u.includes('/search')) return Promise.resolve({ data: [] })
-      return Promise.resolve({ data: [row] })
-    })
-    withQuery(<RecentsPage />)
-    expect(await screen.findByText('Fresh chat')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /^Projects/ }))
-    expect(await screen.findByText('Thesis')).toBeInTheDocument()
-    expect(screen.queryByText('Create a project')).not.toBeInTheDocument()
-    expect(screen.queryByText('none')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Hide sidebar' }))
-    expect(screen.queryByText('Fresh chat')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Show sidebar' }))
-    expect(await screen.findByText('Fresh chat')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Ada/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
-    expect(localStorage.getItem('user')).toBeNull()
-    expect(localStorage.getItem('token')).toBeNull()
+    await waitFor(() => expect(nav.replace).toHaveBeenCalledWith('/chat'))
   })
 })

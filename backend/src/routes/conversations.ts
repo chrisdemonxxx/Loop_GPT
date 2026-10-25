@@ -8,6 +8,11 @@ import { validate, validationSchemas } from '../middleware/validation'
 
 const router = express.Router()
 
+/** Page URL for a share token. The static export serves /share/ and reads ?token=. */
+export function publicSharePath(token: string): string {
+  return `/share/?token=${encodeURIComponent(token)}`
+}
+
 function artifactRefsFromMetadata(metadata: unknown): Array<{ id: string; name: string; kind: string; url?: string; mimeType?: string }> {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return []
   const raw = (metadata as { artifacts?: unknown }).artifacts
@@ -42,6 +47,7 @@ async function savedArtifactRefs(userId: string) {
   }
   if (USE_MEMORY_STORE) {
     for (const conv of memoryStore.getConversations(userId)) {
+      if (conv.incognito) continue
       for (const msg of memoryStore.getMessages(conv.id)) push(msg.metadata)
     }
     return artifacts
@@ -74,7 +80,7 @@ router.get('/', authenticateToken, async (req, res) => {
     }
 
     if (USE_MEMORY_STORE) {
-      const conversations = memoryStore.getConversations(userId)
+      const conversations = memoryStore.getConversations(userId).filter((conv) => !conv.incognito)
       return res.json(conversations.map(conv => ({
         id: conv.id,
         title: conv.title,
@@ -86,9 +92,9 @@ router.get('/', authenticateToken, async (req, res) => {
     }
 
     const conversations = await prisma!.conversation.findMany({
-      // Chat's list only: ordinary chats. Incognito, bot threads, and build
-      // runs (loopitRunId) stay reachable by id but out of this list.
-      where: { userId, incognito: false, kind: 'chat', loopitRunId: null },
+      // Chat's list: ordinary chats, including ones tied to a build.
+      // Incognito and bot/group threads stay reachable by id but out of this list.
+      where: { userId, incognito: false, kind: 'chat' },
       // Pinned first (audit §8-13), then recency — the client groups by
       // date bucket from this order.
       orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
@@ -138,7 +144,7 @@ router.get('/search', authenticateToken, async (req, res) => {
     if (q.length < 2) return res.json([])
     const messages = await prisma!.message.findMany({
       where: {
-        conversation: { userId, incognito: false, kind: 'chat', loopitRunId: null },
+        conversation: { userId, incognito: false, kind: 'chat' },
         content: { contains: q, mode: 'insensitive' },
       },
       select: {
@@ -225,11 +231,12 @@ router.get('/:id', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, validate(validationSchemas.createConversation), async (req, res) => {
   try {
     const userId = (req as any).userId
-    const { title } = req.body
+    const { title, incognito } = req.body
+    const privateChat = incognito === true
 
     if (USE_MEMORY_STORE) {
       memoryStore.ensureUser(userId)
-      const conversation = memoryStore.createConversation(userId, title || 'New Chat')
+      const conversation = memoryStore.createConversation(userId, title || 'New Chat', privateChat)
       return res.json({
         id: conversation.id,
         title: conversation.title,
@@ -238,7 +245,7 @@ router.post('/', authenticateToken, validate(validationSchemas.createConversatio
       })
     }
 
-    const conversation = await getOrCreateConversation(userId, 'new', title || 'New Chat')
+    const conversation = await getOrCreateConversation(userId, 'new', title || 'New Chat', { incognito: privateChat })
 
     res.json(conversation)
   } catch (error) {
@@ -307,10 +314,10 @@ router.post('/:id/share', authenticateToken, async (req, res) => {
       select: { shareToken: true },
     })
     if (!existing) return res.status(404).json({ error: 'Conversation not found' })
-    if (existing.shareToken) return res.json({ url: `/share/${existing.shareToken}`, token: existing.shareToken })
+    if (existing.shareToken) return res.json({ url: publicSharePath(existing.shareToken), token: existing.shareToken })
     const token = randomBytes(16).toString('hex')
     await prisma!.conversation.update({ where: { id }, data: { shareToken: token } })
-    res.json({ url: `/share/${token}`, token })
+    res.json({ url: publicSharePath(token), token })
   } catch (error) {
     console.error('Share conversation error:', error)
     res.status(500).json({ error: 'Internal server error' })

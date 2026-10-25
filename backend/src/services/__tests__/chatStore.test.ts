@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const db = vi.hoisted(() => ({
   message: { findMany: vi.fn(), findUnique: vi.fn() },
-  conversation: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+  conversation: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn(), create: vi.fn() },
   user: { findUnique: vi.fn() },
 }))
 vi.mock('../prisma', () => ({ prisma: db, hasDb: true }))
@@ -67,5 +67,18 @@ describe('database conversation context', () => {
   it('rejects missing identity before database lookup', async () => {
     expect(await getOrCreateConversation(undefined as any, 'foreign', 'Title')).toBeNull()
     expect(db.conversation.findFirst).not.toHaveBeenCalled()
+  })
+
+  it('stores incognito on create and leaves a normal chat public', async () => {
+    db.conversation.create.mockResolvedValue({ id: 'c1', title: 'New Chat', userId: 'user-1' })
+    await getOrCreateConversation('user-1', 'new', 'New Chat', { incognito: true })
+    expect(db.conversation.create).toHaveBeenCalledWith({
+      data: { title: 'New Chat', userId: 'user-1', incognito: true },
+    })
+    db.conversation.create.mockClear()
+    await getOrCreateConversation('user-1', 'new', 'New Chat')
+    expect(db.conversation.create).toHaveBeenCalledWith({
+      data: { title: 'New Chat', userId: 'user-1', incognito: false },
+    })
   })
 })

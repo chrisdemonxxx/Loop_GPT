@@ -75,14 +75,48 @@ function isStreamAlreadyRunning(error: unknown): boolean {
   return /already running/i.test(msg)
 }
 
+/** Provider cap for this E2B tier (same 1h ceiling as the persistent box). */
+const DESKTOP_TIMEOUT_CAP_MS = 60 * 60 * 1000
+/** GNOME setup often outlives a shorter sandbox. Create/connect use at least this. */
+const MIN_BOOT_TIMEOUT_MS = 10 * 60 * 1000
+/** A new desktop is not created when the caller has less budget than this. */
+const BOOT_QUOTA_FLOOR_MS = 5 * 60 * 1000
+const DESKTOP_BOOT_RETRY_MESSAGE = 'The desktop did not finish starting. Try again.'
+
+/** SDK error when the sandbox dies while create/connect still has a stream open. */
+function isSandboxStreamTimeout(error: unknown): boolean {
+  const msg = String((error as any)?.message || error || '')
+  return /ended before the stream completed/i.test(msg) || /sandbox timeout/i.test(msg)
+}
+
+function logCreateStreamDeath(error: unknown): void {
+  console.warn('[e2b-desktop] desktop stream ended before boot finished', {
+    error: String((error as any)?.message || error),
+  })
+}
+
+function rethrowCreateFailure(error: any): never {
+  const status = error?.status ?? error?.response?.status
+  if (status === 401 || status === 403) throw new E2BDesktopError(`E2B auth rejected (${status})`, 'auth')
+  throw new E2BDesktopError(`E2B sandbox creation failed${status ? ` (${status})` : ''}`, status && status >= 500 ? 'unavailable' : 'api')
+}
+
 /** Real E2B implementation. Dynamic import keeps the SDK out of unit-test
  *  processes and lets the backend boot without the package configured. */
 export async function createDesktop(opts: {
   timeoutMs: number
   /** Tag the VM so the reaper can find dedicated sandboxes that lost their DB row. */
   metadata?: Record<string, string>
+  /** First attempt pauses on idle timeout. The stream-death retry omits it. */
+  pauseOnTimeout?: boolean
 }): Promise<DesktopClient> {
   e2bApiKey()
+  if (!(typeof opts.timeoutMs === 'number' && Number.isFinite(opts.timeoutMs) && opts.timeoutMs >= BOOT_QUOTA_FLOOR_MS)) {
+    const { AgentTaskError } = await import('./agentTasks')
+    throw new AgentTaskError('quota')
+  }
+  const bootMs = Math.min(DESKTOP_TIMEOUT_CAP_MS, Math.max(MIN_BOOT_TIMEOUT_MS, opts.timeoutMs))
+  const budgetMs = Math.min(DESKTOP_TIMEOUT_CAP_MS, opts.timeoutMs)
   const { awaitGnomeDesktop, desktopTemplateId, seedDesktopLaunchers } = await import('./gnomeSession')
   const template = desktopTemplateId()
   if (!template) {
@@ -98,19 +132,47 @@ export async function createDesktop(opts: {
   } catch {
     throw new E2BDesktopError('@e2b/desktop is not installed', 'unavailable')
   }
+  const pauseFirst = opts.pauseOnTimeout !== false
+  const createOnce = (pauseOnTimeout: boolean) => {
+    const options: Record<string, unknown> = {
+      timeoutMs: bootMs,
+      metadata: { loopGpt: 'bot-desktop', ...(opts.metadata || {}) },
+    }
+    // Pause-on-timeout is the first attempt. Some accounts end the create
+    // stream when that lifecycle is rejected, so the single retry omits it.
+    if (pauseOnTimeout) options.lifecycle = { onTimeout: 'pause', autoResume: true }
+    return Sandbox.create(template, options)
+  }
+  let retried = !pauseFirst
+  const createOrRetry = async (error: unknown, desktopToKill?: any): Promise<any> => {
+    if (desktopToKill) await desktopToKill.kill().catch(() => undefined)
+    if (!isSandboxStreamTimeout(error)) {
+      if (desktopToKill) {
+        const msg = String((error as Error)?.message || error)
+        throw new E2BDesktopError(msg, 'unavailable')
+      }
+      rethrowCreateFailure(error)
+    }
+    logCreateStreamDeath(error)
+    if (retried) throw new E2BDesktopError(DESKTOP_BOOT_RETRY_MESSAGE, 'unavailable')
+    retried = true
+    try {
+      return await createOnce(false)
+    } catch (second) {
+      if (isSandboxStreamTimeout(second)) {
+        logCreateStreamDeath(second)
+        throw new E2BDesktopError(DESKTOP_BOOT_RETRY_MESSAGE, 'unavailable')
+      }
+      rethrowCreateFailure(second)
+    }
+  }
+
   let desktop: any
   try {
     // Template must be the first argument (same as bot-live-smoke / SDK docs).
-    desktop = await Sandbox.create(template, {
-      timeoutMs: opts.timeoutMs,
-      // Pause on idle timeout so the next touch resumes (~1s) instead of cold-booting.
-      lifecycle: { onTimeout: 'pause', autoResume: true },
-      metadata: { loopGpt: 'bot-desktop', ...(opts.metadata || {}) },
-    })
-  } catch (error: any) {
-    const status = error?.status ?? error?.response?.status
-    if (status === 401 || status === 403) throw new E2BDesktopError(`E2B auth rejected (${status})`, 'auth')
-    throw new E2BDesktopError(`E2B sandbox creation failed${status ? ` (${status})` : ''}`, status && status >= 500 ? 'unavailable' : 'api')
+    desktop = await createOnce(pauseFirst)
+  } catch (error) {
+    desktop = await createOrRetry(error)
   }
 
   // Same GNOME-first gate as the persistent box — never hand back XFCE.
@@ -118,16 +180,29 @@ export async function createDesktop(opts: {
     await awaitGnomeDesktop(desktop)
     await seedDesktopLaunchers(desktop)
   } catch (error) {
-    await desktop.kill().catch(() => undefined)
-    const msg = String((error as Error)?.message || error)
-    throw new E2BDesktopError(msg, 'unavailable')
+    try {
+      desktop = await createOrRetry(error, desktop)
+      await awaitGnomeDesktop(desktop)
+      await seedDesktopLaunchers(desktop)
+    } catch (second) {
+      await desktop.kill().catch(() => undefined)
+      if (second instanceof E2BDesktopError) throw second
+      if (isSandboxStreamTimeout(second)) {
+        logCreateStreamDeath(second)
+        throw new E2BDesktopError(DESKTOP_BOOT_RETRY_MESSAGE, 'unavailable')
+      }
+      throw new E2BDesktopError(String((second as Error)?.message || second), 'unavailable')
+    }
   }
 
-  return wrapDesktop(desktop, true)
+  return wrapDesktop(desktop, true, undefined, budgetMs)
 }
 
 export interface PersistedStreamCreds {
   streamAuthKey?: string | null
+  /** Real remaining VM budget in ms. Connect uses at least 10 minutes so the
+   *  stream can finish; startStream then shrinks the sandbox back to this. */
+  timeoutMs?: number
 }
 
 /** Wrap an already-running desktop sandbox (the persistent box) as a
@@ -137,7 +212,7 @@ export interface PersistedStreamCreds {
  *  `persisted` carries stream credentials written when the stream was first
  *  started: a fresh Sandbox.connect never owned the stream, so getAuthKey()
  *  fails after "already running" — the persisted key is the only recovery. */
-function wrapDesktop(desktop: any, owned: boolean, persisted?: PersistedStreamCreds): DesktopClient {
+function wrapDesktop(desktop: any, owned: boolean, persisted?: PersistedStreamCreds, settleTimeoutMs?: number): DesktopClient {
   const client: DesktopClient = {
     sandboxId: String(desktop.sandboxId),
     async startStream() {
@@ -149,6 +224,13 @@ function wrapDesktop(desktop: any, owned: boolean, persisted?: PersistedStreamCr
         // Fall through and prefer this instance's auth key; if it never owned
         // the stream, use the credentials persisted on BotBox / BotRun.
         if (!isStreamAlreadyRunning(error)) throw error
+      }
+      if (settleTimeoutMs != null) {
+        try {
+          await desktop.setTimeout(settleTimeoutMs)
+        } catch (error) {
+          console.warn('[e2b-desktop] could not shrink sandbox timeout to the remaining budget', String((error as any)?.message || error))
+        }
       }
       let authKey = ''
       try {
@@ -217,6 +299,15 @@ export async function attachDesktop(sandboxId: string, persisted?: PersistedStre
   } catch {
     throw new E2BDesktopError('@e2b/desktop is not installed', 'unavailable')
   }
-  const desktop = await Sandbox.connect(sandboxId)
-  return wrapDesktop(desktop, false, persisted)
+  const budgetMs = persisted?.timeoutMs
+  const connectMs = budgetMs == null || !Number.isFinite(budgetMs)
+    ? undefined
+    : Math.min(DESKTOP_TIMEOUT_CAP_MS, Math.max(MIN_BOOT_TIMEOUT_MS, budgetMs))
+  // Pass the timeout on connect, before any command or stream.start. A paused
+  // or nearly-expired sandbox otherwise dies on the first stream.
+  const desktop = await Sandbox.connect(sandboxId, connectMs != null ? { timeoutMs: connectMs } : undefined)
+  const settleMs = budgetMs == null || !Number.isFinite(budgetMs) || budgetMs <= 0
+    ? undefined
+    : Math.min(DESKTOP_TIMEOUT_CAP_MS, budgetMs)
+  return wrapDesktop(desktop, false, persisted, settleMs)
 }

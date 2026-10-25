@@ -231,6 +231,26 @@ describe('useTeachSession', () => {
     expect(result.current.error).toBe('')
   })
 
+  it('passes conversationId through to enqueue and omits it when absent', async () => {
+    enqueueBotTask.mockResolvedValue({ task: { id: 'task-thread' }, suggestedSkills: [] })
+    const withThread = renderHook(() => useTeachSession(() => {}, 'bot-1', 'thread-1'))
+    await act(async () => { await withThread.result.current.start('Teach on this thread') })
+    expect(enqueueBotTask).toHaveBeenCalledWith(expect.objectContaining({
+      botId: 'bot-1',
+      conversationId: 'thread-1',
+      kind: 'teach',
+      computer: { enabled: true, ttlMinutes: 30 },
+    }))
+
+    enqueueBotTask.mockClear()
+    enqueueBotTask.mockResolvedValue({ task: { id: 'task-plain' }, suggestedSkills: [] })
+    const withoutThread = renderHook(() => useTeachSession(() => {}, 'bot-1'))
+    await act(async () => { await withoutThread.result.current.start('Teach without a thread') })
+    const body = enqueueBotTask.mock.calls[0][0] as { conversationId?: string; botId?: string }
+    expect(body.botId).toBe('bot-1')
+    expect(body.conversationId).toBeUndefined()
+  })
+
   it('cancel never implies a skill', async () => {
     let onEvent: ((e: TeachEvent) => void) | null = null
     streamBotRun.mockImplementation((_id: string, handler: typeof onEvent) => {

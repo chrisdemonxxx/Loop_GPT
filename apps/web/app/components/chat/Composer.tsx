@@ -91,7 +91,7 @@ const MAX_IMAGES = 4
 export default function Composer({
   input, attachments, onRemoveAttachment, onRetryAttachment, running, runMode,
   webSearch, onToggleWebSearch, thinking, onToggleThinking,
-  contextPct, contextTokens, incognito,
+  contextTokens, incognito,
   showSlash, showPlus,
   onInputChange, onSelectSlashCommand, onSend, onStop,
   onImagesSelected,
@@ -104,8 +104,8 @@ export default function Composer({
 }: ComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textRef = useRef<HTMLTextAreaElement>(null)
-  const cameraInputRef = useRef<HTMLInputElement>(null)
   const [slashIndex, setSlashIndex] = useState(0)
+  const [runDismiss, setRunDismiss] = useState(0)
   const [mentionDismissed, setMentionDismissed] = useState(false)
   const [mentionIndex, setMentionIndex] = useState(0)
   const [dragActive, setDragActive] = useState(false)
@@ -261,7 +261,6 @@ export default function Composer({
 
       {/* Hidden file inputs */}
       <input ref={fileInputRef} type="file" accept="image/*,.pdf,.docx,.xlsx,.csv,.txt,.md,.markdown" multiple onChange={handleImageChange} className="hidden" />
-      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageChange} className="hidden" />
 
       {/* Input form */}
       <form
@@ -310,7 +309,7 @@ export default function Composer({
           <label className="flex items-start gap-2 px-3 pt-2 text-[12px] text-slate-400">
             <input
               type="checkbox"
-              className="mt-0.5"
+              className="mt-0.5 h-4 w-4 shrink-0 rounded border border-white/20 bg-white/[0.04] accent-[#c96442]"
               checked={faceLockConsent}
               onChange={(e) => setFaceLockConsent(e.target.checked)}
             />
@@ -416,14 +415,14 @@ export default function Composer({
             open={showPlus}
             onToggle={onTogglePlus}
             onClose={onClosePlus}
-            onCloseOther={() => {}}
+            onCloseOther={() => setRunDismiss((n) => n + 1)}
             onPickFiles={() => fileInputRef.current?.click()}
             onScreenshot={captureScreen}
             canScreenshot={canScreenshot}
             onOpenConnectors={onOpenConnectors}
             onCreateImage={() => onInputChange('/image ')}
             onManageTools={() => onOpenSettingsTab('tools')}
-            onRunBot={() => onInputChange('/bot ')}
+            onRunBot={() => onSelectSlashCommand('/bot')}
           />
 
           {/* Run settings (Option A): ONE popover for Autonomy / Web search /
@@ -435,6 +434,8 @@ export default function Composer({
             onRunModeChange={onRunModeChange}
             onWebSearchChange={onToggleWebSearch}
             onThinkingChange={onToggleThinking}
+            dismissSignal={runDismiss}
+            onOpen={onClosePlus}
           />
 
           {/* Hands-free voice mode (§8-44) — speak → listen → send loop. */}
@@ -475,21 +476,10 @@ export default function Composer({
         </div>
       </form>
 
-      {typeof contextPct === 'number' && contextPct >= 8 && (
-        <div
-          className="mt-2 h-1 rounded-full bg-white/[0.06] overflow-hidden"
-          title={`Context: ~${(contextTokens || 0).toLocaleString()} tokens used (~${contextPct}% of the 32k window)`}
-          role="progressbar"
-          aria-valuenow={contextPct}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label="Context window usage"
-        >
-          <div
-            className={`h-full rounded-full transition-all ${contextPct > 85 ? 'bg-amber-400/80' : 'bg-slate-500/80'}`}
-            style={{ width: `${contextPct}%` }}
-          />
-        </div>
+      {typeof contextTokens === 'number' && contextTokens > 0 && (
+        <p className="text-[11px] text-slate-500 text-center mt-2" aria-label="Conversation size">
+          About {contextTokens.toLocaleString()} tokens in this chat
+        </p>
       )}
       <p className="text-[11px] text-slate-500 text-center mt-2">
         {incognito ? <span className="text-[#e79d7f]/80">Incognito — private chat, no memory. </span> : null}

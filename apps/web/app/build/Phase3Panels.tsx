@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState, type FormEvent } from 'react'
+import Link from 'next/link'
 import { BarChart3, Cable, Loader2, Users } from 'lucide-react'
 import { Badge, SectionHeader, btnGhost, btnOutline, btnPrimary, textareaCls } from '@loop/ui'
 import {
@@ -14,7 +15,6 @@ import {
   heartbeatProjectPresence,
   listProjectConnectors,
   postProjectCollabChat,
-  seedProjectAnalytics,
   setProjectConnector,
   toUserFacingError,
   type ProjectAnalytics,
@@ -57,7 +57,7 @@ export function ConnectorsPanel({ projectId }: { projectId: string }) {
     <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
       <SectionHeader title="Integrations" />
       <p className="text-3xs text-[var(--ink-muted)]">
-        Stripe, email (Resend), and AI-in-app for generated apps. Prefer Loop-GPT Connectors / project secrets; offline stubs enable without keys.
+        Stripe, email, and in-app AI. Add keys in Connectors or project secrets before turning one on.
         {vaultStripe === true ? ' Stripe key found in workspace connectors.' : ''}
       </p>
       {error && <p className="text-2xs text-[var(--danger)]">{error}</p>}
@@ -65,29 +65,34 @@ export function ConnectorsPanel({ projectId }: { projectId: string }) {
         {rows.map((row) => {
           const kind = row.kind as ProjectConnectorKind
           const configured = row.status === 'configured' || (kind === 'stripe' && vaultStripe)
+          const setupHref = row.secret_names?.length ? '#project-secrets' : '/customize/connectors/all'
           return (
             <li key={String(row.kind)} className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-sunken)] p-2.5">
               <div className="flex flex-wrap items-center gap-2">
                 <Cable size={12} className="text-[var(--ink-secondary)]" />
                 <span className="text-ui-xs font-medium text-[var(--ink-primary)]">{row.label || row.kind}</span>
                 <Badge tone={configured ? 'green' : 'neutral'}>
-                  {configured ? 'Configured' : row.enabled ? 'Stub' : 'Off'}
+                  {configured ? 'Configured' : 'Off'}
                 </Badge>
-                <button
-                  type="button"
-                  className={btnGhost}
-                  disabled={busy === kind}
-                  onClick={() => {
-                    setBusy(kind)
-                    void setProjectConnector(projectId, kind, !row.enabled)
-                      .then(() => refresh())
-                      .catch((cause) => setError(toUserFacingError(cause).message))
-                      .finally(() => setBusy(null))
-                  }}
-                >
-                  {busy === kind ? <Loader2 size={11} className="animate-spin inline" /> : null}
-                  {row.enabled ? 'Disable' : 'Enable'}
-                </button>
+                {configured ? (
+                  <button
+                    type="button"
+                    className={btnGhost}
+                    disabled={busy === kind}
+                    onClick={() => {
+                      setBusy(kind)
+                      void setProjectConnector(projectId, kind, !row.enabled)
+                        .then(() => refresh())
+                        .catch((cause) => setError(toUserFacingError(cause).message))
+                        .finally(() => setBusy(null))
+                    }}
+                  >
+                    {busy === kind ? <Loader2 size={11} className="animate-spin inline" /> : null}
+                    {row.enabled ? 'Disable' : 'Enable'}
+                  </button>
+                ) : (
+                  <Link href={setupHref} className={btnGhost}>Add keys</Link>
+                )}
               </div>
               {row.description && <p className="mt-1 text-3xs text-[var(--ink-muted)]">{row.description}</p>}
               {row.note && <p className="mt-0.5 text-3xs text-[var(--ink-secondary)]">{row.note}</p>}
@@ -101,7 +106,6 @@ export function ConnectorsPanel({ projectId }: { projectId: string }) {
 
 export function AnalyticsPanel({ projectId }: { projectId: string }) {
   const [snap, setSnap] = useState<ProjectAnalytics | null>(null)
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function refresh() {
@@ -119,34 +123,18 @@ export function AnalyticsPanel({ projectId }: { projectId: string }) {
   const topPaths = Object.entries(snap?.by_path ?? {})
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
+  const hasCounts = (snap?.page_views ?? 0) > 0 || (snap?.html_views ?? 0) > 0 || topPaths.length > 0
 
   return (
     <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <BarChart3 size={14} className="text-[var(--ink-secondary)]" />
         <SectionHeader title="Analytics" />
-        <button type="button" className={btnOutline} disabled={busy} onClick={() => { void refresh() }}>Refresh</button>
-        <button
-          type="button"
-          className={btnGhost}
-          disabled={busy}
-          title="Seed offline stub counts when edge billing is absent"
-          onClick={() => {
-            setBusy(true)
-            void seedProjectAnalytics(projectId, Math.max(1, (snap?.page_views ?? 0) + 10))
-              .then(setSnap)
-              .catch((cause) => setError(toUserFacingError(cause).message))
-              .finally(() => setBusy(false))
-          }}
-        >
-          Seed stub
-        </button>
+        <button type="button" className={btnOutline} onClick={() => { void refresh() }}>Refresh</button>
       </div>
-      <p className="text-3xs text-[var(--ink-muted)]">
-        Page views from published HTML serves. Edge app-proxy billing counters are not in this stack — sidecar store (offline OK).
-      </p>
       {error && <p className="text-2xs text-[var(--danger)]">{error}</p>}
-      <div className="flex flex-wrap gap-4 text-ui-xs">
+      {!error && !hasCounts && <p className="text-3xs text-[var(--ink-muted)]">No page views yet.</p>}
+      {hasCounts && <div className="flex flex-wrap gap-4 text-ui-xs">
         <div>
           <p className="text-3xs text-[var(--ink-muted)]">Page views</p>
           <p className="text-ui-sm font-medium tabular-nums">{snap?.page_views ?? 0}</p>
@@ -159,8 +147,7 @@ export function AnalyticsPanel({ projectId }: { projectId: string }) {
           <p className="text-3xs text-[var(--ink-muted)]">Last view</p>
           <p className="text-ui-xs">{snap?.last_view_at ? new Date(snap.last_view_at).toLocaleString() : '—'}</p>
         </div>
-        {snap?.source && <Badge tone="neutral">{snap.source}</Badge>}
-      </div>
+      </div>}
       {topPaths.length > 0 && (
         <ul className="space-y-1">
           {topPaths.map(([path, count]) => (
@@ -226,12 +213,12 @@ export function CollaborationPanel({ projectId }: { projectId: string }) {
         <PresenceIndicator peers={peers} onlineCount={collab?.online_count ?? 0} />
       </div>
       <p className="text-3xs text-[var(--ink-muted)]">
-        Presence heartbeats and a shared project chat. Workspace roles already gate access.
+        Notes for people working on this project.
       </p>
       {error && <p className="text-2xs text-[var(--danger)]">{error}</p>}
       <ul className="max-h-40 space-y-1.5 overflow-auto rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-sunken)] p-2">
         {(collab?.messages ?? []).length === 0 && (
-          <li className="text-3xs text-[var(--ink-muted)]">No shared messages yet.</li>
+          <li className="text-3xs text-[var(--ink-muted)]">No notes yet.</li>
         )}
         {(collab?.messages ?? []).map((msg) => (
           <li key={msg.message_id} className="text-2xs">
@@ -243,7 +230,7 @@ export function CollaborationPanel({ projectId }: { projectId: string }) {
       <form onSubmit={(e) => { void onSend(e) }} className="flex gap-2">
         <input
           className={`${textareaCls} py-2 flex-1`}
-          placeholder="Message the project…"
+          placeholder="Add a note…"
           value={text}
           onChange={(e) => setText(e.target.value)}
           disabled={busy}

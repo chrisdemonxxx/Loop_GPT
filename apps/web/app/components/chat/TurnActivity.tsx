@@ -395,14 +395,24 @@ function StepCard({
 /** Live-only footer: clickable available-tools count with popover list. */
 function ToolsFooter({ toolCount, onOpenTools }: { toolCount: number; onOpenTools?: () => void }) {
   const [show, setShow] = useState(false)
+  const [attempt, setAttempt] = useState(0)
+  const [load, setLoad] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [tools, setTools] = useState<Array<{ name: string; description: string }>>([])
   useEffect(() => {
-    if (!show || tools.length) return
+    if (!show) return
+    let cancelled = false
+    setLoad('loading')
     fetch(`${API_URL}/api/agent/tools`, { headers: authHeaders() })
-      .then((r) => r.json())
-      .then((rows) => setTools(Array.isArray(rows) ? rows : []))
-      .catch(() => setTools([]))
-  }, [show, tools.length])
+      .then(async (r) => {
+        if (!r.ok) throw new Error(String(r.status))
+        const rows = await r.json()
+        if (!Array.isArray(rows)) throw new Error('bad')
+        return rows as Array<{ name: string; description: string }>
+      })
+      .then((rows) => { if (!cancelled) { setTools(rows); setLoad('ready') } })
+      .catch(() => { if (!cancelled) setLoad('error') })
+    return () => { cancelled = true }
+  }, [show, attempt])
   return (
     <div className="pt-1">
       <button
@@ -415,7 +425,14 @@ function ToolsFooter({ toolCount, onOpenTools }: { toolCount: number; onOpenTool
       </button>
       {show && (
         <div className="mt-1.5 rounded-xl border border-white/[0.06] bg-white/[0.02] max-h-40 overflow-y-auto">
-          {tools.length === 0 && <div className="px-3 py-2 text-[12px] text-slate-400">Loading tools…</div>}
+          {load === 'error' && (
+            <div className="px-3 py-2 text-[12px] text-rose-300">
+              Couldn&apos;t load tools.{' '}
+              <button type="button" className="underline" onClick={() => setAttempt((n) => n + 1)}>Retry</button>
+            </div>
+          )}
+          {load !== 'error' && load !== 'ready' && <div className="px-3 py-2 text-[12px] text-slate-400">Loading tools…</div>}
+          {load === 'ready' && tools.length === 0 && <div className="px-3 py-2 text-[12px] text-slate-400">No tools available.</div>}
           {tools.map((t) => (
             <div key={t.name} className="px-3 py-1.5 flex items-start gap-2">
               <Wrench size={11} className="text-slate-500 mt-0.5 shrink-0" />

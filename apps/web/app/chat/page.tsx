@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import axios from 'axios'
 
@@ -14,7 +15,7 @@ import SettingsPanel from '../components/SettingsPanel'
 import { CommandPalette, openSidebarSearch } from '../components/CommandPalette'
 import { ShortcutSheet } from '../components/ShortcutSheet'
 
-import Sidebar from '../components/chat/Sidebar'
+import Sidebar, { isChatSession } from '../components/chat/Sidebar'
 import Composer from '../components/chat/Composer'
 import MessageList from '../components/chat/MessageList'
 import { LoopitRunCard } from '../components/chat/LoopitRunCard'
@@ -26,11 +27,11 @@ import { canvasFromStored, canvasFromTurn } from '../lib/canvasDoc'
 import { botsForMessage, createBotGroup, createNamedBot, followUpTargets, groupFanOut, listNamedBots, openBotThread, updateNamedBot, type BotGroup, type NamedBot } from '../lib/namedBots'
 import AuthSidePanel from '../components/chat/AuthSidePanel'
 import type { Conversation, Message } from '../components/chat/types'
-import { parseCommand, SLASH_COMMANDS } from '../lib/commands'
+import { agentsThreadHref, exactSlashAction, parseBotCommand, parseCommand, SLASH_COMMANDS } from '../lib/commands'
 import ProjectsPanel, { type Project } from '../components/ProjectsPanel'
 import ResearchPanel from '../components/ResearchPanel'
 import { useConversationQuery } from './conversationSelection'
-import { usePanels, useSidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom, useAttachments, useConversationSearch, useMessageQueue, useWorkspaceConnections, useVoiceMode } from './hooks'
+import { usePanels, useSidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom, useAttachments, conversationCreateBody, useConversationSearch, useMessageQueue, useWorkspaceConnections, useVoiceMode } from './hooks'
 import { useToast } from '../lib/toast'
 import { useTheme } from '../lib/theme'
 import { useSpeech } from '../lib/voice'
@@ -53,6 +54,7 @@ function escapeHtml(value: string) {
  * live in ../components/chat. */
 export default function ChatPage() {
   // â”€â”€ Panels (sidebar / artifacts + tablet/desktop breakpoints) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const router = useRouter()
   const panels = usePanels()
   const sidebarWidth = useSidebarWidth()
   const [sidebarResizing, setSidebarResizing] = useState(false)
@@ -117,7 +119,7 @@ export default function ChatPage() {
 
   // â”€â”€ Attachments: uploaded at attach-time with progress + visible errors
   //    (audit P2.7); the send consumes the ready server ids.
-  const uploads = useAttachments(currentConversationId)
+  const uploads = useAttachments(currentConversationId, incognito)
   /** Per-chat tool selection (null = all tools, the server default). */
   const [selectedTools, setSelectedTools] = useState<Set<string> | null>(null)
 
@@ -250,8 +252,8 @@ export default function ChatPage() {
     if (typeof window !== 'undefined') {
       const prevKey = `draft:${currentConversationId || 'new'}`
       const nextKey = `draft:${id || 'new'}`
-      if (input.trim()) setDraft(prevKey, input)
-      else deleteDraft(prevKey)
+      if (input.trim() && !exactSlashAction(input)) setDraft(prevKey, input)
+      else if (!exactSlashAction(input)) deleteDraft(prevKey)
       getDraft(nextKey).then((saved) => { if (saved && typeof saved === 'string') setInput(saved) })
     }
     setCurrentConversationId(id)
@@ -404,7 +406,7 @@ export default function ChatPage() {
     }
     const res = await axios.post(
       `${API_URL}/api/conversations`,
-      { title: firstMessage.slice(0, 50) || 'New Chat' },
+      conversationCreateBody(firstMessage.slice(0, 50) || 'New Chat', incognito),
       { headers: authHeaders() }
     )
     const createdId = String(res.data.id || '')
@@ -466,6 +468,19 @@ export default function ChatPage() {
     if (used.size) workspaceConnections.markUsed([...used])
   }
 
+  function focusBotPrompt() {
+    setShowSlash(false)
+    setInput('/bot ')
+    requestAnimationFrame(() => {
+      const ta = document.querySelector('textarea')
+      if (ta instanceof HTMLTextAreaElement) {
+        ta.focus()
+        const end = ta.value.length
+        ta.setSelectionRange(end, end)
+      }
+    })
+  }
+
   async function handleSend(e?: React.FormEvent, overrideText?: string) {
     e?.preventDefault()
     const source = overrideText !== undefined ? overrideText : input
@@ -475,23 +490,65 @@ export default function ChatPage() {
     // inlines; sending early would silently drop the attachment.
     if (uploads.uploading) return
 
-    // /bot <goal> — hand the goal to a Loop Bot (autonomous task) instead of
-    // running a chat turn. The bot's result lands in the Loop Bot
-    // conversation; its live trace opens from /agents.
-    const botMatch = source.trim().match(/^\/bot\b[ \t]*/i)
-    if (botMatch) {
-      const goal = source.trim().slice(botMatch[0].length)
-      if (!goal) { setInput('/bot '); return }
+    // /bot and other slash actions run here when the line is only that command.
+    // They are not sent to the model. /bot <goal> enqueues a Loop Bot task on
+    // a bot thread and the toast points at that thread.
+    const botCmd = parseBotCommand(source)
+    if (botCmd) {
+      if (!botCmd.goal) { focusBotPrompt(); return }
       setInput('')
+      setShowSlash(false)
       uploads.reset()
       if (typeof window !== 'undefined') deleteDraft(`draft:${currentConversationId || 'new'}`)
       try {
+        const listed = (conversations as Conversation[]).find((c) => c.id === currentConversationId)
+        const conv = listed?.kind && listed.kind !== 'chat'
+          ? listed
+          : threadMeta?.id === currentConversationId
+            ? { kind: threadMeta.kind, botId: threadMeta.botId, id: currentConversationId } as Conversation
+            : listed
+        let botId = ''
+        let conversationId = ''
+        if (conv?.kind === 'bot' && conv.botId && currentConversationId) {
+          botId = conv.botId
+          conversationId = currentConversationId
+        } else {
+          let bots = roster.bots
+          if (!bots.length) {
+            try { bots = (await listNamedBots()).bots } catch { bots = [] }
+          }
+          const existing = bots.find((b) => b.isPrimary) || bots[0]
+          if (!existing) {
+            const created = await createNamedBot({
+              name: 'Loop Bot',
+              defaultTools: ['web_search', 'web_fetch', 'create_document', 'remember'],
+            })
+            botId = created.bot.id
+            conversationId = created.conversationId
+          } else if (existing.conversationId) {
+            botId = existing.id
+            conversationId = existing.conversationId
+          } else {
+            const thread = await openBotThread(existing.id)
+            botId = existing.id
+            conversationId = thread.id
+          }
+        }
         const { enqueueBotTask } = await import('../lib/bot')
-        await enqueueBotTask({ goal })
-        toast.push('success', 'Loop Bot is on it — open Loop Bot in the sidebar to watch')
+        await enqueueBotTask({ goal: botCmd.goal, botId, conversationId })
+        const href = agentsThreadHref(botId, conversationId)
+        toast.push('success', `Loop Bot is on it — ${href}`)
+        router.push(href)
       } catch (err: any) {
         toast.push('error', err?.message || 'Could not start the Loop Bot')
       }
+      return
+    }
+    const slashAction = exactSlashAction(source)
+    if (slashAction && slashAction.cmd !== '/bot') {
+      setInput('')
+      setShowSlash(false)
+      handleSlashCommand(slashAction.cmd)
       return
     }
 
@@ -538,6 +595,10 @@ export default function ChatPage() {
       ...(branchParent !== undefined ? { branchParent } : {}),
     }
     if (activeConv?.kind === 'group') {
+      if (!roomMembers.length) {
+        toast.push('error', "This group's roster hasn't loaded yet. Try again in a moment.")
+        return
+      }
       if (!groupTargets.length) {
         toast.push('error', 'No bot in this group has that name.')
         return
@@ -633,7 +694,10 @@ export default function ChatPage() {
       // Print-to-PDF: a clean transcript stylesheet + the browser print dialog.
       // Title and body are escaped — a chat named `<script>` must not run.
       const w = window.open('', '_blank', 'width=800,height=900')
-      if (!w) return
+      if (!w) {
+        toast.push('error', 'Allow pop-ups to export a PDF.')
+        return
+      }
       const safeTitle = escapeHtml(title)
       w.document.write(`<!doctype html><html><head><title>${safeTitle}</title><style>
         body{font:13px/1.65 -apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1e;max-width:720px;margin:32px auto;padding:0 24px}
@@ -671,7 +735,6 @@ export default function ChatPage() {
       case '/plugins': pushSettingsHash('plugins'); break
       case '/connectors': pushSettingsHash('connectors'); break
       case '/projects': setProjectsOpen(true); break
-      case '/model': (document.querySelector('button[title="Choose model"]') as HTMLElement | null)?.click(); break
       case '/undo': {
         // Non-destructive (Â§8-22): the last prompt goes back in the composer
         // as a pending branch edit — re-sending keeps the old turn as a
@@ -689,7 +752,7 @@ export default function ChatPage() {
       }
       case '/stop': chat.stopRun(); break
       case '/help': setShortcutsOpen(true); break
-      case '/bot': setInput(''); setPickerOpen(true); break
+      case '/bot': focusBotPrompt(); break
       default: setInput(def.cmd + ' ')
     }
   }
@@ -710,7 +773,7 @@ export default function ChatPage() {
   const logout = () => {
     logoutSession()
     // Reload: the guest-check reopens the sign-in panel beside the chat.
-    window.location.href = '/'
+    window.location.href = '/login'
   }
   /** Artifact cards (chat + live run) open the right panel focused (audit P2). */
   const openArtifact = (a: import('../lib/stream').ArtifactRef) => {
@@ -741,11 +804,9 @@ export default function ChatPage() {
     ...(streamHere ? chat.liveArtifacts : []),
   ]
   const convTitle = (conversations as Conversation[]).find((c) => c.id === currentConversationId)?.title
-  // Context meter (Â§2.5): honest estimate — chars/4 over the conversation,
-  // against the standard 32k window (the large tier has more headroom).
+  // Rough size of this chat. The active model's window is not readable here, so this is not a percent of a context limit.
   const contextTokens = Math.ceil(((messages as Message[]).reduce((n, m) => n + (m.content?.length || 0), 0) + chat.liveAnswer.length) / 4)
-  const contextPct = Math.min(100, Math.round((contextTokens / 32_768) * 100))
-  const chatConversations = (conversations as Conversation[]).filter((c) => (!c.kind || c.kind === 'chat') && !c.loopitRunId)
+  const chatConversations = (conversations as Conversation[]).filter(isChatSession)
   const listedActive = (conversations as Conversation[]).find((c) => c.id === currentConversationId)
   const activeConv = listedActive?.kind && listedActive.kind !== 'chat'
     ? listedActive
@@ -754,6 +815,19 @@ export default function ChatPage() {
       : listedActive
   const profileBotId = activeConv?.kind === 'bot' ? (activeConv.botId || openedBotId) : openedBotId
   const profileBot = profileBotId ? roster.bots.find((b) => b.id === profileBotId) || null : null
+  const headerTitle = profileBot?.name
+    || (activeConv?.kind === 'group' ? (activeConv.title || 'Group') : convTitle)
+  const welcomeHeadline = profileBot?.name
+    || (activeConv?.kind === 'group' ? (activeConv.title || 'Group') : undefined)
+  const welcomeNote = activeConv?.kind === 'group' && (activeConv.botIds?.length ?? 0) < 2
+    ? 'A group needs at least two bots.'
+    : undefined
+  const loopBotHref = currentConversationId && (activeConv?.kind === 'bot' || activeConv?.kind === 'group')
+    ? agentsThreadHref(
+        activeConv.kind === 'bot' ? (profileBot?.id || activeConv.botId || '') : (activeConv.botIds?.[0] || ''),
+        currentConversationId,
+      )
+    : null
   const authors = Object.fromEntries(roster.bots.map((b) => [b.id, { name: b.name, color: b.avatarColor }]))
   const liveAuthor = streamHere && streamingBotId ? authors[streamingBotId] || null : null
   const liveCanvas = streamHere ? canvasFromTurn(chat.liveSteps, chat.liveAnswer) : null
@@ -846,7 +920,6 @@ export default function ChatPage() {
       onOpenGroup={(group) => { void openGroup(group) }}
       onCreateBot={() => { setPickerOpen(false); setCreateBotOpen(true) }}
       onCreateGroup={() => { setPickerOpen(false); setCreateGroupOpen(true) }}
-      onStartChat={() => setPickerOpen(true)}
     />
   )
 
@@ -963,11 +1036,12 @@ export default function ChatPage() {
       <main className="flex-1 flex flex-col h-full min-w-0 relative pt-[env(safe-area-inset-top)]">
         <ChatHeader
           sidebarOpen={panels.sidebarOpen}
-          convTitle={convTitle}
+          convTitle={headerTitle}
           incognito={incognito}
           onToggleIncognito={() => {
             const next = !incognito
             setIncognito(next)
+            uploads.reset()
             // Toggling applies to the next conversation — leave the current one.
             if (currentConversationId) { setCurrentConversationId(null); setPendingBranch(undefined); messageQueue.clear(); chat.clearTurn(); setInput('') }
           }}
@@ -983,6 +1057,7 @@ export default function ChatPage() {
           theme={theme.choice}
           onCycleTheme={cycleTheme}
           onOpenShortcuts={() => setShortcutsOpen(true)}
+          loopBotHref={loopBotHref}
         />
 
         {/* (S8) transcript fetch failed — an explicit error state, not the
@@ -1033,6 +1108,8 @@ export default function ChatPage() {
           onOpenTools={() => pushSettingsHash('tools') }
           onOpenArtifact={openArtifact}
           onOpenArtifactByName={openArtifactByName}
+          welcomeHeadline={welcomeHeadline}
+          welcomeNote={welcomeNote}
           onEditMessage={editMessageAt}
           onRetryBefore={retryBefore}
           editingMessageId={editingMessageId}
@@ -1046,6 +1123,9 @@ export default function ChatPage() {
           <div className="max-w-[48rem] mx-auto">
             {/* Â§8-22 pending-branch banner: an edited prompt is loaded and the
                 next send starts a new version — visible + cancellable. */}
+            {welcomeNote && messages.length > 0 && (
+              <p className="mb-2 text-center text-[12.5px] text-slate-400">{welcomeNote}</p>
+            )}
             {pendingBranch !== undefined && (
               <div data-testid="branch-edit-banner" className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-[#c96442]/30 bg-[#c96442]/[0.07] px-3 py-2 text-[12.5px] text-[#e79d7f]">
                 <span>Editing a message — your next send starts a new version of this turn.</span>
@@ -1066,7 +1146,6 @@ export default function ChatPage() {
               onToggleWebSearch={setWebSearch}
               thinking={thinking}
               onToggleThinking={setThinking}
-              contextPct={contextPct}
               contextTokens={contextTokens}
               incognito={incognito}
               showSlash={showSlash}
@@ -1115,6 +1194,7 @@ export default function ChatPage() {
       {!canvasDoc && profileBot && (
         <BotProfilePanel
           bot={profileBot}
+          conversationId={currentConversationId}
           onLabel={(label) => { void updateNamedBot(profileBot.id, { label }).then(() => refreshRoster()).catch(() => {}) }}
         />
       )}
@@ -1147,7 +1227,7 @@ export default function ChatPage() {
       </AnimatePresence>
 
       <CommandPalette
-        onNewSession={() => { setCurrentConversationId(null); panels.setSidebarOpen(false) }}
+        onNewSession={() => { selectConversation(null); panels.setSidebarOpen(false) }}
         onSearchChats={() => openSidebarSearch(panels.setSidebarOpen)}
         onToggleSidebar={() => panels.setSidebarOpen((s) => !s)}
         onOpenSettings={() => pushSettingsHash('general') }

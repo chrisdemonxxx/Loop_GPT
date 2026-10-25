@@ -1,10 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { Plus, Users, X } from 'lucide-react'
 import { AVATAR_COLORS, type BotGroup, type NamedBot } from '../../lib/namedBots'
 import { useFocusTrap } from '@loop/ui'
-import { deleteBotSkill, listBotSkills, type BotSkillRef } from '../../lib/bot'
+import { agentsThreadHref } from '../../lib/commands'
+import { deleteBotSkill, getBotMemory, listBotRoutines, listBotSkills, type BotSkillRef } from '../../lib/bot'
 import { useTeachSession } from '../team-bot/useTeachSession'
 import { AgentComputerTab } from '../team-bot/AgentComputerTab'
 import { BotFilesPanel } from '../team-bot/BotFilesPanel'
@@ -56,13 +58,15 @@ export function BotSidebarSection({
   onCreateBot: () => void
   onCreateGroup: () => void
 }) {
-  if (!bots.length && !groups.length) return null
   return (
     <div className="px-2 pt-2 space-y-0.5">
       <div className="px-2.5 pt-1 pb-0.5 text-[10px] uppercase tracking-widest text-slate-500 font-medium flex items-center justify-between">
         <span>Bots</span>
         <button type="button" onClick={onCreateBot} aria-label="Create new Bot" className="p-1 rounded-md text-slate-500 hover:text-slate-200 hover:bg-white/[0.05]"><Plus size={12} /></button>
       </div>
+      {bots.length === 0 && (
+        <p className="px-2.5 py-2 text-[12px] text-slate-500">No bots yet.</p>
+      )}
       {bots.map((bot) => (
         <button
           key={bot.id}
@@ -121,6 +125,7 @@ export function StartChatPicker({
         <button type="button" onClick={onCreateBot} className="w-full text-left px-4 py-2.5 text-[14px] text-slate-100 hover:bg-white/[0.05]">＋ Create new Bot</button>
         <button type="button" onClick={onCreateGroup} className="w-full text-left px-4 py-2.5 text-[14px] text-slate-100 hover:bg-white/[0.05]">Create group chat</button>
         <div className="max-h-72 overflow-y-auto border-t border-white/[0.06] py-1">
+          {bots.length === 0 && <p className="px-4 py-3 text-[13px] text-slate-500">No bots yet.</p>}
           {bots.map((bot) => (
             <button key={bot.id} type="button" onClick={() => onPickBot(bot)} className="w-full flex items-center gap-2.5 px-4 py-2 text-left hover:bg-white/[0.05]">
               <BotAvatar name={bot.name} color={bot.avatarColor} size={26} />
@@ -136,7 +141,12 @@ export function StartChatPicker({
   )
 }
 
-const TOOL_CHOICES = ['web_search', 'create_document', 'execute_code', 'generate_image']
+/** Tools the runner grants. Kept in step with BOT_DEFAULT_TOOLS in backend agentTasks. */
+const TOOL_CHOICES = [
+  'web_search', 'web_fetch', 'create_document',
+  'calculator', 'get_current_time', 'remember', 'search_knowledge',
+]
+const CHOICE_BOX = 'h-4 w-4 shrink-0 rounded border border-white/20 bg-white/[0.04] accent-[#c96442]'
 
 export function CreateBotDialog({ busy, onClose, onCreate }: {
   busy?: boolean
@@ -184,7 +194,7 @@ export function CreateBotDialog({ busy, onClose, onCreate }: {
           })}
         </div>
         <label className="flex items-center gap-2 text-[13px] text-slate-300">
-          <input type="checkbox" checked={cloud} onChange={(e) => setCloud(e.target.checked)} /> Cloud computer
+          <input type="checkbox" className={CHOICE_BOX} checked={cloud} onChange={(e) => setCloud(e.target.checked)} /> Cloud computer
         </label>
         <button type="submit" disabled={busy || !name.trim()} className="w-full rounded-xl bg-[#c96442] text-white py-2 text-[14px] font-medium disabled:opacity-50">Create bot</button>
       </form>
@@ -220,36 +230,97 @@ export function CreateGroupDialog({ bots, busy, onClose, onCreate }: {
           <button type="button" onClick={onClose} aria-label="Close" className="p-1 text-slate-500 hover:text-slate-200"><X size={16} /></button>
         </div>
         <input aria-label="Group name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (optional)" className="w-full rounded-lg bg-white/[0.04] border border-white/10 px-3 py-2 text-[14px] text-slate-100" />
+        {bots.length < 2 ? (
+          <p className="text-[13px] text-slate-400">A group needs at least two bots. Create another bot first.</p>
+        ) : (
         <div className="max-h-60 overflow-y-auto space-y-1">
           {bots.map((bot) => (
             <label key={bot.id} className="flex items-center gap-2 px-1 py-1.5 text-[13px] text-slate-200">
-              <input type="checkbox" checked={picked.includes(bot.id)} onChange={() => toggle(bot.id)} />
+              <input type="checkbox" className={CHOICE_BOX} checked={picked.includes(bot.id)} onChange={() => toggle(bot.id)} />
               <BotAvatar name={bot.name} color={bot.avatarColor} size={22} />
               {bot.name}
             </label>
           ))}
         </div>
+        )}
         <button type="submit" disabled={busy || picked.length < 2} className="w-full rounded-xl bg-[#c96442] text-white py-2 text-[14px] font-medium disabled:opacity-50">Create group</button>
       </form>
     </div>
   )
 }
 
+const PROFILE_TABS = [
+  { id: 'details', label: 'Details' },
+  { id: 'library', label: 'Library' },
+  { id: 'computer', label: 'Computer' },
+  { id: 'files', label: 'Files' },
+] as const
+type ProfileTab = typeof PROFILE_TABS[number]['id']
+
+type TeachHook = (
+  onSkillReady?: (skillId?: string) => void,
+  botId?: string | null,
+  conversationId?: string | null,
+) => ReturnType<typeof useTeachSession>
+
+function useWideProfile() {
+  const [wide, setWide] = useState(() => (
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(min-width: 1024px)').matches
+      : false
+  ))
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const mq = window.matchMedia('(min-width: 1024px)')
+    const apply = () => setWide(mq.matches)
+    apply()
+    mq.addEventListener?.('change', apply)
+    return () => mq.removeEventListener?.('change', apply)
+  }, [])
+  return wide
+}
+
 /**
  * Chat-sidebar bot profile — same Computer / Library / Files surfaces as
  * /agents (AgentComputerTab + BotFilesPanel), not an iframe. The old iframe
- * hit X-Frame-Options on the noVNC HTML page.
+ * hit X-Frame-Options on the noVNC HTML page. Below lg the same tabs open
+ * as a sheet.
  */
-export function BotProfilePanel({ bot, onLabel }: {
+export function BotProfilePanel({ bot, conversationId, onLabel }: {
   bot: NamedBot
+  conversationId?: string | null
   onLabel: (label: string) => void
 }) {
-  const [tab, setTab] = useState<'details' | 'library' | 'computer' | 'files'>('details')
+  const [tab, setTab] = useState<ProfileTab>('details')
   const [label, setLabel] = useState(bot.label || '')
   const [skills, setSkills] = useState<BotSkillRef[]>([])
   const [computerExpanded, setComputerExpanded] = useState(false)
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const [memory, setMemory] = useState<string | null>(null)
+  const [routines, setRoutines] = useState<Array<{ id: string; goal: string; schedule: string }> | null>(null)
+  const [detailsError, setDetailsError] = useState(false)
+  const wide = useWideProfile()
   const refreshSkills = () => { void listBotSkills(bot.id).then((d) => setSkills(d.skills || [])).catch(() => {}) }
-  const teach = useTeachSession(() => refreshSkills(), bot.id)
+  const teach = (useTeachSession as TeachHook)(() => refreshSkills(), bot.id, conversationId ?? null)
+  const loopHref = agentsThreadHref(bot.id, conversationId || bot.conversationId || '')
+  useEffect(() => {
+    let cancelled = false
+    setDetailsError(false)
+    setMemory(null)
+    setRoutines(null)
+    void Promise.allSettled([getBotMemory(bot.id), listBotRoutines()]).then(([mem, rows]) => {
+      if (cancelled) return
+      if (mem.status === 'fulfilled') setMemory(mem.value.memory || '')
+      else setMemory('')
+      if (rows.status === 'fulfilled') {
+        setRoutines((rows.value.routines || [])
+          .filter((routine) => routine.botId === bot.id)
+          .map((routine) => ({ id: routine.id, goal: routine.goal, schedule: routine.schedule })))
+      } else setRoutines([])
+      if (mem.status === 'rejected' && rows.status === 'rejected') setDetailsError(true)
+    })
+    return () => { cancelled = true }
+  }, [bot.id])
   useEffect(() => { setLabel(bot.label || '') }, [bot.id, bot.label])
   useEffect(() => {
     if (tab !== 'library') return
@@ -262,9 +333,8 @@ export function BotProfilePanel({ bot, onLabel }: {
     }
   }, [teach.phase])
 
-  return (
+  const body = (
     <>
-      <aside aria-label={`${bot.name} profile`} className="hidden lg:flex w-[300px] shrink-0 h-full min-h-0 flex-col overflow-hidden border-l border-white/[0.06] bg-[#0c0c0e]">
         <div className="px-4 pt-5 pb-3 shrink-0">
           <BotAvatar name={bot.name} color={bot.avatarColor} working={bot.working} size={44} />
           <div className="mt-3 text-[16px] font-medium text-slate-100">{bot.name}</div>
@@ -277,17 +347,42 @@ export function BotProfilePanel({ bot, onLabel }: {
             className="mt-1 w-full bg-transparent text-[12px] text-slate-400 placeholder-slate-600 focus:outline-none"
           />
         </div>
-        <div className="px-3 flex gap-1 text-[12px] flex-wrap shrink-0">
-          {(['details', 'library', 'computer', 'files'] as const).map((id) => (
-            <button key={id} type="button" onClick={() => setTab(id)} className={`px-2.5 py-1 rounded-lg capitalize ${tab === id ? 'bg-white/[0.08] text-slate-100' : 'text-slate-500'}`} aria-pressed={tab === id}>{id}</button>
+        <div className="px-3 flex gap-1 text-[12px] flex-wrap shrink-0" role="tablist" aria-label="Profile">
+          {PROFILE_TABS.map((item) => (
+            <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} onClick={() => setTab(item.id)} className={`px-2.5 py-1 rounded-lg ${tab === item.id ? 'bg-white/[0.08] text-slate-100' : 'text-slate-500'}`}>{item.label}</button>
           ))}
         </div>
         {(tab === 'details' || tab === 'library') && (
         <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 text-[13px] text-slate-300">
           {tab === 'details' && (
-            <div className="space-y-2">
+            <div className="space-y-3">
               <p className="text-slate-400 whitespace-pre-wrap">{bot.persona || 'No persona yet.'}</p>
               {bot.defaultTools?.length > 0 && <p className="text-[12px] text-slate-500">Tools: {bot.defaultTools.join(', ')}</p>}
+              {detailsError ? (
+                <p className="text-[12px] text-slate-500">Memory and routines are on Loop Bot.</p>
+              ) : (
+                <>
+                  <div>
+                    <h3 className="text-[10px] uppercase tracking-widest text-slate-500 font-medium mb-1">Memory</h3>
+                    <p className="text-[12px] text-slate-400 whitespace-pre-wrap">{memory === null ? 'Loading memory…' : (memory || 'Nothing remembered yet.')}</p>
+                  </div>
+                  <div>
+                    <h3 className="text-[10px] uppercase tracking-widest text-slate-500 font-medium mb-1">Routines</h3>
+                    {routines === null ? (
+                      <p className="text-[12px] text-slate-500">Loading routines…</p>
+                    ) : routines.length === 0 ? (
+                      <p className="text-[12px] text-slate-500">No routines yet.</p>
+                    ) : (
+                      <ul className="space-y-1">
+                        {routines.map((routine) => (
+                          <li key={routine.id} className="text-[12px] text-slate-400">{routine.goal} <span className="text-slate-600">· {routine.schedule}</span></li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </>
+              )}
+              <Link href={loopHref} className="inline-block text-[12px] text-[#e79d7f] hover:underline">Open in Loop Bot</Link>
             </div>
           )}
           {tab === 'library' && (
@@ -332,7 +427,43 @@ export function BotProfilePanel({ bot, onLabel }: {
             <BotFilesPanel />
           </div>
         )}
-      </aside>
+    </>
+  )
+
+  return (
+    <>
+      {wide ? (
+        <aside aria-label={`${bot.name} profile`} className="flex w-[300px] shrink-0 h-full min-h-0 flex-col overflow-hidden border-l border-white/[0.06] bg-[#0c0c0e]">
+          {body}
+        </aside>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={() => setSheetOpen(true)}
+            aria-label={`Open ${bot.name} profile`}
+            className="lg:hidden fixed top-14 right-3 z-20 rounded-full border border-white/10 bg-[#16161a] px-3 py-1.5 text-[12px] text-slate-200 shadow-panel"
+          >
+            {bot.name}
+          </button>
+          {sheetOpen && (
+            <div className="lg:hidden fixed inset-0 z-40 flex justify-end bg-black/50" onClick={() => setSheetOpen(false)}>
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-label={`${bot.name} profile`}
+                className="flex h-full w-full max-w-sm flex-col bg-[#0c0c0e] shadow-panel"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex justify-end px-3 pt-3">
+                  <button type="button" onClick={() => setSheetOpen(false)} aria-label="Close profile" className="p-1 text-slate-500 hover:text-slate-200"><X size={16} /></button>
+                </div>
+                {body}
+              </div>
+            </div>
+          )}
+        </>
+      )}
       {computerExpanded && (
         <AgentComputerTab
           botName={bot.name}

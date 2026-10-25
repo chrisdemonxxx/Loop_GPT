@@ -30,6 +30,15 @@ type Sandbox = any
  *  "always on" in practice via touch-keepalive (every use extends the timer)
  *  and fast resume — when it does expire, the next touch re-boots + re-seeds. */
 export const BOX_IDLE_TTL_MS = 60 * 60 * 1000
+/** GNOME setup often outlives a 1–5 minute sandbox. Create and connect use at
+ *  least this long, then the timeout is shrunk to the real daily remainder. */
+const MIN_BOOT_TIMEOUT_MS = 10 * 60 * 1000
+/** Below this, a new sandbox cannot finish booting. Refuse instead of creating. */
+const BOOT_QUOTA_FLOOR_MINUTES = 5
+/** Untracked provider VMs younger than this are still in boot. The reaper
+ *  must not kill them before the BotBox row (or a failed boot's cleanup) lands. */
+const UNTRACKED_BOOT_GRACE_MS = 15 * 60 * 1000
+const DESKTOP_BOOT_RETRY_MESSAGE = 'The desktop did not finish starting. Try again.'
 /** Documented E2B Desktop default geometry (also COMPUTER_FALLBACK_SCREEN). */
 export const DEFAULT_SCREEN = { width: 1366, height: 768 }
 
@@ -180,7 +189,9 @@ const pendingBoots = new Map<string, Promise<BoxSpec>>()
 /** Daily VM-minute budget → sandbox idle timeout.
  *  Soft mode (resume/reconnect): never throw on quota — return a short keepalive
  *  so an already-alive box can still stream when today's minutes are spent.
- *  Hard mode (cold boot): throws forbidden/quota like remainingVmMinutes. */
+ *  Hard mode (lease extend): throws forbidden/quota like remainingVmMinutes.
+ *  Cold boot does not use this; it uses bootTimeoutPlan so create stays up
+ *  long enough to finish, then shrinks back to this budget. */
 async function boxTimeoutMs(userId: string, mode: 'soft' | 'hard' = 'hard'): Promise<number> {
   const { remainingVmMinutes, AgentTaskError } = await import('./agentTasks')
   try {
@@ -195,12 +206,79 @@ async function boxTimeoutMs(userId: string, mode: 'soft' | 'hard' = 'hard'): Pro
   }
 }
 
+/** SDK error when the sandbox dies while create/connect still has a stream open. */
+function isSandboxStreamTimeout(error: unknown): boolean {
+  const msg = String((error as { message?: string })?.message || error || '')
+  return /ended before the stream completed/i.test(msg) || /sandbox timeout/i.test(msg)
+}
+
+function logDesktopStreamDeath(userId: string, error: unknown, sandboxId?: string): void {
+  console.warn('[bot-box] desktop stream ended before boot finished', {
+    userId,
+    ...(sandboxId ? { sandboxId } : {}),
+    error: String((error as { message?: string })?.message || error),
+  })
+}
+
+/** Create/connect lifetime. Throws the same quota/forbidden errors as
+ *  remainingVmMinutes, and quota when fewer than 5 minutes remain — a new
+ *  desktop cannot finish inside that window. bootMs is at least 10 minutes
+ *  and never above the provider's 1 hour cap. budgetMs is the real remainder. */
+async function bootTimeoutPlan(userId: string): Promise<{ bootMs: number; budgetMs: number }> {
+  const { remainingVmMinutes, AgentTaskError } = await import('./agentTasks')
+  const remaining = await remainingVmMinutes(userId)
+  if (!Number.isFinite(remaining) || remaining >= 24 * 60) {
+    return { bootMs: BOX_IDLE_TTL_MS, budgetMs: BOX_IDLE_TTL_MS }
+  }
+  if (remaining < BOOT_QUOTA_FLOOR_MINUTES) throw new AgentTaskError('quota')
+  const minutesMs = Math.floor(remaining) * 60_000
+  return {
+    bootMs: Math.min(BOX_IDLE_TTL_MS, Math.max(MIN_BOOT_TIMEOUT_MS, minutesMs)),
+    budgetMs: Math.min(BOX_IDLE_TTL_MS, Math.max(60_000, minutesMs)),
+  }
+}
+
+/** Timeout passed to Sandbox.connect before any command or stream.start.
+ *  An existing box still reconnects when fewer than 5 minutes remain — that
+ *  floor only blocks Sandbox.create. The connect itself still gets at least
+ *  10 minutes so the stream can finish, then setTimeout shrinks to budgetMs.
+ *  A spent budget (quota) or a plan with no computer access keeps the short
+ *  soft keepalive and does not grant a 10-minute stretch. */
+async function connectTimeoutForUser(userId: string): Promise<{ connectMs: number; budgetMs: number }> {
+  const { remainingVmMinutes, AgentTaskError } = await import('./agentTasks')
+  try {
+    const remaining = await remainingVmMinutes(userId)
+    if (!Number.isFinite(remaining) || remaining >= 24 * 60) {
+      return { connectMs: BOX_IDLE_TTL_MS, budgetMs: BOX_IDLE_TTL_MS }
+    }
+    const minutesMs = Math.floor(remaining) * 60_000
+    const budgetMs = Math.min(BOX_IDLE_TTL_MS, Math.max(60_000, minutesMs))
+    const connectMs = Math.min(BOX_IDLE_TTL_MS, Math.max(MIN_BOOT_TIMEOUT_MS, minutesMs))
+    return { connectMs, budgetMs }
+  } catch (err) {
+    if (err instanceof AgentTaskError && (err.code === 'quota' || err.code === 'forbidden')) {
+      const budgetMs = await boxTimeoutMs(userId, 'soft')
+      return { connectMs: budgetMs, budgetMs }
+    }
+    throw err
+  }
+}
+
 async function rememberBox(userId: string, sandboxId: string): Promise<void> {
   if (!prisma) return
   await prisma.botBox.upsert({
     where: { userId },
     create: { userId, sandboxId },
     update: { sandboxId },
+  }).catch(() => undefined)
+}
+
+async function clearBoxSandboxId(userId: string): Promise<void> {
+  liveBoxes.delete(userId)
+  if (!prisma) return
+  await prisma.botBox.update({
+    where: { userId },
+    data: { sandboxId: '' },
   }).catch(() => undefined)
 }
 
@@ -212,13 +290,15 @@ interface PersistedStream {
 /** Reconnect a box recorded in the database. A dead id falls through to a
  *  fresh boot. Also returns the persisted stream URLs: the reconnected SDK
  *  instance never owned the stream, so it cannot rebuild them itself. */
-async function connectPersistedBox(userId: string): Promise<{ sandbox: Sandbox; stream: PersistedStream | null } | null> {
+async function connectPersistedBox(userId: string, timeoutMs: number): Promise<{ sandbox: Sandbox; stream: PersistedStream | null } | null> {
   if (!prisma) return null
   const row = await prisma.botBox.findUnique({ where: { userId } }).catch(() => null)
   if (!row?.sandboxId) return null
   try {
     const { Sandbox } = await import('@e2b/desktop')
-    const sandbox = await Sandbox.connect(row.sandboxId)
+    // timeoutMs must be set on connect. The sandbox's old deadline is often
+    // already due, and the SDK stream dies before a later setTimeout runs.
+    const sandbox = await Sandbox.connect(row.sandboxId, { timeoutMs })
     let stream: PersistedStream | null = null
     if (row.streamAuthKey) {
       // Strongest path: rebuild fresh URLs from the persisted auth key.
@@ -228,8 +308,106 @@ async function connectPersistedBox(userId: string): Promise<{ sandbox: Sandbox; 
       stream = { streamUrl: row.streamUrl, interactiveUrl: row.interactiveUrl }
     }
     return { sandbox, stream }
-  } catch {
+  } catch (error) {
+    if (isSandboxStreamTimeout(error)) throw error
     return null
+  }
+}
+
+async function coldBootOnce(userId: string, userLabel: string, taskType: BoxTaskType, pauseOnTimeout: boolean): Promise<BoxSpec> {
+  if (!isE2BConfigured()) {
+    throw new Error('E2B is not configured on this deployment — the bot cannot boot its computer.')
+  }
+  // Refuse a new VM when fewer than 5 minutes remain (or the budget is already
+  // spent). The Computer tab maps this quota error to the daily-budget message.
+  const { bootMs, budgetMs } = await bootTimeoutPlan(userId)
+  const template = desktopTemplateId()
+  if (!template) {
+    throw new Error(
+      'E2B_DESKTOP_TEMPLATE is required for bot Computer boot (GNOME image). Build infra/e2b-gnome-desktop and set the template id.',
+    )
+  }
+  const { Sandbox: DesktopSandbox } = await import('@e2b/desktop')
+  // First arg is the template id/alias — passing only { template } can fall
+  // back to the stock XFCE image (no GNOME binaries).
+  const createOptions: Record<string, unknown> = {
+    timeoutMs: bootMs,
+    metadata: { loopGpt: 'bot-box', userId },
+  }
+  // Pause-on-timeout is the first attempt. Some accounts end the create stream
+  // when that lifecycle is rejected, so the single retry omits it.
+  if (pauseOnTimeout) createOptions.lifecycle = { onTimeout: 'pause', autoResume: true }
+  const sandbox: Sandbox = await DesktopSandbox.create(template, createOptions)
+
+  // Track the VM before GNOME/seeding. Otherwise the reaper sees an untracked
+  // loopGpt:bot-box sandbox and kills it mid-boot.
+  await rememberBox(userId, sandbox.sandboxId)
+  const state: BoxState = {
+    sandboxId: sandbox.sandboxId,
+    sandbox,
+    createdAt: Date.now(),
+    lastTouchedAt: Date.now(),
+  }
+  liveBoxes.set(userId, state)
+
+  try {
+    // GNOME-first: do not return Computer / stream until GNOME owns the
+    // display. The SDK still starts its XFCE shim; we block on the swap.
+    await awaitGnomeDesktop(sandbox)
+    await runInBox(sandbox, 'mkdir -p /workspace /home/user/Desktop')
+    // A fresh box is empty; the user's files come back from the durable mirror
+    // before any seeding writes anything, so a restore never clobbers a seed
+    // and a seed never clobbers a restored file.
+    const restored = await restoreWorkspaceIn(sandbox, userId)
+    await seedBoxProfile(sandbox, userLabel, taskType)
+    await seedBotHomes(sandbox, userId)
+    if (restored) console.info('[bot-box] workspace restored from durable mirror', { userId })
+
+    const stream = await readVncUrls(sandbox)
+    await rememberBoxStream(userId, sandbox.sandboxId, stream)
+    // Boot used a >=10 minute timeout so the stream could finish. Shrink back
+    // to the real daily remainder so a short allowance is not held for an hour.
+    await sandbox.setTimeout(budgetMs).catch((error: unknown) => {
+      console.warn('[bot-box] could not shrink sandbox timeout to the remaining budget', String((error as Error)?.message || error))
+    })
+    console.info('[bot-box] booted persistent box', { userId, sandboxId: sandbox.sandboxId, taskType, template })
+    return {
+      sandboxId: sandbox.sandboxId,
+      streamUrl: stream.streamUrl,
+      interactiveUrl: stream.interactiveUrl,
+      resumed: false,
+      ageMinutes: 0,
+      taskType,
+      workspaceDir: '/workspace',
+    }
+  } catch (error) {
+    await sandbox.kill().catch(() => undefined)
+    await clearBoxSandboxId(userId)
+    throw error
+  }
+}
+
+/** One cold boot, plus a single retry without pause-on-timeout when the
+ *  create/connect stream dies. A second stream failure is a short message
+ *  with no sandbox id (that id stays in the server log). */
+async function finishColdBoot(userId: string, userLabel: string, taskType: BoxTaskType, pauseFirst: boolean): Promise<BoxSpec> {
+  try {
+    return await coldBootOnce(userId, userLabel, taskType, pauseFirst)
+  } catch (error) {
+    if (!isSandboxStreamTimeout(error)) throw error
+    logDesktopStreamDeath(userId, error)
+    await clearBoxSandboxId(userId)
+    if (!pauseFirst) throw new Error(DESKTOP_BOOT_RETRY_MESSAGE)
+    try {
+      return await coldBootOnce(userId, userLabel, taskType, false)
+    } catch (second) {
+      await clearBoxSandboxId(userId)
+      if (isSandboxStreamTimeout(second)) {
+        logDesktopStreamDeath(userId, second)
+        throw new Error(DESKTOP_BOOT_RETRY_MESSAGE)
+      }
+      throw second
+    }
   }
 }
 
@@ -263,12 +441,20 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
       }
     }
 
-    const connected = await connectPersistedBox(userId)
-    if (connected) {
+    const timeouts = await connectTimeoutForUser(userId)
+    let connected: { sandbox: Sandbox; stream: PersistedStream | null } | null = null
+    let streamDied = false
+    try {
+      connected = await connectPersistedBox(userId, timeouts.connectMs)
+    } catch (error) {
+      if (!isSandboxStreamTimeout(error)) throw error
+      logDesktopStreamDeath(userId, error)
+      await clearBoxSandboxId(userId)
+      streamDied = true
+    }
+
+    if (connected && !streamDied) {
       try {
-        // Reconnect path: soft quota — allow streaming an existing sandbox.
-        const timeoutMs = await boxTimeoutMs(userId, 'soft')
-        await connected.sandbox.setTimeout(timeoutMs)
         const state: BoxState = {
           sandboxId: connected.sandbox.sandboxId,
           sandbox: connected.sandbox,
@@ -280,6 +466,7 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
         // rebuild the URLs itself. Use the credentials persisted at boot; only
         // if they are missing (pre-migration row) do we ask the SDK, whose
         // answer may legitimately be empty until the stream is restarted.
+        // Keep the long connect timeout until that stream is up.
         let streamUrl = connected.stream?.streamUrl || ''
         let interactiveUrl = connected.stream?.interactiveUrl || null
         if (!streamUrl) {
@@ -288,8 +475,14 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
             streamUrl = stream.streamUrl
             interactiveUrl = stream.interactiveUrl
             await rememberBoxStream(userId, state.sandboxId, stream)
-          } catch { /* stream state unknown to this instance — stays empty */ }
+          } catch (error) {
+            if (isSandboxStreamTimeout(error)) throw error
+            /* stream state unknown to this instance — stays empty */
+          }
         }
+        await connected.sandbox.setTimeout(timeouts.budgetMs).catch((error: unknown) => {
+          console.warn('[bot-box] could not shrink sandbox timeout to the remaining budget', String((error as Error)?.message || error))
+        })
         return {
           sandboxId: state.sandboxId,
           streamUrl,
@@ -299,74 +492,20 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
           taskType,
           workspaceDir: '/workspace',
         }
-      } catch {
+      } catch (error) {
         liveBoxes.delete(userId)
+        if (isSandboxStreamTimeout(error)) {
+          // Connect's stream died. The cold boot below is the one retry.
+          logDesktopStreamDeath(userId, error, connected.sandbox?.sandboxId)
+          await clearBoxSandboxId(userId)
+          streamDied = true
+        }
       }
     }
 
-    if (!isE2BConfigured()) {
-      throw new Error('E2B is not configured on this deployment — the bot cannot boot its computer.')
-    }
-
-    // Cold boot: hard quota — refuse new VMs when today's minutes are spent.
-    const timeoutMs = await boxTimeoutMs(userId, 'hard')
-
-    const template = desktopTemplateId()
-    if (!template) {
-      throw new Error(
-        'E2B_DESKTOP_TEMPLATE is required for bot Computer boot (GNOME image). Build infra/e2b-gnome-desktop and set the template id.',
-      )
-    }
-    const { Sandbox: DesktopSandbox } = await import('@e2b/desktop')
-    // First arg is the template id/alias — passing only { template } can fall
-    // back to the stock XFCE image (no GNOME binaries).
-    const sandbox: Sandbox = await DesktopSandbox.create(template, {
-      timeoutMs,
-      // Pause on idle timeout so the next touch resumes quickly instead of cold-booting.
-      lifecycle: { onTimeout: 'pause', autoResume: true },
-      metadata: { loopGpt: 'bot-box', userId },
-    })
-
-    // GNOME-first: do not return Computer / stream until GNOME owns the
-    // display. The SDK still starts its XFCE shim; we block on the swap.
-    // Fail loudly — never paint XFCE to the operator.
-    try {
-      await awaitGnomeDesktop(sandbox)
-    } catch (err) {
-      await sandbox.kill().catch(() => undefined)
-      throw err
-    }
-
-    await runInBox(sandbox, 'mkdir -p /workspace /home/user/Desktop')
-    // A fresh box is empty; the user's files come back from the durable mirror
-    // before any seeding writes anything, so a restore never clobbers a seed
-    // and a seed never clobbers a restored file.
-    const restored = await restoreWorkspaceIn(sandbox, userId)
-    await seedBoxProfile(sandbox, userLabel, taskType)
-    await seedBotHomes(sandbox, userId)
-    if (restored) console.info('[bot-box] workspace restored from durable mirror', { userId })
-
-    const state: BoxState = {
-      sandboxId: sandbox.sandboxId,
-      sandbox,
-      createdAt: Date.now(),
-      lastTouchedAt: Date.now(),
-    }
-    liveBoxes.set(userId, state)
-    await rememberBox(userId, sandbox.sandboxId)
-
-    const stream = await readVncUrls(sandbox)
-    await rememberBoxStream(userId, sandbox.sandboxId, stream)
-    console.info('[bot-box] booted persistent box', { userId, sandboxId: sandbox.sandboxId, taskType, template })
-    return {
-      sandboxId: sandbox.sandboxId,
-      streamUrl: stream.streamUrl,
-      interactiveUrl: stream.interactiveUrl,
-      resumed: false,
-      ageMinutes: 0,
-      taskType,
-      workspaceDir: '/workspace',
-    }
+    // Connect already died once: this cold boot is the single retry, and it
+    // skips pause-on-timeout. Otherwise pause-on-timeout is the first attempt.
+    return finishColdBoot(userId, userLabel, taskType, !streamDied)
   })()
 
   pendingBoots.set(userId, boot)
@@ -450,6 +589,17 @@ export async function reapOrphanBoxes(): Promise<void> {
   } catch { /* best effort */ }
 }
 
+/** True when the provider says this VM started less than 15 minutes ago.
+ *  Missing or unreadable timestamps are not treated as young — those sandboxes
+ *  stay eligible for the untracked sweep. */
+function sandboxStartedRecently(info: { startedAt?: Date | string | number | null }): boolean {
+  const raw = info?.startedAt
+  if (raw == null || raw === '') return false
+  const started = raw instanceof Date ? raw.getTime() : new Date(raw).getTime()
+  if (!Number.isFinite(started)) return false
+  return Date.now() - started < UNTRACKED_BOOT_GRACE_MS
+}
+
 /** Kill provider sandboxes tagged as ours that no BotBox / recent BotRun tracks. */
 async function reapUntrackedSandboxes(): Promise<void> {
   if (!prisma || !isE2BConfigured()) return
@@ -475,7 +625,7 @@ async function reapUntrackedSandboxes(): Promise<void> {
       const page = await paginator.nextItems()
       for (const info of page) {
         const id = String(info.sandboxId || '')
-        if (!id || tracked.has(id)) continue
+        if (!id || tracked.has(id) || sandboxStartedRecently(info)) continue
         try {
           const handle = await Sandbox.connect(id)
           await handle.kill().catch(() => undefined)
@@ -489,7 +639,7 @@ async function reapUntrackedSandboxes(): Promise<void> {
       const page = await desktopPager.nextItems()
       for (const info of page) {
         const id = String(info.sandboxId || '')
-        if (!id || tracked.has(id)) continue
+        if (!id || tracked.has(id) || sandboxStartedRecently(info)) continue
         try {
           const handle = await Sandbox.connect(id)
           await handle.kill().catch(() => undefined)

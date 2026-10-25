@@ -1,6 +1,7 @@
 'use client'
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
   Bot, Loader2, Sparkles, Trash2, Clock, Pause, Play, Plus, Pencil,
@@ -10,13 +11,17 @@ import { ConfirmDialog } from '@loop/ui'
 import {
   enqueueBotTask, listBotTasks, cancelBotTask, getBotQuota, listBotSkills, deleteBotSkill,
   listBotRoutines, createBotRoutine, setBotRoutinePaused, deleteBotRoutine,
-  getBotRun, getBotTask, wakeBotComputer, BotApiError,
+  getBotRun, getBotTask, getBotComputer, wakeBotComputer, BotApiError,
   type BotRoutine, type BotTask, type BotQuota, type BotSkillRef,
 } from '../lib/bot'
 import { getStoredUser } from '../lib/api'
 import { getBotMemory } from '../lib/bot'
 import { listNamedBots, listBotThreads, createBotThread, renameBotThread, deleteBotThread, type NamedBot, type BotThreadSummary } from '../lib/namedBots'
 import { COMPUTER_PANE_DEFAULT, COMPUTER_PANE_KEY, COMPUTER_PANE_MIN, clampComputerPaneWidth, computerPaneMax } from './computerPane'
+import {
+  allowedToolsForBot, computerForBot, resolveWatchTarget, routineScheduleLabel, routineSkillLabel,
+  type WatchTarget,
+} from './botTask'
 import RunViewer from '../components/team-bot/RunViewer'
 import { AgentComputerTab } from '../components/team-bot/AgentComputerTab'
 import { AgentChatPane } from '../components/team-bot/AgentChatPane'
@@ -114,11 +119,15 @@ function AgentsPageInner() {
     retry: false,
   })
 
+  const bots = botsQuery.data?.bots ?? []
+  const botsError = botsQuery.isError
+    ? ((botsQuery.error as { message?: string })?.message || 'Could not load bots.')
+    : ''
+  const unknownBot = Boolean(botIdParam) && botsQuery.isSuccess && !bots.some((b) => b.id === botIdParam)
   const activeBot = useMemo(() => {
-    const bots = botsQuery.data?.bots ?? []
-    if (botIdParam) return bots.find((b) => b.id === botIdParam) ?? bots.find((b) => b.isPrimary) ?? bots[0] ?? null
+    if (botIdParam) return bots.find((b) => b.id === botIdParam) ?? null
     return bots.find((b) => b.isPrimary) ?? bots[0] ?? null
-  }, [botsQuery.data?.bots, botIdParam])
+  }, [bots, botIdParam])
 
   const botId = activeBot?.id ?? null
   const [openedThreadId, setOpenedThreadId] = useState<string | null>(null)
@@ -146,6 +155,16 @@ function AgentsPageInner() {
     setOpenedThreadId(id)
     const params = new URLSearchParams(searchParams.toString())
     params.set('thread', id)
+    const q = params.toString()
+    router.replace(q ? `${pathname}?${q}` : pathname)
+  }, [pathname, router, searchParams])
+
+  const selectBot = useCallback((id: string) => {
+    if (!id) return
+    setOpenedThreadId(null)
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('botId', id)
+    params.delete('thread')
     const q = params.toString()
     router.replace(q ? `${pathname}?${q}` : pathname)
   }, [pathname, router, searchParams])
@@ -224,7 +243,9 @@ function AgentsPageInner() {
     retry: false,
     refetchInterval: 15_000,
   })
-  const routineRows = routinesQuery.data?.routines ?? null
+  const routineRows = routinesQuery.data
+    ? routinesQuery.data.routines.filter((routine) => routine.botId === botId)
+    : null
 
   const memoryQuery = useQuery<{ memory: string } | null>({
     queryKey: ['bot', 'memory', botId],
@@ -243,7 +264,11 @@ function AgentsPageInner() {
     void queryClient.invalidateQueries({ queryKey: ['bot', 'routines'] })
   }
 
-  const teach = useTeachSession(refresh, botId)
+  const teach = useTeachSession(refresh, botId, activeThreadId)
+  const [attachedSkill, setAttachedSkill] = useState<BotSkillRef | null>(null)
+  const [watch, setWatch] = useState<WatchTarget | null>(null)
+
+  useEffect(() => { setAttachedSkill(null) }, [botId])
 
   const anyActive = useMemo(() => !!tasks?.some((t) => t.status === 'queued' || t.status === 'processing'), [tasks])
 
@@ -252,15 +277,30 @@ function AgentsPageInner() {
     if (teach.phase === 'waiting' || teach.phase === 'recording') {
       setTab('computer')
       setComputerExpanded(true)
+      setWatch(null)
     }
   }, [teach.phase])
 
-  /** Grok parity: ONE computer surface. Wake on open; never keepalive-poll. */
-  const openComputer = () => {
+  /** Watch keeps the task id and opens that run's computer. The Computer tab stays the persistent box. */
+  const openComputer = useCallback(async (taskId: string) => {
     setTab('computer')
     setComputerExpanded(true)
-    void wakeBotComputer('default').catch(() => undefined)
-  }
+    setWatch({ taskId, runId: null, viewUrl: null, interactiveUrl: null, starting: true })
+    const next = await resolveWatchTarget(taskId, { getTask: getBotTask, getComputer: getBotComputer })
+    setWatch(next)
+  }, [])
+
+  useEffect(() => {
+    if (!computerExpanded || !watch?.starting) return
+    const taskId = watch.taskId
+    let stop = false
+    const timer = setInterval(() => {
+      void resolveWatchTarget(taskId, { getTask: getBotTask, getComputer: getBotComputer }).then((next) => {
+        if (!stop) setWatch(next)
+      })
+    }, 3000)
+    return () => { stop = true; clearInterval(timer) }
+  }, [computerExpanded, watch?.starting, watch?.taskId])
 
   const cancel = useMutation({
     mutationFn: (id: string) => cancelBotTask(id).catch(() => {}),
@@ -270,23 +310,32 @@ function AgentsPageInner() {
   /** Chat is the instruction channel: a message = a one-shot task on this thread. */
   const sendInstruction = useMutation({
     mutationFn: async (text: string) => {
+      if (!botId || !activeBot) {
+        throw new Error(botsError || (unknownBot ? 'No bot matches this link.' : 'Select a bot before sending.'))
+      }
+      const allowedTools = allowedToolsForBot(activeBot.defaultTools)
+      if (!allowedTools.length) throw new Error('This bot has no tools this runner can use.')
       let conversationId = activeThreadId
       if (!conversationId) {
-        if (!botId) throw new Error('Loop Bot is still loading.')
         const thread = await createBotThread(botId)
         conversationId = thread.id
         selectThread(thread.id)
       }
+      const computer = computerForBot(activeBot.cloudComputer)
+      const skillId = attachedSkill?.id
       return enqueueBotTask({
         goal: text,
         maxSteps: 16,
-        computer: { enabled: true, ttlMinutes: 30 },
+        allowedTools,
+        ...(computer ? { computer } : {}),
         conversationId,
-        ...(botId ? { botId } : {}),
+        botId,
+        ...(skillId ? { skillId } : {}),
       })
     },
     onSuccess: (res) => {
       setSendError('')
+      setAttachedSkill(null)
       setSuggestedSkills(res.suggestedSkills || [])
       void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] })
       void queryClient.invalidateQueries({ queryKey: ['bot', 'threads'] })
@@ -305,7 +354,7 @@ function AgentsPageInner() {
 
   if (!user) return null
 
-  const botName = activeBot?.name || 'Loop Bot'
+  const botName = activeBot?.name || ''
 
   const startThread = async () => {
     if (!botId) return
@@ -331,19 +380,26 @@ function AgentsPageInner() {
   }
 
   return (
-    <AppPage width="fill" documentTitle={botName}>
-      {/* Status strip only while a task is running or a load error is showing. */}
-      {(anyActive || loadError) && (
+    <AppPage width="fill" documentTitle={botName || 'Bot'}>
+      {(anyActive || loadError || botsError || unknownBot) && (
         <div className="flex items-center gap-3 px-4 py-2 border-b border-[var(--border-subtle)] shrink-0 min-h-[38px]">
           {anyActive && (
             <span className="flex items-center gap-1.5 text-ui-xs text-[var(--accent-text)]">
               <Loader2 size={11} className="animate-spin" aria-hidden /> working
             </span>
           )}
-          {loadError && (
+          {(loadError || botsError || unknownBot) && (
             <span className="ml-auto text-ui-xs text-[var(--danger)] flex items-center gap-2" role="alert">
-              {loadError}
-              <button type="button" onClick={() => { void tasksQuery.refetch() }} className="text-[var(--accent-text)] hover:underline">Retry</button>
+              {botsError || (unknownBot ? 'No bot matches this link.' : loadError)}
+              {(botsError || loadError) && (
+                <button
+                  type="button"
+                  onClick={() => { if (botsError) void botsQuery.refetch(); if (loadError) void tasksQuery.refetch() }}
+                  className="text-[var(--accent-text)] hover:underline"
+                >
+                  Retry
+                </button>
+              )}
             </span>
           )}
         </div>
@@ -353,6 +409,7 @@ function AgentsPageInner() {
         <BotThreadRail
           threads={threads}
           activeId={activeThreadId}
+          chatHref={activeThreadId ? `/chat/?conversation=${activeThreadId}` : null}
           pending={threadsQuery.isPending}
           error={threadsQuery.isError ? ((threadsQuery.error as { message?: string })?.message || 'Could not load chats.') : ''}
           onRetry={() => { void threadsQuery.refetch() }}
@@ -368,10 +425,14 @@ function AgentsPageInner() {
           sending={sendInstruction.isPending}
           sendError={sendError}
           quota={quota}
+          botName={botName}
+          requiresComputer={activeBot?.cloudComputer === true}
           suggestedSkills={suggestedSkills}
+          attachedSkill={attachedSkill}
+          onAttachSkill={setAttachedSkill}
           onDismissSuggestions={() => setSuggestedSkills([])}
           onSend={async (text) => { await sendInstruction.mutateAsync(text) }}
-          onWatch={openComputer}
+          onWatch={(id) => { void openComputer(id) }}
           onTrace={(id) => setTraceTaskId(id)}
           onCancel={(id) => { cancel.mutate(id) }}
         />
@@ -424,29 +485,51 @@ function AgentsPageInner() {
             <div className="w-16 h-16 rounded-[22px] bg-[var(--accent-soft)] border border-[var(--accent-soft-border)] flex items-center justify-center">
               <Bot size={30} className="text-[var(--accent-text)]" aria-hidden />
             </div>
-            <div className="mt-3 text-ui-md font-semibold text-[var(--ink-primary)]">{botName}</div>
+            <div className="mt-3 text-ui-md font-semibold text-[var(--ink-primary)]">{botName || 'Bot'}</div>
             <div className="text-ui-xs text-[var(--ink-muted)]">{activeBot?.label || 'Autonomous operator'}</div>
+            {bots.length > 0 && (
+              <label className="mt-3 w-full">
+                <span className="sr-only">Bot</span>
+                <select
+                  aria-label="Bot"
+                  value={activeBot?.id ?? ''}
+                  onChange={(e) => selectBot(e.target.value)}
+                  className="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-2 py-1.5 text-ui-xs text-[var(--ink-secondary)] focus:outline-none"
+                >
+                  {!activeBot && <option value="">Select a bot</option>}
+                  {bots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
+                </select>
+              </label>
+            )}
           </div>
 
           <div className="flex gap-1 px-4 shrink-0">
-            {(['details', 'library', 'computer', 'files'] as const).map((id) => (
+            {([
+              ['details', 'Details'],
+              ['library', 'Library'],
+              ['computer', 'Computer'],
+              ['files', 'Files'],
+            ] as const).map(([id, label]) => (
               <button
                 key={id}
                 type="button"
                 onClick={() => {
                   setTab(id)
-                  if (id === 'computer') void wakeBotComputer('default').catch(() => undefined)
+                  if (id === 'computer') {
+                    setWatch(null)
+                    void wakeBotComputer('default').catch(() => undefined)
+                  }
                 }}
-                className={`px-3.5 py-1.5 rounded-lg text-ui-xs font-medium capitalize transition ${
+                className={`px-3.5 py-1.5 rounded-lg text-ui-xs font-medium transition ${
                   tab === id ? 'bg-[var(--bg-hover-strong)] text-[var(--ink-primary)]' : 'text-[var(--ink-muted)] hover:text-[var(--ink-secondary)]'
                 }`}
               >
                 {id === 'computer' ? (
                   <span className="flex items-center gap-1.5">
-                    Computer
+                    {label}
                     {teach.phase === 'recording' && <span className="w-1.5 h-1.5 rounded-full bg-[var(--danger)] animate-pulse" aria-hidden />}
                   </span>
-                ) : id}
+                ) : label}
               </button>
             ))}
           </div>
@@ -483,7 +566,7 @@ function AgentsPageInner() {
                   ) : (
                     <div className="mt-2 space-y-2">
                       {routineRows.map((r) => (
-                        <RoutineCard key={r.id} routine={r} onChanged={refresh} />
+                        <RoutineCard key={r.id} routine={r} skills={skills} onChanged={refresh} />
                       ))}
                     </div>
                   )}
@@ -506,7 +589,13 @@ function AgentsPageInner() {
               ) : (
                 <div className="space-y-2">
                   {skills.map((skill) => (
-                    <SkillCard key={skill.id} skill={skill} onDeleted={() => { void queryClient.invalidateQueries({ queryKey: ['bot', 'skills'] }) }} />
+                    <SkillCard
+                      key={skill.id}
+                      skill={skill}
+                      attached={attachedSkill?.id === skill.id}
+                      onAttach={() => setAttachedSkill(attachedSkill?.id === skill.id ? null : skill)}
+                      onDeleted={() => { void queryClient.invalidateQueries({ queryKey: ['bot', 'skills'] }) }}
+                    />
                   ))}
                 </div>
               )
@@ -517,7 +606,7 @@ function AgentsPageInner() {
           {/* Skip embedded mount while expanded — avoids duplicate status probes. */}
           {tab === 'computer' && !computerExpanded && (
             <div className="flex-1 min-h-0 flex flex-col">
-              <AgentComputerTab botName={botName} session={teach} onExpand={() => setComputerExpanded(true)} />
+              <AgentComputerTab botName={botName || 'Bot'} session={teach} onExpand={() => setComputerExpanded(true)} />
             </div>
           )}
 
@@ -532,10 +621,11 @@ function AgentsPageInner() {
       {/* Enlarged computer — full-window stream with the teach pill */}
       {computerExpanded && (
         <AgentComputerTab
-          botName={botName}
+          botName={botName || 'Bot'}
           session={teach}
           expanded
-          onCollapse={() => setComputerExpanded(false)}
+          runView={watch}
+          onCollapse={() => { setComputerExpanded(false); setWatch(null) }}
         />
       )}
 
@@ -545,10 +635,11 @@ function AgentsPageInner() {
 }
 
 function BotThreadRail({
-  threads, activeId, pending, error, onRetry, onNew, onOpen, onRename, onDelete,
+  threads, activeId, chatHref, pending, error, onRetry, onNew, onOpen, onRename, onDelete,
 }: {
   threads: BotThreadSummary[]
   activeId: string | null
+  chatHref: string | null
   pending: boolean
   error: string
   onRetry: () => void
@@ -648,6 +739,13 @@ function BotThreadRail({
           )
         })}
       </div>
+      {chatHref && (
+        <div className="shrink-0 border-t border-[var(--border-subtle)] p-2">
+          <Link href={chatHref} className="block rounded-lg px-2 py-1.5 text-ui-xs text-[var(--accent-text)] hover:bg-[var(--bg-hover)]">
+            Open in Chat
+          </Link>
+        </div>
+      )}
       <ConfirmDialog
         open={!!deleteId}
         title="Delete this chat?"
@@ -731,7 +829,7 @@ function RoutineComposer({ skills, botId, onCreated }: { skills: BotSkillRef[]; 
   )
 }
 
-function RoutineCard({ routine, onChanged }: { routine: BotRoutine; onChanged: () => void }) {
+function RoutineCard({ routine, skills, onChanged }: { routine: BotRoutine; skills: BotSkillRef[] | null; onChanged: () => void }) {
   const [historyOpen, setHistoryOpen] = useState(false)
   const pause = useMutation({ mutationFn: () => setBotRoutinePaused(routine.id, !routine.paused), onSuccess: onChanged })
   const remove = useMutation({ mutationFn: () => deleteBotRoutine(routine.id), onSuccess: onChanged })
@@ -744,8 +842,10 @@ function RoutineCard({ routine, onChanged }: { routine: BotRoutine; onChanged: (
         <div className="min-w-0 flex-1">
           <div className="text-ui-sm text-[var(--ink-primary)] truncate">{routine.goal}</div>
           <div className="text-2xs text-[var(--ink-muted)] flex items-center gap-1.5 mt-0.5 flex-wrap">
-            <Clock size={10} aria-hidden /> every {routine.schedule}
-            {routine.skillId && <span className="rounded bg-[var(--bg-hover-strong)] px-1 py-0.5 font-mono text-3xs">{routine.skillId}</span>}
+            <Clock size={10} aria-hidden /> {routineScheduleLabel(routine.schedule)}
+            {routineSkillLabel(routine.skillId, skills) && (
+              <span className="rounded bg-[var(--bg-hover-strong)] px-1 py-0.5 text-3xs">{routineSkillLabel(routine.skillId, skills)}</span>
+            )}
             <span>{routine.paused ? 'paused' : routine.nextRunAt ? `next ${new Date(routine.nextRunAt).toLocaleString()}` : ''}</span>
           </div>
         </div>
@@ -777,7 +877,14 @@ function RoutineCard({ routine, onChanged }: { routine: BotRoutine; onChanged: (
   )
 }
 
-function SkillCard({ skill, onDeleted }: { skill: BotSkillRef; onDeleted: () => void }) {
+function SkillCard({
+  skill, attached, onAttach, onDeleted,
+}: {
+  skill: BotSkillRef
+  attached?: boolean
+  onAttach?: () => void
+  onDeleted: () => void
+}) {
   const remove = async () => {
     await deleteBotSkill(skill.id).catch(() => {})
     onDeleted()
@@ -796,7 +903,14 @@ function SkillCard({ skill, onDeleted }: { skill: BotSkillRef; onDeleted: () => 
             </div>
           )}
         </div>
-        <button type="button" onClick={() => void remove()} aria-label="Delete skill" className="shrink-0 text-[var(--ink-muted)] hover:text-[var(--danger)]"><Trash2 size={13} aria-hidden /></button>
+        <div className="flex shrink-0 items-center gap-1">
+          {onAttach && (
+            <button type="button" onClick={onAttach} className="rounded-lg px-2 py-1 text-2xs text-[var(--accent-text)] hover:bg-[var(--bg-hover-strong)]">
+              {attached ? 'Attached' : 'Attach'}
+            </button>
+          )}
+          <button type="button" onClick={() => void remove()} aria-label="Delete skill" className="shrink-0 text-[var(--ink-muted)] hover:text-[var(--danger)]"><Trash2 size={13} aria-hidden /></button>
+        </div>
       </div>
     </div>
   )

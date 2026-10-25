@@ -58,6 +58,8 @@ export const validationSchemas = {
   createConversation: z.object({
     body: z.object({
       title: z.string().max(200, 'Title must be less than 200 characters').optional(),
+      // Set on create. A later message cannot hide a row that already landed in the sidebar.
+      incognito: z.boolean().optional(),
     }),
   }),
 
