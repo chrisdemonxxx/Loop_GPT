@@ -342,7 +342,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
         router.push(`/build/?run=${encodeURIComponent(created.run_id)}`)
       }).catch(fail)
     }
-    return sendMessage.mutateAsync(trimmed).catch(fail)
+    return sendMessage.mutateAsync(trimmed).then(() => undefined).catch(fail)
   }
 
   const handleCancel = () => {
