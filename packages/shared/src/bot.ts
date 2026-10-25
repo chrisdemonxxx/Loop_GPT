@@ -88,7 +88,6 @@ export interface BotEvent {
   seq?: number
   message?: string
   step?: number
-  text?: string
   name?: string
   args?: any
   chunk?: string
