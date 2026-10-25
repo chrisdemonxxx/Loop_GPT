@@ -157,7 +157,7 @@ function PrivacySubPanel({ sub, onBack, onOpenMemory }: { sub: PrivacySub; onBac
       ) : rows.length === 0 ? (
         <EmptyState
           icon={<ShieldCheck size={20} />}
-          title={failed ? 'Could not load this list.' : 'No shared content found'}
+          title={failed ? 'Could not load this list.' : sub === 'your-feedback' ? 'No feedback yet' : 'No shared content found'}
           body={sub === 'shared-artifacts'
             ? 'Artifacts you share from a chat will be listed here.'
             : sub === 'your-feedback'

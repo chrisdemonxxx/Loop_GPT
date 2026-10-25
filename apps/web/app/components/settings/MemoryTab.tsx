@@ -154,7 +154,7 @@ export default function MemoryTab() {
             title="Edit memory" aria-label="Edit memory"
           ><Pencil size={14} /></button>
           <button
-            onClick={() => remove(m.id)}
+            onClick={() => { if (window.confirm('Delete this memory?')) remove(m.id) }}
             className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-white/5"
             title="Delete memory" aria-label="Delete memory"
           ><Trash2 size={14} /></button>

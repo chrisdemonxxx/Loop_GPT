@@ -131,6 +131,10 @@ export default function UpgradePage() {
                         Create an account to upgrade
                       </Link>
                     )
+                  ) : signedIn ? (
+                    <Link href="/" className={`${btnOutline} mt-4 w-full`}>
+                      {me?.plan === 'free' || !me?.plan ? 'Current plan' : 'Go to chat'}
+                    </Link>
                   ) : (
                     <Link href="/signup" className={`${btnOutline} mt-4 w-full`}>
                       Start free

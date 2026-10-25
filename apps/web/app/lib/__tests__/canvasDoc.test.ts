@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canvasFromStored, canvasFromTurn } from '../canvasDoc'
+import { canvasFromStored, canvasFromTurn, canvasPlacement } from '../canvasDoc'
 import type { LiveStep } from '../../components/chat/types'
 
 describe('canvasFromTurn', () => {
@@ -29,5 +29,17 @@ describe('canvasFromTurn', () => {
     )
     expect(doc?.filename).toBe('app.tsx')
     expect(doc?.html).toBe(false)
+  })
+})
+
+describe('canvasPlacement', () => {
+  it('does not auto-open over the chat on a phone', () => {
+    expect(canvasPlacement(390)).toEqual({ autoOpen: false, collapseSidebar: false })
+  })
+  it('folds the docked sidebar on a tablet so the chat keeps its width', () => {
+    expect(canvasPlacement(820)).toEqual({ autoOpen: true, collapseSidebar: true })
+  })
+  it('keeps the sidebar on desktop', () => {
+    expect(canvasPlacement(1440)).toEqual({ autoOpen: true, collapseSidebar: false })
   })
 })

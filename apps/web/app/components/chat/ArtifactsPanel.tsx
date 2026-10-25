@@ -26,6 +26,8 @@ interface Props {
   buildingKinds?: string[]
   /** Composer prefill for the sandbox "Fix error" affordance. */
   onFixError?: (prompt: string) => void
+  /** Full-page viewer (/artifact/?id=) instead of the chat's side panel. */
+  standalone?: boolean
 }
 
 const WIDTH_KEY = 'artifactsPanelWidth'
@@ -65,7 +67,7 @@ const BUILDING_LABEL: Record<string, string> = {
   generate_style: 'Rendering style…',
 }
 
-export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToList, onFocusArtifact, buildingKinds = [], onFixError }: Props) {
+export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToList, onFocusArtifact, buildingKinds = [], onFixError, standalone = false }: Props) {
   const groups = groupVersions(artifacts)
   const focused = focusId ? artifacts.find((a) => a.id === focusId) || null : null
   const isDesktopViewport = useIsDesktopViewport()
@@ -105,6 +107,8 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
   useEffect(() => { setTab('preview'); setSandboxError(null); setActionError('') }, [focusId])
 
   const isHtml = !!(focused && /\.(html?|htm)$/i.test(focused.name))
+  /** HTML renders in the sandboxed frame on both Preview and Sandbox. */
+  const framed = isHtml && (tab === 'preview' || tab === 'sandbox')
   const isSheet = !!(focused && (focused.kind === 'xlsx' || focused.kind === 'csv' || /\.(xlsx?|csv)$/i.test(focused.name)))
   const isPdf = focused?.kind === 'pdf' || /\.(pdf)$/i.test(focused?.name || '')
   const isMermaid = !!(focused && (/\.(mmd|mermaid)$/i.test(focused.name) || focused.kind === 'mermaid'))
@@ -121,13 +125,13 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
 
   // Sandbox error bridge: uncaught errors inside the previewed document.
   useEffect(() => {
-    if (!focused || tab !== 'sandbox') return
+    if (!focused || !framed) return
     const onMessage = (e: MessageEvent) => {
       if (e.data && typeof e.data.__artifactError === 'string') setSandboxError(e.data.__artifactError)
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [focused, tab])
+  }, [focused, framed])
 
   const fixPrompt = useCallback(() => {
     if (!focused || !sandboxError) return
@@ -196,18 +200,20 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
   // Mobile (below lg): a true bottom sheet — slides up, not in from the right
   // (audit P6). Desktop keeps the docked right-hand panel; fullscreen stays a
   // full overlay on both.
-  const sheet = !fullscreen && !isDesktopViewport
+  const sheet = !standalone && !fullscreen && !isDesktopViewport
 
   return (
     <motion.aside
-      initial={sheet ? { y: 400 } : { x: 400, opacity: 0 }}
-      animate={sheet ? { y: 0 } : { x: 0, opacity: 1 }}
+      initial={standalone ? false : sheet ? { y: 400 } : { x: 400, opacity: 0 }}
+      animate={standalone ? undefined : sheet ? { y: 0 } : { x: 0, opacity: 1 }}
       exit={sheet ? { y: 400 } : { x: 400, opacity: 0 }}
       transition={{ type: 'spring', stiffness: 320, damping: 34 }}
-      style={fullscreen ? undefined : isDesktopViewport ? { width } : undefined}
+      style={fullscreen || standalone ? undefined : isDesktopViewport ? { width } : undefined}
       className={
         fullscreen
           ? 'fixed inset-0 z-50 flex p-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))]'
+          : standalone
+            ? 'flex h-[100dvh] w-full p-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))]'
           : sheet
             ? 'fixed inset-x-0 bottom-0 z-40 flex flex-col h-[85dvh] px-2.5 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]'
             : 'fixed lg:relative inset-y-0 right-0 z-40 lg:z-auto flex w-full max-w-[92vw] sm:max-w-[440px] lg:max-w-none shrink-0 px-2.5 sm:px-3 lg:p-3 h-full pt-[max(0.625rem,env(safe-area-inset-top))] pb-[max(0.625rem,env(safe-area-inset-bottom))] lg:pt-3 lg:pb-3'
@@ -220,7 +226,7 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
           </div>
         )}
         {/* Drag handle (desktop resize, persisted) */}
-        {!fullscreen && (
+        {!fullscreen && !standalone && (
           <div
             onPointerDown={onDragStart}
             onPointerMove={onDragMove}
@@ -236,7 +242,7 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
         {/* Header */}
         <div className="flex items-center gap-2.5 px-4 py-3 border-b border-white/5 shrink-0">
           {focused && onBackToList ? (
-            <button onClick={onBackToList} className="p-1 -ml-1 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-200 transition" title="Back to list"><ChevronLeft size={16} /></button>
+            <button onClick={onBackToList} className="p-1 -ml-1 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-200 transition" title="Back to list" aria-label="Back to list"><ChevronLeft size={16} /></button>
           ) : (
             <div className="w-2 h-2 rounded-full bg-[#c96442]" />
           )}
@@ -246,10 +252,12 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
               {focused ? focused.kind.toUpperCase() : `${artifacts.length} item${artifacts.length === 1 ? '' : 's'}`}
             </div>
           </div>
-          <button onClick={() => setFullscreen((v) => !v)} className="p-1 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-200 transition" title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
-            {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-          </button>
-          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-200 transition" title="Close"><X size={16} /></button>
+          {!standalone && (
+            <button onClick={() => setFullscreen((v) => !v)} className="p-1 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-200 transition" title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'} aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
+              {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            </button>
+          )}
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-200 transition" title="Close" aria-label="Close"><X size={16} /></button>
         </div>
 
         {/* ── Focused artifact view ─────────────────────────────────────── */}
@@ -265,19 +273,19 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
                   </button>
                 ))}
               <span className="flex-1" />
-              {isHtml && tab === 'sandbox' && (
+              {framed && (
                 <>
                   {(['desktop', 'tablet', 'mobile'] as ArtifactDevice[]).map((d) => (
-                    <button key={d} onClick={() => setDevice(d)} title={`Preview at ${d} size`}
+                    <button key={d} onClick={() => setDevice(d)} title={`Preview at ${d} size`} aria-label={`Preview at ${d} size`} aria-pressed={device === d}
                       className={`p-1 rounded-lg transition ${device === d ? 'bg-white/10 text-slate-200' : 'text-slate-400 hover:text-slate-300'}`}>
                       {d === 'desktop' ? <Monitor size={13} /> : d === 'tablet' ? <Tablet size={13} /> : <Smartphone size={13} />}
                     </button>
                   ))}
-                  <button onClick={() => { setNonce((n) => n + 1); setSandboxError(null) }} title="Refresh preview" className="p-1 rounded-lg text-slate-400 hover:text-slate-300 transition"><RefreshCw size={13} /></button>
+                  <button onClick={() => { setNonce((n) => n + 1); setSandboxError(null) }} title="Refresh preview" aria-label="Refresh preview" className="p-1 rounded-lg text-slate-400 hover:text-slate-300 transition"><RefreshCw size={13} /></button>
                 </>
               )}
               {openInNewTab && (
-                <button onClick={openInNewTab} title="Open in new tab (short-lived private link)" className="p-1 rounded-lg text-slate-400 hover:text-slate-300 transition"><ExternalLink size={13} /></button>
+                <button onClick={openInNewTab} title="Open in new tab (short-lived private link)" aria-label="Open in new tab" className="p-1 rounded-lg text-slate-400 hover:text-slate-300 transition"><ExternalLink size={13} /></button>
               )}
             </div>
 
@@ -308,7 +316,7 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
                 mermaidText.error || !mermaidText.text ? <FileOpenError onRetry={mermaidText.retry} /> :
                 <MermaidView code={mermaidText.text} />
               )}
-              {tab === 'preview' && !isPdf && !isSheet && !isMermaid && focused.kind !== 'image' && !isVideoArtifact(focused) && (
+              {tab === 'preview' && !isHtml && !isPdf && !isSheet && !isMermaid && focused.kind !== 'image' && !isVideoArtifact(focused) && (
                 textLoading ? <LoadingShim /> :
                 textError ? <FileOpenError onRetry={retryText} /> :
                 /\.(md|txt)$/i.test(focused.name) && textContent !== null ? (
@@ -326,7 +334,7 @@ export default function ArtifactsPanel({ artifacts, onClose, focusId, onBackToLi
                 textError ? <FileOpenError onRetry={retryText} /> :
                 <pre className="text-[12px] leading-relaxed text-slate-400 whitespace-pre-wrap font-mono">{(textContent || '').slice(0, 30000)}</pre>
               )}
-              {tab === 'sandbox' && isHtml && (
+              {framed && (
                 <div className="h-full flex flex-col gap-2">
                   {sandboxError && (
                     <div className="rounded-xl border border-rose-500/20 bg-rose-500/[0.04] px-3 py-2 flex items-start gap-2">

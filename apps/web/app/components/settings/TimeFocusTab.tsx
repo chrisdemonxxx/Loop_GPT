@@ -84,13 +84,12 @@ export default function TimeFocusTab() {
           </span>
           <Toggle on={quietHours.enabled} onChange={(on) => update({ quietHours: { ...quietHours, enabled: on } })} label="Mute notifications at set hours" />
         </div>
-        <div role="radiogroup" aria-label="Quiet hours days" className="mt-3 flex flex-wrap gap-1.5">
+        <div role="group" aria-label="Quiet hours days" className="mt-3 flex flex-wrap gap-1.5">
           {DAYS.map((d, i) => (
             <button
               key={d}
               type="button"
-              role="radio"
-              aria-checked={quietHours.days[i]}
+              aria-pressed={quietHours.days[i]}
               aria-label={d}
               disabled={!quietHours.enabled}
               onClick={() => {

@@ -15,7 +15,7 @@
 export interface SettingsHashRoute { panel: string; sub?: PrivacySub }
 
 export const SETTINGS_PANELS = [
-  'general', 'account', 'privacy', 'billing', 'tools', 'memory', 'reflect', 'time', 'code',
+  'general', 'account', 'privacy', 'billing', 'tools', 'memory', 'time', 'code',
   'skills', 'connectors', 'plugins', 'personalization', 'appearance',
 ] as const
 
@@ -26,7 +26,7 @@ export const PRIVACY_SUBS = [
 export type PrivacySub = (typeof PRIVACY_SUBS)[number]
 
 /** Blueprint panel names that alias to ours. */
-const ALIASES: Record<string, string> = { capabilities: 'tools', 'claude-code': 'code', 'time-and-focus': 'time' }
+const ALIASES: Record<string, string> = { capabilities: 'tools', 'claude-code': 'code', 'time-and-focus': 'time', reflect: 'memory' }
 
 export function normalizePanelId(raw: string): string {
   const id = ALIASES[raw] ?? raw

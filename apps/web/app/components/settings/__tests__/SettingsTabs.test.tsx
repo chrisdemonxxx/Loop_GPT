@@ -70,6 +70,28 @@ describe('SettingsPanel shell', () => {
     }
   })
 
+  it('falls back to General for a panel with no tab instead of a blank body', () => {
+    render(<SettingsPanel onClose={() => {}} initialTab="reflect-old" />)
+    const general = screen.getByRole('tab', { name: /General/ }) as HTMLElement
+    expect(general.getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('scrolls a deep-linked tab that sits off-screen into the strip', () => {
+    const rect = (left: number, width: number) => ({ left, right: left + width, width, top: 0, bottom: 40, height: 40, x: left, y: 0, toJSON: () => ({}) }) as DOMRect
+    const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.getAttribute('role') === 'tablist') return rect(0, 390)
+      if (this.getAttribute('aria-selected') === 'true') return rect(1200, 120)
+      return rect(0, 0)
+    })
+    try {
+      render(<SettingsPanel onClose={() => {}} initialTab="appearance" />)
+      const strip = screen.getByRole('tablist')
+      expect(strip.scrollLeft).toBe(1200 - (390 - 120) / 2)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('selecting a tab pushes the settings hash; leaving it fires onClose', () => {
     window.location.hash = ''
     const onClose = vi.fn()

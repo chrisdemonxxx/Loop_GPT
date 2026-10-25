@@ -23,8 +23,8 @@ import ArtifactsPanel from '../components/chat/ArtifactsPanel'
 import ChatHeader from '../components/chat/ChatHeader'
 import { CanvasPanel } from '../components/chat/CanvasPanel'
 import { BotProfilePanel, CreateBotDialog, CreateGroupDialog, StartChatPicker } from '../components/chat/BotChrome'
-import { canvasFromStored, canvasFromTurn } from '../lib/canvasDoc'
-import { botsForMessage, createBotGroup, createNamedBot, followUpTargets, groupFanOut, listNamedBots, openBotThread, updateNamedBot, type BotGroup, type NamedBot } from '../lib/namedBots'
+import { canvasFromStored, canvasFromTurn, canvasPlacement, viewportWidth } from '../lib/canvasDoc'
+import { botsForMessage, createBotGroup, createNamedBot, deleteBotThread, deleteNamedBot, followUpTargets, groupFanOut, listNamedBots, openBotThread, renameBotThread, updateNamedBot, type BotGroup, type NamedBot } from '../lib/namedBots'
 import AuthSidePanel from '../components/chat/AuthSidePanel'
 import type { Conversation, Message } from '../components/chat/types'
 import { agentsThreadHref, exactSlashAction, parseBotCommand, parseCommand, SLASH_COMMANDS } from '../lib/commands'
@@ -211,10 +211,10 @@ export default function ChatPage() {
   const [createBotOpen, setCreateBotOpen] = useState(false)
   const [createGroupOpen, setCreateGroupOpen] = useState(false)
   const [botBusy, setBotBusy] = useState(false)
-  const [canvasDismissed, setCanvasDismissed] = useState(false)
+  const [canvasDismissed, setCanvasDismissed] = useState(() => !canvasPlacement(viewportWidth()).autoOpen)
   const [streamingBotId, setStreamingBotId] = useState<string | null>(null)
   const [openedBotId, setOpenedBotId] = useState<string | null>(null)
-  const [threadMeta, setThreadMeta] = useState<{ id: string; kind: string; botId?: string | null; botIds?: string[] } | null>(null)
+  const [threadMeta, setThreadMeta] = useState<{ id: string; kind: string; botId?: string | null; botIds?: string[]; title?: string } | null>(null)
 
   useEffect(() => {
     fetch(`${API_URL}/api/agent/tools`, { headers: authHeaders() })
@@ -261,7 +261,7 @@ export default function ChatPage() {
     setPendingBranch(undefined)
     setEditingMessageId(null)
     editSnapshot.current = null
-    setCanvasDismissed(false)
+    setCanvasDismissed(!canvasPlacement(viewportWidth()).autoOpen)
     setOpenedBotId(null)
     setThreadMeta(null)
     // Â§8-39: queued messages belong to the conversation they were typed in.
@@ -832,14 +832,15 @@ export default function ChatPage() {
   const activeConv = listedActive?.kind && listedActive.kind !== 'chat'
     ? listedActive
     : threadMeta?.id === currentConversationId
-      ? { ...listedActive, id: currentConversationId!, kind: threadMeta.kind, botId: threadMeta.botId, botIds: threadMeta.botIds } as Conversation
+      ? { ...listedActive, id: currentConversationId!, kind: threadMeta.kind, botId: threadMeta.botId, botIds: threadMeta.botIds, title: listedActive?.title || threadMeta.title } as Conversation
       : listedActive
   const profileBotId = activeConv?.kind === 'bot' ? (activeConv.botId || openedBotId) : openedBotId
   const profileBot = profileBotId ? roster.bots.find((b) => b.id === profileBotId) || null : null
-  const headerTitle = profileBot?.name
-    || (activeConv?.kind === 'group' ? (activeConv.title || 'Group') : convTitle)
-  const welcomeHeadline = profileBot?.name
-    || (activeConv?.kind === 'group' ? (activeConv.title || 'Group') : undefined)
+  const groupTitle = activeConv?.kind === 'group'
+    ? (activeConv.title || roster.groups.find((g) => g.id === activeConv.id)?.title || 'Group')
+    : undefined
+  const headerTitle = profileBot?.name || groupTitle || convTitle
+  const welcomeHeadline = profileBot?.name || groupTitle
   const welcomeNote = activeConv?.kind === 'group' && (activeConv.botIds?.length ?? 0) < 2
     ? 'A group needs at least two bots.'
     : undefined
@@ -864,6 +865,11 @@ export default function ChatPage() {
     return null
   })()
   const canvasDoc = canvasDismissed ? null : (liveCanvas || storedCanvas)
+  // A docked sidebar plus a 440px canvas leaves the chat unusable between
+  // 768px and 1024px, so the sidebar folds while that canvas is open.
+  useEffect(() => {
+    if (canvasDoc && canvasPlacement(viewportWidth()).collapseSidebar) panels.setSidebarOpen(false)
+  }, [canvasDoc, panels])
   const composerPlaceholder = profileBot
     ? `Message ${profileBot.name}`
     : activeConv?.kind === 'group'
@@ -902,8 +908,38 @@ export default function ChatPage() {
   async function openGroup(group: BotGroup) {
     setPickerOpen(false)
     selectConversation(group.id)
-    setThreadMeta({ id: group.id, kind: 'group', botIds: group.botIds })
+    setThreadMeta({ id: group.id, kind: 'group', botIds: group.botIds, title: group.title })
     panels.setSidebarOpen(false)
+  }
+  async function deleteBot(bot: NamedBot) {
+    try {
+      await deleteNamedBot(bot.id)
+      if (profileBot?.id === bot.id) selectConversation(null)
+      invalidateConversations()
+      await refreshRoster()
+    } catch (err: any) {
+      toast.push('error', err?.message || 'Could not delete that bot')
+    }
+  }
+  async function renameGroup(group: BotGroup, title: string) {
+    try {
+      await renameBotThread(group.id, title)
+      setThreadMeta((meta) => (meta?.id === group.id ? { ...meta, title } : meta))
+      invalidateConversations()
+      await refreshRoster()
+    } catch (err: any) {
+      toast.push('error', err?.message || 'Could not rename that group')
+    }
+  }
+  async function deleteGroup(group: BotGroup) {
+    try {
+      await deleteBotThread(group.id)
+      if (currentConversationId === group.id) selectConversation(null)
+      invalidateConversations()
+      await refreshRoster()
+    } catch (err: any) {
+      toast.push('error', err?.message || 'Could not delete that group')
+    }
   }
 
   // Sidebar contents — shared by the docked column (md+) and the mobile drawer.
@@ -941,6 +977,9 @@ export default function ChatPage() {
       onOpenGroup={(group) => { void openGroup(group) }}
       onCreateBot={() => { setPickerOpen(false); setCreateBotOpen(true) }}
       onCreateGroup={() => { setPickerOpen(false); setCreateGroupOpen(true) }}
+      onDeleteBot={(bot) => { void deleteBot(bot) }}
+      onRenameGroup={renameGroup}
+      onDeleteGroup={(group) => { void deleteGroup(group) }}
     />
   )
 
@@ -1299,7 +1338,7 @@ export default function ChatPage() {
               const created = await createBotGroup(botIds, name || undefined)
               setCreateGroupOpen(false)
               selectConversation(created.id)
-              setThreadMeta({ id: created.id, kind: 'group', botIds: created.botIds })
+              setThreadMeta({ id: created.id, kind: 'group', botIds: created.botIds, title: created.title })
               await refreshRoster()
             } catch (err: any) {
               toast.push('error', err?.message || 'Could not create that group')

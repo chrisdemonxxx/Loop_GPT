@@ -59,7 +59,7 @@ export default function ChatHeader({
         title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
         aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
         aria-expanded={sidebarOpen}
-        className="p-1.5 rounded-lg hover:bg-white/[0.05] text-slate-400 hover:text-slate-300 transition"
+        className="p-2 -m-0.5 rounded-lg hover:bg-white/[0.05] text-slate-400 hover:text-slate-300 transition"
       >
         <PanelLeft size={17} />
       </button>
@@ -91,7 +91,7 @@ export default function ChatHeader({
             aria-haspopup="menu"
             aria-expanded={moreOpen}
             title="More actions"
-            className="p-1.5 rounded-lg hover:bg-white/[0.05] text-slate-400 hover:text-slate-300 transition"
+            className="p-2 -m-0.5 rounded-lg hover:bg-white/[0.05] text-slate-400 hover:text-slate-300 transition"
           >
             <MoreHorizontal size={16} />
           </button>

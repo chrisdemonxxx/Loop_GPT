@@ -55,7 +55,10 @@ export default function DeveloperPage() {
   const revokeKey = useMutation({
     // A failed revoke still refreshes the list so rows reflect the truth.
     mutationFn: (id: string) => apiFetch(`/api/developer/keys/${id}`, { method: 'DELETE' }).catch(() => {}),
-    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['developer', 'overview'] }) },
+    onSuccess: (_data, id) => {
+      setIssued((current) => (current?.id === id ? null : current))
+      void queryClient.invalidateQueries({ queryKey: ['developer', 'overview'] })
+    },
   })
 
   const updateKeyLimits = useMutation({
@@ -163,7 +166,7 @@ export default function DeveloperPage() {
                       >
                         {editingKeyId === k.id ? 'Cancel' : 'Limits'}
                       </button>
-                      <button type="button" onClick={() => revokeKey.mutate(k.id)} className="text-[var(--ink-muted)] hover:text-[var(--danger)] shrink-0" aria-label={`Revoke ${k.name || k.prefix}`}><Trash2 size={13} aria-hidden /></button>
+                      <button type="button" onClick={() => { if (window.confirm(`Revoke ${k.name || 'this key'}? Apps using it will stop working.`)) revokeKey.mutate(k.id) }} className="inline-flex items-center justify-center min-w-8 min-h-8 text-[var(--ink-muted)] hover:text-[var(--danger)] shrink-0" aria-label={`Revoke ${k.name || k.prefix}`}><Trash2 size={13} aria-hidden /></button>
                     </div>
                   </div>
                   {editingKeyId === k.id && (

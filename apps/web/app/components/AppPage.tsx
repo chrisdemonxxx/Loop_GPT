@@ -75,7 +75,7 @@ export function AppBar() {
           onClick={() => setChoice(NEXT_THEME[choice])}
           aria-label={`Theme: ${themeLabel}. Switch theme`}
           title={`Theme: ${themeLabel}`}
-          className="tap-target shrink-0 rounded-lg p-1.5 text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition"
+          className="tap-target shrink-0 rounded-lg p-2 -m-0.5 text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition"
         >
           <ThemeIcon size={16} aria-hidden />
         </button>
@@ -84,7 +84,7 @@ export function AppBar() {
           aria-label="Settings"
           aria-current={isActive(pathname, '/customize') ? 'page' : undefined}
           title="Settings"
-          className="tap-target shrink-0 rounded-lg p-1.5 text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition"
+          className="tap-target shrink-0 rounded-lg p-2 -m-0.5 text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--ink-primary)] transition"
         >
           <Settings size={16} aria-hidden />
         </Link>

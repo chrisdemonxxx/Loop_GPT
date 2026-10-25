@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Plus, Users, X } from 'lucide-react'
+import { Edit2, Plus, Trash2, Users, X } from 'lucide-react'
 import { AVATAR_COLORS, type BotGroup, type NamedBot } from '../../lib/namedBots'
-import { useFocusTrap } from '@loop/ui'
+import { ConfirmDialog, useFocusTrap } from '@loop/ui'
 import { agentsThreadHref } from '../../lib/commands'
 import { deleteBotSkill, getBotMemory, listBotRoutines, listBotSkills, type BotSkillRef } from '../../lib/bot'
 import { useTeachSession } from '../team-bot/useTeachSession'
@@ -46,8 +46,25 @@ export function BotAvatar({ name, color, working, unread, size = 28 }: {
   )
 }
 
+const SECTION_ACTIONS = 'flex items-center shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100'
+
+function SectionAction({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={(e) => { e.stopPropagation(); onClick() }}
+      className="inline-flex items-center justify-center min-w-8 min-h-8 -my-1.5 rounded text-slate-400 hover:text-slate-300 hover:bg-white/10"
+    >
+      {children}
+    </button>
+  )
+}
+
 export function BotSidebarSection({
   bots, groups, activeBotId, activeGroupId, onOpenBot, onOpenGroup, onCreateBot, onCreateGroup,
+  onDeleteBot, onRenameGroup, onDeleteGroup,
 }: {
   bots: NamedBot[]
   groups: BotGroup[]
@@ -57,29 +74,48 @@ export function BotSidebarSection({
   onOpenGroup: (group: BotGroup) => void
   onCreateBot: () => void
   onCreateGroup: () => void
+  onDeleteBot?: (bot: NamedBot) => void
+  onRenameGroup?: (group: BotGroup, title: string) => void | Promise<unknown>
+  onDeleteGroup?: (group: BotGroup) => void
 }) {
+  const [confirmBot, setConfirmBot] = useState<NamedBot | null>(null)
+  const [confirmGroup, setConfirmGroup] = useState<BotGroup | null>(null)
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState('')
+  const commitGroupTitle = (group: BotGroup) => {
+    const title = editingTitle.trim()
+    setEditingGroupId(null)
+    if (title && title !== group.title) void onRenameGroup?.(group, title)
+  }
   return (
-    <div className="px-2 pt-2 space-y-0.5">
-      <div className="px-2.5 pt-1 pb-0.5 text-[10px] uppercase tracking-widest text-slate-500 font-medium flex items-center justify-between">
+    <>
+    <div data-testid="bot-sidebar-section" className="px-2 pt-2 space-y-0.5 max-h-[25%] min-h-0 overflow-y-auto overscroll-contain">
+      <div className="sticky top-0 z-[1] bg-[#0a0a0c] px-2.5 pt-1 pb-0.5 text-[10px] uppercase tracking-widest text-slate-500 font-medium flex items-center justify-between">
         <span>Bots</span>
-        <button type="button" onClick={onCreateBot} aria-label="Create new Bot" className="p-1 rounded-md text-slate-500 hover:text-slate-200 hover:bg-white/[0.05]"><Plus size={12} /></button>
+        <button type="button" onClick={onCreateBot} aria-label="Create new Bot" className="inline-flex items-center justify-center min-w-8 min-h-8 -my-2 -mr-2 rounded-md text-slate-500 hover:text-slate-200 hover:bg-white/[0.05]"><Plus size={12} /></button>
       </div>
       {bots.length === 0 && (
         <p className="px-2.5 py-2 text-[12px] text-slate-500">No bots yet.</p>
       )}
       {bots.map((bot) => (
-        <button
-          key={bot.id}
-          type="button"
-          onClick={() => onOpenBot(bot)}
-          className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left transition ${activeBotId === bot.id ? 'bg-white/[0.06]' : 'hover:bg-white/[0.04]'}`}
-        >
-          <BotAvatar name={bot.name} color={bot.avatarColor} working={bot.working} />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13px] text-slate-200">{bot.name}</span>
-            <span className="block truncate text-[11px] text-slate-500">{bot.preview || bot.label || 'No messages yet'}</span>
-          </span>
-        </button>
+        <div key={bot.id} className={`group flex items-center gap-1 pr-1.5 rounded-lg transition ${activeBotId === bot.id ? 'bg-white/[0.06]' : 'hover:bg-white/[0.04]'}`}>
+          <button
+            type="button"
+            onClick={() => onOpenBot(bot)}
+            className="min-w-0 flex-1 flex items-center gap-2.5 px-2.5 py-2 text-left"
+          >
+            <BotAvatar name={bot.name} color={bot.avatarColor} working={bot.working} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] text-slate-200">{bot.name}</span>
+              <span className="block truncate text-[11px] text-slate-500">{bot.preview || bot.label || 'No messages yet'}</span>
+            </span>
+          </button>
+          {onDeleteBot && !bot.isPrimary && (
+            <span className={SECTION_ACTIONS}>
+              <SectionAction label={`Delete ${bot.name}`} onClick={() => setConfirmBot(bot)}><Trash2 size={12} /></SectionAction>
+            </span>
+          )}
+        </div>
       ))}
       <button type="button" onClick={onCreateGroup} className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]">
         <Users size={13} /> Create group chat
@@ -87,23 +123,75 @@ export function BotSidebarSection({
       {groups.length > 0 && (
         <div className="pt-1 space-y-0.5">
           <div className="px-2.5 text-[10px] uppercase tracking-widest text-slate-500 font-medium">Groups</div>
-          {groups.map((group) => (
-            <button
+          {groups.map((group) => editingGroupId === group.id ? (
+            <input
               key={group.id}
-              type="button"
-              onClick={() => onOpenGroup(group)}
-              className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left transition ${activeGroupId === group.id ? 'bg-white/[0.06]' : 'hover:bg-white/[0.04]'}`}
-            >
-              <span className="w-7 h-7 rounded-full bg-white/[0.06] flex items-center justify-center text-slate-300 shrink-0"><Users size={13} /></span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] text-slate-200">{group.title}</span>
-                <span className="block truncate text-[11px] text-slate-500">{group.preview || `${group.botIds.length} bots`}</span>
-              </span>
-            </button>
+              aria-label="Group name"
+              value={editingTitle}
+              onChange={(e) => setEditingTitle(e.target.value)}
+              autoFocus
+              onBlur={() => commitGroupTitle(group)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                if (e.key === 'Escape') { e.stopPropagation(); setEditingGroupId(null) }
+              }}
+              className="w-full px-2.5 py-2 text-[13px] bg-ink-800 border border-white/10 rounded-lg text-slate-100 focus:outline-none"
+            />
+          ) : (
+            <div key={group.id} className={`group flex items-center gap-1 pr-1.5 rounded-lg transition ${activeGroupId === group.id ? 'bg-white/[0.06]' : 'hover:bg-white/[0.04]'}`}>
+              <button
+                type="button"
+                onClick={() => onOpenGroup(group)}
+                className="min-w-0 flex-1 flex items-center gap-2.5 px-2.5 py-2 text-left"
+              >
+                <span className="w-7 h-7 rounded-full bg-white/[0.06] flex items-center justify-center text-slate-300 shrink-0"><Users size={13} /></span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] text-slate-200">{group.title}</span>
+                  <span className="block truncate text-[11px] text-slate-500">{group.preview || `${group.botIds.length} bots`}</span>
+                </span>
+              </button>
+              {(onRenameGroup || onDeleteGroup) && (
+                <span className={SECTION_ACTIONS}>
+                  {onRenameGroup && (
+                    <SectionAction label={`Rename ${group.title}`} onClick={() => { setEditingGroupId(group.id); setEditingTitle(group.title) }}><Edit2 size={12} /></SectionAction>
+                  )}
+                  {onDeleteGroup && (
+                    <SectionAction label={`Delete ${group.title}`} onClick={() => setConfirmGroup(group)}><Trash2 size={12} /></SectionAction>
+                  )}
+                </span>
+              )}
+            </div>
           ))}
         </div>
       )}
     </div>
+      <ConfirmDialog
+        open={confirmBot !== null}
+        tone="danger"
+        title={`Delete ${confirmBot?.name ?? 'this bot'}?`}
+        ariaLabel="Delete bot"
+        body="Its chat thread is deleted too. This can't be undone."
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (confirmBot) onDeleteBot?.(confirmBot)
+          setConfirmBot(null)
+        }}
+        onCancel={() => setConfirmBot(null)}
+      />
+      <ConfirmDialog
+        open={confirmGroup !== null}
+        tone="danger"
+        title={`Delete ${confirmGroup?.title ?? 'this group'}?`}
+        ariaLabel="Delete group"
+        body="The group chat is deleted. The bots stay. This can't be undone."
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (confirmGroup) onDeleteGroup?.(confirmGroup)
+          setConfirmGroup(null)
+        }}
+        onCancel={() => setConfirmGroup(null)}
+      />
+    </>
   )
 }
 

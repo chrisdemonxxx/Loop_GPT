@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import {
-  ArrowLeft, X, Wrench, Puzzle, Blocks, Cable, Brain, Palette, SunMoon,
+  ArrowLeft, ChevronLeft, ChevronRight, X, Wrench, Puzzle, Blocks, Cable, Brain, Palette, SunMoon,
   Settings2, UserRound, ShieldCheck, CreditCard, Clock, Terminal,
 } from 'lucide-react'
 import MemoryTab from './settings/MemoryTab'
@@ -20,7 +20,7 @@ import PrivacyTab from './settings/PrivacyTab'
 import BillingTab from './settings/BillingTab'
 import TimeFocusTab from './settings/TimeFocusTab'
 import CodeTab from './settings/CodeTab'
-import { pushSettingsHash, readCurrentSettingsHash, parseSettingsHash, exitSettingsHash, type PrivacySub } from '../lib/settingsHash'
+import { pushSettingsHash, readCurrentSettingsHash, parseSettingsHash, exitSettingsHash, normalizePanelId, type PrivacySub } from '../lib/settingsHash'
 import { useFocusTrap } from '@loop/ui'
 
 interface Props { onClose: () => void; initialTab?: string; workspaceId?: string | null; asPage?: boolean }
@@ -39,7 +39,7 @@ interface Props { onClose: () => void; initialTab?: string; workspaceId?: string
  */
 export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage = false }: Props) {
   const hashRoute = readCurrentSettingsHash()
-  const [tab, setTab] = useState(initialTab || hashRoute?.panel || 'general')
+  const [tab, setTab] = useState(normalizePanelId(initialTab || hashRoute?.panel || 'general'))
   const [privacySub, setPrivacySub] = useState<PrivacySub | undefined>(hashRoute?.sub)
   // Tab-strip scroll edges (fade indicators so off-screen tabs are discoverable).
   const [tabScroll, setTabScroll] = useState({ left: false, right: false })
@@ -60,6 +60,25 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+
+  // A deep link (or back/forward) can select a tab that sits off-screen on a
+  // phone; center it in the strip.
+  useEffect(() => {
+    const strip = tabStripRef.current
+    const active = strip?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+    if (!strip || !active) return
+    const s = strip.getBoundingClientRect()
+    const a = active.getBoundingClientRect()
+    if (a.left >= s.left && a.right <= s.right) return
+    strip.scrollLeft += a.left - s.left - (s.width - a.width) / 2
+    setTabScroll({ left: strip.scrollLeft > 8, right: strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 8 })
+  }, [tab])
+
+  const scrollTabs = (dir: -1 | 1) => {
+    const strip = tabStripRef.current
+    if (!strip) return
+    strip.scrollBy?.({ left: dir * strip.clientWidth * 0.6, behavior: 'smooth' })
+  }
 
   // Hash → panel: back/forward and typed URLs select panels; an emptied hash
   // closes the dialog (only in dialog mode). popstate AND hashchange are both
@@ -160,7 +179,7 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
             )}
             <h2 className="text-lg font-semibold text-gradient">Settings</h2>
           </div>
-          <button onClick={close} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400" aria-label="Close settings"><X size={18} /></button>
+          <button onClick={close} className="p-2 -m-0.5 hover:bg-white/10 rounded-lg text-slate-400" aria-label="Close settings"><X size={18} /></button>
         </div>
         {/* Tab strip: group labels inline (P1: groups were computed but never
             rendered) + scroll-fade edges so off-screen tabs are discoverable
@@ -198,10 +217,18 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
             ))}
           </div>
           {tabScroll.left && (
-            <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-[#0f0f12] to-transparent" />
+            <div className="pointer-events-none absolute inset-y-0 left-0 w-12 flex items-center bg-gradient-to-r from-[#0f0f12] via-[#0f0f12]/80 to-transparent">
+              <button type="button" tabIndex={-1} aria-hidden onClick={() => scrollTabs(-1)} data-testid="settings-tabs-left" className="pointer-events-auto p-2 text-slate-300 hover:text-slate-100">
+                <ChevronLeft size={16} />
+              </button>
+            </div>
           )}
           {tabScroll.right && (
-            <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-[#0f0f12] to-transparent" />
+            <div className="pointer-events-none absolute inset-y-0 right-0 w-12 flex items-center justify-end bg-gradient-to-l from-[#0f0f12] via-[#0f0f12]/80 to-transparent">
+              <button type="button" tabIndex={-1} aria-hidden onClick={() => scrollTabs(1)} data-testid="settings-tabs-right" className="pointer-events-auto p-2 text-slate-300 hover:text-slate-100">
+                <ChevronRight size={16} />
+              </button>
+            </div>
           )}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">

@@ -113,7 +113,7 @@ export default function BillingTab() {
               }}
               className="rounded-lg border border-[#c96442]/40 bg-[#c96442]/[0.08] px-3.5 py-2 text-[13px] font-medium text-[#e79d7f] transition hover:bg-[#c96442]/[0.14] disabled:opacity-50"
             >
-              {me?.plan === plan ? `${plan} is current` : checkoutPlan === plan ? 'Starting…' : `Upgrade to ${plan}`}
+              {me?.plan === plan ? `${plan === 'gold' ? 'Max' : 'Pro'} is current` : checkoutPlan === plan ? 'Starting…' : `Upgrade to ${plan === 'gold' ? 'Max' : 'Pro'}`}
             </button>
           ))}
         </div>

@@ -16,6 +16,12 @@ describe('settings hash routing (S2, contract §2)', () => {
     expect(parseSettingsHash('#settings/time-and-focus')!.panel).toBe('time')
   })
 
+  it('opens Memory for the retired Reflect panel instead of a blank one', () => {
+    expect(SETTINGS_PANELS).not.toContain('reflect')
+    expect(parseSettingsHash('#settings/reflect')!.panel).toBe('memory')
+    expect(toSettingsHash('reflect')).toBe('#settings/memory')
+  })
+
   it('falls back to general for unknown panels (with a console warn)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(parseSettingsHash('#settings/teleport')).toEqual({ panel: 'general' })

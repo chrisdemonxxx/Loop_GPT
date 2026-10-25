@@ -93,7 +93,12 @@ async function main() {
     const name = (vars.stdout.match(/^POSTGRES_DB=(.+)$/m) || [])[1]
     if (!dbUrl && !(user && pass && name)) { console.error('[deploy] FAILED: no DATABASE_URL or POSTGRES_* credentials found'); process.exit(1) }
     const tunnel = spawn('railway', ['connect', 'postgres', '--tunnel-only', '--ssh', '-P', String(tunnelPort), '--project', PROJECT, '--environment', ENVIRONMENT],
-      { cwd: ROOT, shell: true, stdio: ['ignore', 'inherit', 'inherit'] })
+      { cwd: ROOT, shell: false, stdio: 'ignore' })
+    const killTunnel = () => {
+      if (!tunnel.pid) return
+      if (process.platform === 'win32') spawnSync('taskkill', ['/T', '/F', '/PID', String(tunnel.pid)], { stdio: 'ignore' })
+      else tunnel.kill()
+    }
     try {
       await waitForPort(tunnelPort)
       const local = dbUrl
@@ -101,7 +106,7 @@ async function main() {
         : `postgresql://${user}:${pass}@127.0.0.1:${tunnelPort}/${name}`
       run('npx prisma migrate deploy', path.join(ROOT, 'backend'), { DATABASE_URL: local })
     } finally {
-      tunnel.kill()
+      killTunnel()
     }
   }
 

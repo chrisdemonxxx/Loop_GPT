@@ -48,6 +48,17 @@ export function canvasFromTurn(steps: LiveStep[], answer: string): CanvasDoc | n
   return fromFenced(answer)
 }
 
+/** Below 768px the canvas is a full-screen sheet, so it waits for a tap
+ *  instead of covering the chat. From 768px to 1024px the docked sidebar
+ *  folds away so the chat column keeps its width beside the canvas. */
+export function canvasPlacement(viewportWidth: number): { autoOpen: boolean; collapseSidebar: boolean } {
+  return { autoOpen: viewportWidth >= 768, collapseSidebar: viewportWidth >= 768 && viewportWidth < 1024 }
+}
+
+export function viewportWidth(): number {
+  return typeof window === 'undefined' ? 1280 : window.innerWidth
+}
+
 /** Persisted assistant steps use `{ tool, args }` rather than live `LiveStep`s. */
 export function canvasFromStored(steps: Array<{ tool?: string; args?: any }>, content: string): CanvasDoc | null {
   const live: LiveStep[] = steps.map((s, i) => ({

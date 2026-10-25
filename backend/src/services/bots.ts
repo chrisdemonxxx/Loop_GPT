@@ -226,7 +226,11 @@ export async function deleteBot(ownerId: string, id: string) {
   if (!existing) throw new BotError('not_found')
   const refusal = primaryDeleteRefusal(existing.isPrimary)
   if (refusal) throw new BotError('forbidden', refusal)
-  await database.bot.delete({ where: { id } })
+  // The FK only nulls botId, which would leave the bot's 1:1 threads behind.
+  await database.$transaction([
+    database.conversation.deleteMany({ where: { userId: ownerId, botId: id, kind: 'bot' } }),
+    database.bot.delete({ where: { id } }),
+  ])
   return { ok: true }
 }
 

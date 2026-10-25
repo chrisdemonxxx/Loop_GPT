@@ -421,7 +421,7 @@ function AgentsPageInner() {
           onDelete={removeThread}
         />
 
-        <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col max-lg:min-h-[42dvh]">
         <AgentChatPane
           tasks={tasks}
           sending={sendInstruction.isPending}
@@ -482,7 +482,7 @@ function AgentsPageInner() {
         {/* ── Profile panel ── */}
         <aside
           style={{ '--computer-pane': `${computerPane.width}px` } as CSSProperties}
-          className={`flex flex-col min-h-0 overflow-hidden border-t lg:border-t-0 lg:border-l border-[var(--border-subtle)] bg-[var(--bg-sunken)] max-lg:max-h-[58dvh] w-full lg:w-[var(--computer-pane)] lg:shrink-0 ${paneResizing ? '' : 'lg:transition-[width] duration-200 ease-out'}`}
+          className={`flex flex-col min-h-0 overflow-hidden border-t lg:border-t-0 lg:border-l border-[var(--border-subtle)] bg-[var(--bg-sunken)] max-lg:max-h-[28dvh] w-full lg:w-[var(--computer-pane)] lg:shrink-0 ${paneResizing ? '' : 'lg:transition-[width] duration-200 ease-out'}`}
         >
           <div className="flex flex-col items-center pt-7 pb-4 px-4 shrink-0">
             <div className="w-16 h-16 rounded-[22px] bg-[var(--accent-soft)] border border-[var(--accent-soft-border)] flex items-center justify-center">
@@ -693,7 +693,7 @@ function BotThreadRail({
   }
 
   return (
-    <aside aria-label="Bot chats" className="flex w-full lg:w-56 shrink-0 flex-col border-b lg:border-b-0 lg:border-r border-[var(--border-subtle)] bg-[var(--bg-sunken)] max-lg:max-h-48">
+    <aside aria-label="Bot chats" className="flex w-full lg:w-56 shrink-0 flex-col border-b lg:border-b-0 lg:border-r border-[var(--border-subtle)] bg-[var(--bg-sunken)] max-lg:max-h-28">
       <div className="p-2 shrink-0">
         <button
           type="button"

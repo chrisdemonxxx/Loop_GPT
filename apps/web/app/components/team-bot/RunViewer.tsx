@@ -101,6 +101,7 @@ export default function RunViewer({ taskId, onClose }: { taskId: string; onClose
         <motion.div
           key="dock"
           variants={panelRight} initial="initial" animate="animate" exit="exit"
+          role="dialog" aria-modal="true" aria-label="Run trace"
           className="flex flex-col w-[460px] max-w-[92vw] h-dvh fixed right-0 top-0 z-40 glass-strong border-l border-[var(--border-subtle)] shadow-panel"
         >
           {content}
@@ -109,6 +110,7 @@ export default function RunViewer({ taskId, onClose }: { taskId: string; onClose
         <motion.div
           key="sheet"
           variants={sheetBottom} initial="initial" animate="animate" exit="exit"
+          role="dialog" aria-modal="true" aria-label="Run trace"
           className="flex flex-col h-[88dvh] fixed inset-x-0 bottom-0 z-40 glass-strong rounded-t-2xl border-t border-[var(--border-subtle)] shadow-panel"
         >
           <div className="mx-auto mt-2 mb-1 w-9 h-1 rounded-full bg-[var(--bg-hover-strong)] shrink-0" aria-hidden />

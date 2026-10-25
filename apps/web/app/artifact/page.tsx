@@ -82,6 +82,7 @@ export default function ArtifactPage() {
         focusId={file.data.id}
         onClose={() => router.push('/artifacts')}
         onBackToList={() => router.push('/artifacts')}
+        standalone
       />
     </div>
   )

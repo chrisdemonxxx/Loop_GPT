@@ -52,6 +52,34 @@ describe('ArtifactsPanel — list and focus', () => {
     expect(props.onBackToList).toHaveBeenCalledOnce()
   })
 
+  it('renders HTML Preview in the sandboxed frame, not as raw source', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse('<p>hello page</p>')))
+    const { container } = renderPanel({ focusId: 'a2' })
+    const frame = await screen.findByTitle('Sandbox: site.html')
+    expect(frame.getAttribute('srcdoc')).toContain('hello page')
+    expect(frame.getAttribute('sandbox')).not.toContain('allow-same-origin')
+    expect(container.querySelector('pre')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Raw' }))
+    expect(container.querySelector('pre')?.textContent).toContain('<p>hello page</p>')
+  })
+
+  it('names its icon buttons for assistive tech', async () => {
+    renderPanel({ focusId: 'a2' })
+    expect(screen.getByRole('button', { name: 'Back to list' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open in new tab' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Refresh preview' })).toBeInTheDocument()
+  })
+
+  it('standalone fills the page instead of docking as a fixed side panel', () => {
+    const { container } = renderPanel({ focusId: 'a1', standalone: true })
+    const aside = container.querySelector('aside')!
+    expect(aside.className).toContain('w-full')
+    expect(aside.className).not.toContain('fixed')
+    expect(aside.getAttribute('style') || '').not.toContain('width')
+    expect(screen.queryByRole('button', { name: 'Fullscreen' })).not.toBeInTheDocument()
+  })
+
   it('shows per-artifact Building… placeholders for in-flight tools', () => {
     renderPanel({ buildingKinds: ['generate_image', 'create_document'] })
     expect(screen.getByText('Generating image…')).toBeInTheDocument()

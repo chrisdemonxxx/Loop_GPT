@@ -38,7 +38,7 @@ function VersionArrows({ info, onSelect }: { info: BranchVersionInfo; onSelect?:
       <span className="text-[11px] text-slate-400 tabular-nums px-0.5 select-none" aria-label={`Version ${info.index} of ${info.count}`}>
         {info.index}/{info.count}
       </span>
-      {info.next && (
+      {info.next && info.index < info.count && (
         <ActionBtn
           onClick={() => pick(info.next)}
           title="Next version"

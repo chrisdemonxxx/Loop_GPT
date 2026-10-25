@@ -81,6 +81,9 @@ interface SidebarProps {
   onOpenGroup?: (group: BotGroup) => void
   onCreateBot?: () => void
   onCreateGroup?: () => void
+  onDeleteBot?: (bot: NamedBot) => void
+  onRenameGroup?: (group: BotGroup, title: string) => void | Promise<unknown>
+  onDeleteGroup?: (group: BotGroup) => void
 }
 
 /** Bucket a conversation by recency (audit §8-13: grouped history render). */
@@ -105,6 +108,7 @@ export default function Sidebar({
   sessionsError = false, sessionsPending = false, onRetrySessions, searchError = false, onRetrySearch,
   onOpenProjects, onSelectProject, activeProjectName,
   bots = [], groups = [], activeBotId, activeGroupId, onOpenBot, onOpenGroup, onCreateBot, onCreateGroup,
+  onDeleteBot, onRenameGroup, onDeleteGroup,
 }: SidebarProps) {
   const [pathname, setPathname] = useState('')
   useEffect(() => { setPathname(window.location?.pathname ?? '') }, [])
@@ -185,7 +189,7 @@ export default function Sidebar({
           onClick={onClose}
           title="Hide sidebar"
           aria-label="Hide sidebar"
-          className="ml-auto p-1.5 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-300 transition md:hidden"
+          className="ml-auto p-2 -m-0.5 rounded-lg hover:bg-white/5 text-slate-400 hover:text-slate-300 transition md:hidden"
         >
           <PanelLeft size={16} />
         </button>
@@ -290,6 +294,9 @@ export default function Sidebar({
           onOpenGroup={onOpenGroup}
           onCreateBot={onCreateBot}
           onCreateGroup={onCreateGroup}
+          onDeleteBot={onDeleteBot}
+          onRenameGroup={onRenameGroup}
+          onDeleteGroup={onDeleteGroup}
         />
       )}
 
@@ -519,7 +526,7 @@ function ConversationRow({
           <MessageSquare size={13} className="text-slate-500 shrink-0" />
           <span className="truncate flex-1">{c.title || 'New session'}</span>
         </button>
-        <span className="flex items-center gap-0.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+        <span className="flex items-center shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
           <RowAction title={c.pinned ? 'Unpin' : 'Pin to top'} onClick={onPin} className={c.pinned ? 'text-[#c96442]' : undefined}>
             <Star size={12} fill={c.pinned ? 'currentColor' : 'none'} />
           </RowAction>
@@ -553,7 +560,7 @@ function RowAction({ title, onClick, children, danger, className }: {
       title={title}
       aria-label={title}
       onClick={(e) => { e.stopPropagation(); onClick(e) }}
-      className={`tap-target p-1 hover:bg-white/10 rounded ${danger ? 'text-slate-400 hover:text-rose-400' : 'text-slate-400 hover:text-slate-300'} ${className || ''}`}
+      className={`inline-flex items-center justify-center min-w-8 min-h-8 -my-1.5 hover:bg-white/10 rounded ${danger ? 'text-slate-400 hover:text-rose-400' : 'text-slate-400 hover:text-slate-300'} ${className || ''}`}
     >
       {children}
     </button>

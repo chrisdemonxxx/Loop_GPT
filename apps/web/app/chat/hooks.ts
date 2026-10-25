@@ -49,6 +49,18 @@ export function usePanels() {
     }
   }, [])
 
+  // The drawer (below tablet) is an overlay, so Escape dismisses it. Dialogs
+  // claim Escape in the capture phase first, so this only sees a free key.
+  useEffect(() => {
+    if (isTablet || !sidebarOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      setSidebarOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isTablet, sidebarOpen])
+
   const closeOverlays = () => { if (!isTablet) { setSidebarOpen(false); setArtifactsOpen(false) } }
 
   return {
