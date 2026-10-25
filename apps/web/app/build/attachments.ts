@@ -17,6 +17,18 @@ export type BuildAttachment = {
 
 const MAX = 4
 
+/** Absolute URL the builder can fetch. An empty API base uses this page's origin. */
+export function absoluteAttachmentUrl(
+  path: string,
+  apiUrl = API_URL,
+  origin = typeof window !== 'undefined' ? window.location.origin : '',
+): string {
+  if (/^https?:\/\//i.test(path)) return path
+  const base = (apiUrl || origin).replace(/\/$/, '')
+  const suffix = path.startsWith('/') ? path : `/${path}`
+  return `${base}${suffix}`
+}
+
 export function isImageFile(file: File): boolean {
   return file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name)
 }
@@ -45,11 +57,10 @@ export async function uploadBuildImage(file: File): Promise<{ attachmentId: stri
     // Fall back to authenticated content path so the run still receives a reference.
     return {
       attachmentId: uploadBody.attachmentId,
-      url: `${API_URL}/api/files/${uploadBody.attachmentId}/content`,
+      url: absoluteAttachmentUrl(`/api/files/${uploadBody.attachmentId}/content`),
     }
   }
-  const url = linkBody.url.startsWith('http') ? linkBody.url : `${API_URL}${linkBody.url}`
-  return { attachmentId: uploadBody.attachmentId, url }
+  return { attachmentId: uploadBody.attachmentId, url: absoluteAttachmentUrl(linkBody.url) }
 }
 
 export function collectImageFiles(from: DataTransfer | FileList | null | undefined): File[] {

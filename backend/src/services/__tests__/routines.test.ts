@@ -91,6 +91,11 @@ describe('routines', () => {
     expect(routines[0].runs[0].result).toBe('All green')
   })
 
+  it('does not turn a database error into an empty list', async () => {
+    findMany.mockRejectedValue(new Error('db down'))
+    await expect(listRoutines('user-1')).rejects.toThrow(/db down/)
+  })
+
   it('cancels a dead-lettered routine', async () => {
     findFirst.mockResolvedValue({ status: 'dead_letter' })
     updateMany.mockResolvedValue({ count: 1 })

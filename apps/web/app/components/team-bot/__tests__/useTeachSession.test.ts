@@ -165,6 +165,22 @@ describe('useTeachSession', () => {
     expect(onReady).not.toHaveBeenCalled()
   })
 
+  it('stays recording when Stop cannot release the desktop', async () => {
+    streamBotRun.mockReturnValue(() => {})
+    enqueueBotTask.mockResolvedValue({ task: { id: 'task-stop' }, suggestedSkills: [] })
+    getBotTask.mockResolvedValue(runningTask('task-stop', 'run-stop'))
+
+    const { result } = renderHook(() => useTeachSession())
+    await act(async () => { await result.current.start('Show the release') })
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    expect(result.current.phase).toBe('recording')
+
+    setBotTakeover.mockRejectedValueOnce(new Error('release failed'))
+    await act(async () => { await result.current.stop() })
+    expect(result.current.phase).toBe('recording')
+    expect(result.current.error).toMatch(/release failed/i)
+  })
+
   it('shows a nothing-recorded failure instead of Skill saved', async () => {
     let onEvent: ((e: TeachEvent) => void) | null = null
     streamBotRun.mockImplementation((_id: string, handler: typeof onEvent) => {

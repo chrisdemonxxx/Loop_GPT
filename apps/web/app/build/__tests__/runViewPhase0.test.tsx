@@ -19,6 +19,7 @@ const client = vi.hoisted(() => ({
   sendRunMessage: vi.fn(),
   cancelRun: vi.fn(),
   getFile: vi.fn(),
+  listDeployments: vi.fn(),
 }))
 
 const nav = vi.hoisted(() => ({
@@ -40,6 +41,7 @@ vi.mock('@loop/loopit-client', async (importOriginal) => ({
   sendRunMessage: client.sendRunMessage,
   cancelRun: client.cancelRun,
   getFile: client.getFile,
+  listDeployments: client.listDeployments,
 }))
 
 vi.mock('next/navigation', () => ({
@@ -106,6 +108,8 @@ beforeEach(() => {
     expiresAt: Date.now() + 900_000,
   })
   client.startRun.mockResolvedValue({ run_id: 'run_followup', project_id: 'proj_1', status: 'queued' })
+  client.listDeployments.mockResolvedValue([])
+  client.sendRunMessage.mockResolvedValue({ queued: true })
   client.forkCheckpoint.mockResolvedValue({ project_id: 'proj_fork' })
   client.rollbackCheckpoint.mockResolvedValue(undefined)
 })
@@ -122,7 +126,7 @@ describe('RunView Phase 0 controls (B27)', () => {
     await user.click(screen.getByRole('button', { name: /Continue/i }))
 
     await waitFor(() => {
-      expect(client.startRun).toHaveBeenCalledWith('Fix the header', { projectId: 'proj_1' })
+      expect(client.startRun).toHaveBeenCalledWith('Fix the header', expect.objectContaining({ projectId: 'proj_1' }))
     })
     expect(nav.push).toHaveBeenCalledWith('/build/?run=run_followup')
   })
@@ -196,7 +200,7 @@ describe('RunView Phase 0 controls (B27)', () => {
       expect(client.createPreviewUrl).toHaveBeenCalledWith('proj_1', 'App.js')
     })
     // Chrome bar shows the selected path (not gated on .html).
-    expect(await screen.findByText('App.js')).toBeInTheDocument()
+    expect(await screen.findByDisplayValue('App.js')).toBeInTheDocument()
   })
 
   it('falls back to index.html when the project has no files yet', async () => {
@@ -213,6 +217,109 @@ describe('RunView Phase 0 controls (B27)', () => {
     await waitFor(() => {
       expect(client.createPreviewUrl).toHaveBeenCalledWith('proj_1', 'index.html')
     })
+  })
+
+  it('shows Continue on a successful finished run', async () => {
+    client.getRun.mockResolvedValue(finishedRun({ status: 'completed' }))
+    render(<RunView runId="run_1" />, { wrapper })
+    expect(await screen.findByRole('button', { name: /Continue/i })).toBeInTheDocument()
+  })
+
+  it('Send on a finished run starts a new run on the same project', async () => {
+    const user = userEvent.setup()
+    client.getRun.mockResolvedValue(finishedRun({ status: 'completed' }))
+    render(<RunView runId="run_1" />, { wrapper })
+    const composer = await screen.findByPlaceholderText(/Tell the builder what to change/i)
+    await user.type(composer, 'Add a footer')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => {
+      expect(client.startRun).toHaveBeenCalledWith('Add a footer', expect.objectContaining({ projectId: 'proj_1' }))
+    })
+    expect(client.sendRunMessage).not.toHaveBeenCalled()
+    expect(nav.push).toHaveBeenCalledWith('/build/?run=run_followup')
+  })
+
+  it('Revise on a finished plan starts a new run with the composer text', async () => {
+    const user = userEvent.setup()
+    client.getRun.mockResolvedValue(finishedRun({ status: 'completed', mode: 'plan' }))
+    render(<RunView runId="run_1" />, { wrapper })
+    const composer = await screen.findByPlaceholderText(/Tell the builder what to change/i)
+    await user.type(composer, 'Use a darker header')
+    await user.click(screen.getByRole('button', { name: 'Revise' }))
+    await waitFor(() => {
+      expect(client.startRun).toHaveBeenCalledWith('Use a darker header', expect.objectContaining({ projectId: 'proj_1' }))
+    })
+    expect(nav.push).toHaveBeenCalledWith('/build/?run=run_followup')
+  })
+
+  it('restores the composer draft and drops the pending bubble when a follow-up fails', async () => {
+    const user = userEvent.setup()
+    client.getRun.mockResolvedValue(finishedRun({ status: 'completed' }))
+    client.startRun.mockRejectedValue(new Error('could not start'))
+    render(<RunView runId="run_1" />, { wrapper })
+    const composer = await screen.findByPlaceholderText(/Tell the builder what to change/i)
+    await user.type(composer, 'Add a footer')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => {
+      expect(composer).toHaveValue('Add a footer')
+    })
+    expect(document.querySelector('.opacity-60')).toBeNull()
+  })
+
+  it('posts Send to the active run while it is live', async () => {
+    const user = userEvent.setup()
+    client.getRun.mockResolvedValue(finishedRun({ status: 'running', finished_at: null }))
+    render(<RunView runId="run_1" />, { wrapper })
+    const composer = await screen.findByPlaceholderText(/Tell the builder what to change/i)
+    await user.type(composer, 'Nudge the layout')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => {
+      expect(client.sendRunMessage).toHaveBeenCalledWith('run_1', 'Nudge the layout')
+    })
+    expect(client.startRun).not.toHaveBeenCalled()
+  })
+
+  it('restores the draft and drops the pending bubble when a live send fails', async () => {
+    const user = userEvent.setup()
+    client.getRun.mockResolvedValue(finishedRun({ status: 'running', finished_at: null }))
+    client.sendRunMessage.mockRejectedValue(new Error('run is not active'))
+    render(<RunView runId="run_1" />, { wrapper })
+    const composer = await screen.findByPlaceholderText(/Tell the builder what to change/i)
+    await user.type(composer, 'Nudge the layout')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => {
+      expect(composer).toHaveValue('Nudge the layout')
+    })
+    expect(document.querySelector('.opacity-60')).toBeNull()
+  })
+
+  it('opens an HTML file in the editor and the preview', async () => {
+    const user = userEvent.setup()
+    client.getRun.mockResolvedValue(finishedRun({
+      status: 'completed',
+      files: ['index.html', 'styles.css'],
+    }))
+    render(<RunView runId="run_1" />, { wrapper })
+    await user.click(await screen.findByRole('button', { name: /Files/i }))
+    await user.click(screen.getByRole('button', { name: 'index.html' }))
+    expect(await screen.findByRole('button', { name: 'Save', exact: true })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(client.createPreviewUrl).toHaveBeenCalledWith('proj_1', 'index.html')
+    })
+  })
+
+  it('restores Unpublish and the open link from the latest live deployment', async () => {
+    client.getRun.mockResolvedValue(finishedRun({ status: 'completed' }))
+    client.listDeployments.mockResolvedValue([
+      { deployment_id: 'dep_old', status: 'unpublished', production_url: '/api/projects/proj_1/site/t/old/index.html' },
+      { deployment_id: 'dep_9', status: 'live', production_url: '/api/projects/proj_1/site/t/tok/index.html' },
+    ])
+    render(<RunView runId="run_1" />, { wrapper })
+    expect(await screen.findByRole('button', { name: 'Unpublish' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Open app' })).toHaveAttribute(
+      'href',
+      '/api/loopit/projects/proj_1/site/t/tok/index.html',
+    )
   })
 })
 

@@ -1216,7 +1216,12 @@ export default function ChatPage() {
         <BotProfilePanel
           bot={profileBot}
           conversationId={currentConversationId}
-          onLabel={(label) => { void updateNamedBot(profileBot.id, { label }).then(() => refreshRoster()).catch(() => {}) }}
+          onLabel={(label) => {
+            void updateNamedBot(profileBot.id, { label }).then(() => refreshRoster()).catch((err: unknown) => {
+              const message = err instanceof Error && err.message ? err.message : 'Could not save the label.'
+              toast.push('error', message)
+            })
+          }}
         />
       )}
       <AnimatePresence initial={false}>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUp, Bot, Clock, Loader2, Monitor, Square, GraduationCap } from 'lucide-react'
 import { BOT_STATUS_LABEL, type BotQuota, type BotSkillRef, type BotTask } from '../../lib/bot'
+import { computerUnavailableMessage, taskInProgress } from '../../agents/botTask'
 
 /**
  * Task thread for a named bot. A message becomes a one-shot task. The thread
@@ -64,16 +65,8 @@ export function AgentChatPane({
   }, [thread.length, thread[thread.length - 1]?.status, thread[thread.length - 1]?.result])
 
   const name = botName.trim()
-  const computerBlocked = requiresComputer && !!quota && (!quota.computerAllowed || !quota.computerConfigured)
-  const composerHint = !requiresComputer || !quota
-    ? null
-    : !quota.computerConfigured
-      ? 'Computer provider is not configured on this deployment.'
-      : !quota.computerAllowed
-        ? 'Dedicated computer requires a plan with computer minutes.'
-        : null
-
-  const sendLocked = !threadsReady || computerBlocked
+  const composerHint = requiresComputer ? computerUnavailableMessage(quota) : null
+  const sendLocked = !threadsReady
 
   const send = async () => {
     const text = draft.trim()
@@ -161,7 +154,7 @@ export function AgentChatPane({
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() } }}
               rows={1}
-              placeholder={!threadsReady ? 'Loading chats…' : computerBlocked ? 'Computer unavailable' : (name ? `Message ${name}` : 'Message')}
+              placeholder={!threadsReady ? 'Loading chats…' : (name ? `Message ${name}` : 'Message')}
               aria-label={name ? `Message ${name}` : 'Message'}
               disabled={sendLocked}
               className="flex-1 bg-transparent resize-none text-ui-base text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] focus:outline-none max-h-32 disabled:cursor-not-allowed"
@@ -199,9 +192,10 @@ function Exchange({
   onTrace: (taskId: string) => void
   onCancel: (taskId: string) => void
 }) {
-  const active = task.status === 'queued' || task.status === 'processing'
+  const active = taskInProgress(task)
   const teach = task.kind === 'teach'
   const routine = task.kind === 'scheduled'
+  const waitingRoutine = routine && task.status === 'queued' && !active
   return (
     <div className="space-y-2.5">
       {/* User instruction */}
@@ -229,7 +223,7 @@ function Exchange({
             {active && <Loader2 size={12} className="animate-spin text-[var(--accent-text)]" />}
             <span>{replyFor(task)}</span>
           </div>
-          {task.status === 'succeeded' && task.result && (
+          {(task.status === 'succeeded' || waitingRoutine) && task.result && (
             <p className="mt-2 whitespace-pre-wrap text-ui-sm text-[var(--ink-secondary)] leading-relaxed">{task.result}</p>
           )}
           <div className="mt-2 flex items-center gap-2">
@@ -249,13 +243,13 @@ function Exchange({
             >
               <Monitor size={11} /> Trace
             </button>
-            {active && (
+            {(active || waitingRoutine) && (
               <button
                 type="button"
                 onClick={() => onCancel(task.id)}
                 className="flex items-center gap-1 px-2 py-1 rounded-lg text-ui-xs text-[var(--ink-muted)] hover:text-[var(--danger)] transition"
               >
-                <Square size={10} /> Stop
+                <Square size={10} /> {waitingRoutine ? 'Cancel schedule' : 'Stop'}
               </button>
             )}
             <span className="ml-auto text-2xs text-[var(--ink-muted)] tabular-nums">
@@ -269,6 +263,10 @@ function Exchange({
 }
 
 function replyFor(task: BotTask): string {
+  if (task.kind === 'scheduled' && task.status === 'queued' && !taskInProgress(task)) {
+    const when = task.nextAttemptAt ? new Date(task.nextAttemptAt).toLocaleString() : ''
+    return when ? `Next run ${when}.` : 'Waiting for the next run.'
+  }
   switch (task.status) {
     case 'queued':
       return 'Queued — picking it up now.'

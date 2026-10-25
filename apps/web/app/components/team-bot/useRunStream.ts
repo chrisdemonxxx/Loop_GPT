@@ -17,6 +17,7 @@ export function useRunStream(taskId: string) {
   const [live, setLive] = useState(false)
   const [computer, setComputer] = useState<BotComputer | null>(null)
   const [loadError, setLoadError] = useState('')
+  const [ended, setEnded] = useState(false)
   const [connectAttempt, setConnectAttempt] = useState(0)
   const runIdRef = useRef<string | null>(null)
 
@@ -38,6 +39,7 @@ export function useRunStream(taskId: string) {
     setEvents([])
     setComputer(null)
     setLive(false)
+    setEnded(false)
     setLoadError('')
 
     const attach = (id: string, status: string) => {
@@ -51,10 +53,16 @@ export function useRunStream(taskId: string) {
         (event) => {
           if (cancelled) return
           setEvents((prev) => [...prev.slice(-399), event])
-          if (event.type === 'final' || event.type === 'done') setLive(false)
+          if (event.type === 'final' || event.type === 'done') {
+            setLive(false)
+            setEnded(true)
+            void getBotTask(taskId).then((detail) => {
+              if (!cancelled) setTask(detail)
+            }).catch(() => undefined)
+          }
         },
-        () => { if (!cancelled) setLive(false) },
-        (msg) => { if (!cancelled) { setLoadError(msg); setLive(false) } },
+        () => { if (!cancelled) { setLive(false); setEnded(true) } },
+        (msg) => { if (!cancelled) { setLoadError(msg); setLive(false); setEnded(true) } },
       )
       void getBotComputer(id).then((comp) => {
         if (!cancelled && comp?.sandboxId) setComputer(comp)
@@ -118,5 +126,5 @@ export function useRunStream(taskId: string) {
     return () => clearInterval(t)
   }, [runId, live])
 
-  return { task, runId, events, live, computer, setComputer, loadError, setLoadError, retry, runIdRef }
+  return { task, runId, events, live, ended, computer, setComputer, loadError, setLoadError, retry, runIdRef }
 }

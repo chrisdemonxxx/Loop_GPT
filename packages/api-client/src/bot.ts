@@ -266,7 +266,7 @@ export function streamBotRun(
         // Transport closed without a terminal `done` — reconnect with the cursor.
         attempt += 1
         if (attempt > maxRetries) {
-          onDone?.()
+          onError?.('The trace stream ended before it finished.')
           return
         }
         await new Promise((r) => setTimeout(r, 1000 * attempt))

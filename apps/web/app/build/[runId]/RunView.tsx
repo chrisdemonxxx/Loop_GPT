@@ -22,6 +22,8 @@ import {
   reduceRunEvent,
   applyVisualEdit,
   getPreviewMeta,
+  listDeployments,
+  resolvePreviewUrl,
   getProjectDatabase,
   getProjectDatabaseTable,
   reportConsoleError,
@@ -205,6 +207,20 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   useRunStream(runId, true, onStream, { live: !!live })
 
   const projectId = ui.run?.project_id ?? query.data?.project_id ?? null
+
+  useEffect(() => {
+    if (!projectId) return
+    let cancelled = false
+    void listDeployments(projectId).then((rows) => {
+      if (cancelled) return
+      const liveRow = [...rows].reverse().find((row) => row.status === 'live')
+      if (!liveRow) return
+      setDeploymentId(liveRow.deployment_id)
+      setDeployStatus('live')
+      if (liveRow.production_url) setDeployUrl(resolvePreviewUrl(liveRow.production_url))
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [projectId])
   // Preview any served path (not only .html); fall back to index.html when unset.
   const previewServePath = previewPath || (projectId ? 'index.html' : null)
   const preview = usePreviewUrl(projectId, previewServePath)
@@ -304,13 +320,29 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
     })
   }
 
-  const handleSendMessage = (text: string) => {
+  const handleSendMessage = (text: string): Promise<void> => {
     const trimmed = text.trim()
-    if (!trimmed || sendMessage.isPending) return
-    setMessages((prev) => [...prev, { id: `${Date.now()}-user`, role: 'user', text: trimmed, at: new Date().toISOString(), pending: true }])
-    sendMessage.mutate(trimmed, {
-      onError: (cause) => toast.push('error', toUserFacingError(cause).message),
-    })
+    if (!trimmed || sendMessage.isPending || startBuild.isPending) return Promise.resolve()
+    const id = `${Date.now()}-user`
+    setMessages((prev) => [...prev, { id, role: 'user', text: trimmed, at: new Date().toISOString(), pending: true }])
+    const dropPending = () => setMessages((prev) => prev.filter((message) => message.id !== id))
+    const fail = (cause: unknown) => {
+      dropPending()
+      toast.push('error', toUserFacingError(cause).message)
+      throw cause
+    }
+    if (!live) {
+      if (!projectId) return fail(new Error('This build has no project to continue'))
+      return startBuild.mutateAsync({
+        prompt: trimmed,
+        projectId,
+        mode: continueMode,
+        tier: continueTier,
+      }).then((created) => {
+        router.push(`/build/?run=${encodeURIComponent(created.run_id)}`)
+      }).catch(fail)
+    }
+    return sendMessage.mutateAsync(trimmed).catch(fail)
   }
 
   const handleCancel = () => {
@@ -423,7 +455,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
             >
               <Square size={11} className="fill-current" /> Stop
             </button>
-          ) : terminalFailed ? (
+          ) : status ? (
             <>
               <EffortSwitch value={continueTier} onChange={setContinueTier} disabled={startBuild.isPending} />
               <ModeSwitch value={continueMode} onChange={setContinueMode} disabled={startBuild.isPending} />
@@ -435,7 +467,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
               >
                 <Play size={12} /> Continue
               </button>
-              <RetryButton run={ui.run ?? query.data} />
+              {terminalFailed && <RetryButton run={ui.run ?? query.data} />}
             </>
           ) : null}
           <button
@@ -564,7 +596,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
             <button type="button" className={btnOutline} disabled={startBuild.isPending || !projectId} onClick={() => handleApprovePlan(true)}>
               Build in background
             </button>
-            <button type="button" className={btnOutline} onClick={() => composerRef.current?.focus()}>Revise</button>
+            <button type="button" className={btnOutline} disabled={startBuild.isPending || !projectId} onClick={handleContinue}>Revise</button>
             <Link href="/build" className={btnGhost}>Cancel</Link>
           </div>
         </section>
@@ -619,7 +651,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
                 files={files}
                 selected={previewPath}
                 onSelect={(path) => {
-                  if (/\.html?$/i.test(path)) { setPreviewPath(path); setCodePath(null); setDiffChange(null) }
+                  if (/\.html?$/i.test(path)) { setPreviewPath(path); setCodePath(path); setDiffChange(null) }
                   else { setCodePath(path); setDiffChange(null); setPreviewPath((current) => current ?? path) }
                 }}
                 codePath={codePath}
@@ -655,7 +687,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
                   if (live) handleSendMessage(prompt)
                   else handleResend(prompt)
                 }}
-                sendBusy={sendMessage.isPending}
+                sendBusy={sendMessage.isPending || startBuild.isPending}
                 terminalAllowed={terminalAllowed}
                 terminalOpen={terminalOpen}
                 onToggleTerminal={() => setTerminalOpen((v) => !v)}
@@ -1254,7 +1286,7 @@ function RunWorkspace({
   terminalHistory: TerminalEntry[]
   onSetTerminalHistory: React.Dispatch<React.SetStateAction<TerminalEntry[]>>
   consoleEntries: ConsoleEntry[]
-  onSendMessage: (text: string) => void
+  onSendMessage: (text: string) => void | Promise<void>
   onResend: (text: string) => void
   onFixError: (text: string) => void
   sendBusy: boolean
@@ -1366,7 +1398,7 @@ function RunWorkspaceTab({ active, onClick, icon: Icon, label }: { active: boole
 function RunChat({ messages, streamingText, onSend, onResend, busy, composerRef, gates = [], gatesBusy = false, onGateDecision, inspectTarget = null, onClearInspect, onVisualEdit }: {
   messages: ChatMessage[]
   streamingText: string | null
-  onSend: (text: string) => void
+  onSend: (text: string) => void | Promise<void>
   onResend: (text: string) => void
   busy: boolean
   composerRef: React.RefObject<HTMLTextAreaElement | null>
@@ -1396,12 +1428,16 @@ function RunChat({ messages, streamingText, onSend, onResend, busy, composerRef,
 
   const submit = () => {
     if (!text.trim() || busy) return
+    const draft = text
     const payload = inspectTarget
       ? `${text.trim()}\n\n(editing ${inspectTarget.tag || 'element'}${inspectTarget.loc ? ` at ${inspectTarget.loc}` : ''}: ${inspectTarget.selector})`
       : text
-    onSend(payload)
     setText('')
     onClearInspect?.()
+    const pending = onSend(payload)
+    if (pending && typeof pending.then === 'function') {
+      void pending.catch(() => setText(draft))
+    }
   }
 
   return (

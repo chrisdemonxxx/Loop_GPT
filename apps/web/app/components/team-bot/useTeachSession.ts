@@ -330,15 +330,16 @@ export function useTeachSession(
   const stop = useCallback(async () => {
     const id = runIdRef.current
     if (!id || phaseRef.current !== 'recording') return
-    distillArmedRef.current = true
-    movePhase('distilling')
-    armDistillTimeout()
     try {
       await setBotTakeover(id, false)
     } catch (err: unknown) {
       const message = err instanceof Error && err.message ? err.message : 'Could not release control.'
       setError(message)
+      return
     }
+    distillArmedRef.current = true
+    movePhase('distilling')
+    armDistillTimeout()
     setComputer((cur) => (cur ? { ...cur, takeoverRequested: false } : cur))
   }, [armDistillTimeout, movePhase])
 

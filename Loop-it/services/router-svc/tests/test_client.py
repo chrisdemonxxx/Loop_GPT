@@ -274,6 +274,89 @@ def test_max_output_tokens_from_env_rejects_non_positive(
         max_output_tokens_from_env()
 
 
+def _attachment_turn() -> str:
+    return (
+        "Match this screenshot\n\n"
+        "ATTACHMENTS (image/file URLs — vision is enabled; the model receives these as images):\n"
+        "- https://cdn.example/shot.png"
+    )
+
+
+def _text_of(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    return "\n".join(
+        part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text"
+    )
+
+
+class _TaggedRouter(_RecordingRouter):
+    def __init__(self, tags: tuple[str, ...]) -> None:
+        super().__init__(_result())
+        spec = type("Spec", (), {"capability_tags": tags})()
+        self.policy = type("Policy", (), {"candidates": lambda self, _difficulty: (spec,)})()
+
+
+def test_vision_model_receives_an_image_part(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOOPIT_VISION_ENABLED", "1")
+    router = _TaggedRouter(("vision", "coding"))
+    RouterModelClient(router, tenant_id="t1").complete(  # type: ignore[arg-type]
+        [Message("user", _attachment_turn())],
+        difficulty="implementation",
+    )
+    content = router.kwargs["messages"][0]["content"]
+    assert isinstance(content, list)
+    assert any(
+        part.get("type") == "image_url" and part["image_url"]["url"] == "https://cdn.example/shot.png"
+        for part in content
+    )
+
+
+def test_vision_expansion_keeps_non_image_links_as_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOOPIT_VISION_ENABLED", "1")
+    router = _TaggedRouter(("vision", "coding"))
+    turn = (
+        "Match https://docs.example/guide against the shot\n\n"
+        "ATTACHMENTS (image/file URLs — vision is enabled; the model receives these as images):\n"
+        "- https://cdn.example/shot.png\n"
+        "- https://cdn.example/notes.txt\n"
+        "- http://localhost/api/files/att_1/content"
+    )
+    RouterModelClient(router, tenant_id="t1").complete(  # type: ignore[arg-type]
+        [Message("user", turn)],
+        difficulty="implementation",
+    )
+    content = router.kwargs["messages"][0]["content"]
+    assert isinstance(content, list)
+    image_urls = [
+        part["image_url"]["url"]
+        for part in content
+        if isinstance(part, dict) and part.get("type") == "image_url"
+    ]
+    assert image_urls == [
+        "https://cdn.example/shot.png",
+        "http://localhost/api/files/att_1/content",
+    ]
+    text = _text_of(content)
+    assert "https://docs.example/guide" in text
+    assert "https://cdn.example/notes.txt" in text
+
+
+def test_non_vision_model_is_told_it_cannot_see_images(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOOPIT_VISION_ENABLED", "1")
+    router = _TaggedRouter(("coding", "tools"))
+    RouterModelClient(router, tenant_id="t1").complete(  # type: ignore[arg-type]
+        [Message("user", _attachment_turn())],
+        difficulty="implementation",
+    )
+    content = router.kwargs["messages"][0]["content"]
+    text = _text_of(content)
+    assert "cannot see images" in text.lower()
+    assert "https://cdn.example/shot.png" not in text
+    parts = content if isinstance(content, list) else []
+    assert not any(isinstance(part, dict) and part.get("type") == "image_url" for part in parts)
+
+
 def test_on_token_is_forwarded_to_the_router() -> None:
     router = _RecordingRouter(_result())
     client = RouterModelClient(router, tenant_id="t1")  # type: ignore[arg-type]

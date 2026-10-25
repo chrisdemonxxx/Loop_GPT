@@ -26,6 +26,54 @@ export function computerForBot(cloudComputer: boolean | undefined): { enabled: t
   return cloudComputer === true ? { enabled: true, ttlMinutes: 30 } : undefined
 }
 
+/** Drop the computer when this account cannot start one. An unknown quota still asks. */
+export function computerForSend(
+  cloudComputer: boolean | undefined,
+  quota: { computerAllowed: boolean; computerConfigured: boolean } | null | undefined,
+): { enabled: true; ttlMinutes: 30 } | undefined {
+  const computer = computerForBot(cloudComputer)
+  if (!computer || !quota) return computer
+  if (!quota.computerAllowed || !quota.computerConfigured) return undefined
+  return computer
+}
+
+/** Why a desktop cannot start, or null when this account can use one. */
+export function computerUnavailableMessage(
+  quota: { computerAllowed: boolean; computerConfigured: boolean } | null | undefined,
+): string | null {
+  if (!quota) return null
+  if (!quota.computerConfigured) return 'Computer provider is not configured on this deployment.'
+  if (!quota.computerAllowed) return 'Dedicated computer requires a plan with computer minutes.'
+  return null
+}
+
+type ProgressTask = { status: string; kind?: string | null; nextAttemptAt?: string | null }
+
+/** A scheduled task is in progress only while processing, or while queued and due. */
+export function taskInProgress(task: ProgressTask, now = Date.now()): boolean {
+  if (task.status === 'processing') return true
+  if (task.status !== 'queued') return false
+  if (task.kind !== 'scheduled') return true
+  const due = task.nextAttemptAt ? Date.parse(task.nextAttemptAt) : Number.NaN
+  if (Number.isNaN(due)) return true
+  return due <= now
+}
+
+export function anyTaskInProgress(tasks: readonly ProgressTask[] | null | undefined, now = Date.now()): boolean {
+  return !!tasks?.some((task) => taskInProgress(task, now))
+}
+
+/** Pending is loading. An error stays an error. Settled null data is ready. */
+export function listPanelPhase(query: { isPending: boolean; isError: boolean; data: unknown }): 'loading' | 'error' | 'ready' {
+  if (query.isError) return 'error'
+  if (query.isPending) return 'loading'
+  return 'ready'
+}
+
+export function botMemoryQueryKey(botId: string) {
+  return ['bot', 'memory', botId] as const
+}
+
 export interface WatchTarget {
   taskId: string
   runId: string | null
@@ -60,16 +108,28 @@ export function finishWatchTarget(target: WatchTarget, elapsedMs: number): Watch
   return target
 }
 
+type WatchTask = {
+  runs?: Array<{ id: string }> | null
+  status?: string
+  computer?: { enabled?: boolean } | null
+}
+
+function desktopStillBooting(detail: WatchTask): boolean {
+  const live = detail.status === 'queued' || detail.status === 'processing'
+  return live && detail.computer?.enabled === true
+}
+
 export async function resolveWatchTarget(
   taskId: string,
   load: {
-    getTask: (id: string) => Promise<{ runs?: Array<{ id: string }> | null }>
+    getTask: (id: string) => Promise<WatchTask>
     getComputer: (runId: string) => Promise<{ viewUrl?: string | null; interactiveUrl?: string | null } | null>
   },
 ): Promise<WatchTarget> {
   let runId: string | null = null
+  let detail: WatchTask = {}
   try {
-    const detail = await load.getTask(taskId)
+    detail = await load.getTask(taskId)
     runId = detail.runs?.[0]?.id ?? null
   } catch (err) {
     if (httpStatus(err) === 404) {
@@ -78,16 +138,19 @@ export async function resolveWatchTarget(
     return { taskId, runId: null, viewUrl: null, interactiveUrl: null, starting: true }
   }
   if (!runId) return { taskId, runId: null, viewUrl: null, interactiveUrl: null, starting: true }
+  const booting = desktopStillBooting(detail)
   try {
     const computer = await load.getComputer(runId)
     const viewUrl = computer?.viewUrl ?? null
     const interactiveUrl = computer?.interactiveUrl ?? null
     if (!viewUrl && !interactiveUrl && !computer) {
+      if (booting) return { taskId, runId, viewUrl: null, interactiveUrl: null, starting: true }
       return { taskId, runId, viewUrl: null, interactiveUrl: null, starting: false, noComputer: true }
     }
     return { taskId, runId, viewUrl, interactiveUrl, starting: !viewUrl && !interactiveUrl }
   } catch (err) {
     if (httpStatus(err) === 404) {
+      if (booting) return { taskId, runId, viewUrl: null, interactiveUrl: null, starting: true }
       return { taskId, runId, viewUrl: null, interactiveUrl: null, starting: false, noComputer: true }
     }
     return { taskId, runId, viewUrl: null, interactiveUrl: null, starting: true }

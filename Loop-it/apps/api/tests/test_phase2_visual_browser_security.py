@@ -133,7 +133,7 @@ class TestSecurityScan:
             f"/api/projects/{project_id}/security-scan",
             json={"gate": "deploy", "force_offline": True},
         ).json()
-        assert scan["passed"] is True
+        assert scan["passed"] is not True
         assert scan["mode"] == "offline"
 
         # Inject a critical finding into the latest scan artifact.
@@ -199,5 +199,41 @@ class TestSecurityScan:
             workspace_root=root,
             force_offline=True,
         )
-        assert result["passed"] is True
+        assert result["passed"] is not True
         assert result["mode"] == "offline"
+        latest = tmp_path / "projects" / ".artifacts" / "security" / "proj_x" / "latest.json"
+        if latest.is_file():
+            cached = json.loads(latest.read_text(encoding="utf-8"))
+            assert cached.get("passed") is not True
+
+    def test_publish_does_not_skip_because_latest_is_a_stub(self, tmp_path: Path) -> None:
+        client = _client(tmp_path)
+        run = client.post("/api/runs", json={"prompt": "build a page"}).json()
+        finished = _finish(client, run["run_id"])
+        project_id = run["project_id"]
+        dest = tmp_path / "projects" / ".artifacts" / "security" / project_id
+        dest.mkdir(parents=True, exist_ok=True)
+        stub = {
+            "scan_id": "sec_stub",
+            "passed": True,
+            "mode": "offline",
+            "findings": [],
+            "notes": ["offline stub — scanners not executed"],
+            "summary": "No security findings.",
+        }
+        (dest / "latest.json").write_text(json.dumps(stub) + "\n", encoding="utf-8")
+        checkpoints = client.get(f"/api/projects/{project_id}/checkpoints").json()
+        green = [item for item in checkpoints if item["verified"]] or checkpoints
+        assert green, finished
+        deployed = client.post(
+            f"/api/projects/{project_id}/deploy",
+            json={
+                "checkpoint_id": green[-1]["checkpoint_id"],
+                "confirmed": True,
+                "reason": "ship",
+            },
+        )
+        assert deployed.status_code != 409
+        cached = json.loads((dest / "latest.json").read_text(encoding="utf-8"))
+        assert cached.get("scan_id") != "sec_stub"
+        assert cached.get("passed") is not True

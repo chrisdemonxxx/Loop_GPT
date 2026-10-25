@@ -116,4 +116,19 @@ describe('createLoopitClient site URL surfaces', () => {
     expect(republished.deployment_id).toBe('dep_1')
     expect(republished.status).toBe('live')
   })
+
+  it('gateway-prefixes production_url from a public share the same way as deploy', async () => {
+    const fetchImpl = routingFetch(() => ({
+      share_id: 'share_1',
+      project_id: 'proj_1',
+      title: 'Demo',
+      visibility: 'public_remix',
+      production_url: SITE_URL,
+      remix_allowed: true,
+    }))
+    const client = createLoopitClient({ fetchImpl })
+    const share = await client.getPublicShare('share_1')
+    expect(share.production_url).toBe('/api/loopit/projects/proj_1/site/t/tok/index.html')
+    expect(String(fetchImpl.mock.calls.at(-1)?.[0])).toContain('/public/share/share_1')
+  })
 })

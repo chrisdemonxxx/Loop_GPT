@@ -155,6 +155,27 @@ export function getBaseSystemPrompt(): string {
   return isAdultEdition() ? ADULT_SYSTEM_PROMPT : MAINSTREAM_SYSTEM_PROMPT
 }
 
+/** Named-bot chat gets that bot's tools, limited to what this account can run, plus remember_fact. */
+export function namedBotChatTools(
+  defaultTools: readonly unknown[] | null | undefined,
+  available: readonly string[],
+): string[] {
+  const allowed = new Set(available)
+  const names: string[] = []
+  for (const tool of defaultTools ?? []) {
+    if (typeof tool !== 'string' || !allowed.has(tool) || names.includes(tool)) continue
+    names.push(tool)
+  }
+  if (allowed.has('remember_fact') && !names.includes('remember_fact')) names.push('remember_fact')
+  return names
+}
+
+/** Tool scratch for one turn. botId comes from the request so remember_fact can write. */
+export function withBotScratch<T extends Record<string, unknown>>(scratch: T, botId: string | undefined): T & { botId?: string } {
+  if (!botId) return scratch
+  return { ...scratch, botId }
+}
+
 export { isAdultEdition, isMainstreamEdition }
 
 export const streamInput = z.object({
@@ -432,6 +453,9 @@ export async function streamAgentRun(req: Request, res: Response) {
       }
       authorBotId = bot.id
       const toolsHint = Array.isArray(bot.defaultTools) ? (bot.defaultTools as unknown[]).filter((t) => typeof t === 'string').join(', ') : ''
+      if (mode === 'chat') {
+        selectedNames = namedBotChatTools(Array.isArray(bot.defaultTools) ? bot.defaultTools : [], selectableNames)
+      }
       botPersona = [
         `You are ${bot.name}${bot.label ? `, the ${bot.label}` : ''}.`,
         bot.persona || '',
@@ -491,11 +515,11 @@ export async function streamAgentRun(req: Request, res: Response) {
         // Reference images (GAP: reference-image video/image editing). Attached
         // images are resolved to data URIs; media tools read them from scratch
         // when no explicit reference args are given.
-        scratch: {
+        scratch: withBotScratch({
           ...(images.length ? { referenceImages: images.map((img) => img.dataUri) } : {}),
           // From the validated request body only; the model cannot set this.
           faceLockConsent: input.data.faceLockConsent === true,
-        } }
+        }, input.data.botId) }
       // Build message history + current turn (conversation memory window).
       // §8-22: a retry walks the path that ENDS at the anchor user row (the
       // old answer is a child of it — never on the ancestry path, so the

@@ -19,7 +19,7 @@ import { LineRender } from './LineRender'
  * run's written record.
  */
 export default function RunViewer({ taskId, onClose }: { taskId: string; onClose: () => void }) {
-  const { task, events, live, loadError, retry } = useRunStream(taskId)
+  const { task, events, live, ended, loadError, setLoadError, retry } = useRunStream(taskId)
 
   // Single shell: dock on ≥640px, sheet below — never both mounted.
   const [isDesktop, setIsDesktop] = useState(false)
@@ -45,6 +45,7 @@ export default function RunViewer({ taskId, onClose }: { taskId: string; onClose
   const headerStatus = live
     ? 'running'
     : task?.runs?.[0]?.status || (loadError ? null : 'loading')
+  const showEmpty = !loadError && ended && !live && events.length === 0
 
   const content = (
     <div className="flex flex-col h-full min-h-0">
@@ -67,21 +68,30 @@ export default function RunViewer({ taskId, onClose }: { taskId: string; onClose
         </button>
       </div>
 
-      {loadError && (
-        <div className="m-3 flex items-center gap-2 rounded-lg border border-[var(--danger-soft-border)] bg-[var(--danger-soft)] px-3 py-2 text-ui-xs text-[var(--danger)]">
+      {(loadError || showEmpty) && (
+        <div className="m-3 flex items-center gap-2 rounded-lg border border-[var(--danger-soft-border)] bg-[var(--danger-soft)] px-3 py-2 text-ui-xs text-[var(--danger)]" role="alert">
           <AlertCircle size={13} className="shrink-0" />
-          <span className="flex-1">{loadError}</span>
+          <span className="flex-1">{loadError || 'The trace is empty.'}</span>
           <button
             type="button"
             onClick={() => retry()}
             className="text-[var(--accent-text)] hover:underline shrink-0"
           >
-            Dismiss
+            Retry
           </button>
+          {loadError && (
+            <button
+              type="button"
+              onClick={() => setLoadError('')}
+              className="text-[var(--ink-muted)] hover:underline shrink-0"
+            >
+              Dismiss
+            </button>
+          )}
         </div>
       )}
 
-      <LineRender events={events} attaching={!loadError} />
+      <LineRender events={events} attaching={!loadError && !showEmpty} />
     </div>
   )
 

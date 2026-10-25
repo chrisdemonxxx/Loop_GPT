@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   allowedToolsForBot,
+  anyTaskInProgress,
+  botMemoryQueryKey,
   computerForBot,
+  computerForSend,
+  computerUnavailableMessage,
   finishWatchTarget,
+  listPanelPhase,
   resolveWatchTarget,
   routineScheduleLabel,
   routineSkillLabel,
+  taskInProgress,
   WATCH_START_TIMEOUT_MS,
 } from '../botTask'
 
@@ -62,16 +68,44 @@ describe('resolveWatchTarget', () => {
     expect(done.timedOut).toBe(true)
   })
 
-  it('does not stay starting when the computer route 404s', async () => {
+  it('keeps polling when a live task asked for a computer and the route 404s', async () => {
     const missing = Object.assign(new Error('not found'), { status: 404 })
     const target = await resolveWatchTarget('task-404', {
-      getTask: async () => ({ runs: [{ id: 'run-404' }] }),
+      getTask: async () => ({
+        status: 'processing',
+        computer: { enabled: true, ttlMinutes: 30 },
+        runs: [{ id: 'run-404' }],
+      }),
+      getComputer: async () => { throw missing },
+    })
+    expect(target.starting).toBe(true)
+    expect(target.noComputer).toBeFalsy()
+    expect(target.runId).toBe('run-404')
+    expect(target.viewUrl).toBeNull()
+  })
+
+  it('treats a missing sandbox as no computer when the task never asked for one', async () => {
+    const missing = Object.assign(new Error('not found'), { status: 404 })
+    const target = await resolveWatchTarget('task-plain', {
+      getTask: async () => ({ status: 'processing', computer: null, runs: [{ id: 'run-plain' }] }),
       getComputer: async () => { throw missing },
     })
     expect(target.starting).toBe(false)
     expect(target.noComputer).toBe(true)
-    expect(target.runId).toBe('run-404')
-    expect(target.viewUrl).toBeNull()
+  })
+
+  it('treats a finished run that never got a sandbox as no computer', async () => {
+    const missing = Object.assign(new Error('not found'), { status: 404 })
+    const target = await resolveWatchTarget('task-done', {
+      getTask: async () => ({
+        status: 'succeeded',
+        computer: { enabled: true },
+        runs: [{ id: 'run-done' }],
+      }),
+      getComputer: async () => { throw missing },
+    })
+    expect(target.starting).toBe(false)
+    expect(target.noComputer).toBe(true)
   })
 
   it('keeps the task id when no run exists yet', async () => {
@@ -82,6 +116,64 @@ describe('resolveWatchTarget', () => {
     })
     expect(getComputer).not.toHaveBeenCalled()
     expect(target).toMatchObject({ taskId: 'task-9', runId: null, starting: true })
+  })
+})
+
+describe('scheduled task progress', () => {
+  const waiting = {
+    status: 'queued' as const,
+    kind: 'scheduled' as const,
+    nextAttemptAt: '2099-01-01T00:00:00.000Z',
+  }
+
+  it('treats a future queued routine as waiting, not in progress', () => {
+    expect(taskInProgress(waiting, Date.parse('2026-10-24T12:00:00.000Z'))).toBe(false)
+    expect(taskInProgress({ ...waiting, status: 'processing' }, Date.parse('2026-10-24T12:00:00.000Z'))).toBe(true)
+    expect(taskInProgress({
+      ...waiting,
+      nextAttemptAt: '2026-10-24T12:00:00.000Z',
+    }, Date.parse('2026-10-24T12:00:00.000Z'))).toBe(true)
+    expect(taskInProgress({ status: 'queued', kind: 'ops', nextAttemptAt: waiting.nextAttemptAt })).toBe(true)
+  })
+
+  it('ignores routines that are only waiting for the next interval', () => {
+    expect(anyTaskInProgress([
+      waiting,
+      { status: 'succeeded', kind: 'ops', nextAttemptAt: waiting.nextAttemptAt },
+    ], Date.parse('2026-10-24T12:00:00.000Z'))).toBe(false)
+    expect(anyTaskInProgress([
+      waiting,
+      { status: 'processing', kind: 'ops', nextAttemptAt: waiting.nextAttemptAt },
+    ], Date.parse('2026-10-24T12:00:00.000Z'))).toBe(true)
+  })
+})
+
+describe('computer send gate', () => {
+  it('drops the computer when the provider is off or the plan has no minutes', () => {
+    expect(computerForSend(true, { computerAllowed: false, computerConfigured: true })).toBeUndefined()
+    expect(computerForSend(true, { computerAllowed: true, computerConfigured: false })).toBeUndefined()
+    expect(computerForSend(true, { computerAllowed: true, computerConfigured: true })).toEqual({ enabled: true, ttlMinutes: 30 })
+    expect(computerForSend(false, { computerAllowed: true, computerConfigured: true })).toBeUndefined()
+    expect(computerUnavailableMessage({ computerAllowed: false, computerConfigured: true }))
+      .toMatch(/computer minutes/i)
+    expect(computerUnavailableMessage({ computerAllowed: true, computerConfigured: false }))
+      .toMatch(/not configured/i)
+    expect(computerUnavailableMessage({ computerAllowed: true, computerConfigured: true })).toBeNull()
+  })
+})
+
+describe('list panel phase', () => {
+  it('treats an error as an error and null data as ready, not loading', () => {
+    expect(listPanelPhase({ isPending: false, isError: true, data: null })).toBe('error')
+    expect(listPanelPhase({ isPending: true, isError: false, data: null })).toBe('loading')
+    expect(listPanelPhase({ isPending: false, isError: false, data: null })).toBe('ready')
+    expect(listPanelPhase({ isPending: false, isError: false, data: [] })).toBe('ready')
+  })
+})
+
+describe('bot memory query', () => {
+  it('uses the bot memory cache key', () => {
+    expect(botMemoryQueryKey('bot-9')).toEqual(['bot', 'memory', 'bot-9'])
   })
 })
 

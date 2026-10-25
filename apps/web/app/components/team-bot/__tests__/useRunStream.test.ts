@@ -119,6 +119,39 @@ describe('useRunStream', () => {
     expect(result.current.events.map((event) => event.message)).not.toContain('from-t1')
   })
 
+  it('refetches the task when the stream emits done or final', async () => {
+    getBotTask
+      .mockResolvedValueOnce({
+        id: 't1',
+        goal: 'g',
+        status: 'processing',
+        runs: [{ id: 'r1', status: 'running' }],
+      })
+      .mockResolvedValue({
+        id: 't1',
+        goal: 'g',
+        status: 'succeeded',
+        runs: [{ id: 'r1', status: 'completed' }],
+      })
+    let onEvent: ((event: { type: string }) => void) | undefined
+    streamBotRun.mockImplementation((_id, handler) => {
+      onEvent = handler
+      return () => {}
+    })
+
+    const { result } = renderHook(() => useRunStream('t1'))
+    await act(async () => { await Promise.resolve() })
+    expect(result.current.task?.runs?.[0]?.status).toBe('running')
+
+    await act(async () => { onEvent?.({ type: 'done' }) })
+    await act(async () => { await Promise.resolve() })
+    expect(getBotTask.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(result.current.live).toBe(false)
+    expect(result.current.ended).toBe(true)
+    expect(result.current.task?.runs?.[0]?.status).toBe('completed')
+    expect(result.current.task?.status).toBe('succeeded')
+  })
+
   it('reconnects the stream when retry is called', async () => {
     getBotTask.mockResolvedValue({
       id: 't1',

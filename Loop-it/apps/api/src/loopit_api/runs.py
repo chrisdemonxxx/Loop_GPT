@@ -1075,24 +1075,33 @@ class RunManager:
         return self._checkpoint_to_dict(checkpoint, live=True)
 
     def fork_checkpoint(
-        self, project_id: str, checkpoint_id: str, *, tenant_id: str, actor_id: str
+        self,
+        project_id: str,
+        checkpoint_id: str,
+        *,
+        tenant_id: str,
+        actor_id: str,
+        dest_tenant_id: str | None = None,
     ) -> dict[str, Any]:
         checkpoint = self._checkpoints.get(checkpoint_id, tenant_id=tenant_id)
         if checkpoint.project_id != project_id:
             raise ValueError(
                 f"checkpoint {checkpoint_id} belongs to project {checkpoint.project_id}"
             )
+        # Same-tenant forks keep the source tenancy. A remix into another
+        # account writes the copy under that caller's tenant.
+        dest = dest_tenant_id or tenant_id
         fork_project_id = f"proj_{uuid.uuid4().hex[:12]}"
-        workspace = Workspace(self._projects_root / tenant_id / fork_project_id)
+        workspace = Workspace(self._projects_root / dest / fork_project_id)
         self._restore_checkpoint(workspace, checkpoint)
-        self._projects[(tenant_id, fork_project_id)] = workspace
-        self._project_stacks[(tenant_id, fork_project_id)] = self._project_stacks.get(
+        self._projects[(dest, fork_project_id)] = workspace
+        self._project_stacks[(dest, fork_project_id)] = self._project_stacks.get(
             (tenant_id, project_id), REACT_STACK
         )
         forked = self._snapshot(
             workspace,
             project_id=fork_project_id,
-            tenant_id=tenant_id,
+            tenant_id=dest,
             run_id=f"fork_{uuid.uuid4().hex[:12]}",
             label=f"forked by {actor_id}",
         )

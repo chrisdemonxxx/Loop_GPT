@@ -155,8 +155,7 @@ class ProjectDomains:
         claim = self._local.repository.custom_by_host.get(hostname.lower())
         if claim is None:
             raise LookupError("domain claim was not found")
-        if seed_txt and self._resolver is not None:
-            # Offline UX: "I added the TXT record" seeds the fake public resolver.
+        if seed_txt and self.mode == "live" and self._resolver is not None:
             self._resolver.set_txt(claim.challenge_name, claim.challenge_value)
         verified = self._local.verify_custom_domain(actor=actor, hostname=hostname)
         return self._claim_view(verified, project_id=verified.project_id).as_dict()

@@ -213,6 +213,8 @@ export interface Health {
   hosting_provider?: string
   apps_base_domain?: string | null
   domains_configured?: boolean
+  domains_mode?: string
+  gitsync_provider?: string
   fly_configured?: boolean
   provision_provider?: string
   background_builds?: boolean
@@ -552,6 +554,7 @@ export interface SecurityScanResult {
   mode?: string
   gate?: string
   passed?: boolean
+  stub?: boolean
   blocking_count?: number
   advisory_count?: number
   findings?: SecurityFinding[]
@@ -724,7 +727,12 @@ export function createLoopitClient(options: LoopitClientOptions = {}): LoopitCli
       const response = await fetchImpl(options)(
         `${baseUrl}/public/share/${encodeURIComponent(shareId)}`,
       )
-      return readJson<PublicShare>(response)
+      const body = await readJson<PublicShare>(response)
+      if (!body?.production_url) return body
+      return {
+        ...body,
+        production_url: resolvePreviewUrl(body.production_url, baseUrl),
+      }
     },
     remixPublicShare: (shareId) =>
       apiFetch(`/public/share/${encodeURIComponent(shareId)}/remix`, { method: 'POST' }),

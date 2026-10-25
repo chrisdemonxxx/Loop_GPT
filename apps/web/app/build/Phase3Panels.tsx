@@ -11,6 +11,7 @@ import { BarChart3, Cable, Loader2, Users } from 'lucide-react'
 import { Badge, SectionHeader, btnGhost, btnOutline, btnPrimary, textareaCls } from '@loop/ui'
 import {
   getProjectAnalytics,
+  getMe,
   getProjectCollab,
   heartbeatProjectPresence,
   listProjectConnectors,
@@ -164,6 +165,7 @@ export function AnalyticsPanel({ projectId }: { projectId: string }) {
 
 export function CollaborationPanel({ projectId }: { projectId: string }) {
   const [collab, setCollab] = useState<ProjectCollab | null>(null)
+  const [selfId, setSelfId] = useState<string | null>(null)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -177,11 +179,17 @@ export function CollaborationPanel({ projectId }: { projectId: string }) {
   }
 
   useEffect(() => {
-    void heartbeatProjectPresence(projectId)
-      .then(setCollab)
-      .catch(() => { void refresh() })
+    void getMe().then((me) => setSelfId(me.user_id)).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    const fail = (cause: unknown) => setError(toUserFacingError(cause).message)
+    void heartbeatProjectPresence(projectId).then((next) => {
+      setCollab(next)
+      setError(null)
+    }).catch(fail)
     const timer = window.setInterval(() => {
-      void heartbeatProjectPresence(projectId).then(setCollab).catch(() => {})
+      void heartbeatProjectPresence(projectId).then(setCollab).catch(fail)
     }, 20_000)
     return () => window.clearInterval(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -210,14 +218,14 @@ export function CollaborationPanel({ projectId }: { projectId: string }) {
       <div className="flex flex-wrap items-center gap-2">
         <Users size={14} className="text-[var(--ink-secondary)]" />
         <SectionHeader title="Collaboration" />
-        <PresenceIndicator peers={peers} onlineCount={collab?.online_count ?? 0} />
+        <PresenceIndicator peers={peers} onlineCount={collab?.online_count ?? 0} selfId={selfId} />
       </div>
       <p className="text-3xs text-[var(--ink-muted)]">
         Notes for people working on this project.
       </p>
-      {error && <p className="text-2xs text-[var(--danger)]">{error}</p>}
+      {error && <p role="alert" className="text-2xs text-[var(--danger)]">{error}</p>}
       <ul className="max-h-40 space-y-1.5 overflow-auto rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-sunken)] p-2">
-        {(collab?.messages ?? []).length === 0 && (
+        {!error && (collab?.messages ?? []).length === 0 && (
           <li className="text-3xs text-[var(--ink-muted)]">No notes yet.</li>
         )}
         {(collab?.messages ?? []).map((msg) => (
@@ -244,19 +252,24 @@ export function CollaborationPanel({ projectId }: { projectId: string }) {
 export function PresenceIndicator({
   peers,
   onlineCount,
+  selfId = null,
 }: {
   peers: Array<{ actor_id: string; display_name: string }>
   onlineCount: number
+  selfId?: string | null
 }) {
-  const names = peers.map((p) => p.display_name).slice(0, 4)
+  const others = selfId ? peers.filter((peer) => peer.actor_id !== selfId) : peers
+  const alone = selfId ? others.length === 0 : onlineCount === 0
+  const names = (selfId ? others : peers).map((p) => p.display_name).slice(0, 4)
+  const count = selfId ? others.length : onlineCount
   return (
     <span className="inline-flex items-center gap-1.5 text-3xs text-[var(--ink-secondary)]" title={names.join(', ') || 'Nobody else online'}>
       <span
-        className={`inline-block h-1.5 w-1.5 rounded-full ${onlineCount > 0 ? 'bg-emerald-500' : 'bg-[var(--ink-muted)]'}`}
+        className={`inline-block h-1.5 w-1.5 rounded-full ${alone ? 'bg-[var(--ink-muted)]' : 'bg-emerald-500'}`}
         aria-hidden
       />
-      {onlineCount > 0 ? `${onlineCount} online` : 'Just you'}
-      {names.length > 0 && onlineCount > 1 ? ` · ${names.join(', ')}` : ''}
+      {alone ? 'Just you' : `${count} online`}
+      {names.length > 0 && count > 1 ? ` · ${names.join(', ')}` : ''}
     </span>
   )
 }

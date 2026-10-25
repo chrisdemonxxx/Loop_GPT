@@ -13,6 +13,7 @@ import { buildBranchView, type BranchVersionInfo } from '../lib/branch'
 import type { Project } from '../components/ProjectsPanel'
 import type { Conversation, Message, LiveStep, PendingApproval } from '../components/chat/types'
 import { consumeFaceLockConsent } from '../lib/faceLockConsent'
+import { botMemoryQueryKey } from '../agents/botTask'
 // ---------------------------------------------------------------------------
 // Panels: sidebar / activity / artifacts + responsive desktop detection
 // ---------------------------------------------------------------------------
@@ -1061,6 +1062,7 @@ export function useChatStream() {
       // Drain any buffered streamed text synchronously (§8-33) — nothing
       // buffered is ever lost, even if rAF never fired (background tab).
       flushLive()
+      if (botId) void queryClient.invalidateQueries({ queryKey: botMemoryQueryKey(botId) })
       // A chat switch parked this run. Leave the newer UI alone.
       if (generationRef.current !== gen) return
       setRunning(false)

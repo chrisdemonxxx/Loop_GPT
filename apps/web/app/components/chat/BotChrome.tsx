@@ -293,22 +293,41 @@ export function BotProfilePanel({ bot, conversationId, onLabel }: {
 }) {
   const [tab, setTab] = useState<ProfileTab>('details')
   const [label, setLabel] = useState(bot.label || '')
-  const [skills, setSkills] = useState<BotSkillRef[]>([])
+  const [skills, setSkills] = useState<BotSkillRef[] | null>(null)
   const [computerExpanded, setComputerExpanded] = useState(false)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [memory, setMemory] = useState<string | null>(null)
   const [routines, setRoutines] = useState<Array<{ id: string; goal: string; schedule: string }> | null>(null)
-  const [detailsError, setDetailsError] = useState(false)
+  const [routinesError, setRoutinesError] = useState('')
   const [skillError, setSkillError] = useState('')
+  const [skillsListError, setSkillsListError] = useState('')
   const wide = useWideProfile()
-  const refreshSkills = () => { void listBotSkills(bot.id).then((d) => setSkills(d.skills || [])).catch(() => {}) }
+  const refreshSkills = () => {
+    void listBotSkills(bot.id).then((d) => {
+      setSkills(d.skills || [])
+      setSkillsListError('')
+    }).catch((err: unknown) => {
+      setSkillsListError(err instanceof Error && err.message ? err.message : 'Could not load skills.')
+    })
+  }
+  const refreshRoutines = () => {
+    setRoutinesError('')
+    void listBotRoutines().then((rows) => {
+      setRoutines((rows.routines || [])
+        .filter((routine) => routine.botId === bot.id)
+        .map((routine) => ({ id: routine.id, goal: routine.goal, schedule: routine.schedule })))
+      setRoutinesError('')
+    }).catch((err: unknown) => {
+      setRoutinesError(err instanceof Error && err.message ? err.message : 'Could not load routines.')
+    })
+  }
   const teach = (useTeachSession as TeachHook)(() => refreshSkills(), bot.id, conversationId ?? null)
   const loopHref = agentsThreadHref(bot.id, conversationId || bot.conversationId || '')
   useEffect(() => {
     let cancelled = false
-    setDetailsError(false)
     setMemory(null)
     setRoutines(null)
+    setRoutinesError('')
     void Promise.allSettled([getBotMemory(bot.id), listBotRoutines()]).then(([mem, rows]) => {
       if (cancelled) return
       if (mem.status === 'fulfilled') setMemory(mem.value.memory || '')
@@ -317,8 +336,10 @@ export function BotProfilePanel({ bot, conversationId, onLabel }: {
         setRoutines((rows.value.routines || [])
           .filter((routine) => routine.botId === bot.id)
           .map((routine) => ({ id: routine.id, goal: routine.goal, schedule: routine.schedule })))
-      } else setRoutines([])
-      if (mem.status === 'rejected' && rows.status === 'rejected') setDetailsError(true)
+        setRoutinesError('')
+      } else {
+        setRoutinesError(rows.reason instanceof Error && rows.reason.message ? rows.reason.message : 'Could not load routines.')
+      }
     })
     return () => { cancelled = true }
   }, [bot.id])
@@ -359,17 +380,19 @@ export function BotProfilePanel({ bot, conversationId, onLabel }: {
             <div className="space-y-3">
               <p className="text-slate-400 whitespace-pre-wrap">{bot.persona || 'No persona yet.'}</p>
               {bot.defaultTools?.length > 0 && <p className="text-[12px] text-slate-500">Tools: {bot.defaultTools.join(', ')}</p>}
-              {detailsError ? (
-                <p className="text-[12px] text-slate-500">Memory and routines are on Loop Bot.</p>
-              ) : (
-                <>
+              <>
                   <div>
                     <h3 className="text-[10px] uppercase tracking-widest text-slate-500 font-medium mb-1">Memory</h3>
                     <p className="text-[12px] text-slate-400 whitespace-pre-wrap">{memory === null ? 'Loading memory…' : (memory || 'Nothing remembered yet.')}</p>
                   </div>
                   <div>
                     <h3 className="text-[10px] uppercase tracking-widest text-slate-500 font-medium mb-1">Routines</h3>
-                    {routines === null ? (
+                    {routinesError ? (
+                      <p className="text-[12px] text-rose-300" role="alert">
+                        {routinesError}
+                        <button type="button" onClick={refreshRoutines} className="ml-2 text-[#e79d7f] hover:underline">Retry</button>
+                      </p>
+                    ) : routines === null ? (
                       <p className="text-[12px] text-slate-500">Loading routines…</p>
                     ) : routines.length === 0 ? (
                       <p className="text-[12px] text-slate-500">No routines yet.</p>
@@ -381,13 +404,21 @@ export function BotProfilePanel({ bot, conversationId, onLabel }: {
                       </ul>
                     )}
                   </div>
-                </>
-              )}
+              </>
               <Link href={loopHref} className="inline-block text-[12px] text-[#e79d7f] hover:underline">Open in Loop Bot</Link>
             </div>
           )}
           {tab === 'library' && (
-            skills.length === 0
+            skillsListError
+              ? (
+                <p className="text-rose-300" role="alert">
+                  {skillsListError}
+                  <button type="button" onClick={() => refreshSkills()} className="ml-2 text-[#e79d7f] hover:underline">Retry</button>
+                </p>
+              )
+              : skills === null
+              ? <p className="text-slate-500">Loading skills…</p>
+              : skills.length === 0
               ? <p className="text-slate-500">No skills yet. Start recording on the computer and it lands here after you stop.</p>
               : (
                 <ul className="space-y-2">

@@ -69,7 +69,7 @@ export async function listRoutines(userId: string): Promise<Routine[]> {
     include: {
       runs: { orderBy: { startedAt: 'desc' }, take: 20, select: { id: true, status: true, error: true, result: true, startedAt: true, completedAt: true } },
     },
-  }).catch(() => [])
+  })
   return rows.map(toRoutine)
 }
 

@@ -76,8 +76,14 @@ beforeEach(() => {
   client.listRuns.mockResolvedValue([])
   client.listNotifications.mockResolvedValue({ notifications: [], unread_count: 0 })
   client.listReviews.mockResolvedValue([])
-  client.getSecurityScan.mockResolvedValue({ findings: [], passed: true, summary: 'No scan yet.' })
-  client.listBrowserTests.mockResolvedValue([])
+  client.getSecurityScan.mockResolvedValue({
+    findings: [],
+    passed: true,
+    mode: 'offline',
+    summary: 'No security findings.',
+    notes: ['offline stub — scanners not executed'],
+  })
+  client.listBrowserTests.mockRejectedValue(new Error('runner unavailable'))
   client.listProjects.mockImplementation(async (options?: { includeArchived?: boolean }) => {
     const rows = [
       { project_id: 'active', name: 'Live app', archived_at: null, run_count: 1 },
@@ -140,6 +146,11 @@ describe('stub controls', () => {
     const test = screen.getByRole('button', { name: 'Run test' })
     expect(scan).toBeDisabled()
     expect(test).toBeDisabled()
+    expect(screen.queryByText('Passed')).toBeNull()
+    expect(screen.queryByText('No findings yet.')).toBeNull()
+    expect(await screen.findByRole('alert')).toHaveTextContent(/runner unavailable/i)
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    expect(screen.queryByText('No test runs yet.')).toBeNull()
     expect(client.runSecurityScan).not.toHaveBeenCalled()
     expect(client.startBrowserTest).not.toHaveBeenCalled()
   })

@@ -208,6 +208,7 @@ def run_security_scan(
 
     blocking = [f for f in findings if f.blocks_publish]
     advisory = [f for f in findings if not f.blocks_publish]
+    offline_stub = mode == "offline"
     result = {
         "scan_id": scan_id,
         "project_id": project_id,
@@ -215,12 +216,17 @@ def run_security_scan(
         "gate": gate,
         "started_at": started,
         "finished_at": datetime.now(UTC).isoformat(),
-        "passed": len(blocking) == 0,
+        # An offline stub did not run the scanners. Caching it as passed
+        # lets a later publish skip a real scan.
+        "passed": False if offline_stub else len(blocking) == 0,
+        "stub": offline_stub,
         "blocking_count": len(blocking),
         "advisory_count": len(advisory),
         "findings": [f.to_dict() for f in findings],
         "summary": (
-            "No security findings."
+            "Security scanning is not available until a live scanner is connected."
+            if offline_stub
+            else "No security findings."
             if not findings
             else f"{len(blocking)} blocking, {len(advisory)} advisory findings."
         ),
@@ -232,6 +238,23 @@ def run_security_scan(
     (dest / f"{scan_id}.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     (dest / "latest.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     return result
+
+
+def is_offline_stub(scan: dict[str, Any] | None) -> bool:
+    """True when this record is the offline stand-in, not a scanner result.
+
+    A stub must not count as a pass, and it must not satisfy publish: a later
+    live scan has to be allowed to run. Real findings keep the record even if
+    an older note still mentions the stub.
+    """
+    if not isinstance(scan, dict) or scan.get("findings"):
+        return False
+    if scan.get("stub") is True:
+        return True
+    notes = scan.get("notes") or []
+    if any("offline stub" in str(note) for note in notes):
+        return True
+    return scan.get("mode") == "offline"
 
 
 def latest_security_scan(projects_root: Path, project_id: str) -> dict[str, Any] | None:
@@ -252,8 +275,8 @@ def publish_blocked_by_security(
 ) -> dict[str, Any] | None:
     """Return a blocking payload if publish should be refused, else None."""
     latest = latest_security_scan(projects_root, project_id)
-    if latest is None:
-        # Auto-run a quick offline scan before publish when nothing cached.
+    if latest is None or is_offline_stub(latest):
+        # Nothing usable is cached. A stub pass must not clear publish.
         return None
     if latest.get("passed"):
         return None
@@ -272,6 +295,7 @@ def publish_blocked_by_security(
 
 __all__ = [
     "PlainFinding",
+    "is_offline_stub",
     "latest_security_scan",
     "publish_blocked_by_security",
     "run_security_scan",

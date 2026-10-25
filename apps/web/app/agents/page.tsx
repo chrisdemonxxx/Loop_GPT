@@ -19,7 +19,8 @@ import { getBotMemory } from '../lib/bot'
 import { listNamedBots, listBotThreads, createBotThread, renameBotThread, deleteBotThread, type NamedBot, type BotThreadSummary } from '../lib/namedBots'
 import { COMPUTER_PANE_DEFAULT, COMPUTER_PANE_KEY, COMPUTER_PANE_MIN, clampComputerPaneWidth, computerPaneMax } from './computerPane'
 import {
-  allowedToolsForBot, computerForBot, finishWatchTarget, resolveWatchTarget, routineScheduleLabel, routineSkillLabel,
+  allowedToolsForBot, anyTaskInProgress, botMemoryQueryKey, computerForSend, computerUnavailableMessage,
+  finishWatchTarget, listPanelPhase, resolveWatchTarget, routineScheduleLabel, routineSkillLabel,
   type WatchTarget,
 } from './botTask'
 import RunViewer from '../components/team-bot/RunViewer'
@@ -28,6 +29,7 @@ import { AgentChatPane } from '../components/team-bot/AgentChatPane'
 import { BotFilesPanel } from '../components/team-bot/BotFilesPanel'
 import { useTeachSession } from '../components/team-bot/useTeachSession'
 import { AppPage } from '../components/AppPage'
+import { useToast } from '../lib/toast'
 
 /**
  * Loop Bot (/agents):
@@ -186,8 +188,8 @@ function AgentsPageInner() {
     enabled: typeof window !== 'undefined' && !!user,
     retry: false,
     refetchInterval: (q) => {
-      const tasks = q.state.data?.tasks
-      return Array.isArray(tasks) && tasks.some((t) => t.status === 'queued' || t.status === 'processing') ? 6000 : false
+      const rows = q.state.data?.tasks
+      return anyTaskInProgress(rows) ? 6000 : false
     },
   })
   const tasks = tasksQuery.data?.tasks ?? null
@@ -204,6 +206,10 @@ function AgentsPageInner() {
     retry: false,
   })
   const skills = skillsQuery.data?.skills ?? null
+  const skillsPhase = listPanelPhase({ isPending: skillsQuery.isPending, isError: skillsQuery.isError, data: skillsQuery.data ?? null })
+  const skillsError = skillsQuery.isError
+    ? ((skillsQuery.error as { message?: string })?.message || 'Could not load skills.')
+    : ''
 
   const routinesQuery = useQuery<{ routines: BotRoutine[] }>({
     queryKey: ['bot', 'routines'],
@@ -215,6 +221,11 @@ function AgentsPageInner() {
   const routineRows = routinesQuery.data
     ? routinesQuery.data.routines.filter((routine) => routine.botId === botId)
     : null
+  const routinesPhase = listPanelPhase({ isPending: routinesQuery.isPending, isError: routinesQuery.isError, data: routinesQuery.data ?? null })
+  const routinesError = routinesQuery.isError
+    ? ((routinesQuery.error as { message?: string })?.message || 'Could not load routines.')
+    : ''
+  const desktopUnavailable = computerUnavailableMessage(quota)
 
   const memoryQuery = useQuery<{ memory: string } | null>({
     queryKey: ['bot', 'memory', botId],
@@ -231,6 +242,7 @@ function AgentsPageInner() {
     void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] })
     void queryClient.invalidateQueries({ queryKey: ['bot', 'skills'] })
     void queryClient.invalidateQueries({ queryKey: ['bot', 'routines'] })
+    if (botId) void queryClient.invalidateQueries({ queryKey: botMemoryQueryKey(botId) })
   }
 
   const teach = useTeachSession(refresh, botId, activeThreadId)
@@ -239,7 +251,12 @@ function AgentsPageInner() {
 
   useEffect(() => { setAttachedSkill(null) }, [botId])
 
-  const anyActive = useMemo(() => !!tasks?.some((t) => t.status === 'queued' || t.status === 'processing'), [tasks])
+  const anyActive = useMemo(() => anyTaskInProgress(tasks), [tasks])
+
+  useEffect(() => {
+    if (!botId || !tasks || anyActive) return
+    void queryClient.invalidateQueries({ queryKey: botMemoryQueryKey(botId) })
+  }, [anyActive, botId, queryClient, tasks])
 
   // A teach session drives the operator straight into the enlarged computer.
   useEffect(() => {
@@ -305,7 +322,7 @@ function AgentsPageInner() {
         conversationId = thread.id
         selectThread(thread.id)
       }
-      const computer = computerForBot(activeBot.cloudComputer)
+      const computer = computerForSend(activeBot.cloudComputer, quota)
       const skillId = attachedSkill?.id
       return enqueueBotTask({
         goal: text,
@@ -323,6 +340,7 @@ function AgentsPageInner() {
       setSuggestedSkills(res.suggestedSkills || [])
       void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] })
       void queryClient.invalidateQueries({ queryKey: ['bot', 'threads'] })
+      if (botId) void queryClient.invalidateQueries({ queryKey: botMemoryQueryKey(botId) })
     },
     onError: (err: unknown) => {
       if (err instanceof BotApiError) {
@@ -502,7 +520,7 @@ function AgentsPageInner() {
                   setTab(id)
                   if (id === 'computer') {
                     setWatch(null)
-                    void wakeBotComputer('default').catch(() => undefined)
+                    if (!desktopUnavailable) void wakeBotComputer('default').catch(() => undefined)
                   }
                 }}
                 className={`px-3.5 py-1.5 rounded-lg text-ui-xs font-medium transition ${
@@ -546,12 +564,17 @@ function AgentsPageInner() {
                     botId={botId}
                     conversationId={activeThreadId}
                     allowedTools={activeBot ? allowedToolsForBot(activeBot.defaultTools) : []}
-                    computer={computerForBot(activeBot?.cloudComputer)}
+                    computer={computerForSend(activeBot?.cloudComputer, quota)}
                     onCreated={refresh}
                   />
-                  {routineRows === null ? (
+                  {routinesPhase === 'error' ? (
+                    <p className="mt-2 text-ui-xs text-[var(--danger)]" role="alert">
+                      {routinesError}
+                      <button type="button" onClick={() => { void routinesQuery.refetch() }} className="ml-2 text-[var(--accent-text)] hover:underline">Retry</button>
+                    </p>
+                  ) : routinesPhase === 'loading' ? (
                     <div className="mt-2 text-ui-xs text-[var(--ink-muted)] flex items-center gap-2"><Loader2 size={12} className="animate-spin" aria-hidden /> Loading routines…</div>
-                  ) : routineRows.length === 0 ? (
+                  ) : !routineRows || routineRows.length === 0 ? (
                     <p className="mt-2 text-ui-sm text-[var(--ink-muted)] leading-relaxed">
                       Nothing on a schedule yet. A routine pairs this Bot with a skill on an interval — teach a skill in the Computer, then put it on a routine.
                     </p>
@@ -567,9 +590,14 @@ function AgentsPageInner() {
             )}
 
             {tab === 'library' && (
-              skills === null ? (
+              skillsPhase === 'error' ? (
+                <p className="text-ui-xs text-[var(--danger)]" role="alert">
+                  {skillsError}
+                  <button type="button" onClick={() => { void skillsQuery.refetch() }} className="ml-2 text-[var(--accent-text)] hover:underline">Retry</button>
+                </p>
+              ) : skillsPhase === 'loading' ? (
                 <div className="text-ui-xs text-[var(--ink-muted)] flex items-center gap-2"><Loader2 size={12} className="animate-spin" aria-hidden /> Loading skills…</div>
-              ) : skills.length === 0 ? (
+              ) : !skills || skills.length === 0 ? (
                 <div className="pt-2">
                   <Sparkles size={18} className="text-[var(--ink-muted)] mb-2" aria-hidden />
                   <p className="text-ui-sm text-[var(--ink-muted)] leading-relaxed">
@@ -598,13 +626,13 @@ function AgentsPageInner() {
           {/* Skip embedded mount while expanded — avoids duplicate status probes. */}
           {tab === 'computer' && !computerExpanded && (
             <div className="flex-1 min-h-0 flex flex-col">
-              <AgentComputerTab botName={botName || 'Bot'} session={teach} onExpand={() => setComputerExpanded(true)} />
+              <AgentComputerTab botName={botName || 'Bot'} session={teach} unavailableMessage={desktopUnavailable} onExpand={() => setComputerExpanded(true)} />
             </div>
           )}
 
           {tab === 'files' && (
             <div className="flex-1 min-h-0 flex flex-col px-4 py-4">
-              <BotFilesPanel onWakeComputer={() => { void wakeBotComputer('default').catch(() => undefined) }} />
+              <BotFilesPanel onWakeComputer={() => { if (!desktopUnavailable) void wakeBotComputer('default').catch(() => undefined) }} />
             </div>
           )}
         </aside>
@@ -617,6 +645,7 @@ function AgentsPageInner() {
           session={teach}
           expanded
           runView={watch}
+          unavailableMessage={desktopUnavailable}
           onTrace={watch ? () => setTraceTaskId(watch.taskId) : undefined}
           onCollapse={() => { setComputerExpanded(false); setWatch(null) }}
         />
@@ -641,6 +670,7 @@ function BotThreadRail({
   onRename: (id: string, title: string) => Promise<void>
   onDelete: (id: string) => Promise<void>
 }) {
+  const toast = useToast()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [deleteId, setDeleteId] = useState<string | null>(null)
@@ -655,7 +685,10 @@ function BotThreadRail({
     try {
       await onRename(id, title)
       setEditingId(null)
-    } catch { /* keep the editor open so the title isn't lost */ }
+    } catch (err) {
+      const message = err instanceof Error && err.message ? err.message : 'Could not rename the chat.'
+      toast.push('error', message)
+    }
     finally { setBusy(false) }
   }
 

@@ -32,6 +32,8 @@ export function AgentComputerTab({
   runView = null,
   /** Open the written trace when Watch cannot show a desktop. */
   onTrace,
+  /** Set when this account cannot start a desktop. Send still works without one. */
+  unavailableMessage = null,
 }: {
   session: TeachSession
   botName?: string
@@ -41,6 +43,7 @@ export function AgentComputerTab({
   autoProbe?: boolean
   runView?: WatchTarget | null
   onTrace?: () => void
+  unavailableMessage?: string | null
 }) {
   const [box, setBox] = useState<BotBox | null>(null)
   const [booting, setBooting] = useState(false)
@@ -113,7 +116,7 @@ export function AgentComputerTab({
   // When the user expands the persistent desktop, trust a fresh status.
   // No view URL means the box is not live — wake, even if an older payload had a URL.
   useEffect(() => {
-    if (!expanded || runView) return
+    if (!expanded || runView || unavailableMessage) return
     let cancelled = false
     void (async () => {
       let fresh: BotBox | null = null
@@ -128,7 +131,7 @@ export function AgentComputerTab({
       if (!fresh?.alive || !fresh.viewUrl) void wakeRef.current()
     })()
     return () => { cancelled = true }
-  }, [expanded, runView, taskType])
+  }, [expanded, runView, taskType, unavailableMessage])
 
   const teachStream = session.phase === 'starting' || session.phase === 'waiting' || session.phase === 'recording' || session.phase === 'distilling'
   const comp = session.computer
@@ -280,6 +283,12 @@ export function AgentComputerTab({
             <>
               <Ghost size={28} className="text-white/80" aria-hidden />
               <p className="text-ui-sm text-white/80">The desktop is starting.</p>
+            </>
+          ) : unavailableMessage && !watchingRun ? (
+            <>
+              <Monitor size={22} className="text-white/50" aria-hidden />
+              <p className="text-ui-sm text-white/80">A desktop is unavailable.</p>
+              <p className="text-ui-xs text-white/60 max-w-sm">{unavailableMessage}</p>
             </>
           ) : booting || session.phase === 'starting' ? (
             <>

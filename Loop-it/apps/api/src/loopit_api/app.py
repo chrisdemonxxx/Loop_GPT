@@ -131,6 +131,7 @@ from .stacks import MODULE_CDN, REACT_STACK, uses_sandbox_runtime
 from .terminal import TERMINAL_SCOPE
 from .browser_test import get_browser_test, list_browser_tests, run_browser_test
 from .security_scan import (
+    is_offline_stub,
     latest_security_scan,
     publish_blocked_by_security,
     run_security_scan,
@@ -2254,8 +2255,15 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such project")
         require_action(request_actor, "project:read", Resource(org_id=tenant))
         latest = latest_security_scan(projects_root, project_id)
-        if latest is None:
-            return {"findings": [], "passed": True, "summary": "No scan yet."}
+        if latest is None or is_offline_stub(latest):
+            return {
+                "project_id": project_id,
+                "findings": [],
+                "passed": False,
+                "mode": "offline",
+                "stub": True,
+                "summary": "Security scanning is not available until a live scanner is connected.",
+            }
         return latest
 
     @app.get("/api/projects/{project_id}/deployments")
@@ -2296,7 +2304,8 @@ def create_app(
             raise HTTPException(status_code=422, detail="only green checkpoints may be deployed")
         # Phase 2.8: block publish on critical security findings unless overridden.
         if not body.override_security:
-            if latest_security_scan(projects_root, project_id) is None:
+            cached_scan = latest_security_scan(projects_root, project_id)
+            if cached_scan is None or is_offline_stub(cached_scan):
                 workspace = manager.project(project_id, tenant_id=request_actor.actor.tenant_id)
                 if workspace is not None:
                     run_security_scan(
@@ -2304,7 +2313,7 @@ def create_app(
                         project_id=project_id,
                         workspace_root=workspace.root,
                         gate="deploy",
-                        force_offline=True,
+                        force_offline=True if offline else None,
                     )
             blocked = publish_blocked_by_security(
                 projects_root, project_id, override=False
@@ -3335,13 +3344,15 @@ def create_app(
         if tenant is None:
             raise HTTPException(status_code=404, detail="no such project")
         require_action(request_actor, "project:write", Resource(org_id=tenant))
-        seed = bool(body.seed_txt) if body is not None else False
+        # A fake resolver must not pretend the TXT record exists.
+        live_resolver = getattr(app.state.domains, "mode", "fake") == "live"
+        seed = bool(body.seed_txt) if body is not None and live_resolver else False
         try:
             claim = app.state.domains.verify(
                 tenant_id=tenant,
                 subject=request_actor.actor.subject,
                 hostname=hostname,
-                seed_txt=seed or offline,
+                seed_txt=seed,
             )
         except Exception as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
@@ -3412,25 +3423,27 @@ def create_app(
             if green is None:
                 raise HTTPException(status_code=422, detail="no verified checkpoint to remix")
             checkpoint_id = green["checkpoint_id"]
-        # Remix always forks under the source tenant (checkpoint tenancy), then
-        # catalogs the copy for the caller. Secrets and run journals are not copied.
+        # Read the checkpoint in the share's tenant, then write the copy and
+        # its catalog entry in the caller's tenant. Same-tenant remix is unchanged.
+        # Secrets and run journals are not copied.
+        dest_tenant = request_actor.actor.tenant_id
         try:
             forked = manager.fork_checkpoint(
                 source_project,
                 str(checkpoint_id),
                 tenant_id=share.tenant_id,
                 actor_id=request_actor.actor.subject,
+                dest_tenant_id=dest_tenant,
             )
         except Exception as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         new_id = str(forked["project_id"])
-        dest_tenant = request_actor.actor.tenant_id
         name = f"Remix of {payload.get('title') or source_project}"[:120]
         try:
             project_store.create(
                 ProjectRecord(
                     project_id=new_id,
-                    tenant_id=dest_tenant if dest_tenant == share.tenant_id else share.tenant_id,
+                    tenant_id=dest_tenant,
                     owner_user_id=request_actor.actor.subject,
                     name=name,
                     stack=REACT_STACK,
@@ -3441,7 +3454,7 @@ def create_app(
             LOGGER.exception("could not catalog remixed project %s", new_id)
         app.state.sharing.set_visibility(
             project_id=new_id,
-            tenant_id=share.tenant_id,
+            tenant_id=dest_tenant,
             visibility="private",
             title=name,
         )

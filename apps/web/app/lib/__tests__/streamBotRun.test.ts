@@ -67,6 +67,19 @@ describe('streamBotRun reconnect + after cursor', () => {
     expect(onError).not.toHaveBeenCalled()
   })
 
+  it('calls onError when the socket closes without done', async () => {
+    ;(fetch as ReturnType<typeof vi.fn>).mockResolvedValue(sse([
+      { type: 'status', message: 'running', seq: 1 },
+    ]))
+    const onDone = vi.fn()
+    const onError = vi.fn()
+    streamBotRun('run-cut', () => {}, onDone, onError, { maxRetries: 0 })
+    await vi.advanceTimersByTimeAsync(0)
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    expect(onError).toHaveBeenCalled()
+    expect(onDone).not.toHaveBeenCalled()
+  })
+
   it('retries 404 while the worker is still claiming, then surfaces', async () => {
     ;(fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
       new Response(JSON.stringify({ error: 'Bot run not found' }), { status: 404 }),

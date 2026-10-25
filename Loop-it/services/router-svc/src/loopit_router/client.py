@@ -158,46 +158,112 @@ def extract_tool_call(
 _PASSTHROUGH_ROLES: Final[frozenset[str]] = frozenset({"system", "user", "assistant"})
 
 
-def _wire_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
-    """Render the harness transcript as OpenAI chat messages.
+_CANNOT_SEE_IMAGES = "This model cannot see images, so the attached image was not sent."
 
-    ``role: "tool"`` is rewritten to ``"user"``. When ``LOOPIT_VISION_ENABLED``
-    is on, user turns that list image attachment URLs are expanded to OpenAI
-    multimodal ``image_url`` parts so a VL endpoint can see Build screenshots.
-    """
+
+def _vision_enabled() -> bool:
     import os
-    import re
 
-    vision_on = os.environ.get("LOOPIT_VISION_ENABLED", "").strip().lower() in {
+    return os.environ.get("LOOPIT_VISION_ENABLED", "").strip().lower() in {
         "1",
         "true",
         "yes",
         "on",
     }
-    image_url_re = re.compile(r"https?://[^\s\]\)\"']+", re.IGNORECASE)
-    image_ext_re = re.compile(r"\.(png|jpe?g|gif|webp|bmp)(\?|$)", re.IGNORECASE)
 
+
+def _model_accepts_images(router: Any, difficulty: str) -> bool:
+    """True when vision expansion is on and the routed model can take images."""
+    if not _vision_enabled():
+        return False
+    policy = getattr(router, "policy", None)
+    candidates = getattr(policy, "candidates", None)
+    if not callable(candidates):
+        return False
+    try:
+        specs = candidates(difficulty)
+    except Exception:
+        return False
+    if not specs:
+        return False
+    tags = getattr(specs[0], "capability_tags", ()) or ()
+    return "vision" in tags
+
+
+def _redact_unseen_images(content: str) -> str:
+    """Replace image attachment URLs the routed model would ignore."""
+    import re
+
+    image_ext_re = re.compile(r"\.(png|jpe?g|gif|webp|bmp)(\?|$)", re.IGNORECASE)
+    lines: list[str] = []
+    in_attachments = False
+    for line in content.splitlines():
+        if line.startswith("ATTACHMENTS"):
+            in_attachments = True
+            lines.append(line)
+            continue
+        if in_attachments and line.startswith("- http"):
+            url = line[2:].strip()
+            if image_ext_re.search(url) or "/api/files/" in url:
+                lines.append(f"- {_CANNOT_SEE_IMAGES}")
+                continue
+        if in_attachments and line and not line.startswith("-") and not line.startswith(" "):
+            in_attachments = False
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _wire_messages(
+    messages: Sequence[Message], *, accepts_images: bool = False
+) -> list[dict[str, Any]]:
+    """Render the harness transcript as OpenAI chat messages.
+
+    ``role: "tool"`` is rewritten to ``"user"``. When the routed model can take
+    images, user turns that list image attachment URLs are expanded to OpenAI
+    multimodal ``image_url`` parts. Otherwise those URLs are replaced with a
+    note — a URL the model cannot see is not sent.
+    """
     wire: list[dict[str, Any]] = []
     for message in messages:
         role = message.role if message.role in _PASSTHROUGH_ROLES else "user"
         content: Any = message.content
-        if vision_on and role == "user" and isinstance(message.content, str):
-            urls = [
-                url
-                for url in image_url_re.findall(message.content)
-                if image_ext_re.search(url) or "ATTACHMENTS" in message.content
-            ]
-            if "ATTACHMENTS" in message.content and not any(
-                image_ext_re.search(u) for u in urls
-            ):
-                urls = image_url_re.findall(message.content)
-            if urls:
-                parts: list[dict[str, Any]] = [{"type": "text", "text": message.content}]
-                for url in urls[:8]:
-                    parts.append({"type": "image_url", "image_url": {"url": url}})
-                content = parts
+        if role == "user" and isinstance(message.content, str) and "ATTACHMENTS" in message.content:
+            if not accepts_images:
+                content = _redact_unseen_images(message.content)
+            else:
+                urls = _attachment_image_urls(message.content)
+                if urls:
+                    parts: list[dict[str, Any]] = [{"type": "text", "text": message.content}]
+                    for url in urls[:8]:
+                        parts.append({"type": "image_url", "image_url": {"url": url}})
+                    content = parts
         wire.append({"role": role, "content": content})
     return wire
+
+
+def _attachment_image_urls(content: str) -> list[str]:
+    """Image URLs listed under ATTACHMENTS, not every link in the turn.
+
+    A pasted Build image is either a file with an image extension or the
+    ``/api/files/…/content`` fallback. Other https links stay text.
+    """
+    import re
+
+    image_ext_re = re.compile(r"\.(png|jpe?g|gif|webp|bmp)(\?|$)", re.IGNORECASE)
+    urls: list[str] = []
+    in_attachments = False
+    for line in content.splitlines():
+        if line.startswith("ATTACHMENTS"):
+            in_attachments = True
+            continue
+        if in_attachments and line.startswith("- http"):
+            url = line[2:].strip()
+            if image_ext_re.search(url) or "/api/files/" in url:
+                urls.append(url)
+            continue
+        if in_attachments and line and not line.startswith("-") and not line.startswith(" "):
+            in_attachments = False
+    return urls
 
 
 class RouterModelClient:
@@ -238,7 +304,10 @@ class RouterModelClient:
         result = self._router.complete(
             tenant_id=self._tenant_id,
             difficulty=difficulty,
-            messages=_wire_messages(messages),
+            messages=_wire_messages(
+                messages,
+                accepts_images=_model_accepts_images(self._router, difficulty),
+            ),
             response_schema=response_schema if response_schema is not None else TOOL_CALL_ENVELOPE,
             max_output_tokens=self._max_output_tokens,
             run_id=self._run_id,

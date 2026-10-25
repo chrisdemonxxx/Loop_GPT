@@ -9,6 +9,8 @@ import {
   claimProjectDomain,
   deleteProjectSecret,
   getGitStatus,
+  pullGitWebhook,
+  pushGitCheckpoint,
   isServiceMissing,
   isUnreachable,
   listProjectDomains,
@@ -309,34 +311,41 @@ function ProjectVisibilityPanel({
   )
 }
 
-function ProjectGitPanel({ projectId }: { projectId: string }) {
+export function ProjectGitPanel({ projectId, checkpointId = null }: { projectId: string; checkpointId?: string | null }) {
   const toast = useToast()
   const health = useBuildHealth()
   const [status, setStatus] = useState<GitSyncStatus | null>(null)
   const [owner, setOwner] = useState('')
   const [repo, setRepo] = useState('')
   const [busy, setBusy] = useState(false)
-  const connected = githubSyncConnected({
-    mode: status?.mode,
-    provider: gitsyncProvider(health.data),
-  })
+  const [error, setError] = useState<string | null>(null)
+  const provider = (gitsyncProvider(health.data) ?? '').trim().toLowerCase()
+  const disconnected = health.isFetched && (!provider || provider === 'fake')
 
   async function refresh() {
     try {
       setStatus(await getGitStatus(projectId))
-    } catch {
-      setStatus({ bound: false })
+      setError(null)
+    } catch (cause) {
+      setStatus(null)
+      setError(toUserFacingError(cause).message)
     }
   }
 
   useEffect(() => { void refresh() }, [projectId])
+
+  function report(cause: unknown) {
+    const message = toUserFacingError(cause).message
+    setError(message)
+    toast.push('error', message)
+  }
 
   return (
     <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
       <SectionHeader title="GitHub sync" />
       {!health.isFetched ? (
         <p className="text-3xs text-[var(--ink-muted)]">Checking GitHub sync…</p>
-      ) : !connected ? (
+      ) : disconnected ? (
         <>
           <p className="text-3xs text-[var(--ink-muted)]">GitHub sync is not connected.</p>
           <div className="flex flex-wrap gap-2">
@@ -345,12 +354,54 @@ function ProjectGitPanel({ projectId }: { projectId: string }) {
             <button type="button" className={btnPrimary} disabled>Bind</button>
           </div>
         </>
-      ) : status?.bound ? (
+      ) : (
+        <>
+      {error && <p role="alert" className="text-2xs text-[var(--danger)]">{error}</p>}
+      {!status ? null : status.bound ? (
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-ui-xs">
             Connected to <code>{status.owner}/{status.name}</code>
             {status.last_commit_sha ? ` · ${status.last_commit_sha.slice(0, 8)}` : ''}
           </p>
+          <button
+            type="button"
+            className={btnGhost}
+            disabled={busy || !checkpointId}
+            onClick={async () => {
+              if (!checkpointId) return
+              setBusy(true)
+              try {
+                await pushGitCheckpoint(projectId, checkpointId)
+                toast.push('success', 'Checkpoint pushed')
+                await refresh()
+              } catch (cause) {
+                report(cause)
+              } finally {
+                setBusy(false)
+              }
+            }}
+          >
+            Push
+          </button>
+          <button
+            type="button"
+            className={btnGhost}
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true)
+              try {
+                await pullGitWebhook(projectId, {})
+                toast.push('success', 'Checkpoint pulled')
+                await refresh()
+              } catch (cause) {
+                report(cause)
+              } finally {
+                setBusy(false)
+              }
+            }}
+          >
+            Pull
+          </button>
           <button
             type="button"
             className={btnGhost}
@@ -362,7 +413,7 @@ function ProjectGitPanel({ projectId }: { projectId: string }) {
                 toast.push('success', 'GitHub repository disconnected')
                 await refresh()
               } catch (cause) {
-                toast.push('error', toUserFacingError(cause).message)
+                report(cause)
               } finally {
                 setBusy(false)
               }
@@ -399,15 +450,19 @@ function ProjectGitPanel({ projectId }: { projectId: string }) {
           </div>
         </>
       )}
+        </>
+      )}
     </div>
   )
 }
 
-function ProjectDomainsPanel({ projectId }: { projectId: string }) {
+export function ProjectDomainsPanel({ projectId }: { projectId: string }) {
   const toast = useToast()
+  const health = useBuildHealth()
   const [claims, setClaims] = useState<DomainClaim[]>([])
   const [hostname, setHostname] = useState('')
   const [busy, setBusy] = useState(false)
+  const domainsLive = health.data?.domains_mode === 'live'
 
   async function refresh() {
     try {
@@ -422,6 +477,10 @@ function ProjectDomainsPanel({ projectId }: { projectId: string }) {
   return (
     <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
       <SectionHeader title="Domains" />
+      {health.isFetched && !domainsLive ? (
+        <p className="text-3xs text-[var(--ink-muted)]">Custom domains are not connected</p>
+      ) : (
+      <>
       <p className="text-3xs text-[var(--ink-muted)]">
         Connect a custom domain. Add the TXT record at your DNS host, then verify ownership.
       </p>
@@ -491,6 +550,8 @@ function ProjectDomainsPanel({ projectId }: { projectId: string }) {
           Connect domain
         </button>
       </div>
+      </>
+      )}
     </div>
   )
 }
@@ -726,7 +787,7 @@ function ProjectView({ projectId }: { projectId: string }) {
           shareId={project.share_id}
           title={project.name}
         />
-        <ProjectGitPanel projectId={projectId} />
+        <ProjectGitPanel projectId={projectId} checkpointId={project?.current_checkpoint_id ?? null} />
         <ProjectDomainsPanel projectId={projectId} />
         <ConnectorsPanel projectId={projectId} />
         <AnalyticsPanel projectId={projectId} />

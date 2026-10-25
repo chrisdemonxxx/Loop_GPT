@@ -12,6 +12,7 @@ import { Badge, btnGhost, btnOutline, btnPrimary } from '@loop/ui'
 import {
   listBrowserTests,
   getSecurityScan,
+  toUserFacingError,
   type BrowserTestRun,
   type SecurityScanResult,
 } from '@loop/loopit-client'
@@ -49,19 +50,38 @@ export function EditingElementChip({
   )
 }
 
+function isLiveScan(scan: SecurityScanResult | null): boolean {
+  if (!scan || scan.stub || scan.mode === 'offline') return false
+  return scan.mode === 'live'
+}
+
 export function SecurityPanel({ projectId }: { projectId: string | null }) {
   const [scan, setScan] = useState<SecurityScanResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  const refresh = () => {
     if (!projectId) return
     void getSecurityScan(projectId)
-      .then(setScan)
-      .catch(() => setScan(null))
+      .then((result) => {
+        setScan(result)
+        setError(null)
+      })
+      .catch((cause) => {
+        setScan(null)
+        setError(toUserFacingError(cause).message)
+      })
+  }
+
+  useEffect(() => {
+    refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when the project changes
   }, [projectId])
 
   if (!projectId) {
     return <p className="p-3 text-2xs text-[var(--ink-muted)]">Open a project to run a security scan.</p>
   }
+
+  const live = isLiveScan(scan)
 
   return (
     <div className="flex flex-1 min-h-0 flex-col p-3 gap-3 overflow-auto">
@@ -76,31 +96,39 @@ export function SecurityPanel({ projectId }: { projectId: string | null }) {
         >
           Scan now
         </button>
-        {scan?.passed === true && <Badge tone="green">Passed</Badge>}
-        {scan?.passed === false && <Badge tone="rose">Blocking</Badge>}
+        {live && scan?.passed === true && <Badge tone="green">Passed</Badge>}
+        {live && scan?.passed === false && <Badge tone="rose">Blocking</Badge>}
       </div>
       <p className="text-3xs text-[var(--ink-muted)]">Security scanning is not available until a live scanner is connected.</p>
-      {scan?.summary && <p className="text-2xs text-[var(--ink-secondary)]">{scan.summary}</p>}
-      <ul className="space-y-2">
-        {(scan?.findings ?? []).map((finding, index) => (
-          <li
-            key={`${finding.rule_id}-${index}`}
-            className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-sunken)] p-2.5"
-          >
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Badge tone={finding.blocks_publish ? 'rose' : 'neutral'}>{finding.severity}</Badge>
-              <span className="font-mono text-3xs text-[var(--ink-muted)]">{finding.rule_id}</span>
-            </div>
-            <p className="mt-1 text-2xs text-[var(--ink-primary)]">{finding.plain || finding.message}</p>
-            {finding.path && (
-              <p className="mt-0.5 font-mono text-3xs text-[var(--ink-muted)]">
-                {finding.path}{finding.line != null ? `:${finding.line}` : ''}
-              </p>
-            )}
-          </li>
-        ))}
-      </ul>
-      {!scan?.findings?.length && (
+      {error && (
+        <div role="alert" className="flex flex-wrap items-center gap-2">
+          <p className="text-2xs text-[var(--danger)]">{error}</p>
+          <button type="button" className={btnOutline} onClick={refresh}>Retry</button>
+        </div>
+      )}
+      {live && scan?.summary && <p className="text-2xs text-[var(--ink-secondary)]">{scan.summary}</p>}
+      {live && (
+        <ul className="space-y-2">
+          {(scan?.findings ?? []).map((finding, index) => (
+            <li
+              key={`${finding.rule_id}-${index}`}
+              className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-sunken)] p-2.5"
+            >
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Badge tone={finding.blocks_publish ? 'rose' : 'neutral'}>{finding.severity}</Badge>
+                <span className="font-mono text-3xs text-[var(--ink-muted)]">{finding.rule_id}</span>
+              </div>
+              <p className="mt-1 text-2xs text-[var(--ink-primary)]">{finding.plain || finding.message}</p>
+              {finding.path && (
+                <p className="mt-0.5 font-mono text-3xs text-[var(--ink-muted)]">
+                  {finding.path}{finding.line != null ? `:${finding.line}` : ''}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {live && !error && !scan?.findings?.length && (
         <p className="text-2xs text-[var(--ink-muted)]">No findings yet.</p>
       )}
     </div>
@@ -115,10 +143,19 @@ export function BrowserTestsPanel({
 }) {
   const [runs, setRuns] = useState<BrowserTestRun[]>([])
   const [selected, setSelected] = useState<BrowserTestRun | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   const refresh = () => {
     if (!projectId) return
-    void listBrowserTests(projectId).then(setRuns).catch(() => setRuns([]))
+    void listBrowserTests(projectId)
+      .then((next) => {
+        setRuns(next)
+        setError(null)
+      })
+      .catch((cause) => {
+        setRuns([])
+        setError(toUserFacingError(cause).message)
+      })
   }
 
   useEffect(() => {
@@ -144,6 +181,12 @@ export function BrowserTestsPanel({
         </button>
       </div>
       <p className="text-3xs text-[var(--ink-muted)]">Browser tests are not available until a live runner is connected.</p>
+      {error && (
+        <div role="alert" className="flex flex-wrap items-center gap-2">
+          <p className="text-2xs text-[var(--danger)]">{error}</p>
+          <button type="button" className={btnOutline} onClick={refresh}>Retry</button>
+        </div>
+      )}
       <div className="grid gap-2 sm:grid-cols-2">
         <ul className="space-y-1.5">
           {runs.map((run) => (
@@ -163,7 +206,7 @@ export function BrowserTestsPanel({
               </button>
             </li>
           ))}
-          {!runs.length && <p className="text-2xs text-[var(--ink-muted)]">No test runs yet.</p>}
+          {!error && !runs.length && <p className="text-2xs text-[var(--ink-muted)]">No test runs yet.</p>}
         </ul>
         {selected && <TestRunReplayCard run={selected} onClose={() => setSelected(null)} />}
       </div>

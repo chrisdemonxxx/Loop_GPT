@@ -123,12 +123,15 @@ class TestCustomDomains:
             f"/api/projects/{project_id}/domains/app.example.test/verify",
             json={"seed_txt": True},
         )
-        assert verified.status_code == 200
-        assert verified.json()["status"] == "verified"
-        assert verified.json().get("tls_status") == "active"
+        assert verified.status_code == 422
+        body = verified.json()
+        assert body.get("status") != "verified"
 
         listed = client.get(f"/api/projects/{project_id}/domains").json()
-        assert any(item["hostname"] == "app.example.test" for item in listed)
+        assert any(
+            item["hostname"] == "app.example.test" and item["status"] != "verified"
+            for item in listed
+        )
 
 
 class TestSharingRemix:
@@ -163,6 +166,49 @@ class TestSharingRemix:
         # Remix is a private copy.
         detail = client.get(f"/api/projects/{new_id}").json()
         assert detail.get("visibility") in {"private", None} or detail["project_id"] == new_id
+
+    def test_remix_forks_into_the_caller_tenant(self, tmp_path: Path) -> None:
+        owner = _client(tmp_path)
+        project_id, _checkpoint = _project_with_green(owner)
+        visibility = owner.patch(
+            f"/api/projects/{project_id}/visibility",
+            json={"visibility": "public_remix", "title": "Demo app"},
+        )
+        assert visibility.status_code == 200, visibility.text
+        share_id = visibility.json()["share_id"]
+
+        caller = TestClient(owner.app)
+        registered = caller.post(
+            "/api/auth/register",
+            json={
+                "email": "caller@example.com",
+                "password": "correct horse battery staple",
+                "org_name": "Caller Co",
+            },
+        )
+        assert registered.status_code == 200, registered.text
+        caller.headers.update({"Authorization": f"Bearer {registered.json()['access_token']}"})
+
+        third = TestClient(owner.app)
+        third_reg = third.post(
+            "/api/auth/register",
+            json={
+                "email": "third@example.com",
+                "password": "correct horse battery staple",
+                "org_name": "Third Co",
+            },
+        )
+        assert third_reg.status_code == 200, third_reg.text
+        third.headers.update({"Authorization": f"Bearer {third_reg.json()['access_token']}"})
+
+        remixed = caller.post(f"/api/public/share/{share_id}/remix")
+        assert remixed.status_code == 200, remixed.text
+        new_id = remixed.json()["project_id"]
+        assert new_id != project_id
+        caller_project = caller.get(f"/api/projects/{new_id}")
+        assert caller_project.status_code == 200
+        assert caller_project.json()["files"]
+        assert third.get(f"/api/projects/{new_id}").status_code == 404
 
 
 class TestTemplates:
