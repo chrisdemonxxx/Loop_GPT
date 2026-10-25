@@ -1,7 +1,7 @@
 'use client'
 
 import type {
-  BotBoxTaskType, BotComputer, BotEvent, BotQuota, BotRun, BotSkillRef, BotTask, BotTaskDetail,
+  BotBoxTaskType, BotComputer, BotDiskStatus, BotEvent, BotQuota, BotRun, BotSkillRef, BotTask, BotTaskDetail,
   BotTaskStatus, EnqueueBotInput, EnqueueBotResult,
 } from '@loop/shared'
 import { API_URL, authHeaders } from './api'
@@ -97,6 +97,22 @@ export const setBotBoxTakeover = (takeover: boolean) =>
 /** Bill minutes the Computer tab has been open. Safe to call on an interval and once on close. */
 export const settleBotComputer = () =>
   req<{ ok: true; minutes: number }>('POST', '/api/bot/computer/settle', {})
+
+/** Pause the persistent desktop. Wake resumes the same sandbox. */
+export const sleepBotComputer = () =>
+  req<{ alive: false; sandboxId: string; paused: true }>('POST', '/api/bot/computer/sleep', {})
+
+/** Replace a wedged desktop. Mirrored files are copied onto the new machine. */
+export const recoverBotComputer = (taskType: BotBoxTaskType = 'default') =>
+  req<BotBox>('POST', '/api/bot/computer/recover', { taskType })
+
+/** Roll the desktop back to its baseline snapshot. confirm is required. */
+export const resetBotComputer = (taskType: BotBoxTaskType = 'default') =>
+  req<BotBox>('POST', '/api/bot/computer/reset', { confirm: true, taskType })
+
+/** Free space on the live desktop. Does not wake an asleep computer. */
+export const getBotComputerDisk = () =>
+  req<BotDiskStatus>('GET', '/api/bot/computer/disk')
 
 export const setBotTakeover = (runId: string, takeover: boolean) =>
   req<{ takeoverRequested: boolean; interactiveUrl: string | null }>('POST', `/api/bot/runs/${runId}/takeover`, { takeover })

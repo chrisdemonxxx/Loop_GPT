@@ -358,14 +358,26 @@ async function connectPersistedBox(userId: string, timeoutMs: number): Promise<{
   }
 }
 
-async function coldBootOnce(userId: string, userLabel: string, taskType: BoxTaskType, pauseOnTimeout: boolean): Promise<BoxSpec> {
+type ColdBootOptions = {
+  restoreWorkspace?: boolean
+  clearTeachSessions?: boolean
+  templateOverride?: string | null
+}
+
+async function coldBootOnce(
+  userId: string,
+  userLabel: string,
+  taskType: BoxTaskType,
+  pauseOnTimeout: boolean,
+  options: ColdBootOptions = {},
+): Promise<BoxSpec> {
   if (!isE2BConfigured()) {
     throw new Error('E2B is not configured on this deployment — the bot cannot boot its computer.')
   }
   // Refuse a new VM when fewer than 5 minutes remain (or the budget is already
   // spent). The Computer tab maps this quota error to the daily-budget message.
   const { bootMs, budgetMs } = await bootTimeoutPlan(userId)
-  const template = desktopTemplateId()
+  const template = options.templateOverride || desktopTemplateId()
   if (!template) {
     throw new Error(
       'E2B_DESKTOP_TEMPLATE is required for bot Computer boot (GNOME image). Build infra/e2b-gnome-desktop and set the template id.',
@@ -399,14 +411,20 @@ async function coldBootOnce(userId: string, userLabel: string, taskType: BoxTask
     // display. The SDK still starts its XFCE shim; we block on the swap.
     await awaitGnomeDesktop(sandbox)
     await runInBox(sandbox, 'mkdir -p /workspace /home/user/Desktop')
+    // Reset wipes teach recordings. Recover and wake keep them via the mirror.
+    if (options.clearTeachSessions) {
+      await runInBox(sandbox, 'rm -rf /workspace/teach-sessions && mkdir -p /workspace/teach-sessions')
+    }
     // A fresh box is empty; the user's files come back from the durable mirror
     // before any seeding writes anything, so a restore never clobbers a seed
-    // and a seed never clobbers a restored file.
-    const restored = await restoreWorkspaceIn(sandbox, userId)
+    // and a seed never clobbers a restored file. Reset skips this on purpose.
+    const restored = options.restoreWorkspace === false ? 0 : await restoreWorkspaceIn(sandbox, userId)
     await seedBoxProfile(sandbox, userLabel, taskType)
     await seedBotHomes(sandbox, userId)
     if (restored) console.info('[bot-box] workspace restored from durable mirror', { userId })
 
+    await rememberBaselineSnapshot(userId, sandbox)
+    await clearPausedAt(userId)
     const stream = await readVncUrls(sandbox)
     await rememberBoxStream(userId, sandbox.sandboxId, stream)
     // Boot used a >=10 minute timeout so the stream could finish. Shrink back
@@ -434,16 +452,22 @@ async function coldBootOnce(userId: string, userLabel: string, taskType: BoxTask
 /** One cold boot, plus a single retry without pause-on-timeout when the
  *  create/connect stream dies. A second stream failure is a short message
  *  with no sandbox id (that id stays in the server log). */
-async function finishColdBoot(userId: string, userLabel: string, taskType: BoxTaskType, pauseFirst: boolean): Promise<BoxSpec> {
+async function finishColdBoot(
+  userId: string,
+  userLabel: string,
+  taskType: BoxTaskType,
+  pauseFirst: boolean,
+  options: ColdBootOptions = {},
+): Promise<BoxSpec> {
   try {
-    return await coldBootOnce(userId, userLabel, taskType, pauseFirst)
+    return await coldBootOnce(userId, userLabel, taskType, pauseFirst, options)
   } catch (error) {
     if (!isSandboxStreamTimeout(error)) throw error
     logDesktopStreamDeath(userId, error)
     await clearBoxSandboxId(userId)
     if (!pauseFirst) throw new Error(DESKTOP_BOOT_RETRY_MESSAGE)
     try {
-      return await coldBootOnce(userId, userLabel, taskType, false)
+      return await coldBootOnce(userId, userLabel, taskType, false, options)
     } catch (second) {
       await clearBoxSandboxId(userId)
       if (isSandboxStreamTimeout(second)) {
@@ -789,9 +813,139 @@ export async function extendUserBoxLease(userId: string): Promise<void> {
 
 export class BoxNotConnectedError extends Error {
   readonly code = 'not_connected'
-  constructor() {
-    super('The computer is not connected. Wake it before taking control.')
+  constructor(message = 'The computer is not connected. Wake it before taking control.') {
+    super(message)
   }
+}
+
+export class BoxResetConfirmError extends Error {
+  readonly code = 'confirm_required'
+  constructor() {
+    super('Reset needs confirm: true')
+  }
+}
+
+const DISK_WARN_BYTES = () => {
+  const raw = Number(process.env.BOT_DISK_WARN_BYTES || 1_073_741_824)
+  return Number.isFinite(raw) && raw > 0 ? raw : 1_073_741_824
+}
+
+/** df -PB1 rows. warn when either mount is under the free-byte threshold or 90% full. */
+export function parseDfBytes(stdout: string): { rootFreeBytes: number | null; workspaceFreeBytes: number | null; warn: boolean } {
+  let rootFreeBytes: number | null = null
+  let workspaceFreeBytes: number | null = null
+  let rootPct = 0
+  let workspacePct = 0
+  for (const line of stdout.split('\n')) {
+    const parts = line.trim().split(/\s+/)
+    if (parts.length < 6) continue
+    const mount = parts[parts.length - 1]
+    const avail = Number(parts[parts.length - 3])
+    const pct = Number(String(parts[parts.length - 2]).replace('%', ''))
+    if (!Number.isFinite(avail)) continue
+    if (mount === '/') {
+      rootFreeBytes = avail
+      rootPct = pct
+    } else if (mount === '/workspace') {
+      workspaceFreeBytes = avail
+      workspacePct = pct
+    }
+  }
+  const threshold = DISK_WARN_BYTES()
+  const low = (bytes: number | null) => bytes != null && bytes < threshold
+  const warn = low(rootFreeBytes) || low(workspaceFreeBytes) || rootPct >= 90 || workspacePct >= 90
+  return { rootFreeBytes, workspaceFreeBytes, warn }
+}
+
+async function clearPausedAt(userId: string): Promise<void> {
+  if (!prisma) return
+  await prisma.botBox.update({ where: { userId }, data: { pausedAt: null } }).catch(() => undefined)
+}
+
+async function rememberBaselineSnapshot(userId: string, sandbox: Sandbox): Promise<void> {
+  if (!prisma || typeof sandbox.createSnapshot !== 'function') return
+  const row = await prisma.botBox.findUnique({ where: { userId }, select: { lastSnapshotId: true } }).catch(() => null)
+  if (row?.lastSnapshotId) return
+  try {
+    const snap = await sandbox.createSnapshot({ name: `loop-baseline-${userId.slice(0, 16)}` })
+    const snapshotId = typeof snap?.snapshotId === 'string' ? snap.snapshotId : ''
+    if (!snapshotId) return
+    await prisma.botBox.update({ where: { userId }, data: { lastSnapshotId: snapshotId } })
+  } catch { /* a missing snapshot still leaves Reset on the template */ }
+}
+
+async function connectedSandbox(userId: string): Promise<Sandbox | null> {
+  const live = liveBoxes.get(userId)
+  if (live) return live.sandbox
+  const connected = await connectPersistedBox(userId, sandboxConnectTimeoutMs())
+  return connected?.sandbox ?? null
+}
+
+/** Pause the desktop. The sandbox id stays so Wake resumes the same machine. */
+export async function pauseUserBox(userId: string): Promise<{ alive: false; sandboxId: string; paused: true }> {
+  const sandbox = await connectedSandbox(userId)
+  const sandboxId = String(sandbox?.sandboxId || liveBoxes.get(userId)?.sandboxId || '')
+  if (!sandbox || !sandboxId) {
+    throw new BoxNotConnectedError('The computer is already asleep.')
+  }
+  await sandbox.pause()
+  liveBoxes.delete(userId)
+  if (prisma) {
+    await prisma.botBox.update({
+      where: { userId },
+      data: { pausedAt: new Date() },
+    }).catch(() => undefined)
+  }
+  return { alive: false, sandboxId, paused: true }
+}
+
+/** Replace a wedged desktop. Workspace files and the durable mirror survive. */
+export async function recoverUserBox(userId: string, userLabel: string, taskType: BoxTaskType = 'default'): Promise<BoxSpec> {
+  const sandbox = await connectedSandbox(userId)
+  if (sandbox) {
+    try { await syncWorkspaceOut(sandbox, userId) } catch { /* the mirror may already be current */ }
+    try { await sandbox.kill() } catch { /* a dead sandbox is already gone */ }
+  }
+  await clearBoxSandboxId(userId)
+  return ensureUserBox(userId, userLabel, taskType)
+}
+
+/** Roll the desktop back to the baseline snapshot. Does not copy the current workspace in. */
+export async function resetUserBox(
+  userId: string,
+  userLabel: string,
+  opts: { confirm: boolean; taskType?: BoxTaskType },
+): Promise<BoxSpec> {
+  if (opts.confirm !== true) throw new BoxResetConfirmError()
+  const row = prisma
+    ? await prisma.botBox.findUnique({ where: { userId }, select: { lastSnapshotId: true } }).catch(() => null)
+    : null
+  const sandbox = await connectedSandbox(userId)
+  if (sandbox) {
+    try { await sandbox.kill() } catch { /* already gone */ }
+  }
+  await clearBoxSandboxId(userId)
+  return finishColdBoot(userId, userLabel, opts.taskType || 'default', true, {
+    restoreWorkspace: false,
+    clearTeachSessions: true,
+    templateOverride: row?.lastSnapshotId || null,
+  })
+}
+
+export interface BoxDisk {
+  asleep: boolean
+  warn: boolean
+  rootFreeBytes: number | null
+  workspaceFreeBytes: number | null
+}
+
+/** Read free space on the live desktop. An asleep box is not woken. */
+export async function readBoxDisk(userId: string): Promise<BoxDisk> {
+  const sandbox = liveBoxes.get(userId)?.sandbox
+  if (!sandbox) return { asleep: true, warn: false, rootFreeBytes: null, workspaceFreeBytes: null }
+  const result = await sandbox.commands.run('df -PB1 / /workspace', { timeoutMs: 8_000 })
+  const parsed = parseDfBytes(String(result?.stdout || ''))
+  return { asleep: false, ...parsed }
 }
 
 export interface ComputerStatus {

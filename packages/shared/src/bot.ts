@@ -56,6 +56,14 @@ export interface BotRun {
   completedAt?: string | null
 }
 
+/** Free space on the persistent desktop. asleep is true when the box is not probed live. */
+export interface BotDiskStatus {
+  asleep: boolean
+  warn: boolean
+  rootFreeBytes: number | null
+  workspaceFreeBytes: number | null
+}
+
 export interface BotComputer {
   active: boolean
   /** Why the stream is inactive: 'finished' (run ended, VM destroyed) or

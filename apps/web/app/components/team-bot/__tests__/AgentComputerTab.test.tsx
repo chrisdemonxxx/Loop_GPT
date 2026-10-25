@@ -1,14 +1,22 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { AgentComputerTab } from '../AgentComputerTab'
 import type { TeachSession } from '../useTeachSession'
+import { getBotBox, getBotComputerDisk, resetBotComputer, sleepBotComputer } from '../../../lib/bot'
+
+vi.mock('../BotScreen', () => ({ BotScreen: () => <div>screen</div> }))
 
 vi.mock('../../../lib/bot', () => ({
   getBotBox: vi.fn(),
   wakeBotComputer: vi.fn(),
   setBotTakeover: vi.fn(),
   setBotBoxTakeover: vi.fn(),
-  settleBotComputer: vi.fn(),
+  settleBotComputer: vi.fn(async () => ({ ok: true, minutes: 0 })),
+  sleepBotComputer: vi.fn(async () => ({ alive: false, sandboxId: 'sbx', paused: true })),
+  recoverBotComputer: vi.fn(async () => ({ alive: true, sandboxId: 'sbx' })),
+  resetBotComputer: vi.fn(async () => ({ alive: true, sandboxId: 'sbx' })),
+  getBotComputerDisk: vi.fn(async () => ({ asleep: true, warn: false, rootFreeBytes: null, workspaceFreeBytes: null })),
   BotApiError: class BotApiError extends Error { status = 500 },
 }))
 
@@ -43,5 +51,54 @@ describe('AgentComputerTab unavailable desktop', () => {
     expect(screen.getByText(/desktop is unavailable/i)).toBeInTheDocument()
     expect(screen.getByText(/not configured/i)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /wake the computer/i })).not.toBeInTheDocument()
+  })
+
+  it('sleeps a live desktop, confirms reset, and shows a low-disk warning', async () => {
+    const user = userEvent.setup()
+    vi.mocked(getBotBox).mockResolvedValue({
+      alive: true,
+      paused: false,
+      sandboxId: 'sbx',
+      viewUrl: 'https://example.test/view',
+      interactiveUrl: null,
+      resumed: true,
+      ageMinutes: 1,
+      taskType: 'default',
+      workspaceDir: '/workspace',
+    })
+    vi.mocked(getBotComputerDisk).mockResolvedValue({
+      asleep: false,
+      warn: true,
+      rootFreeBytes: 500_000_000,
+      workspaceFreeBytes: 400_000_000,
+    })
+    vi.mocked(sleepBotComputer).mockResolvedValue({ alive: false, sandboxId: 'sbx', paused: true })
+    vi.mocked(resetBotComputer).mockResolvedValue({
+      alive: true,
+      paused: false,
+      sandboxId: 'sbx-clean',
+      viewUrl: 'https://example.test/view',
+      interactiveUrl: null,
+      resumed: false,
+      ageMinutes: 0,
+      taskType: 'default',
+      workspaceDir: '/workspace',
+    })
+    const openFiles = vi.fn()
+    render(<AgentComputerTab session={session} onOpenFiles={openFiles} />)
+
+    expect(await screen.findByRole('button', { name: 'Sleep' })).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent(/low on disk space/i)
+    await user.click(screen.getByRole('button', { name: 'Free up space' }))
+    expect(openFiles).toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Sleep' }))
+    expect(sleepBotComputer).toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Reset computer' }))
+    expect(resetBotComputer).not.toHaveBeenCalled()
+    const confirm = await screen.findByRole('dialog', { name: 'Reset the computer' })
+    await user.click(within(confirm).getByRole('button', { name: 'Reset computer' }))
+    expect(resetBotComputer).toHaveBeenCalled()
   })
 })

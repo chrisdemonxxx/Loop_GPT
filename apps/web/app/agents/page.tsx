@@ -626,7 +626,7 @@ function AgentsPageInner() {
           {/* Skip embedded mount while expanded — avoids duplicate status probes. */}
           {tab === 'computer' && !computerExpanded && (
             <div className="flex-1 min-h-0 flex flex-col">
-              <AgentComputerTab botName={botName || 'Bot'} session={teach} unavailableMessage={desktopUnavailable} onExpand={() => setComputerExpanded(true)} />
+              <AgentComputerTab botName={botName || 'Bot'} session={teach} unavailableMessage={desktopUnavailable} onExpand={() => setComputerExpanded(true)} onOpenFiles={() => setTab('files')} />
             </div>
           )}
 
@@ -647,6 +647,7 @@ function AgentsPageInner() {
           runView={watch}
           unavailableMessage={desktopUnavailable}
           onTrace={watch ? () => setTraceTaskId(watch.taskId) : undefined}
+          onOpenFiles={() => { setComputerExpanded(false); setTab('files') }}
           onCollapse={() => { setComputerExpanded(false); setWatch(null) }}
         />
       )}

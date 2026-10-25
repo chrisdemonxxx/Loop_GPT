@@ -47,6 +47,13 @@ describe('prefs store (loop-prefs/v1)', () => {
     expect(reloadPrefs()).toEqual(DEFAULT_PREFS)
   })
 
+  it('usePrefs adopts a stored chat font when the module cache was primed with defaults', () => {
+    getPrefs()
+    window.localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify({ ...DEFAULT_PREFS, chatFontSize: 'compact' }))
+    const { result } = renderHook(() => usePrefs())
+    expect(result.current.prefs.chatFontSize).toBe('compact')
+  })
+
   it('usePrefs re-renders on update', () => {
     const { result } = renderHook(() => usePrefs())
     expect(result.current.prefs.notifications).toBe(true)

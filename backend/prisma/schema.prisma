@@ -111,6 +111,10 @@ model BotBox {
   streamUrl       String?
   interactiveUrl  String?
   streamStartedAt DateTime?
+  /// Set when the operator pauses the desktop. Cleared on the next wake.
+  pausedAt        DateTime?
+  /// Provider snapshot used by Reset. Empty until the first healthy boot records one.
+  lastSnapshotId  String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 }

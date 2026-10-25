@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Ghost, Monitor, Loader2, Power, Maximize2, X } from 'lucide-react'
-import { getBotBox, wakeBotComputer, setBotTakeover, setBotBoxTakeover, settleBotComputer, BotApiError, type BotBox } from '../../lib/bot'
+import { getBotBox, wakeBotComputer, setBotTakeover, setBotBoxTakeover, settleBotComputer, sleepBotComputer, recoverBotComputer, resetBotComputer, getBotComputerDisk, BotApiError, type BotBox } from '../../lib/bot'
+import type { BotDiskStatus } from '@loop/shared'
 import { Dialog } from '@loop/ui'
 import { BotScreen } from './BotScreen'
 import type { WatchTarget } from '../../agents/botTask'
@@ -32,6 +33,8 @@ export function AgentComputerTab({
   runView = null,
   /** Open the written trace when Watch cannot show a desktop. */
   onTrace,
+  /** Open Files when the disk banner asks to free space. */
+  onOpenFiles,
   /** Set when this account cannot start a desktop. Send still works without one. */
   unavailableMessage = null,
 }: {
@@ -43,6 +46,7 @@ export function AgentComputerTab({
   autoProbe?: boolean
   runView?: WatchTarget | null
   onTrace?: () => void
+  onOpenFiles?: () => void
   unavailableMessage?: string | null
 }) {
   const [box, setBox] = useState<BotBox | null>(null)
@@ -51,6 +55,9 @@ export function AgentComputerTab({
   const [driving, setDriving] = useState(false)
   const [drivenUrl, setDrivenUrl] = useState<string | null>(null)
   const [takeoverBusy, setTakeoverBusy] = useState(false)
+  const [disk, setDisk] = useState<BotDiskStatus | null>(null)
+  const [pendingAction, setPendingAction] = useState<'recover' | 'reset' | null>(null)
+  const [actionBusy, setActionBusy] = useState(false)
   const wakeRef = useRef<() => Promise<void>>(async () => {})
 
   const taskType = session.phase === 'recording' || session.phase === 'waiting' ? 'teach' as const : 'default' as const
@@ -112,6 +119,24 @@ export function AgentComputerTab({
     if (!autoProbe) return
     void probe()
   }, [autoProbe, probe])
+
+  // Disk while this tab is on screen. Hidden tabs do not poll.
+  useEffect(() => {
+    if (!box?.alive) return
+    let cancelled = false
+    const load = () => {
+      if (document.visibilityState === 'hidden') return
+      void getBotComputerDisk()
+        .then((next) => { if (!cancelled) setDisk(next) })
+        .catch(() => undefined)
+    }
+    load()
+    const timer = setInterval(load, 60_000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [box?.alive])
 
   // When the user expands the persistent desktop, trust a fresh status.
   // No view URL means the box is not live — wake, even if an older payload had a URL.
@@ -221,6 +246,41 @@ export function AgentComputerTab({
         setTakeoverBusy(false)
       }
     })()
+  }
+
+  const applyBox = (next: BotBox) => {
+    setBox(next)
+    if (!next.alive) {
+      setDriving(false)
+      setDrivenUrl(null)
+    }
+  }
+
+  const sleep = () => {
+    setActionBusy(true)
+    setError('')
+    void sleepBotComputer()
+      .then(() => getBotBox(taskType))
+      .then(applyBox)
+      .catch((err: unknown) => {
+        setError(err instanceof Error && err.message ? err.message : 'Could not sleep the computer.')
+      })
+      .finally(() => setActionBusy(false))
+  }
+
+  const confirmAction = () => {
+    const action = pendingAction
+    if (!action) return
+    setPendingAction(null)
+    setActionBusy(true)
+    setError('')
+    const run = action === 'reset' ? resetBotComputer(taskType) : recoverBotComputer(taskType)
+    void run
+      .then(applyBox)
+      .catch((err: unknown) => {
+        setError(err instanceof Error && err.message ? err.message : `Could not ${action} the computer.`)
+      })
+      .finally(() => setActionBusy(false))
   }
 
   const stopControl = () => {
@@ -367,6 +427,17 @@ export function AgentComputerTab({
         <div className="shrink-0 px-4 pt-2 text-center">
           <p className="text-ui-xs text-[var(--ink-muted)]">{botName}&apos;s screen</p>
           <p className="mt-1 text-2xs text-[var(--ink-muted)]">This desktop is shared across your bots.</p>
+          <ComputerActions
+            alive={Boolean(box?.alive && box.viewUrl)}
+            busy={actionBusy || booting}
+            pending={pendingAction}
+            diskWarn={Boolean(disk?.warn)}
+            onSleep={sleep}
+            onAsk={setPendingAction}
+            onConfirm={confirmAction}
+            onCancel={() => setPendingAction(null)}
+            onOpenFiles={onOpenFiles}
+          />
           {session.error && (
             <p className="mt-1 text-ui-xs text-[var(--danger)]">{session.error}</p>
           )}
@@ -397,12 +468,82 @@ export function AgentComputerTab({
           onDiscard={() => { void session.cancel() }}
           onClose={closeComputer}
         />
+        <ComputerActions
+          alive={Boolean(box?.alive && (box.viewUrl || runView?.viewUrl))}
+          busy={actionBusy || booting}
+          pending={pendingAction}
+          diskWarn={Boolean(disk?.warn)}
+          onSleep={sleep}
+          onAsk={setPendingAction}
+          onConfirm={confirmAction}
+          onCancel={() => setPendingAction(null)}
+          onOpenFiles={onOpenFiles}
+        />
         {stage}
       </Dialog>
     )
   }
 
   return stage
+}
+
+function ComputerActions({
+  alive, busy, pending, diskWarn, onSleep, onAsk, onConfirm, onCancel, onOpenFiles,
+}: {
+  alive: boolean
+  busy: boolean
+  pending: 'recover' | 'reset' | null
+  diskWarn: boolean
+  onSleep: () => void
+  onAsk: (action: 'recover' | 'reset') => void
+  onConfirm: () => void
+  onCancel: () => void
+  onOpenFiles?: () => void
+}) {
+  return (
+    <div className="mt-2 flex flex-col items-center gap-2">
+      {diskWarn && (
+        <div role="status" className="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-hover)] px-3 py-2 text-left">
+          <p className="text-ui-xs text-[var(--ink-primary)]">The computer is low on disk space.</p>
+          {onOpenFiles && (
+            <button type="button" onClick={onOpenFiles} className="mt-1 min-h-8 px-2 text-ui-xs text-[var(--accent-text)] hover:underline">
+              Free up space
+            </button>
+          )}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        {alive && (
+          <button type="button" onClick={onSleep} disabled={busy} className="min-h-8 px-3 rounded-lg text-ui-xs text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] transition disabled:opacity-40">
+            Sleep
+          </button>
+        )}
+        <button type="button" onClick={() => onAsk('recover')} disabled={busy} className="min-h-8 px-3 rounded-lg text-ui-xs text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover)] transition disabled:opacity-40">
+          Recover computer
+        </button>
+        <button type="button" onClick={() => onAsk('reset')} disabled={busy} className="min-h-8 px-3 rounded-lg text-ui-xs text-[var(--ink-secondary)] hover:text-[var(--danger)] hover:bg-[var(--bg-hover)] transition disabled:opacity-40">
+          Reset computer
+        </button>
+      </div>
+      {pending && (
+        <div role="dialog" aria-label={pending === 'reset' ? 'Reset the computer' : 'Recover the computer'} className="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-3 py-2 text-left">
+          <p className="text-ui-xs text-[var(--ink-secondary)]">
+            {pending === 'reset'
+              ? 'Reset rolls the desktop back to the last snapshot. Files that were not in that snapshot can be lost.'
+              : 'Recover restarts the desktop. Saved files and logins stay.'}
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button type="button" onClick={onCancel} className="min-h-8 px-3 rounded-lg text-ui-xs text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition">
+              Cancel
+            </button>
+            <button type="button" onClick={onConfirm} className="min-h-8 px-3 rounded-lg text-ui-xs font-medium text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
+              {pending === 'reset' ? 'Reset computer' : 'Recover computer'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 /** On-screen pill. Stop releases control, and ends the recording when one is active. */

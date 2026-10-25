@@ -159,6 +159,8 @@ export function usePrefs(): { prefs: UserPrefs; update: (patch: Partial<UserPref
   const [prefs, setLocal] = useState<UserPrefs>(current)
   useEffect(() => {
     const unsub = subscribePrefs(setLocal)
+    // The first read can be the server default. A reload must show what was stored.
+    setLocal(reloadPrefs())
     // Adopt changes made by another tab (storage event is same-key).
     const onStorage = (e: StorageEvent) => { if (e.key === PREFS_STORAGE_KEY) setLocal(readStored()) }
     window.addEventListener('storage', onStorage)

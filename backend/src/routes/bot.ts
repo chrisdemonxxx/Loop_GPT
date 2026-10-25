@@ -379,6 +379,103 @@ router.post('/computer/settle', asyncHandler(async (req, res) => {
   res.json({ ok: true, minutes })
 }))
 
+function computerTaskType(req: express.Request) {
+  const raw = typeof req.body?.taskType === 'string' ? req.body.taskType
+    : typeof req.query.taskType === 'string' ? req.query.taskType
+      : 'default'
+  return raw as 'default' | 'coding' | 'research' | 'ops' | 'teach'
+}
+
+async function sendLiveBox(res: express.Response, userId: string, box: { streamUrl?: string; interactiveUrl?: string | null; sandboxId: string; resumed: boolean; ageMinutes: number; taskType: string; workspaceDir: string }) {
+  const { recordInteractiveVmMinutes } = await import('../services/botComputerMeter')
+  await recordInteractiveVmMinutes(userId).catch(() => undefined)
+  let takeoverRequested = false
+  if (hasDb && prisma) {
+    const row = await prisma.botBox.findUnique({
+      where: { userId },
+      select: { takeoverRequested: true },
+    }).catch(() => null)
+    takeoverRequested = row?.takeoverRequested === true
+  }
+  const viewUrl = box.streamUrl || null
+  const alive = Boolean(viewUrl)
+  res.json({
+    alive,
+    sandboxId: box.sandboxId,
+    viewUrl,
+    interactiveUrl: alive && takeoverRequested ? (box.interactiveUrl || null) : null,
+    resumed: box.resumed,
+    ageMinutes: box.ageMinutes,
+    taskType: box.taskType,
+    workspaceDir: box.workspaceDir,
+    takeoverRequested,
+    paused: !alive,
+  })
+}
+
+/** POST /api/bot/computer/sleep — pause the persistent desktop. Does not delete it. */
+router.post('/computer/sleep', asyncHandler(async (req, res) => {
+  const { pauseUserBox } = await import('../services/botBox')
+  const { recordInteractiveVmMinutes } = await import('../services/botComputerMeter')
+  const userId = (req as any).userId as string
+  await recordInteractiveVmMinutes(userId).catch(() => undefined)
+  try {
+    res.json(await pauseUserBox(userId))
+  } catch (error: any) {
+    if (error?.code === 'not_connected') {
+      return res.status(409).json({ error: error.message, code: 'not_connected' })
+    }
+    const msg = String(error?.message || 'Could not sleep the computer')
+    return res.status(502).json({ error: msg, code: 'provider' })
+  }
+}))
+
+/** POST /api/bot/computer/recover — new desktop, same mirrored files. */
+router.post('/computer/recover', asyncHandler(async (req, res) => {
+  const { recoverUserBox } = await import('../services/botBox')
+  const userId = (req as any).userId as string
+  const user = hasDb && prisma ? await prisma.user.findUnique({ where: { id: userId }, select: { email: true } }) : null
+  try {
+    const box = await recoverUserBox(userId, (user?.email || 'operator').split('@')[0], computerTaskType(req))
+    await sendLiveBox(res, userId, box)
+  } catch (error: any) {
+    if (error?.code === 'forbidden' || error?.code === 'quota' || error?.code === 'unavailable' || error?.code === 'invalid_request') {
+      return botError(res, error)
+    }
+    const msg = String(error?.message || 'Could not recover the computer')
+    return res.status(502).json({ error: msg, code: 'provider' })
+  }
+}))
+
+/** POST /api/bot/computer/reset { confirm: true } — baseline snapshot, no workspace restore. */
+router.post('/computer/reset', asyncHandler(async (req, res) => {
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({ error: 'Reset needs confirm: true', code: 'invalid_request' })
+  }
+  const { resetUserBox } = await import('../services/botBox')
+  const userId = (req as any).userId as string
+  const user = hasDb && prisma ? await prisma.user.findUnique({ where: { id: userId }, select: { email: true } }) : null
+  try {
+    const box = await resetUserBox(userId, (user?.email || 'operator').split('@')[0], { confirm: true, taskType: computerTaskType(req) })
+    await sendLiveBox(res, userId, box)
+  } catch (error: any) {
+    if (error?.code === 'confirm_required') {
+      return res.status(400).json({ error: error.message, code: 'invalid_request' })
+    }
+    if (error?.code === 'forbidden' || error?.code === 'quota' || error?.code === 'unavailable' || error?.code === 'invalid_request') {
+      return botError(res, error)
+    }
+    const msg = String(error?.message || 'Could not reset the computer')
+    return res.status(502).json({ error: msg, code: 'provider' })
+  }
+}))
+
+/** GET /api/bot/computer/disk — free space. Does not wake an asleep computer. */
+router.get('/computer/disk', asyncHandler(async (req, res) => {
+  const { readBoxDisk } = await import('../services/botBox')
+  res.json(await readBoxDisk((req as any).userId as string))
+}))
+
 /** POST /api/bot/computer/wake — boot or resume YOUR persistent box (side effects
  *  + interactive VM-minute metering). Body/query: taskType optional. */
 router.post('/computer/wake', asyncHandler(async (req, res) => {
