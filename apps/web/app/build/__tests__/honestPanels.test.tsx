@@ -44,7 +44,7 @@ vi.mock('@loop/loopit-client', async (importOriginal) => ({
 
 import { CollaborationPanel } from '../Phase3Panels'
 import { SecurityPanel } from '../Phase2Panels'
-import { ProjectDomainsPanel, ProjectGitPanel } from '../projects/page'
+import { ProjectDomainsPanel, ProjectGitPanel } from '../projects/ProjectSyncPanels'
 
 function wrapper({ children }: { children: ReactNode }) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
