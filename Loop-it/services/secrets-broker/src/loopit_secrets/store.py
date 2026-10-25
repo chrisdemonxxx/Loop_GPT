@@ -375,6 +375,14 @@ class SecretStore:
             )
         self._by_key[(secret.tenant_id, secret.project_id, secret.name)] = secret
 
+    def names_for_project(self, tenant_id: str, project_id: str) -> list[str]:
+        """Names stored for this tenant and project. Persistent stores override this."""
+        return [
+            name
+            for (stored_tenant, stored_project, name) in self._by_key
+            if stored_tenant == tenant_id and stored_project == project_id
+        ]
+
     def get(self, tenant_id: str, project_id: str, name: str) -> StoredSecret | None:
         """Return the secret for this tenant/project/name, or ``None``."""
         return self._by_key.get((tenant_id, project_id, name))
@@ -432,6 +440,16 @@ class PersistentSecretStore(SecretStore):
                 "class that may never enter a project store"
             )
         self._repository.put(self._codec.encrypt(secret))
+
+    def names_for_project(self, tenant_id: str, project_id: str) -> list[str]:
+        # Durable rows live in the repository. The in-memory index stays empty.
+        return [
+            record.name
+            for record in self._repository.list_by_environment_and_root_key(
+                self.environment, self._codec.root_key.key_id
+            )
+            if record.tenant_id == tenant_id and record.project_id == project_id
+        ]
 
     def get(self, tenant_id: str, project_id: str, name: str) -> StoredSecret | None:
         record = self._repository.get(tenant_id, project_id, name)

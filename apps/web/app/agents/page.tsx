@@ -18,6 +18,7 @@ import { getStoredUser } from '../lib/api'
 import { getBotMemory } from '../lib/bot'
 import { listNamedBots, listBotThreads, createBotThread, renameBotThread, deleteBotThread, type NamedBot, type BotThreadSummary } from '../lib/namedBots'
 import { COMPUTER_PANE_DEFAULT, COMPUTER_PANE_KEY, COMPUTER_PANE_MIN, clampComputerPaneWidth, computerPaneMax } from './computerPane'
+import { BOT_SECTION_TAB_CLASS } from './sectionTabs'
 import {
   allowedToolsForBot, anyTaskInProgress, botMemoryQueryKey, computerForSend, computerUnavailableMessage,
   finishWatchTarget, listPanelPhase, resolveWatchTarget, routineScheduleLabel, routineSkillLabel,
@@ -523,7 +524,7 @@ function AgentsPageInner() {
                     if (!desktopUnavailable) void wakeBotComputer('default').catch(() => undefined)
                   }
                 }}
-                className={`px-3.5 py-1.5 rounded-lg text-ui-xs font-medium transition ${
+                className={`${BOT_SECTION_TAB_CLASS} ${
                   tab === id ? 'bg-[var(--bg-hover-strong)] text-[var(--ink-primary)]' : 'text-[var(--ink-muted)] hover:text-[var(--ink-secondary)]'
                 }`}
               >

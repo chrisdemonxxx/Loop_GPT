@@ -476,10 +476,10 @@ def list_secret_names(
     state: ProjectBackendState, *, tenant_id: str, project_id: str, environment: str = "build"
 ) -> list[dict[str, str]]:
     store = state.build_secrets if environment == "build" else state.prod_secrets
-    names: list[dict[str, str]] = []
-    for (t, p, name), secret in getattr(store, "_by_key", {}).items():
-        if t == tenant_id and p == project_id:
-            names.append({"name": name, "environment": secret.environment.value})
+    names: list[dict[str, str]] = [
+        {"name": name, "environment": environment}
+        for name in store.names_for_project(tenant_id, project_id)
+    ]
     # Also surface pending requests.
     for req in state.pending_secret_requests.get(project_id, []):
         if req.get("status") == "pending":

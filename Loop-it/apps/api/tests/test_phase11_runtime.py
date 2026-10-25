@@ -141,6 +141,49 @@ class TestOrchestratorGetRunEnrichment:
         assert response.status_code == 200
         assert response.json()["project_id"] == "proj_meta"
 
+    def test_a_finished_orchestrator_run_is_not_listed_as_running(self, tmp_path: Path) -> None:
+        from loopit_api.persist import persist_run_started
+
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        failed = _workflow_status("run_err", project_id="proj_err")
+        failed.status = RunStatus.FAILED
+        failed.summary = "ActivityError: dispatch failed"
+        orchestrator = _FakeOrchestrator({"run_err": failed})
+        app = create_app(
+            projects_root=projects,
+            model_factory=offline_model_factory(),
+            execution_mode="orchestrator",
+            orchestrator_client=cast(Any, orchestrator),
+        )
+        persist_run_started(
+            projects=cast(Any, app).state.project_store,
+            runs=cast(Any, app).state.run_store,
+            tenant_id="org_1",
+            owner_user_id="owner",
+            project_id="proj_err",
+            run_id="run_err",
+            prompt="A single page that says Audit ready.",
+            stack="react",
+            max_iterations=1,
+            difficulty="implementation",
+        )
+        cast(Any, app).state.temporal_runs["run_err"] = {
+            "execution_mode": "orchestrator",
+            "tenant_id": "org_1",
+            "project_id": "proj_err",
+            "prompt": "A single page that says Audit ready.",
+            "stack": "react",
+        }
+        token = cast(Any, app).state.identity_signer.mint_identity(
+            subject="owner", org_id="org_1", role="owner", scopes=("api",)
+        )
+        client = TestClient(app)
+        response = client.get("/api/runs", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 200
+        row = next(item for item in response.json() if item["run_id"] == "run_err")
+        assert row["status"] in {"error", "failed"}
+
 
 class TestProjectLeaseLocalMode:
     def test_lease_endpoint_reports_local_without_scheduler(self, tmp_path: Path) -> None:

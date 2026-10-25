@@ -220,4 +220,19 @@ describe('computer sleep, recover, reset, and disk', () => {
     expect(live.warn).toBe(true)
     expect(live.workspaceFreeBytes).toBe(400_000_000)
   })
+
+  it('disk reads df output when the command exits nonzero', async () => {
+    const sandbox = fakeSandbox('sbx-disk-df', LOW_DISK)
+    create.mockResolvedValue(sandbox)
+    await ensureUserBox('user-disk-df', 'ada')
+    const failure = Object.assign(new Error('df failed'), {
+      result: { stdout: LOW_DISK, exitCode: 1 },
+    })
+    sandbox.commands.run.mockRejectedValue(failure)
+
+    const live = await readBoxDisk('user-disk-df')
+    expect(live.asleep).toBe(false)
+    expect(live.warn).toBe(true)
+    expect(live.rootFreeBytes).toBe(500_000_000)
+  })
 })

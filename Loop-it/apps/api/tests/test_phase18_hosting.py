@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from loopit_api.app import create_app, offline_model_factory
 from loopit_api.hosting import opaque_label_for
-from loopit_api.project_backend import backend_from_env, put_secret, request_secret
+from loopit_api.project_backend import backend_from_env, list_secret_names, put_secret, request_secret
 from loopit_deployer import StaticObjectHostingProvider as DeployerStatic
 
 IDENTITY_SECRET = "api-identity-secret-with-at-least-thirty-two-bytes"
@@ -143,6 +143,30 @@ class TestDatabaseAndSecrets:
             if item.get("status") == "pending"
         ]
         assert remaining == []
+
+    def test_a_saved_secret_is_listed_from_the_persistent_store(self) -> None:
+        from loopit_secrets import (
+            Environment,
+            InMemoryEncryptedSecretRepository,
+            PersistentSecretStore,
+            RootKey,
+        )
+
+        state = backend_from_env()
+        state.build_secrets = PersistentSecretStore(
+            Environment.BUILD,
+            repository=InMemoryEncryptedSecretRepository(),
+            root_key=RootKey(key_id="root-a", key=bytes([1]) * 32),
+        )
+        put_secret(
+            state,
+            tenant_id="t1",
+            project_id="proj_x",
+            name="AUDIT_PASS",
+            value="ok",
+        )
+        names = list_secret_names(state, tenant_id="t1", project_id="proj_x")
+        assert any(item["name"] == "AUDIT_PASS" for item in names)
 
 
 class TestHealthParityFlags:

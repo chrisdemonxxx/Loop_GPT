@@ -943,8 +943,17 @@ export interface BoxDisk {
 export async function readBoxDisk(userId: string): Promise<BoxDisk> {
   const sandbox = liveBoxes.get(userId)?.sandbox
   if (!sandbox) return { asleep: true, warn: false, rootFreeBytes: null, workspaceFreeBytes: null }
-  const result = await sandbox.commands.run('df -PB1 / /workspace', { timeoutMs: 8_000 })
-  const parsed = parseDfBytes(String(result?.stdout || ''))
+  let stdout = ''
+  try {
+    const result = await sandbox.commands.run('df -PB1 / /workspace', { timeoutMs: 8_000 })
+    stdout = String(result?.stdout || '')
+  } catch (error: unknown) {
+    // df exits nonzero when one path is missing. E2B throws, and the route
+    // would otherwise turn that into a 500 with no disk state.
+    const result = (error as { result?: { stdout?: string } } | null)?.result
+    stdout = String(result?.stdout || '')
+  }
+  const parsed = parseDfBytes(stdout)
   return { asleep: false, ...parsed }
 }
 

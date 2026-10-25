@@ -118,6 +118,7 @@ from .project_backend import (
 )
 from .reviews import ReviewStore
 from .persist import (
+    catalog_status,
     load_run_meta,
     persist_run_finished,
     persist_run_started,
@@ -1125,7 +1126,7 @@ def create_app(
         return state.to_dict()
 
     @app.get("/api/runs")
-    def list_runs(request_actor: RequestActor = actor_dependency) -> list[dict[str, Any]]:
+    async def list_runs(request_actor: RequestActor = actor_dependency) -> list[dict[str, Any]]:
         require_action(request_actor, "project:read", Resource(org_id=request_actor.actor.org_id))
         tenant_id = request_actor.actor.tenant_id
         by_id: dict[str, dict[str, Any]] = {}
@@ -1136,11 +1137,65 @@ def create_app(
             )
         for state in manager.list_runs(tenant_id=tenant_id):
             by_id[state.run_id] = state.to_dict()
+        runs = list(by_id.values())
+        if resolved_execution_mode == "orchestrator":
+            overlaid: list[dict[str, Any]] = []
+            for item in runs:
+                overlaid.append(await _listed_orchestrator_run(item))
+            runs = overlaid
         return sorted(
-            by_id.values(),
+            runs,
             key=lambda item: str(item.get("started_at") or ""),
             reverse=True,
         )
+
+    async def _listed_orchestrator_run(item: dict[str, Any]) -> dict[str, Any]:
+        """Replace a stale catalog 'running' row with the workflow's real status.
+
+        The single-run board asks Temporal. The list used to keep the catalog
+        row from persist_run_started, so a finished error still read as Running.
+        """
+        if str(item.get("status") or "") not in {"queued", "running"}:
+            return item
+        run_id = str(item.get("run_id") or "")
+        if not run_id:
+            return item
+        metadata = app.state.temporal_runs.get(run_id)
+        if metadata is None:
+            meta = load_run_meta(projects_root, run_id)
+            if meta.get("execution_mode") == "orchestrator":
+                metadata = {
+                    "tenant_id": str(meta.get("tenant_id") or ""),
+                    "actor_id": str(meta.get("actor_id") or ""),
+                    "prompt": str(meta.get("prompt") or item.get("prompt") or ""),
+                    "stack": meta.get("stack", REACT_STACK),
+                    "tier": meta.get("tier"),
+                    "project_id": str(meta.get("project_id") or item.get("project_id") or ""),
+                }
+        if metadata is None:
+            return item
+        try:
+            status = await (await _orchestrator()).get(run_id)
+        except Exception:
+            LOGGER.exception("orchestrator list status failed for %s", run_id)
+            return item
+        if status is None:
+            return item
+        payload = _board_run_from_orchestrator(
+            status, metadata, tenant_id=str(metadata.get("tenant_id") or "")
+        )
+        mapped = catalog_status(str(payload.get("status") or ""))
+        if mapped in {"succeeded", "failed", "cancelled"}:
+            try:
+                run_store.finish(
+                    run_id,
+                    tenant_id=str(metadata.get("tenant_id") or item.get("tenant_id") or ""),
+                    status=mapped,
+                    summary=str(payload.get("summary") or ""),
+                )
+            except Exception:
+                LOGGER.exception("failed to store terminal status for %s", run_id)
+        return payload
 
     @app.get("/api/runs/{run_id}")
     async def get_run(
