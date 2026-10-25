@@ -535,12 +535,7 @@ def delete_secret(
     environment: str = "build",
 ) -> bool:
     store = state.build_secrets if environment == "build" else state.prod_secrets
-    key = (tenant_id, project_id, name)
-    by_key = getattr(store, "_by_key", None)
-    if isinstance(by_key, dict) and key in by_key:
-        del by_key[key]
-        return True
-    return False
+    return store.delete(tenant_id, project_id, name)
 
 
 def request_secret(

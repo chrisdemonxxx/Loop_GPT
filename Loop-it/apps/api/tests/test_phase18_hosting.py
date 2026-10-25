@@ -167,6 +167,11 @@ class TestDatabaseAndSecrets:
         )
         names = list_secret_names(state, tenant_id="t1", project_id="proj_x")
         assert any(item["name"] == "AUDIT_PASS" for item in names)
+        from loopit_api.project_backend import delete_secret
+
+        assert delete_secret(state, tenant_id="t1", project_id="proj_x", name="AUDIT_PASS")
+        names = list_secret_names(state, tenant_id="t1", project_id="proj_x")
+        assert all(item["name"] != "AUDIT_PASS" for item in names)
 
 
 class TestHealthParityFlags:

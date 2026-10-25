@@ -383,6 +383,9 @@ class SecretStore:
             if stored_tenant == tenant_id and stored_project == project_id
         ]
 
+    def delete(self, tenant_id: str, project_id: str, name: str) -> bool:
+        return self._by_key.pop((tenant_id, project_id, name), None) is not None
+
     def get(self, tenant_id: str, project_id: str, name: str) -> StoredSecret | None:
         """Return the secret for this tenant/project/name, or ``None``."""
         return self._by_key.get((tenant_id, project_id, name))
@@ -399,6 +402,9 @@ class InMemoryEncryptedSecretRepository:
 
     def get(self, tenant_id: str, project_id: str, name: str) -> EncryptedSecretRecord | None:
         return self._by_key.get((tenant_id, project_id, name))
+
+    def delete(self, tenant_id: str, project_id: str, name: str) -> bool:
+        return self._by_key.pop((tenant_id, project_id, name), None) is not None
 
     def list_by_environment_and_root_key(
         self, environment: Environment, root_key_id: str
@@ -450,6 +456,12 @@ class PersistentSecretStore(SecretStore):
             )
             if record.tenant_id == tenant_id and record.project_id == project_id
         ]
+
+    def delete(self, tenant_id: str, project_id: str, name: str) -> bool:
+        deleter = getattr(self._repository, "delete", None)
+        if deleter is None:
+            return False
+        return bool(deleter(tenant_id, project_id, name))
 
     def get(self, tenant_id: str, project_id: str, name: str) -> StoredSecret | None:
         record = self._repository.get(tenant_id, project_id, name)
@@ -525,6 +537,16 @@ class PostgresEncryptedSecretRepository:
             (tenant_id, project_id, name),
         ).fetchone()
         return self._record(row) if row is not None else None
+
+    def delete(self, tenant_id: str, project_id: str, name: str) -> bool:
+        result = self._conn.execute(
+            """
+            DELETE FROM secrets
+            WHERE tenant_id = %s AND project_id = %s AND name = %s
+            """,
+            (tenant_id, project_id, name),
+        )
+        return result.rowcount > 0
 
     def list_by_environment_and_root_key(
         self, environment: Environment, root_key_id: str

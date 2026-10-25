@@ -1172,8 +1172,17 @@ def create_app(
                     "tier": meta.get("tier"),
                     "project_id": str(meta.get("project_id") or item.get("project_id") or ""),
                 }
-        if metadata is None:
-            return item
+        if metadata is None and resolved_execution_mode == "orchestrator":
+            # A restart drops the in-memory workflow map, and the sidecar can
+            # be gone with it. The catalog row is enough to ask Temporal.
+            metadata = {
+                "tenant_id": str(item.get("tenant_id") or ""),
+                "actor_id": "",
+                "prompt": str(item.get("prompt") or ""),
+                "stack": item.get("stack", REACT_STACK),
+                "tier": item.get("tier"),
+                "project_id": str(item.get("project_id") or ""),
+            }
         try:
             status = await (await _orchestrator()).get(run_id)
         except Exception:
