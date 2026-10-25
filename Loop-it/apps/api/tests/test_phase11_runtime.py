@@ -222,6 +222,63 @@ class TestOrchestratorGetRunEnrichment:
         row = next(item for item in response.json() if item["run_id"] == "run_err")
         assert row["status"] in {"error", "failed"}
 
+    def test_a_missing_workflow_is_not_listed_as_running(self, tmp_path: Path) -> None:
+        from dataclasses import replace
+        from datetime import timedelta
+
+        from temporalio.service import RPCError, RPCStatusCode
+
+        from loopit_api.persist import persist_run_started
+
+        class _MissingOrchestrator:
+            async def get(self, run_id: str) -> Any:
+                if run_id == "run_down":
+                    raise RuntimeError("temporal unavailable")
+                raise RPCError(
+                    "workflow not found for ID: loopit-run-run_gone",
+                    RPCStatusCode.NOT_FOUND,
+                    b"",
+                )
+
+        projects = tmp_path / "projects"
+        projects.mkdir()
+        app = create_app(
+            projects_root=projects,
+            model_factory=offline_model_factory(),
+            execution_mode="orchestrator",
+            orchestrator_client=cast(Any, _MissingOrchestrator()),
+        )
+        for run_id, prompt in (
+            ("run_gone", "A single page that says Audit ready."),
+            ("run_down", "A single page that says Remeasure ready."),
+        ):
+            persist_run_started(
+                projects=cast(Any, app).state.project_store,
+                runs=cast(Any, app).state.run_store,
+                tenant_id="org_1",
+                owner_user_id="owner",
+                project_id="proj_err",
+                run_id=run_id,
+                prompt=prompt,
+                stack="react",
+                max_iterations=1,
+                difficulty="implementation",
+            )
+            store = cast(Any, app).state.run_store
+            record = store.get(run_id, tenant_id="org_1")
+            store._runs[run_id] = replace(
+                record, started_at=record.started_at - timedelta(minutes=10)
+            )
+        token = cast(Any, app).state.identity_signer.mint_identity(
+            subject="owner", org_id="org_1", role="owner", scopes=("api",)
+        )
+        client = TestClient(app)
+        response = client.get("/api/runs", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 200
+        rows = {item["run_id"]: item for item in response.json()}
+        assert rows["run_gone"]["status"] in {"error", "failed"}
+        assert rows["run_down"]["status"] == "running"
+
 
 class TestProjectLeaseLocalMode:
     def test_lease_endpoint_reports_local_without_scheduler(self, tmp_path: Path) -> None:

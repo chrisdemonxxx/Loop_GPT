@@ -1149,6 +1149,19 @@ def create_app(
             reverse=True,
         )
 
+    def _remember_missing_workflow(item: dict[str, Any]) -> dict[str, Any]:
+        payload = _missing_workflow_payload(item)
+        try:
+            run_store.finish(
+                str(item.get("run_id") or ""),
+                tenant_id=str(item.get("tenant_id") or ""),
+                status="failed",
+                summary=str(payload.get("summary") or ""),
+            )
+        except Exception:
+            LOGGER.exception("failed to store missing workflow for %s", item.get("run_id"))
+        return payload
+
     async def _listed_orchestrator_run(item: dict[str, Any]) -> dict[str, Any]:
         """Replace a stale catalog 'running' row with the workflow's real status.
 
@@ -1185,7 +1198,9 @@ def create_app(
             }
         try:
             status = await (await _orchestrator()).get(run_id)
-        except Exception:
+        except Exception as error:
+            if _temporal_workflow_missing(error) and _catalog_row_is_old(item):
+                return _remember_missing_workflow(item)
             LOGGER.exception("orchestrator list status failed for %s", run_id)
             return item
         if status is None:
@@ -1231,7 +1246,16 @@ def create_app(
             )
             try:
                 status = await (await _orchestrator()).get(run_id)
-            except Exception:
+            except Exception as error:
+                if _temporal_workflow_missing(error):
+                    record = run_store.get(run_id, tenant_id=tenant_id)
+                    if record is not None and str(record.status) in {"queued", "running"}:
+                        project = project_store.get(record.project_id, tenant_id=record.tenant_id)
+                        item = record_to_dict(
+                            record, projects_root=projects_root, project=project
+                        )
+                        if _catalog_row_is_old(item):
+                            return _remember_missing_workflow(item)
                 LOGGER.exception("orchestrator get failed for %s; falling back to store", run_id)
                 status = None
             if status is not None:
@@ -3667,6 +3691,38 @@ def _audit_payload(
         "outcome": outcome,
         "detail": detail,
     }
+
+
+def _temporal_workflow_missing(error: BaseException) -> bool:
+    """True when Temporal has no workflow for this run, not when it is unreachable."""
+    status = getattr(error, "status", None)
+    if getattr(status, "name", "") == "NOT_FOUND":
+        return True
+    return "workflow not found" in str(error).lower()
+
+
+def _catalog_row_is_old(item: dict[str, Any], *, older_than_seconds: int = 120) -> bool:
+    """A just-started run can be listed before its workflow exists."""
+    raw = item.get("started_at")
+    if not raw:
+        return True
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - parsed).total_seconds() > older_than_seconds
+
+
+def _missing_workflow_payload(item: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(item)
+    payload["status"] = "error"
+    if not str(payload.get("summary") or "").strip():
+        payload["summary"] = "The build is no longer running."
+    if not payload.get("finished_at"):
+        payload["finished_at"] = datetime_now_iso()
+    return payload
 
 
 def datetime_now_iso() -> str:
