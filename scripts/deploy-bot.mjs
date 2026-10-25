@@ -92,8 +92,11 @@ async function main() {
     const pass = (vars.stdout.match(/^POSTGRES_PASSWORD=(.+)$/m) || [])[1]
     const name = (vars.stdout.match(/^POSTGRES_DB=(.+)$/m) || [])[1]
     if (!dbUrl && !(user && pass && name)) { console.error('[deploy] FAILED: no DATABASE_URL or POSTGRES_* credentials found'); process.exit(1) }
+    // shell is required on Windows: `railway` is a .cmd shim, which CreateProcess
+    // cannot spawn. The pid is that shell, so the tree kill below is what
+    // actually stops the railway and ssh children.
     const tunnel = spawn('railway', ['connect', 'postgres', '--tunnel-only', '--ssh', '-P', String(tunnelPort), '--project', PROJECT, '--environment', ENVIRONMENT],
-      { cwd: ROOT, shell: false, stdio: 'ignore' })
+      { cwd: ROOT, shell: true, stdio: 'ignore' })
     const killTunnel = () => {
       if (!tunnel.pid) return
       if (process.platform === 'win32') spawnSync('taskkill', ['/T', '/F', '/PID', String(tunnel.pid)], { stdio: 'ignore' })
