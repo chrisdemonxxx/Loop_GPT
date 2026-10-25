@@ -409,7 +409,10 @@ async function coldBootOnce(
   try {
     // GNOME-first: do not return Computer / stream until GNOME owns the
     // display. The SDK still starts its XFCE shim; we block on the swap.
-    await awaitGnomeDesktop(sandbox)
+    await awaitGnomeDesktop(
+      sandbox,
+      options.templateOverride ? { resumeSnapshot: true } : undefined,
+    )
     await runInBox(sandbox, 'mkdir -p /workspace /home/user/Desktop')
     // Reset wipes teach recordings. Recover and wake keep them via the mirror.
     if (options.clearTeachSessions) {

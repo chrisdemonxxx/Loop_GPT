@@ -52,7 +52,25 @@ async function gnomeShellRunning(sandbox: Sandbox): Promise<boolean> {
  * Block until GNOME owns DISPLAY=:0, or throw.
  * Callers must not return Computer / stream URLs until this resolves.
  */
-export async function awaitGnomeDesktop(sandbox: Sandbox): Promise<void> {
+export async function awaitGnomeDesktop(
+  sandbox: Sandbox,
+  options?: { resumeSnapshot?: boolean },
+): Promise<void> {
+  // A baseline snapshot was taken after GNOME was already up. Killing XFCE
+  // and starting a second session on that disk is what left Reset asleep.
+  if (options?.resumeSnapshot) {
+    for (let i = 0; i < 20; i += 1) {
+      if (await gnomeShellRunning(sandbox)) {
+        console.info('[gnome-session] resumed snapshot already has GNOME')
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+    }
+    throw new Error(
+      'The saved desktop did not resume. Reset left that snapshot alone instead of starting a second GNOME session.',
+    )
+  }
+
   const marker = '/tmp/.loop-gnome-session'
   try {
     const already = await sandbox.commands.run(`test -f ${marker}`, { timeoutMs: 5_000 }).catch(() => null)

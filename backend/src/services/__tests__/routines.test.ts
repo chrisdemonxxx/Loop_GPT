@@ -113,4 +113,21 @@ describe('routines', () => {
       },
     })
   })
+
+  it('cancels a paused routine whose last run already finished', async () => {
+    findFirst.mockResolvedValue({ status: 'succeeded' })
+    updateMany.mockResolvedValue({ count: 1 })
+
+    await expect(deleteRoutine('user-1', 'routine-1')).resolves.toBe(true)
+
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: 'routine-1', userId: 'user-1', kind: 'scheduled', status: 'succeeded' },
+      data: {
+        status: 'cancelled',
+        leaseToken: null,
+        leaseExpiresAt: null,
+        cancelRequested: false,
+      },
+    })
+  })
 })

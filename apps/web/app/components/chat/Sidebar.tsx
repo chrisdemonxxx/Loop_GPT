@@ -162,9 +162,9 @@ export default function Sidebar({
     setShareNote({ id, kind: result && typeof result === 'object' && result.error === 'copy' ? 'copy' : 'share' })
   }
 
-  async function commitEdit() {
+  async function commitEdit(rawTitle?: string) {
     if (!editingId) return
-    const title = editingTitle.trim()
+    const title = (rawTitle ?? editingTitle).trim()
     if (!title) { setEditingId(null); return }
     try {
       const result = await onRenameConversation(editingId, title)
@@ -493,7 +493,7 @@ function ConversationRow({
   shareKind: 'copied' | 'share' | 'copy' | null
   onStartEdit: () => void
   onEditChange: (v: string) => void
-  onCommitEdit: () => void
+  onCommitEdit: (value: string) => void
   onCancelEdit: () => void
   onSelect: () => void
   onPin: () => void
@@ -506,9 +506,12 @@ function ConversationRow({
         value={editingTitle}
         onChange={(e) => onEditChange(e.target.value)}
         autoFocus
-        onBlur={onCommitEdit}
+        onBlur={(e) => onCommitEdit(e.currentTarget.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            onCommitEdit((e.target as HTMLInputElement).value)
+          }
           if (e.key === 'Escape') onCancelEdit()
         }}
         className="w-full m-1 px-2 py-1 text-[13px] bg-ink-800 border border-white/10 rounded text-slate-100 focus:outline-none"
@@ -541,6 +544,7 @@ function ConversationRow({
           <Star size={11} className="text-[#c96442] shrink-0 group-hover:hidden" fill="currentColor" aria-label="Pinned" />
         )}
       </div>
+      {shareKind === 'copied' && <p className="px-2.5 pb-1.5 text-[11px] text-emerald-400" role="status">Link copied</p>}
       {shareKind === 'share' && <p className="px-2.5 pb-1.5 text-[11px] text-rose-400">Couldn&apos;t share this session.</p>}
       {shareKind === 'copy' && <p className="px-2.5 pb-1.5 text-[11px] text-rose-400">Couldn&apos;t copy the link.</p>}
     </div>

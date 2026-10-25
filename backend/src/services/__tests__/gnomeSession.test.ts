@@ -4,11 +4,12 @@ import { awaitGnomeDesktop, desktopTemplateId, seedDesktopLaunchers } from '../g
 function fakeSandbox(opts: {
   gnomePresent?: boolean
   shellAfter?: number
+  marker?: boolean
 }) {
   let shellChecks = 0
   const run = vi.fn(async (cmd: string) => {
     if (cmd.includes('test -f /tmp/.loop-gnome-session')) {
-      return { exitCode: 1 }
+      return { exitCode: opts.marker ? 0 : 1 }
     }
     if (cmd.includes('test -x /usr/bin/gnome-shell')) {
       return { exitCode: opts.gnomePresent === false ? 1 : 0 }
@@ -56,6 +57,17 @@ describe('gnomeSession', () => {
     const assert = expect(pending).rejects.toThrow(/GNOME session failed to start/)
     await vi.advanceTimersByTimeAsync(80_000)
     await assert
+    vi.useRealTimers()
+  })
+
+  it('a resumed snapshot waits for gnome-shell and does not swap XFCE', async () => {
+    vi.useFakeTimers()
+    const sandbox = fakeSandbox({ gnomePresent: true, shellAfter: 2, marker: true })
+    const pending = awaitGnomeDesktop(sandbox as any, { resumeSnapshot: true })
+    await vi.advanceTimersByTimeAsync(2500)
+    await expect(pending).resolves.toBeUndefined()
+    const cmds = sandbox.commands.run.mock.calls.map((call) => String(call[0]))
+    expect(cmds.some((cmd) => cmd.includes('gnome-session') || cmd.includes('pkill'))).toBe(false)
     vi.useRealTimers()
   })
 

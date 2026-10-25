@@ -146,7 +146,9 @@ export async function deleteRoutine(userId: string, id: string): Promise<boolean
     select: { status: true },
   })
   if (!owned || owned.status === 'cancelled') return false
-  if (owned.status === 'queued' || owned.status === 'dead_letter') {
+  // A paused routine keeps whatever status the last run left (often succeeded).
+  // It is still listed, so delete has to cancel that row too.
+  if (owned.status !== 'processing') {
     const updated = await prisma.agentTask.updateMany({
       where: { id, userId, kind: 'scheduled', status: owned.status },
       data: {
@@ -158,7 +160,6 @@ export async function deleteRoutine(userId: string, id: string): Promise<boolean
     })
     return updated.count === 1
   }
-  if (owned.status !== 'processing') return false
   const { cancelAgentTask } = await import('./agentTasks')
   try {
     await cancelAgentTask(id, { userId })

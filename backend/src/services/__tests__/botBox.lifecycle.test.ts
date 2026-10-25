@@ -195,6 +195,7 @@ describe('computer sleep, recover, reset, and disk', () => {
     expect(dirty.kill).toHaveBeenCalledTimes(1)
     expect(syncWorkspaceOut).not.toHaveBeenCalled()
     expect(create.mock.calls.at(-1)?.[0]).toBe('snap-baseline')
+    expect(awaitGnomeDesktop).toHaveBeenLastCalledWith(clean, { resumeSnapshot: true })
     expect(restoreWorkspaceIn).not.toHaveBeenCalled()
     expect(clean.commands.run).toHaveBeenCalledWith(
       expect.stringContaining('/workspace/teach-sessions'),

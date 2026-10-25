@@ -103,6 +103,7 @@ describe('Sidebar — share', () => {
     renderSidebar({ conversations: [conv('c1', 'Chat', 0)] })
     fireEvent.click(screen.getByTitle('Share public link'))
     await screen.findByTitle('Link copied')
+    expect(await screen.findByText('Link copied')).toBeInTheDocument()
     expect(base.onShareConversation).toHaveBeenCalledWith('c1')
   })
 
@@ -215,6 +216,16 @@ describe('Sidebar ? recents copy and failures', () => {
     fireEvent.blur(screen.getByDisplayValue('Better title'))
     expect(await screen.findByDisplayValue('Better title')).toBeInTheDocument()
     expect(onRenameConversation).toHaveBeenCalledWith('c1', 'Better title')
+  })
+
+  it('commits the title shown in the field, not a stale state value', () => {
+    const onRenameConversation = vi.fn(async () => undefined)
+    renderSidebar({ conversations: [conv('c1', 'New Chat', 0)], onRenameConversation })
+    fireEvent.click(screen.getByTitle('Rename'))
+    const input = screen.getByDisplayValue('New Chat') as HTMLInputElement
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Audit disposable')
+    fireEvent.blur(input)
+    expect(onRenameConversation).toHaveBeenCalledWith('c1', 'Audit disposable')
   })
 
   it('asks before delete (dialog, not native confirm) and leaves the session when cancelled', () => {
