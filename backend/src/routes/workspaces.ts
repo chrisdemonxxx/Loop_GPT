@@ -21,6 +21,10 @@ function handle(action: (req: express.Request, res: express.Response) => Promise
   }) }
 }
 function actor(req: express.Request): string { return (req as any).userId }
+// Workspace rows include BigInt wallet columns, which res.json cannot serialize.
+function publicWorkspace({ id, name, personalOwnerId, createdAt }: { id: string; name: string; personalOwnerId: string | null; createdAt: Date }) {
+  return { id, name, personalOwnerId, createdAt }
+}
 
 router.use(authenticateToken)
 router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next() })
@@ -45,12 +49,12 @@ router.get('/wallet', handle(async (req, res) => {
 
 router.post('/personal', handle(async (req, res) => {
   z.object({}).strict().parse(req.body ?? {})
-  res.json({ workspace: await ensurePersonalWorkspace(actor(req)) })
+  res.json({ workspace: publicWorkspace(await ensurePersonalWorkspace(actor(req))) })
 }))
 
 router.post('/', handle(async (req, res) => {
   const { name } = z.object({ name: workspaceName }).strict().parse(req.body)
-  res.status(201).json({ workspace: await createWorkspace(actor(req), name) })
+  res.status(201).json({ workspace: publicWorkspace(await createWorkspace(actor(req), name)) })
 }))
 
 router.get('/:workspaceId/wallet', handle(async (req, res) => {
