@@ -98,7 +98,19 @@ export function reduceRunEvent(state: RunUiState, event: StreamEvent): RunUiStat
     }
     return { ...state, fileChanges: [...state.fileChanges, change] }
   }
-  return { ...state, error: event.message }
+  // An error event is terminal: the engine crashed or hit its budget. Record
+  // the message AND end the run's live state, so the badge, stepper, status dot
+  // and Stop button stop implying progress that has already stopped. Without
+  // this the final "run" event is the only thing that flips status, and a
+  // dropped/late stream close would leave the view stuck on "Working".
+  if (event.kind === 'error') {
+    const failedStatus = event.code === 'budget_exceeded' || event.code === 'out_of_credits'
+      ? 'budget_exceeded'
+      : 'error'
+    const run = state.run ? { ...state.run, status: failedStatus } : state.run
+    return { ...state, run, error: event.message }
+  }
+  return state
 }
 
 export function orderedDagNodes(dag: TaskDagView): TaskNodeView[] {

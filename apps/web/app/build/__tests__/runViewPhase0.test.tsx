@@ -302,7 +302,7 @@ describe('RunView Phase 0 controls (B27)', () => {
     render(<RunView runId="run_1" />, { wrapper })
     await user.click(await screen.findByRole('button', { name: /Files/i }))
     await user.click(screen.getByRole('button', { name: 'index.html' }))
-    expect(await screen.findByRole('button', { name: 'Save', exact: true })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: (value) => value === 'Save' })).toBeInTheDocument()
     await waitFor(() => {
       expect(client.createPreviewUrl).toHaveBeenCalledWith('proj_1', 'index.html')
     })

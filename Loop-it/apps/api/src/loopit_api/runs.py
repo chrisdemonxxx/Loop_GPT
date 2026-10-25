@@ -1010,13 +1010,20 @@ class RunManager:
         # from before a restart.
         if not PROJECT_ID.fullmatch(project_id):
             return None
-        for tenant_dir in sorted(self._projects_root.iterdir()):
-            if (
-                tenant_dir.is_dir()
-                and not tenant_dir.name.startswith(".")
-                and (tenant_dir / project_id).is_dir()
-            ):
-                return tenant_dir.name
+        try:
+            entries = sorted(self._projects_root.iterdir())
+        except OSError:
+            return None
+        for tenant_dir in entries:
+            # A mounted volume root carries root-owned entries such as
+            # ``lost+found`` that the service user cannot stat.
+            if not _is_path_segment(tenant_dir.name):
+                continue
+            try:
+                if tenant_dir.is_dir() and (tenant_dir / project_id).is_dir():
+                    return tenant_dir.name
+            except OSError:
+                continue
         return None
 
     def _rehydrate(self, project_id: str, tenant_id: str) -> Workspace | None:

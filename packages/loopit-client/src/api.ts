@@ -178,7 +178,7 @@ export interface DagStreamEvent { kind: 'dag'; dag: TaskDagView }
 export interface GateStreamEvent { kind: 'gate'; gate: ApprovalGate }
 export interface CheckpointsStreamEvent { kind: 'checkpoints'; checkpoints: CheckpointView[] }
 export interface CostStreamEvent { kind: 'cost'; cost: RunCost }
-export interface ErrorStreamEvent { kind: 'error'; message: string }
+export interface ErrorStreamEvent { kind: 'error'; message: string; code?: string }
 export interface ChatStreamEvent { kind: 'chat'; role: 'user' | 'assistant'; text: string }
 export interface ChatChunkStreamEvent { kind: 'chat_chunk'; text: string }
 export interface FileChangeStreamEvent extends FileChange { kind: 'file_change' }

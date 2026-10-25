@@ -116,6 +116,13 @@ describe('run state mapping', () => {
     expect(state.error).toBe('dropped')
   })
 
+  it('ends a live run when the engine reports an error', () => {
+    let state = reduceRunEvent(emptyRunUiState(), run({ status: 'running' }))
+    state = reduceRunEvent(state, { kind: 'error', message: 'The platform hit an internal failure' })
+    expect(state.error).toBe('The platform hit an internal failure')
+    expect(state.run?.status).toBe('error')
+  })
+
   it('orders a graph by dependencies and keeps sibling source order', () => {
     const dag: TaskDagView = {
       plan_id: 'p',
