@@ -94,6 +94,43 @@ describe('resolveWatchTarget', () => {
     expect(target.noComputer).toBe(true)
   })
 
+  it('does not open a finished computer that still has a dead view url', async () => {
+    const target = await resolveWatchTarget('task-dead', {
+      getTask: async () => ({
+        status: 'failed',
+        computer: { enabled: true },
+        runs: [{ id: 'run-dead' }],
+      }),
+      getComputer: async () => ({
+        active: false,
+        viewUrl: '/novnc/dead',
+        interactiveUrl: null,
+      }),
+    })
+    expect(target.viewUrl).toBeNull()
+    expect(target.interactiveUrl).toBeNull()
+    expect(target.starting).toBe(false)
+    expect(target.timedOut).toBe(true)
+  })
+
+  it('keeps polling when the latest computer ended but the task is still live', async () => {
+    const target = await resolveWatchTarget('task-retry', {
+      getTask: async () => ({
+        status: 'processing',
+        computer: { enabled: true },
+        runs: [{ id: 'run-retry' }],
+      }),
+      getComputer: async () => ({
+        active: false,
+        viewUrl: '/novnc/dead',
+        interactiveUrl: null,
+      }),
+    })
+    expect(target.viewUrl).toBeNull()
+    expect(target.starting).toBe(true)
+    expect(target.timedOut).toBeFalsy()
+  })
+
   it('treats a finished run that never got a sandbox as no computer', async () => {
     const missing = Object.assign(new Error('not found'), { status: 404 })
     const target = await resolveWatchTarget('task-done', {

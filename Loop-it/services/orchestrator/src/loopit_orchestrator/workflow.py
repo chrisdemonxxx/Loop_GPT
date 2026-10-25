@@ -25,6 +25,7 @@ with workflow.unsafe.imports_passed_through():
         default_activity_retry_policy,
         enforce_budget,
     )
+    from .failure_text import describe_failure
     from .types import (
         AcquireLeaseInput,
         AgentStepInput,
@@ -167,7 +168,7 @@ class RunWorkflow:
             await self._audit("run.budget_exceeded", "failure", {"axis": exc.axis})
         except Exception as exc:
             self._status = RunStatus.FAILED
-            self._summary = f"{type(exc).__name__}: {exc}"
+            self._summary = describe_failure(exc)
             await self._audit("run.failed", "failure", {"error": self._summary})
             raise
         finally:

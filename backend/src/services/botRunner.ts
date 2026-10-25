@@ -233,9 +233,20 @@ export async function ensureRunIdentity(task: {
       where: { id: task.conversationId, userId: user.id },
     })
     if (owned) {
+      // Bot threads are created without a workspace. The run grant looks the
+      // row up by workspace id, so a null column fails as "access revoked"
+      // after the desktop has already booted and the VM is then destroyed.
+      let workspaceId = owned.workspaceId
+      if (!workspaceId) {
+        workspaceId = workspace.id
+        await prisma.conversation.update({
+          where: { id: owned.id },
+          data: { workspaceId },
+        })
+      }
       return {
         userId: user.id,
-        workspaceId: owned.workspaceId || workspace.id,
+        workspaceId,
         conversationId: owned.id,
       }
     }

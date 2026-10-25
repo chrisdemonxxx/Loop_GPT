@@ -6,6 +6,7 @@
 import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { prisma } from '../prisma'
+import { authorizeRunContext } from '../../agent/runAuthorization'
 import { ensureBotIdentity, ensureRunIdentity, resetBotIdentityCache } from '../botRunner'
 import {
   captureDailyReservation,
@@ -58,6 +59,18 @@ describe('ensureRunIdentity (B3)', () => {
     expect(identity.conversationId).toBe(thread.id)
     const workspace = await db.workspace.findUniqueOrThrow({ where: { id: identity.workspaceId } })
     expect(workspace.personalOwnerId).toBe(userId)
+    const stored = await db.conversation.findUniqueOrThrow({ where: { id: thread.id } })
+    expect(stored.workspaceId).toBe(identity.workspaceId)
+    await expect(authorizeRunContext({
+      userId: identity.userId,
+      conversationId: identity.conversationId,
+      emit: () => {},
+      scratch: {},
+    }, identity.workspaceId, [])).resolves.toMatchObject({
+      userId,
+      conversationId: thread.id,
+      workspaceId: identity.workspaceId,
+    })
 
     const standing = await ensureRunIdentity({ userId })
     expect(standing.conversationId).not.toBe(thread.id)

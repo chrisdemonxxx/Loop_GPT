@@ -114,6 +114,13 @@ type WatchTask = {
   computer?: { enabled?: boolean } | null
 }
 
+type WatchComputer = {
+  viewUrl?: string | null
+  interactiveUrl?: string | null
+  /** False means the VM is already gone. A leftover URL is not a live desktop. */
+  active?: boolean
+}
+
 function desktopStillBooting(detail: WatchTask): boolean {
   const live = detail.status === 'queued' || detail.status === 'processing'
   return live && detail.computer?.enabled === true
@@ -123,7 +130,7 @@ export async function resolveWatchTarget(
   taskId: string,
   load: {
     getTask: (id: string) => Promise<WatchTask>
-    getComputer: (runId: string) => Promise<{ viewUrl?: string | null; interactiveUrl?: string | null } | null>
+    getComputer: (runId: string) => Promise<WatchComputer | null>
   },
 ): Promise<WatchTarget> {
   let runId: string | null = null
@@ -141,8 +148,13 @@ export async function resolveWatchTarget(
   const booting = desktopStillBooting(detail)
   try {
     const computer = await load.getComputer(runId)
-    const viewUrl = computer?.viewUrl ?? null
-    const interactiveUrl = computer?.interactiveUrl ?? null
+    const live = computer?.active !== false
+    const viewUrl = live ? computer?.viewUrl ?? null : null
+    const interactiveUrl = live ? computer?.interactiveUrl ?? null : null
+    if (!live) {
+      if (booting) return { taskId, runId, viewUrl: null, interactiveUrl: null, starting: true }
+      return { taskId, runId, viewUrl: null, interactiveUrl: null, starting: false, timedOut: true }
+    }
     if (!viewUrl && !interactiveUrl && !computer) {
       if (booting) return { taskId, runId, viewUrl: null, interactiveUrl: null, starting: true }
       return { taskId, runId, viewUrl: null, interactiveUrl: null, starting: false, noComputer: true }
