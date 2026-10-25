@@ -33,4 +33,17 @@ describe('botRuns event seq cursor', () => {
     unsub()
     await run.complete({ content: 'done', artifacts: [], usage: { tokensIn: 0, tokensOut: 0 } })
   })
+
+  it('delivers done when the subscriber finishes the run during replay', async () => {
+    const run = await startRun('task-seq-done')
+    run.emit({ type: 'status', message: 'hi' })
+    const seen: string[] = []
+    subscribe(run.runId, (event) => {
+      seen.push(event.type)
+      if (event.type === 'status') {
+        void run.complete({ content: 'done', artifacts: [], usage: { tokensIn: 0, tokensOut: 0 } })
+      }
+    })
+    expect(seen).toContain('done')
+  })
 })

@@ -11,7 +11,7 @@ import { ConfirmDialog } from '@loop/ui'
 import {
   enqueueBotTask, listBotTasks, cancelBotTask, getBotQuota, listBotSkills, deleteBotSkill,
   listBotRoutines, createBotRoutine, setBotRoutinePaused, deleteBotRoutine,
-  getBotRun, getBotTask, getBotComputer, wakeBotComputer, BotApiError,
+  getBotTask, getBotComputer, wakeBotComputer, BotApiError,
   type BotRoutine, type BotTask, type BotQuota, type BotSkillRef,
 } from '../lib/bot'
 import { getStoredUser } from '../lib/api'
@@ -19,7 +19,7 @@ import { getBotMemory } from '../lib/bot'
 import { listNamedBots, listBotThreads, createBotThread, renameBotThread, deleteBotThread, type NamedBot, type BotThreadSummary } from '../lib/namedBots'
 import { COMPUTER_PANE_DEFAULT, COMPUTER_PANE_KEY, COMPUTER_PANE_MIN, clampComputerPaneWidth, computerPaneMax } from './computerPane'
 import {
-  allowedToolsForBot, computerForBot, resolveWatchTarget, routineScheduleLabel, routineSkillLabel,
+  allowedToolsForBot, computerForBot, finishWatchTarget, resolveWatchTarget, routineScheduleLabel, routineSkillLabel,
   type WatchTarget,
 } from './botTask'
 import RunViewer from '../components/team-bot/RunViewer'
@@ -100,8 +100,8 @@ function AgentsPageInner() {
   const [computerExpanded, setComputerExpanded] = useState(false)
   const [suggestedSkills, setSuggestedSkills] = useState<BotSkillRef[]>([])
   const [sendError, setSendError] = useState('')
-  const [taskResults, setTaskResults] = useState<Record<string, string>>({})
-  const fetchedResultsRef = useRef<Set<string>>(new Set())
+  const [actionError, setActionError] = useState('')
+  const watchStartedRef = useRef(0)
 
   useEffect(() => {
     const u = getStoredUser()
@@ -195,38 +195,7 @@ function AgentsPageInner() {
   const loadError = tasksQuery.isError
     ? ((tasksQuery.error as { message?: string })?.message || 'Could not load Loop Bot tasks.')
     : ''
-
-  // Enrich succeeded tasks with latest run result text (for the bot bubble).
-  useEffect(() => {
-    if (!tasks?.length) return
-    const targets = tasks
-      .filter((t) => t.status === 'succeeded' && !t.result && !fetchedResultsRef.current.has(t.id))
-      .slice(-8)
-    if (!targets.length) return
-    for (const t of targets) fetchedResultsRef.current.add(t.id)
-    let cancelled = false
-    void (async () => {
-      const next: Record<string, string> = {}
-      await Promise.all(targets.map(async (t) => {
-        try {
-          const detail = await getBotTask(t.id)
-          const runId = detail.runs?.[0]?.id
-          if (!runId) return
-          const run = await getBotRun(runId)
-          if (run.result) next[t.id] = run.result
-        } catch { /* ignore */ }
-      }))
-      if (!cancelled && Object.keys(next).length) {
-        setTaskResults((prev) => ({ ...prev, ...next }))
-      }
-    })()
-    return () => { cancelled = true }
-  }, [tasks])
-
-  const displayTasks = useMemo(() => {
-    if (!tasks) return null
-    return tasks.map((t) => (taskResults[t.id] && !t.result ? { ...t, result: taskResults[t.id] } : t))
-  }, [tasks, taskResults])
+  const threadsReady = !botId || threadsQuery.isSuccess || threadsQuery.isError
 
   const skillsQuery = useQuery<{ skills: BotSkillRef[] }>({
     queryKey: ['bot', 'skills', botId],
@@ -285,26 +254,37 @@ function AgentsPageInner() {
   const openComputer = useCallback(async (taskId: string) => {
     setTab('computer')
     setComputerExpanded(true)
+    watchStartedRef.current = Date.now()
     setWatch({ taskId, runId: null, viewUrl: null, interactiveUrl: null, starting: true })
-    const next = await resolveWatchTarget(taskId, { getTask: getBotTask, getComputer: getBotComputer })
+    const next = finishWatchTarget(
+      await resolveWatchTarget(taskId, { getTask: getBotTask, getComputer: getBotComputer }),
+      Date.now() - watchStartedRef.current,
+    )
     setWatch(next)
   }, [])
 
   useEffect(() => {
     if (!computerExpanded || !watch?.starting) return
     const taskId = watch.taskId
+    const startedAt = watchStartedRef.current
     let stop = false
     const timer = setInterval(() => {
       void resolveWatchTarget(taskId, { getTask: getBotTask, getComputer: getBotComputer }).then((next) => {
-        if (!stop) setWatch(next)
+        if (!stop) setWatch(finishWatchTarget(next, Date.now() - startedAt))
       })
     }, 3000)
     return () => { stop = true; clearInterval(timer) }
   }, [computerExpanded, watch?.starting, watch?.taskId])
 
   const cancel = useMutation({
-    mutationFn: (id: string) => cancelBotTask(id).catch(() => {}),
-    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] }) },
+    mutationFn: (id: string) => cancelBotTask(id),
+    onSuccess: () => {
+      setActionError('')
+      void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] })
+    },
+    onError: (err: unknown) => {
+      setActionError((err as { message?: string })?.message || 'Could not stop that task.')
+    },
   })
 
   /** Chat is the instruction channel: a message = a one-shot task on this thread. */
@@ -315,8 +295,12 @@ function AgentsPageInner() {
       }
       const allowedTools = allowedToolsForBot(activeBot.defaultTools)
       if (!allowedTools.length) throw new Error('This bot has no tools this runner can use.')
+      if (botId && !threadsQuery.isSuccess && !threadsQuery.isError) {
+        throw new Error('Chats are still loading.')
+      }
       let conversationId = activeThreadId
       if (!conversationId) {
+        if (!threadsQuery.isSuccess) throw new Error('Could not load chats.')
         const thread = await createBotThread(botId)
         conversationId = thread.id
         selectThread(thread.id)
@@ -381,16 +365,16 @@ function AgentsPageInner() {
 
   return (
     <AppPage width="fill" documentTitle={botName || 'Bot'}>
-      {(anyActive || loadError || botsError || unknownBot) && (
+      {(anyActive || loadError || botsError || unknownBot || actionError) && (
         <div className="flex items-center gap-3 px-4 py-2 border-b border-[var(--border-subtle)] shrink-0 min-h-[38px]">
           {anyActive && (
             <span className="flex items-center gap-1.5 text-ui-xs text-[var(--accent-text)]">
               <Loader2 size={11} className="animate-spin" aria-hidden /> working
             </span>
           )}
-          {(loadError || botsError || unknownBot) && (
+          {(loadError || botsError || unknownBot || actionError) && (
             <span className="ml-auto text-ui-xs text-[var(--danger)] flex items-center gap-2" role="alert">
-              {botsError || (unknownBot ? 'No bot matches this link.' : loadError)}
+              {actionError || botsError || (unknownBot ? 'No bot matches this link.' : loadError)}
               {(botsError || loadError) && (
                 <button
                   type="button"
@@ -421,9 +405,10 @@ function AgentsPageInner() {
 
         <div className="flex-1 min-w-0 min-h-0 flex flex-col">
         <AgentChatPane
-          tasks={displayTasks}
+          tasks={tasks}
           sending={sendInstruction.isPending}
           sendError={sendError}
+          threadsReady={threadsReady}
           quota={quota}
           botName={botName}
           requiresComputer={activeBot?.cloudComputer === true}
@@ -556,7 +541,14 @@ function AgentsPageInner() {
                 )}
                 <div>
                   <h3 className="text-2xs uppercase tracking-widest text-[var(--ink-muted)] font-medium mb-2">Routines</h3>
-                  <RoutineComposer skills={skills ?? []} botId={botId} onCreated={refresh} />
+                  <RoutineComposer
+                    skills={skills ?? []}
+                    botId={botId}
+                    conversationId={activeThreadId}
+                    allowedTools={activeBot ? allowedToolsForBot(activeBot.defaultTools) : []}
+                    computer={computerForBot(activeBot?.cloudComputer)}
+                    onCreated={refresh}
+                  />
                   {routineRows === null ? (
                     <div className="mt-2 text-ui-xs text-[var(--ink-muted)] flex items-center gap-2"><Loader2 size={12} className="animate-spin" aria-hidden /> Loading routines…</div>
                   ) : routineRows.length === 0 ? (
@@ -625,6 +617,7 @@ function AgentsPageInner() {
           session={teach}
           expanded
           runView={watch}
+          onTrace={watch ? () => setTraceTaskId(watch.taskId) : undefined}
           onCollapse={() => { setComputerExpanded(false); setWatch(null) }}
         />
       )}
@@ -775,7 +768,16 @@ const SCHEDULE_OPTIONS = [
   { value: '7d', label: 'weekly' },
 ]
 
-function RoutineComposer({ skills, botId, onCreated }: { skills: BotSkillRef[]; botId: string | null; onCreated: () => void }) {
+function RoutineComposer({
+  skills, botId, conversationId, allowedTools, computer, onCreated,
+}: {
+  skills: BotSkillRef[]
+  botId: string | null
+  conversationId: string | null
+  allowedTools: string[]
+  computer?: { enabled: true; ttlMinutes: number }
+  onCreated: () => void
+}) {
   const [open, setOpen] = useState(false)
   const [goal, setGoal] = useState('')
   const [schedule, setSchedule] = useState('1d')
@@ -786,6 +788,9 @@ function RoutineComposer({ skills, botId, onCreated }: { skills: BotSkillRef[]; 
       schedule,
       ...(skillId ? { skillId } : {}),
       ...(botId ? { botId } : {}),
+      ...(conversationId ? { conversationId } : {}),
+      allowedTools,
+      ...(computer ? { computer } : {}),
     }),
     onSuccess: () => { setGoal(''); setSkillId(''); setOpen(false); onCreated() },
   })
@@ -831,9 +836,19 @@ function RoutineComposer({ skills, botId, onCreated }: { skills: BotSkillRef[]; 
 
 function RoutineCard({ routine, skills, onChanged }: { routine: BotRoutine; skills: BotSkillRef[] | null; onChanged: () => void }) {
   const [historyOpen, setHistoryOpen] = useState(false)
-  const pause = useMutation({ mutationFn: () => setBotRoutinePaused(routine.id, !routine.paused), onSuccess: onChanged })
-  const remove = useMutation({ mutationFn: () => deleteBotRoutine(routine.id), onSuccess: onChanged })
+  const [actionError, setActionError] = useState('')
+  const pause = useMutation({
+    mutationFn: () => setBotRoutinePaused(routine.id, !routine.paused),
+    onSuccess: () => { setActionError(''); onChanged() },
+    onError: (err: unknown) => setActionError((err as { message?: string })?.message || 'Could not update the routine.'),
+  })
+  const remove = useMutation({
+    mutationFn: () => deleteBotRoutine(routine.id),
+    onSuccess: () => { setActionError(''); onChanged() },
+    onError: (err: unknown) => setActionError((err as { message?: string })?.message || 'Could not delete the routine.'),
+  })
   const lastRun = routine.runs[0] ?? null
+  const latestResult = routine.result || lastRun?.result || ''
 
   return (
     <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-3 py-2.5">
@@ -856,6 +871,10 @@ function RoutineCard({ routine, skills, onChanged }: { routine: BotRoutine; skil
           <Trash2 size={12} aria-hidden />
         </button>
       </div>
+      {latestResult && (
+        <p className="mt-1.5 whitespace-pre-wrap text-ui-xs text-[var(--ink-secondary)] leading-relaxed">{latestResult}</p>
+      )}
+      {actionError && <p className="mt-1.5 text-2xs text-[var(--danger)]" role="alert">{actionError}</p>}
       {lastRun && (
         <button type="button" onClick={() => setHistoryOpen((v) => !v)} className="mt-1.5 text-3xs text-[var(--ink-muted)] hover:text-[var(--ink-secondary)]">
           {historyOpen ? 'Hide' : 'Show'} history — last run {lastRun.status}{lastRun.completedAt ? ` ${new Date(lastRun.completedAt).toLocaleString()}` : ''}
@@ -885,9 +904,15 @@ function SkillCard({
   onAttach?: () => void
   onDeleted: () => void
 }) {
+  const [deleteError, setDeleteError] = useState('')
   const remove = async () => {
-    await deleteBotSkill(skill.id).catch(() => {})
-    onDeleted()
+    try {
+      await deleteBotSkill(skill.id)
+      setDeleteError('')
+      onDeleted()
+    } catch (err: unknown) {
+      setDeleteError((err as { message?: string })?.message || 'Could not delete the skill.')
+    }
   }
   return (
     <div className="rounded-xl bg-[var(--bg-hover)] p-3 border border-[var(--border-strong)] hover:border-[var(--border-strong)]">
@@ -912,6 +937,7 @@ function SkillCard({
           <button type="button" onClick={() => void remove()} aria-label="Delete skill" className="shrink-0 text-[var(--ink-muted)] hover:text-[var(--danger)]"><Trash2 size={13} aria-hidden /></button>
         </div>
       </div>
+      {deleteError && <p className="mt-1.5 text-2xs text-[var(--danger)]" role="alert">{deleteError}</p>}
     </div>
   )
 }

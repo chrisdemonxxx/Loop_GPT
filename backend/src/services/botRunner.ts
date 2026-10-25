@@ -23,7 +23,7 @@ import { startRun, setRunComputer, isRunTakeoverRequested } from './botRuns'
 import { clearTeachSteps, formatTeachStepLog, loadTeachSteps } from './teachSteps'
 import { ComputerSession } from './computerSession'
 import { E2BDesktopError, attachDesktop } from './e2bDesktop'
-import { attachUserBoxFromDB, createBoxTaskFolder, extendUserBoxLease } from './botBox'
+import { attachUserBoxFromDB, createBoxTaskFolder, extendUserBoxLease, sharedBoxAttachBudget } from './botBox'
 import { COMPUTER_TOOL_NAMES, computerToolsForScreen } from '../agent/tools/computerTools'
 import { rememberFactTool } from '../agent/tools/metaTools'
 import { builtinToolNames } from '../agent'
@@ -376,9 +376,12 @@ export async function executeBotTask(
           const boxRow = prisma
             ? await prisma.botBox.findUnique({ where: { userId: identity.userId }, select: { streamAuthKey: true } }).catch(() => null)
             : null
+          // The shared box keeps its own lease. A task TTL must not shorten it.
+          // Dedicated VMs (the create path below) still use the task TTL.
+          const leaseMs = await sharedBoxAttachBudget(identity.userId)
           existingDesktop = await attachDesktop(sandboxId, {
             streamAuthKey: boxRow?.streamAuthKey,
-            timeoutMs: computerCfg.ttlMinutes * 60_000,
+            timeoutMs: leaseMs,
           })
         }
       } catch {

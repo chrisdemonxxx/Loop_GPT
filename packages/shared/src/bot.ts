@@ -95,6 +95,7 @@ export interface BotEvent {
   stream?: 'stdout' | 'stderr'
   items?: Array<{ id: string; label: string; status: string }>
   content?: string
+  text?: string
   isError?: boolean
   data?: any
   artifact?: { id: string; kind: string; name: string }

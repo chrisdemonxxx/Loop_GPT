@@ -187,6 +187,10 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string, o
     },
     select: { id: true, kind: true, status: true, nextAttemptAt: true, computer: true, skillId: true },
   })
+  if (conversationId) {
+    const { saveMessage } = await import('./chatStore')
+    await saveMessage(conversationId, { role: 'user', content: parsed.goal })
+  }
   // Auto-suggest (confirm-before-apply): when no explicit skill is attached,
   // surface trigger-matching skills the owner could attach instead. Carried on
   // the returned task row so callers that only read .id stay source-compatible.
@@ -220,23 +224,36 @@ export async function remainingVmMinutes(ownerId: string): Promise<number> {
   return remaining
 }
 
+/** Standing Computer-tab meter. It is not a conversation the user sent. */
+const INTERACTIVE_COMPUTER_GOAL = '__interactive_computer__'
+
 export async function listAgentTasks(opts: { status?: string; limit?: number; scope?: TaskScope; conversationId?: string } = {}) {
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200)
   const where: Record<string, unknown> = {}
   if (opts.status) where.status = opts.status
   if (opts.scope?.userId) where.userId = opts.scope.userId
   if (opts.conversationId) where.conversationId = opts.conversationId
-  return database().agentTask.findMany({
+  // User thread lists hide the interactive-desktop meter. Claim order is untouched.
+  const userFacing = !!opts.scope?.userId
+  if (userFacing) where.goal = { not: INTERACTIVE_COMPUTER_GOAL }
+  const rows = await database().agentTask.findMany({
     where,
-    orderBy: [{ status: 'asc' }, { priority: 'desc' }, { nextAttemptAt: 'asc' }],
+    orderBy: userFacing
+      ? { createdAt: 'desc' }
+      : [{ status: 'asc' }, { priority: 'desc' }, { nextAttemptAt: 'asc' }],
     take: limit,
     select: {
       id: true, kind: true, goal: true, status: true, schedule: true, model: true,
       priority: true, attempts: true, failures: true, nextAttemptAt: true,
       cancelRequested: true, lastErrorCode: true, createdBy: true, createdAt: true, updatedAt: true,
       computer: true, userId: true, botId: true, conversationId: true,
+      runs: { orderBy: { startedAt: 'desc' }, take: 1, select: { result: true } },
     },
   })
+  return rows.map(({ runs, ...task }) => ({
+    ...task,
+    result: runs[0]?.result ?? null,
+  }))
 }
 
 export async function getAgentTask(id: string, scope?: TaskScope) {
@@ -363,6 +380,7 @@ export const BOT_PERMANENT_FAILURES = [
   'BOT_COMPUTER_QUOTA',
   'BOT_TEACH_NOTHING_RECORDED',
   'BOT_TEACH_SKILL_NOT_SAVED',
+  'BOT_TEACH_NO_DEMO',
 ] as const
 
 /** Failure recording with deterministic DB-clock backoff; mirrors the settlement

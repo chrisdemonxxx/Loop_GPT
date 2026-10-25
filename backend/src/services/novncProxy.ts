@@ -105,10 +105,16 @@ async function authorize(userId: string, sandboxId: string): Promise<boolean> {
   }
 }
 
-/** True when any running BotRun for this sandbox has takeover requested. */
+/** True when a running BotRun for this sandbox has takeover requested, or the
+ *  persistent box itself is flagged for operator control. View-only otherwise. */
 async function isTakeoverActive(sandboxId: string): Promise<boolean> {
   if (!prisma) return false
   try {
+    const box = await prisma.botBox.findFirst({
+      where: { sandboxId, takeoverRequested: true },
+      select: { userId: true },
+    })
+    if (box) return true
     const runs = await prisma.botRun.findMany({
       where: { status: 'running', takeoverRequested: true },
       orderBy: { startedAt: 'desc' },

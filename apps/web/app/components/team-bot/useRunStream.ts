@@ -17,16 +17,31 @@ export function useRunStream(taskId: string) {
   const [live, setLive] = useState(false)
   const [computer, setComputer] = useState<BotComputer | null>(null)
   const [loadError, setLoadError] = useState('')
+  const [connectAttempt, setConnectAttempt] = useState(0)
   const runIdRef = useRef<string | null>(null)
 
+  const retry = () => {
+    setLoadError('')
+    setConnectAttempt((n) => n + 1)
+  }
+
   // Load the task, wait for a run if the worker hasn't claimed yet, then SSE.
+  // A new taskId or a Dismiss/retry drops the previous run before attaching.
   useEffect(() => {
     let stop: (() => void) | null = null
     let cancelled = false
     let waitTimer: ReturnType<typeof setTimeout> | null = null
     let attempts = 0
+    setTask(null)
+    setRunId(null)
+    runIdRef.current = null
+    setEvents([])
+    setComputer(null)
+    setLive(false)
+    setLoadError('')
 
     const attach = (id: string, status: string) => {
+      if (cancelled) return
       setRunId(id)
       runIdRef.current = id
       setLive(status === 'running')
@@ -34,11 +49,12 @@ export function useRunStream(taskId: string) {
       stop = streamBotRun(
         id,
         (event) => {
+          if (cancelled) return
           setEvents((prev) => [...prev.slice(-399), event])
           if (event.type === 'final' || event.type === 'done') setLive(false)
         },
-        () => setLive(false),
-        (msg) => { setLoadError(msg); setLive(false) },
+        () => { if (!cancelled) setLive(false) },
+        (msg) => { if (!cancelled) { setLoadError(msg); setLive(false) } },
       )
       void getBotComputer(id).then((comp) => {
         if (!cancelled && comp?.sandboxId) setComputer(comp)
@@ -74,7 +90,7 @@ export function useRunStream(taskId: string) {
       if (waitTimer) clearTimeout(waitTimer)
       stop?.()
     }
-  }, [taskId])
+  }, [taskId, connectAttempt])
 
   // Keep header status live while the run is in flight (task status + result).
   useEffect(() => {
@@ -102,5 +118,5 @@ export function useRunStream(taskId: string) {
     return () => clearInterval(t)
   }, [runId, live])
 
-  return { task, runId, events, live, computer, setComputer, loadError, setLoadError, runIdRef }
+  return { task, runId, events, live, computer, setComputer, loadError, setLoadError, retry, runIdRef }
 }

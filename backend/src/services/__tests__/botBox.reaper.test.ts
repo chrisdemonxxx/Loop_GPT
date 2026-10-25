@@ -80,7 +80,10 @@ describe('reapOrphanBoxes', () => {
 
     await reapOrphanBoxes()
 
-    expect(connect).toHaveBeenCalledWith('sbx-old')
+    expect(connect).toHaveBeenCalledWith('sbx-old', expect.objectContaining({ timeoutMs: expect.any(Number) }))
+    const timeoutMs = (connect.mock.calls[0][1] as { timeoutMs: number }).timeoutMs
+    expect(timeoutMs).toBeGreaterThanOrEqual(10 * 60_000)
+    expect(timeoutMs).toBeLessThanOrEqual(60 * 60_000)
     expect(syncWorkspaceOut).toHaveBeenCalled()
     expect(kill).toHaveBeenCalled()
     expect(update).toHaveBeenCalledWith({
@@ -119,6 +122,17 @@ describe('reapOrphanBoxes', () => {
     })
   })
 
+  it('does not clear sandboxId when connect times out', async () => {
+    const updatedAt = new Date(Date.now() - STALE_MS)
+    findMany.mockResolvedValue([{ userId: 'u4', sandboxId: 'sbx-timeout', updatedAt }])
+    findUnique.mockResolvedValue({ userId: 'u4', sandboxId: 'sbx-timeout', updatedAt })
+    connect.mockRejectedValue(new Error('connect ETIMEDOUT'))
+
+    await reapOrphanBoxes()
+
+    expect(update).not.toHaveBeenCalled()
+  })
+
   it('does not kill an untracked sandbox that started just now', async () => {
     isE2BConfigured.mockReturnValue(true)
     findMany.mockResolvedValue([])
@@ -151,7 +165,10 @@ describe('reapOrphanBoxes', () => {
 
     await reapOrphanBoxes()
 
-    expect(connect).toHaveBeenCalledWith('sbx-stale-untracked')
+    expect(connect).toHaveBeenCalledWith('sbx-stale-untracked', expect.objectContaining({ timeoutMs: expect.any(Number) }))
+    const timeoutMs = (connect.mock.calls[0][1] as { timeoutMs: number }).timeoutMs
+    expect(timeoutMs).toBeGreaterThanOrEqual(10 * 60_000)
+    expect(timeoutMs).toBeLessThanOrEqual(60 * 60_000)
     expect(kill).toHaveBeenCalled()
   })
 })

@@ -19,7 +19,7 @@ import { LineRender } from './LineRender'
  * run's written record.
  */
 export default function RunViewer({ taskId, onClose }: { taskId: string; onClose: () => void }) {
-  const { task, events, live, loadError, setLoadError } = useRunStream(taskId)
+  const { task, events, live, loadError, retry } = useRunStream(taskId)
 
   // Single shell: dock on ≥640px, sheet below — never both mounted.
   const [isDesktop, setIsDesktop] = useState(false)
@@ -73,7 +73,7 @@ export default function RunViewer({ taskId, onClose }: { taskId: string; onClose
           <span className="flex-1">{loadError}</span>
           <button
             type="button"
-            onClick={() => setLoadError('')}
+            onClick={() => retry()}
             className="text-[var(--accent-text)] hover:underline shrink-0"
           >
             Dismiss

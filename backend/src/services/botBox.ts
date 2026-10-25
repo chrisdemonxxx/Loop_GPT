@@ -35,6 +35,8 @@ export const BOX_IDLE_TTL_MS = 60 * 60 * 1000
 const MIN_BOOT_TIMEOUT_MS = 10 * 60 * 1000
 /** Below this, a new sandbox cannot finish booting. Refuse instead of creating. */
 const BOOT_QUOTA_FLOOR_MINUTES = 5
+/** Spent-budget keepalive. Never substitute the 1 hour provider cap. */
+const SOFT_KEEPALIVE_MS = 60_000
 /** Untracked provider VMs younger than this are still in boot. The reaper
  *  must not kill them before the BotBox row (or a failed boot's cleanup) lands. */
 const UNTRACKED_BOOT_GRACE_MS = 15 * 60 * 1000
@@ -137,7 +139,7 @@ async function seedBotHomes(sandbox: Sandbox, userId: string): Promise<void> {
       await runInBox(sandbox, [
         `mkdir -p ${quote(home)}`,
         `[ -f ${quote(`${home}/README.md`)} ] || printf '# %s\\nHome of bot %s. Files here persist; /workspace/shared is visible to every bot.\\n' ${quote(bot.name)} ${quote(bot.id)} > ${quote(`${home}/README.md`)}`,
-        ...(mirror ? [`[ -f ${quote(`${home}/MEMORY.md`)} ] || printf '%s\\n' ${quote(mirror)} > ${quote(`${home}/MEMORY.md`)}`] : []),
+        ...(mirror ? [`printf '%s\\n' ${quote(mirror)} > ${quote(`${home}/MEMORY.md`)}`] : []),
       ].join(' && '))
     }
   } catch { /* home seeding is best-effort, never a boot blocker */ }
@@ -200,10 +202,32 @@ async function boxTimeoutMs(userId: string, mode: 'soft' | 'hard' = 'hard'): Pro
     return Math.min(BOX_IDLE_TTL_MS, Math.max(60_000, Math.floor(remaining) * 60_000))
   } catch (err) {
     if (mode === 'soft' && err instanceof AgentTaskError && (err.code === 'quota' || err.code === 'forbidden')) {
-      return 60_000
+      return SOFT_KEEPALIVE_MS
     }
     throw err
   }
+}
+
+/** Sandbox.connect / Sandbox.create timeout: at least 10 minutes, at most the
+ *  provider's 1 hour cap. Shrink to the daily remainder only after the stream is up. */
+export function sandboxConnectTimeoutMs(desiredMs?: number): number {
+  const desired = typeof desiredMs === 'number' && Number.isFinite(desiredMs) ? desiredMs : MIN_BOOT_TIMEOUT_MS
+  return Math.min(BOX_IDLE_TTL_MS, Math.max(MIN_BOOT_TIMEOUT_MS, desired))
+}
+
+/** Lease a task may apply to the shared persistent box. This is the box's own
+ *  budget (or the short soft keepalive when the day is spent), never a task TTL. */
+export async function sharedBoxAttachBudget(userId: string): Promise<number> {
+  try {
+    return await boxTimeoutMs(userId, 'soft')
+  } catch {
+    return SOFT_KEEPALIVE_MS
+  }
+}
+
+/** In-process desktop handle, if this process has one. Does not connect. */
+export function getLiveUserBox(userId: string): Sandbox | null {
+  return liveBoxes.get(userId)?.sandbox ?? null
 }
 
 /** SDK error when the sandbox dies while create/connect still has a stream open. */
@@ -240,10 +264,9 @@ async function bootTimeoutPlan(userId: string): Promise<{ bootMs: number; budget
 
 /** Timeout passed to Sandbox.connect before any command or stream.start.
  *  An existing box still reconnects when fewer than 5 minutes remain — that
- *  floor only blocks Sandbox.create. The connect itself still gets at least
- *  10 minutes so the stream can finish, then setTimeout shrinks to budgetMs.
- *  A spent budget (quota) or a plan with no computer access keeps the short
- *  soft keepalive and does not grant a 10-minute stretch. */
+ *  floor only blocks Sandbox.create. The connect itself always gets at least
+ *  10 minutes (and at most 1 hour) so the stream can finish, then setTimeout
+ *  shrinks to budgetMs. A spent budget shrinks to the short soft keepalive. */
 async function connectTimeoutForUser(userId: string): Promise<{ connectMs: number; budgetMs: number }> {
   const { remainingVmMinutes, AgentTaskError } = await import('./agentTasks')
   try {
@@ -253,15 +276,36 @@ async function connectTimeoutForUser(userId: string): Promise<{ connectMs: numbe
     }
     const minutesMs = Math.floor(remaining) * 60_000
     const budgetMs = Math.min(BOX_IDLE_TTL_MS, Math.max(60_000, minutesMs))
-    const connectMs = Math.min(BOX_IDLE_TTL_MS, Math.max(MIN_BOOT_TIMEOUT_MS, minutesMs))
+    const connectMs = sandboxConnectTimeoutMs(minutesMs)
     return { connectMs, budgetMs }
   } catch (err) {
     if (err instanceof AgentTaskError && (err.code === 'quota' || err.code === 'forbidden')) {
       const budgetMs = await boxTimeoutMs(userId, 'soft')
-      return { connectMs: budgetMs, budgetMs }
+      return { connectMs: sandboxConnectTimeoutMs(), budgetMs }
     }
     throw err
   }
+}
+
+/** The provider says this VM no longer exists. A timeout or network error is not this. */
+function isProviderSandboxGone(error: unknown): boolean {
+  const status = (error as { status?: number; response?: { status?: number } })?.status
+    ?? (error as { response?: { status?: number } })?.response?.status
+  if (status === 404) return true
+  const msg = String((error as { message?: string })?.message || error || '')
+  return /not found|does not exist|no such sandbox|unknown sandbox/i.test(msg)
+}
+
+function isRetryableProviderError(error: unknown): boolean {
+  if (isProviderSandboxGone(error)) return false
+  if (isSandboxStreamTimeout(error)) return true
+  const msg = String((error as { message?: string })?.message || error || '')
+  return /timeout|timed out|etimedout|econn|enotfound|eai_again|network|socket|fetch failed|503|502|504|temporarily/i.test(msg)
+}
+
+async function retryableDesktopError(): Promise<Error> {
+  const { AgentTaskError } = await import('./agentTasks')
+  return new AgentTaskError('unavailable', DESKTOP_BOOT_RETRY_MESSAGE)
 }
 
 async function rememberBox(userId: string, sandboxId: string): Promise<void> {
@@ -309,8 +353,8 @@ async function connectPersistedBox(userId: string, timeoutMs: number): Promise<{
     }
     return { sandbox, stream }
   } catch (error) {
-    if (isSandboxStreamTimeout(error)) throw error
-    return null
+    if (isProviderSandboxGone(error)) return null
+    throw error
   }
 }
 
@@ -411,6 +455,33 @@ async function finishColdBoot(userId: string, userLabel: string, taskType: BoxTa
   }
 }
 
+/** Rewrite each bot's desktop MEMORY.md from the durable memory file.
+ *  The first boot used to seed the file only when it was missing, so later
+ *  remember_fact notes never landed. Wake always rewrites. A down box is a no-op
+ *  here; the next successful wake performs the rewrite. */
+async function rewriteDesktopMemory(sandbox: Sandbox, userId: string, onlyBotId?: string): Promise<void> {
+  if (!prisma) return
+  try {
+    const bots = onlyBotId
+      ? [{ id: onlyBotId }]
+      : await prisma.bot.findMany({ where: { ownerId: userId }, select: { id: true } })
+    for (const bot of bots) {
+      const mirror = readBotMemory(userId, bot.id)
+      if (!mirror) continue
+      const home = `/workspace/agents/${bot.id}`
+      await runInBox(sandbox, `mkdir -p ${quote(home)} && printf '%s\\n' ${quote(mirror)} > ${quote(`${home}/MEMORY.md`)}`)
+    }
+  } catch { /* memory mirror is best-effort */ }
+}
+
+/** When the box is already up in this process, refresh one bot's MEMORY.md.
+ *  If the box is down, the next wake rewrites it from the memory file. */
+export async function syncLiveBoxMemory(userId: string, botId: string): Promise<void> {
+  const sandbox = getLiveUserBox(userId)
+  if (!sandbox) return
+  await rewriteDesktopMemory(sandbox, userId, botId)
+}
+
 export async function ensureUserBox(userId: string, userLabel: string, taskType: BoxTaskType = 'default'): Promise<BoxSpec> {
   const pending = pendingBoots.get(userId)
   if (pending) return pending
@@ -427,6 +498,7 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
         syncWorkspaceThrottled(existing.sandbox, userId)
         const stream = await readVncUrls(existing.sandbox)
         await rememberBoxStream(userId, existing.sandboxId, stream)
+        await rewriteDesktopMemory(existing.sandbox, userId)
         return {
           sandboxId: existing.sandboxId,
           streamUrl: stream.streamUrl,
@@ -443,17 +515,17 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
 
     const timeouts = await connectTimeoutForUser(userId)
     let connected: { sandbox: Sandbox; stream: PersistedStream | null } | null = null
-    let streamDied = false
     try {
       connected = await connectPersistedBox(userId, timeouts.connectMs)
     } catch (error) {
-      if (!isSandboxStreamTimeout(error)) throw error
+      // Timeout or network: keep sandboxId and ask the caller to retry.
+      // A missing VM returns null from connect and falls through to a cold boot.
+      if (!isRetryableProviderError(error)) throw error
       logDesktopStreamDeath(userId, error)
-      await clearBoxSandboxId(userId)
-      streamDied = true
+      throw await retryableDesktopError()
     }
 
-    if (connected && !streamDied) {
+    if (connected) {
       try {
         const state: BoxState = {
           sandboxId: connected.sandbox.sandboxId,
@@ -483,6 +555,7 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
         await connected.sandbox.setTimeout(timeouts.budgetMs).catch((error: unknown) => {
           console.warn('[bot-box] could not shrink sandbox timeout to the remaining budget', String((error as Error)?.message || error))
         })
+        await rewriteDesktopMemory(connected.sandbox, userId)
         return {
           sandboxId: state.sandboxId,
           streamUrl,
@@ -494,18 +567,18 @@ export async function ensureUserBox(userId: string, userLabel: string, taskType:
         }
       } catch (error) {
         liveBoxes.delete(userId)
-        if (isSandboxStreamTimeout(error)) {
-          // Connect's stream died. The cold boot below is the one retry.
-          logDesktopStreamDeath(userId, error, connected.sandbox?.sandboxId)
+        if (isProviderSandboxGone(error)) {
           await clearBoxSandboxId(userId)
-          streamDied = true
+        } else {
+          logDesktopStreamDeath(userId, error, connected.sandbox?.sandboxId)
+          throw await retryableDesktopError()
         }
       }
     }
 
-    // Connect already died once: this cold boot is the single retry, and it
-    // skips pause-on-timeout. Otherwise pause-on-timeout is the first attempt.
-    return finishColdBoot(userId, userLabel, taskType, !streamDied)
+    // The provider confirmed the sandbox is gone (or there was no id).
+    await clearBoxSandboxId(userId)
+    return finishColdBoot(userId, userLabel, taskType, true)
   })()
 
   pendingBoots.set(userId, boot)
@@ -565,7 +638,7 @@ export async function reapOrphanBoxes(): Promise<void> {
       if (fresh.updatedAt.getTime() >= Date.now() - BOX_IDLE_REAP_MS) continue
       try {
         const { Sandbox } = await import('@e2b/desktop')
-        const handle = await Sandbox.connect(row.sandboxId)
+        const handle = await Sandbox.connect(row.sandboxId, { timeoutMs: sandboxConnectTimeoutMs() })
         try { await syncWorkspaceOut(handle, row.userId) } catch { /* best effort */ }
         // Final freshness check after the (slow) sync.
         const again = await prisma.botBox.findUnique({
@@ -578,9 +651,17 @@ export async function reapOrphanBoxes(): Promise<void> {
         await prisma.botBox.update({ where: { userId: row.userId }, data: { sandboxId: '' } }).catch(() => undefined)
         liveBoxes.delete(row.userId)
         console.info('[bot-box] reaped stale sandbox', { userId: row.userId, sandboxId: row.sandboxId })
-      } catch {
-        // The sandbox is already dead (provider TTL), so the DB row is already
-        // stale; clear the pointer to unblock the next cold-boot.
+      } catch (error) {
+        // Clear the id only after the provider says the sandbox is gone.
+        // A timeout or network error leaves it so the next wake can retry.
+        if (!isProviderSandboxGone(error)) {
+          console.warn('[bot-box] reaper could not reach sandbox; leaving sandboxId', {
+            userId: row.userId,
+            sandboxId: row.sandboxId,
+            error: String((error as Error)?.message || error),
+          })
+          continue
+        }
         await prisma.botBox.update({ where: { userId: row.userId }, data: { sandboxId: '' } }).catch(() => undefined)
         liveBoxes.delete(row.userId)
       }
@@ -627,7 +708,7 @@ async function reapUntrackedSandboxes(): Promise<void> {
         const id = String(info.sandboxId || '')
         if (!id || tracked.has(id) || sandboxStartedRecently(info)) continue
         try {
-          const handle = await Sandbox.connect(id)
+          const handle = await Sandbox.connect(id, { timeoutMs: sandboxConnectTimeoutMs() })
           await handle.kill().catch(() => undefined)
           console.info('[bot-box] reaped untracked sandbox', { sandboxId: id })
         } catch { /* already gone */ }
@@ -641,7 +722,7 @@ async function reapUntrackedSandboxes(): Promise<void> {
         const id = String(info.sandboxId || '')
         if (!id || tracked.has(id) || sandboxStartedRecently(info)) continue
         try {
-          const handle = await Sandbox.connect(id)
+          const handle = await Sandbox.connect(id, { timeoutMs: sandboxConnectTimeoutMs() })
           await handle.kill().catch(() => undefined)
           console.info('[bot-box] reaped untracked desktop sandbox', { sandboxId: id })
         } catch { /* already gone */ }
@@ -661,7 +742,8 @@ export async function createBoxTaskFolder(userId: string, taskId: string, goal: 
   const dir = `/workspace/task-folders/${taskId.slice(0, 8)}`
   try {
     const { Sandbox } = await import('@e2b/desktop')
-    const sandbox = liveBoxes.get(userId)?.sandbox || await Sandbox.connect(sandboxId)
+    const timeouts = await connectTimeoutForUser(userId).catch(() => ({ connectMs: sandboxConnectTimeoutMs(), budgetMs: sandboxConnectTimeoutMs() }))
+    const sandbox = liveBoxes.get(userId)?.sandbox || await Sandbox.connect(sandboxId, { timeoutMs: timeouts.connectMs })
     await sandbox.commands.run(
       `mkdir -p ${quote(dir)} && printf '%s\\n' ${quote(`# ${goal}\n# task ${taskId} — created ${new Date().toISOString()}`)} > ${quote(`${dir}/TASK.md`)}`,
       { timeoutMs: 20_000 },
@@ -676,7 +758,7 @@ export async function createBoxTaskFolder(userId: string, taskId: string, goal: 
  *  so the reaper never kills an active box. */
 export async function extendUserBoxLease(userId: string): Promise<void> {
   if (!prisma) return
-  const timeoutMs = await boxTimeoutMs(userId).catch(() => BOX_IDLE_TTL_MS)
+  const timeoutMs = await boxTimeoutMs(userId, 'soft').catch(() => SOFT_KEEPALIVE_MS)
   const live = liveBoxes.get(userId)
   if (live) {
     try {
@@ -688,7 +770,7 @@ export async function extendUserBoxLease(userId: string): Promise<void> {
     if (row?.sandboxId) {
       try {
         const { Sandbox } = await import('@e2b/desktop')
-        const sandbox = await Sandbox.connect(row.sandboxId)
+        const sandbox = await Sandbox.connect(row.sandboxId, { timeoutMs: sandboxConnectTimeoutMs(timeoutMs) })
         await sandbox.setTimeout(timeoutMs)
         liveBoxes.set(userId, {
           sandboxId: row.sandboxId,
@@ -705,7 +787,92 @@ export async function extendUserBoxLease(userId: string): Promise<void> {
   }).catch(() => undefined)
 }
 
-/** Read-only stream state for GET /computer (no boot/resume side effects). */
+export class BoxNotConnectedError extends Error {
+  readonly code = 'not_connected'
+  constructor() {
+    super('The computer is not connected. Wake it before taking control.')
+  }
+}
+
+export interface ComputerStatus {
+  alive: boolean
+  paused: boolean
+  takeoverRequested: boolean
+  sandboxId: string | null
+  viewUrl: string | null
+  interactiveUrl: string | null
+  resumed: boolean
+  ageMinutes: number | null
+  taskType: BoxTaskType | null
+  workspaceDir: string
+}
+
+function emptyComputerStatus(): ComputerStatus {
+  return {
+    alive: false,
+    paused: false,
+    takeoverRequested: false,
+    sandboxId: null,
+    viewUrl: null,
+    interactiveUrl: null,
+    resumed: false,
+    ageMinutes: null,
+    taskType: null,
+    workspaceDir: '/workspace',
+  }
+}
+
+/** Probe the in-process handle. A stored sandbox id with no live handle is
+ *  paused, not alive, and has no stream URLs. */
+async function probeLiveBox(userId: string, sandboxId: string): Promise<{ ageMinutes: number } | null> {
+  const live = liveBoxes.get(userId)
+  if (!live || live.sandboxId !== sandboxId) return null
+  try {
+    await live.sandbox.commands.run('true', { timeoutMs: 5_000 })
+    return { ageMinutes: Math.max(0, Math.round((Date.now() - live.createdAt) / 60_000)) }
+  } catch {
+    liveBoxes.delete(userId)
+    return null
+  }
+}
+
+/** Read-only computer status for GET /computer. Does not boot or resume. */
+export async function getComputerStatus(userId: string): Promise<ComputerStatus> {
+  if (!prisma) return emptyComputerStatus()
+  const row = await prisma.botBox.findUnique({ where: { userId } }).catch(() => null)
+  if (!row?.sandboxId) return emptyComputerStatus()
+  const takeoverRequested = row.takeoverRequested === true
+  const paused: ComputerStatus = {
+    ...emptyComputerStatus(),
+    paused: true,
+    takeoverRequested,
+    sandboxId: row.sandboxId,
+    taskType: 'default',
+  }
+  const probed = await probeLiveBox(userId, row.sandboxId)
+  if (!probed) return paused
+  let viewUrl = row.streamUrl || null
+  let interactiveUrl = row.interactiveUrl || null
+  if (row.streamAuthKey) {
+    const urls = buildVncUrls(row.sandboxId, row.streamAuthKey)
+    viewUrl = urls.viewUrl
+    interactiveUrl = urls.interactiveUrl
+  }
+  return {
+    alive: true,
+    paused: false,
+    takeoverRequested,
+    sandboxId: row.sandboxId,
+    viewUrl: viewUrl || null,
+    interactiveUrl: takeoverRequested ? (interactiveUrl || null) : null,
+    resumed: true,
+    ageMinutes: probed.ageMinutes,
+    taskType: 'default',
+    workspaceDir: '/workspace',
+  }
+}
+
+/** Read-only stream state. Alive only after a successful in-process probe. */
 export async function getBoxStreamState(userId: string): Promise<{
   alive: boolean
   sandboxId?: string
@@ -715,44 +882,43 @@ export async function getBoxStreamState(userId: string): Promise<{
   taskType?: BoxTaskType
   workspaceDir?: string
 } | null> {
-  if (!prisma) return null
-  const row = await prisma.botBox.findUnique({ where: { userId } }).catch(() => null)
-  if (!row?.sandboxId) return { alive: false }
-  let viewUrl = row.streamUrl
-  let interactiveUrl = row.interactiveUrl
-  if (row.streamAuthKey) {
-    const urls = buildVncUrls(row.sandboxId, row.streamAuthKey)
-    viewUrl = urls.viewUrl
-    interactiveUrl = urls.interactiveUrl
-  }
-  const live = liveBoxes.get(userId)
+  const status = await getComputerStatus(userId)
+  if (!status.sandboxId) return { alive: false }
   return {
-    alive: true,
-    sandboxId: row.sandboxId,
-    viewUrl: viewUrl || null,
-    interactiveUrl: interactiveUrl || null,
-    ageMinutes: live
-      ? Math.max(0, Math.round((Date.now() - live.createdAt) / 60_000))
-      : undefined,
-    workspaceDir: '/workspace',
+    alive: status.alive,
+    sandboxId: status.sandboxId,
+    viewUrl: status.viewUrl,
+    interactiveUrl: status.interactiveUrl,
+    ageMinutes: status.ageMinutes ?? undefined,
+    taskType: status.taskType || 'default',
+    workspaceDir: status.workspaceDir,
   }
 }
 
-/** Box health for the Computer tab. Prefers the in-process handle; falls back
- *  to the persisted BotBox row (API vs worker don't share liveBoxes). */
+/** Box health. A stored id this process has not probed is not alive. */
 export async function getUserBoxStatus(userId: string): Promise<{ alive: boolean; sandboxId?: string; ageMinutes?: number }> {
-  const live = liveBoxes.get(userId)
-  if (live) {
-    try {
-      await live.sandbox.commands.run('true', { timeoutMs: 5_000 })
-      return { alive: true, sandboxId: live.sandboxId, ageMinutes: Math.max(0, Math.round((Date.now() - live.createdAt) / 60_000)) }
-    } catch {
-      liveBoxes.delete(userId)
-    }
+  const status = await getComputerStatus(userId)
+  if (!status.sandboxId) return { alive: false }
+  return {
+    alive: status.alive,
+    sandboxId: status.sandboxId,
+    ...(status.ageMinutes != null ? { ageMinutes: status.ageMinutes } : {}),
   }
-  const sandboxId = await attachUserBoxFromDB(userId)
-  if (!sandboxId) return { alive: false }
-  return { alive: true, sandboxId }
+}
+
+/** Persistent-box operator control. Does not boot. 409 when the box is not connected. */
+export async function setUserBoxTakeover(userId: string, takeover: boolean): Promise<{ takeoverRequested: boolean; interactiveUrl: string | null }> {
+  const status = await getComputerStatus(userId)
+  if (!status.alive || !status.sandboxId) throw new BoxNotConnectedError()
+  if (prisma) {
+    await prisma.botBox.update({
+      where: { userId },
+      data: { takeoverRequested: takeover },
+    })
+  }
+  if (!takeover) return { takeoverRequested: false, interactiveUrl: null }
+  const again = await getComputerStatus(userId)
+  return { takeoverRequested: true, interactiveUrl: again.interactiveUrl }
 }
 
 /** Graceful shutdown (deploys / restarts): sync every workspace out first —
@@ -770,7 +936,7 @@ export async function killAllBoxes(): Promise<void> {
 export async function syncUserBoxNow(userId: string): Promise<void> {
   const sandboxId = await attachUserBoxFromDB(userId)
   if (sandboxId) {
-    const sandbox = await (await import('@e2b/desktop')).Sandbox.connect(sandboxId)
+    const sandbox = await (await import('@e2b/desktop')).Sandbox.connect(sandboxId, { timeoutMs: sandboxConnectTimeoutMs() })
     await syncWorkspaceOut(sandbox, userId)
   }
 }
@@ -780,14 +946,14 @@ export async function syncUserBoxNow(userId: string): Promise<void> {
 export async function seedBotHomeNow(userId: string, botId: string, botName: string): Promise<void> {
   const sandboxId = await attachUserBoxFromDB(userId)
   if (!sandboxId) return
-  const sandbox = await (await import('@e2b/desktop')).Sandbox.connect(sandboxId)
+  const sandbox = await (await import('@e2b/desktop')).Sandbox.connect(sandboxId, { timeoutMs: sandboxConnectTimeoutMs() })
   try {
     const home = `/workspace/agents/${botId}`
     const mirror = readBotMemory(userId, botId)
     await runInBox(sandbox, [
       `mkdir -p ${quote(home)} /workspace/shared`,
       `[ -f ${quote(`${home}/README.md`)} ] || printf '# %s\\nHome of bot %s. Files here persist; /workspace/shared is visible to every bot.\\n' ${quote(botName)} ${quote(botId)} > ${quote(`${home}/README.md`)}`,
-      ...(mirror ? [`[ -f ${quote(`${home}/MEMORY.md`)} ] || printf '%s\\n' ${quote(mirror)} > ${quote(`${home}/MEMORY.md`)}`] : []),
+      ...(mirror ? [`printf '%s\\n' ${quote(mirror)} > ${quote(`${home}/MEMORY.md`)}`] : []),
     ].join(' && '))
   } catch { /* best effort */ }
 }

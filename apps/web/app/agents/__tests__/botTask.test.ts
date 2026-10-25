@@ -2,20 +2,23 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   allowedToolsForBot,
   computerForBot,
+  finishWatchTarget,
   resolveWatchTarget,
   routineScheduleLabel,
   routineSkillLabel,
+  WATCH_START_TIMEOUT_MS,
 } from '../botTask'
 
 describe('allowedToolsForBot', () => {
-  it('intersects the bot tools with the runner grant and drops execute_code and generate_image', () => {
+  it('includes execute_code when the bot lists it and drops generate_image', () => {
     expect(allowedToolsForBot([
       'web_search', 'execute_code', 'generate_image', 'web_fetch', 'web_search',
-    ])).toEqual(['web_search', 'web_fetch'])
+    ])).toEqual(['web_search', 'execute_code', 'web_fetch'])
   })
 
-  it('returns an empty grant when every listed tool is outside the runner set', () => {
-    expect(allowedToolsForBot(['execute_code', 'generate_image'])).toEqual([])
+  it('lets a bot whose only tool is execute_code send', () => {
+    expect(allowedToolsForBot(['execute_code'])).toEqual(['execute_code'])
+    expect(allowedToolsForBot(['generate_image'])).toEqual([])
     expect(allowedToolsForBot(undefined)).toEqual([])
   })
 })
@@ -44,7 +47,7 @@ describe('resolveWatchTarget', () => {
     })
   })
 
-  it('says the desktop is still starting when the run has no stream', async () => {
+  it('does not leave a missing stream starting forever', async () => {
     const getComputer = vi.fn(async () => ({ viewUrl: null, interactiveUrl: null }))
     const target = await resolveWatchTarget('task-8', {
       getTask: async () => ({ runs: [{ id: 'run-8' }] }),
@@ -53,6 +56,22 @@ describe('resolveWatchTarget', () => {
     expect(target.taskId).toBe('task-8')
     expect(target.runId).toBe('run-8')
     expect(target.starting).toBe(true)
+    expect(finishWatchTarget(target, 0).timedOut).toBeFalsy()
+    const done = finishWatchTarget(target, WATCH_START_TIMEOUT_MS)
+    expect(done.starting).toBe(false)
+    expect(done.timedOut).toBe(true)
+  })
+
+  it('does not stay starting when the computer route 404s', async () => {
+    const missing = Object.assign(new Error('not found'), { status: 404 })
+    const target = await resolveWatchTarget('task-404', {
+      getTask: async () => ({ runs: [{ id: 'run-404' }] }),
+      getComputer: async () => { throw missing },
+    })
+    expect(target.starting).toBe(false)
+    expect(target.noComputer).toBe(true)
+    expect(target.runId).toBe('run-404')
+    expect(target.viewUrl).toBeNull()
   })
 
   it('keeps the task id when no run exists yet', async () => {

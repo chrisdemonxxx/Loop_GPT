@@ -2,13 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const db = vi.hoisted(() => ({
   bot: { findFirst: vi.fn() },
-  conversation: { findFirst: vi.fn() },
-  agentTask: { create: vi.fn() },
+  conversation: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+  agentTask: { create: vi.fn(), findMany: vi.fn() },
+  message: { create: vi.fn() },
 }))
 
 vi.mock('../prisma', () => ({ prisma: db, hasDb: true }))
 
-import { AgentTaskError, enqueueAgentTask } from '../agentTasks'
+import { AgentTaskError, enqueueAgentTask, listAgentTasks } from '../agentTasks'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -22,6 +23,14 @@ beforeEach(() => {
     computer: null,
     skillId: null,
   })
+  db.conversation.findUnique.mockResolvedValue({ activeLeafId: null })
+  db.conversation.update.mockResolvedValue({})
+  db.message.create.mockResolvedValue({
+    id: 'msg-1',
+    role: 'user',
+    content: 'Check the inbox',
+    createdAt: new Date('2026-10-22T12:00:00.000Z'),
+  })
 })
 
 describe('enqueueAgentTask conversation', () => {
@@ -34,6 +43,29 @@ describe('enqueueAgentTask conversation', () => {
     expect(db.agentTask.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ conversationId: 'conv-1', botId: 'bot-1', userId: 'owner-1' }),
     }))
+    expect(db.message.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ role: 'user', content: 'Check the inbox', conversationId: 'conv-1' }),
+    }))
+  })
+
+  it('lists a user thread newest-first and includes the latest run result', async () => {
+    db.agentTask.findMany.mockResolvedValue([
+      { id: 'new', createdAt: new Date('2026-10-24T12:00:00Z'), runs: [{ result: 'newest answer' }] },
+      { id: 'old', createdAt: new Date('2026-10-24T11:00:00Z'), runs: [{ result: null }] },
+    ])
+    const tasks = await listAgentTasks({ scope: { userId: 'owner-1' }, conversationId: 'conv-1' })
+    expect(db.agentTask.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      orderBy: { createdAt: 'desc' },
+      where: expect.objectContaining({
+        userId: 'owner-1',
+        conversationId: 'conv-1',
+        goal: { not: '__interactive_computer__' },
+      }),
+    }))
+    expect(tasks.map((task) => task.id)).toEqual(['new', 'old'])
+    expect(tasks[0].result).toBe('newest answer')
+    expect(tasks[1].result).toBeNull()
+    expect('runs' in tasks[0]).toBe(false)
   })
 
   it('refuses a thread the owner does not have on this bot', async () => {

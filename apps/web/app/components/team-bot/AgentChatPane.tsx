@@ -18,6 +18,7 @@ export function AgentChatPane({
   attachedSkill,
   botName = '',
   requiresComputer = true,
+  threadsReady = true,
   onSend,
   onWatch,
   onTrace,
@@ -35,6 +36,8 @@ export function AgentChatPane({
   botName?: string
   /** When false, a missing computer quota does not block the composer. */
   requiresComputer?: boolean
+  /** False while the thread list is still loading. Send stays disabled. */
+  threadsReady?: boolean
   onSend: (text: string) => Promise<void>
   /** Active run → open that run's computer. */
   onWatch: (taskId: string) => void
@@ -70,9 +73,11 @@ export function AgentChatPane({
         ? 'Dedicated computer requires a plan with computer minutes.'
         : null
 
+  const sendLocked = !threadsReady || computerBlocked
+
   const send = async () => {
     const text = draft.trim()
-    if (!text || sending || computerBlocked) return
+    if (!text || sending || sendLocked) return
     setDraft('')
     try { await onSend(text) } catch { setDraft(text) }
   }
@@ -150,21 +155,21 @@ export function AgentChatPane({
               <button type="button" onClick={() => onAttachSkill?.(null)} className="text-[var(--ink-muted)] hover:underline">Clear</button>
             </p>
           )}
-          <div className={`flex items-end gap-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-3.5 py-2.5 focus-within:border-[var(--accent)] transition ${computerBlocked ? 'opacity-60' : ''}`}>
+          <div className={`flex items-end gap-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-3.5 py-2.5 focus-within:border-[var(--accent)] transition ${sendLocked ? 'opacity-60' : ''}`}>
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() } }}
               rows={1}
-              placeholder={computerBlocked ? 'Computer unavailable' : (name ? `Message ${name}` : 'Message')}
+              placeholder={!threadsReady ? 'Loading chats…' : computerBlocked ? 'Computer unavailable' : (name ? `Message ${name}` : 'Message')}
               aria-label={name ? `Message ${name}` : 'Message'}
-              disabled={computerBlocked}
+              disabled={sendLocked}
               className="flex-1 bg-transparent resize-none text-ui-base text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] focus:outline-none max-h-32 disabled:cursor-not-allowed"
             />
             <button
               type="button"
               onClick={() => void send()}
-              disabled={!draft.trim() || sending || computerBlocked}
+              disabled={!draft.trim() || sending || sendLocked}
               aria-label="Send"
               className="shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-white bg-[var(--accent)] hover:bg-[var(--accent-hover)] transition disabled:opacity-30 disabled:cursor-not-allowed"
             >
@@ -228,7 +233,7 @@ function Exchange({
             <p className="mt-2 whitespace-pre-wrap text-ui-sm text-[var(--ink-secondary)] leading-relaxed">{task.result}</p>
           )}
           <div className="mt-2 flex items-center gap-2">
-            {active ? (
+            {active && (
               <button
                 type="button"
                 onClick={() => onWatch(task.id)}
@@ -236,15 +241,14 @@ function Exchange({
               >
                 <Monitor size={11} /> Watch
               </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => onTrace(task.id)}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg text-ui-xs bg-[var(--bg-hover)] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover-strong)] transition"
-              >
-                <Monitor size={11} /> Trace
-              </button>
             )}
+            <button
+              type="button"
+              onClick={() => onTrace(task.id)}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-ui-xs bg-[var(--bg-hover)] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--bg-hover-strong)] transition"
+            >
+              <Monitor size={11} /> Trace
+            </button>
             {active && (
               <button
                 type="button"
@@ -274,8 +278,12 @@ function replyFor(task: BotTask): string {
         : 'Working on it — watch me on the Computer tab.'
     case 'succeeded':
       return task.result ? 'Done.' : 'Done. Open the trace for the full run.'
-    case 'dead_letter':
-      return `It failed${task.lastErrorCode ? ` — ${task.lastErrorCode.replace(/^BOT_/, '').replace(/_/g, ' ').toLowerCase()}` : ''}. Say the word and I'll retry.`
+    case 'dead_letter': {
+      const why = task.lastErrorCode
+        ? ` — ${task.lastErrorCode.replace(/^BOT_/, '').replace(/_/g, ' ').toLowerCase()}`
+        : ''
+      return `It failed${why}. This run will not be retried.`
+    }
     case 'cancelled':
       return 'Stopped before it finished.'
     default:

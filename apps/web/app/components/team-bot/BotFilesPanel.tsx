@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ChevronRight, FileCode2, Folder, FolderOpen, Loader2, Power, RefreshCw, Save, Trash2, Upload, X,
 } from 'lucide-react'
@@ -29,20 +29,28 @@ export function BotFilesPanel({ onWakeComputer }: { onWakeComputer?: () => void 
   const [needsWake, setNeedsWake] = useState(false)
   const [waking, setWaking] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<BoxFileEntry | null>(null)
+  const listGen = useRef(0)
 
   const currentDir = `/workspace${path.length ? `/${path.join('/')}` : ''}`
 
   const refresh = useCallback(async (dir: string) => {
+    const gen = ++listGen.current
     setError('')
     setLoading(true)
     try {
       const body = await listBoxFiles(dir)
+      if (gen !== listGen.current) return
       setEntries(body.entries)
       setNeedsWake(false)
     } catch (err: any) {
+      if (gen !== listGen.current) return
       setEntries(null)
+      const status = err instanceof BotApiError ? err.status : err?.status
       const code = err instanceof BotApiError ? err.code : ''
-      if (code === 'no_box' || err?.status === 409) {
+      if (status === 503) {
+        setNeedsWake(false)
+        setError(err?.message || 'The computer could not be reached.')
+      } else if (code === 'no_box' || status === 409) {
         setNeedsWake(true)
         setError('The computer is asleep — wake it to browse files.')
       } else {
@@ -50,7 +58,7 @@ export function BotFilesPanel({ onWakeComputer }: { onWakeComputer?: () => void 
         setError(err?.message || 'Could not read the workspace.')
       }
     } finally {
-      setLoading(false)
+      if (gen === listGen.current) setLoading(false)
     }
   }, [])
 
@@ -215,7 +223,7 @@ export function BotFilesPanel({ onWakeComputer }: { onWakeComputer?: () => void 
                 <span className="truncate font-mono text-2xs text-[var(--ink-primary)]">{entry.name}</span>
                 {entry.type === 'file' && <span className="ml-auto shrink-0 text-3xs text-[var(--ink-muted)]">{entry.size > 1024 ? `${(entry.size / 1024).toFixed(1)}k` : `${entry.size}b`}</span>}
               </button>
-              <button type="button" onClick={() => setPendingDelete(entry)} className="hidden shrink-0 text-[var(--ink-muted)] hover:text-[var(--danger)] group-hover:block" aria-label={`Delete ${entry.name}`}>
+              <button type="button" onClick={() => setPendingDelete(entry)} className="shrink-0 p-1 text-[var(--ink-muted)] hover:text-[var(--danger)]" aria-label={`Delete ${entry.name}`}>
                 <Trash2 size={11} aria-hidden />
               </button>
             </div>

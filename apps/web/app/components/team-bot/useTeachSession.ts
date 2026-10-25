@@ -73,6 +73,9 @@ export function useTeachSession(
   const phaseRef = useRef<TeachPhase>('idle')
   /** True only after the operator presses Stop. Early skill_saved must not finish the session. */
   const distillArmedRef = useRef(false)
+  const abandoningRef = useRef(false)
+  /** Bumped when a new start/reset begins so an in-flight cancel cannot overwrite it. */
+  const generationRef = useRef(0)
 
   const movePhase = useCallback((next: TeachPhase) => {
     phaseRef.current = next
@@ -97,12 +100,54 @@ export function useTeachSession(
   }, [clearTimers, movePhase])
 
   const reset = useCallback(() => {
+    generationRef.current += 1
     clearTimers()
     distillArmedRef.current = false
+    abandoningRef.current = false
     movePhase('idle'); setGoal(null); setTaskId(null); setRunId(null)
     taskIdRef.current = null
     runIdRef.current = null
     setComputer(null); setFrames(0); setSteps(0); setError(''); setSkillId(null); setSkillName(null)
+  }, [clearTimers, movePhase])
+
+  /**
+   * Release takeover and cancel the task. Discard, close, unmount, and the
+   * start timeout all come through here. Does not save a skill.
+   */
+  const abandon = useCallback(async (message: string) => {
+    if (abandoningRef.current) return
+    const phase = phaseRef.current
+    if (phase === 'idle' || phase === 'done' || phase === 'distilling' || phase === 'failed') return
+    abandoningRef.current = true
+    const gen = generationRef.current
+    const task = taskIdRef.current
+    const run = runIdRef.current
+    distillArmedRef.current = false
+    clearTimers()
+    movePhase('failed')
+    setSkillId(null)
+    setSkillName(null)
+    let note = message
+    if (run) {
+      try {
+        await setBotTakeover(run, false)
+      } catch (err: unknown) {
+        const extra = err instanceof Error && err.message ? err.message : 'Could not release control.'
+        note = `${note} ${extra}`.trim()
+      }
+    }
+    if (task) {
+      try {
+        await cancelBotTask(task)
+      } catch (err: unknown) {
+        const extra = err instanceof Error && err.message ? err.message : 'Could not cancel the teach task.'
+        note = `${note} ${extra}`.trim()
+      }
+    }
+    if (generationRef.current !== gen) return
+    setComputer((cur) => (cur ? { ...cur, takeoverRequested: false } : cur))
+    setError(note)
+    abandoningRef.current = false
   }, [clearTimers, movePhase])
 
   const armDistillTimeout = useCallback(() => {
@@ -161,10 +206,11 @@ export function useTeachSession(
     }
   }, [onSkillReady, reset, fail, movePhase, armDistillTimeout])
 
-  /** Takeover on, then recording. Does not enqueue and does not save a skill. */
+  /** Takeover on, then recording. The returned interactive URL is applied before any poll. */
   const armRecording = useCallback(async (id: string) => {
+    let taken: { takeoverRequested: boolean; interactiveUrl: string | null }
     try {
-      await setBotTakeover(id, true)
+      taken = await setBotTakeover(id, true)
     } catch (err: any) {
       if (phaseRef.current === 'failed' || phaseRef.current === 'idle') return
       setError(err?.message || 'Takeover failed — the session may already be over.')
@@ -173,7 +219,18 @@ export function useTeachSession(
     }
     if (phaseRef.current !== 'starting' && phaseRef.current !== 'waiting' && phaseRef.current !== 'recording') return
     if (phaseTimerRef.current) { clearTimeout(phaseTimerRef.current); phaseTimerRef.current = null }
-    setComputer((cur) => (cur ? { ...cur, takeoverRequested: true } : cur))
+    setComputer((cur) => ({
+      active: cur?.active ?? true,
+      reason: cur?.reason ?? null,
+      sandboxId: cur?.sandboxId ?? '',
+      viewUrl: cur?.viewUrl ?? null,
+      interactiveUrl: taken.interactiveUrl ?? cur?.interactiveUrl ?? null,
+      takeoverRequested: true,
+      takeoverTimeoutMs: cur?.takeoverTimeoutMs,
+      minutes: cur?.minutes ?? null,
+      startedAt: cur?.startedAt ?? null,
+      endedAt: cur?.endedAt ?? null,
+    }))
     movePhase('recording')
   }, [movePhase])
 
@@ -185,10 +242,15 @@ export function useTeachSession(
     })
     const pullComputer = async () => {
       const c = await getBotComputer(id).catch(() => null)
-      if (!c?.sandboxId) return
-      setComputer({
-        ...c,
-        takeoverRequested: phaseRef.current === 'recording' ? true : c.takeoverRequested,
+      if (phaseRef.current === 'failed' || phaseRef.current === 'idle') return
+      setComputer((prev) => {
+        if (!c?.sandboxId) return prev
+        const keepUrl = phaseRef.current === 'recording' || phaseRef.current === 'waiting'
+        return {
+          ...c,
+          interactiveUrl: c.interactiveUrl || (keepUrl ? prev?.interactiveUrl ?? null : c.interactiveUrl),
+          takeoverRequested: phaseRef.current === 'recording' ? true : c.takeoverRequested,
+        }
       })
     }
     void pullComputer()
@@ -204,6 +266,8 @@ export function useTeachSession(
       await armRecording(runIdRef.current)
       return
     }
+    generationRef.current += 1
+    abandoningRef.current = false
     clearTimers()
     distillArmedRef.current = false
     setError('')
@@ -215,7 +279,7 @@ export function useTeachSession(
     setGoal(teachGoal)
     phaseTimerRef.current = setTimeout(() => {
       if (phaseRef.current === 'starting' || phaseRef.current === 'waiting') {
-        fail('Timed out waiting for the teach computer. Cancel and try again.')
+        void abandon('Timed out waiting for the teach computer. Cancel and try again.')
       }
     }, START_TIMEOUT_MS)
     try {
@@ -233,6 +297,7 @@ export function useTeachSession(
       pollRef.current = setInterval(async () => {
         try {
           const detail = await getBotTask(id)
+          if (phaseRef.current !== 'starting' && phaseRef.current !== 'waiting') return
           if (detail.status === 'dead_letter') {
             fail(detail.lastErrorCode
               ? `Teach failed — ${detail.lastErrorCode.replace(/^BOT_/, '').replace(/_/g, ' ').toLowerCase()}`
@@ -253,7 +318,7 @@ export function useTeachSession(
     } catch (err: any) {
       fail(err?.message || 'Could not start the teach session.')
     }
-  }, [armRecording, attachRun, botId, clearTimers, conversationId, fail, movePhase])
+  }, [abandon, armRecording, attachRun, botId, clearTimers, conversationId, fail, movePhase])
 
   const takeOver = useCallback(async () => {
     const id = runIdRef.current
@@ -270,20 +335,16 @@ export function useTeachSession(
     armDistillTimeout()
     try {
       await setBotTakeover(id, false)
-    } catch { /* the run may already be over — skill_saved or an error resolves it */ }
+    } catch (err: unknown) {
+      const message = err instanceof Error && err.message ? err.message : 'Could not release control.'
+      setError(message)
+    }
     setComputer((cur) => (cur ? { ...cur, takeoverRequested: false } : cur))
   }, [armDistillTimeout, movePhase])
 
   const cancel = useCallback(async () => {
-    const id = taskIdRef.current
-    distillArmedRef.current = false
-    clearTimers()
-    if (id) await cancelBotTask(id).catch(() => {})
-    setSkillId(null)
-    setSkillName(null)
-    setError('Teach session cancelled.')
-    movePhase('failed')
-  }, [clearTimers, movePhase])
+    await abandon('Teach session cancelled.')
+  }, [abandon])
 
   const reportInput = useCallback((input: TeachOperatorInput) => {
     const id = runIdRef.current
@@ -292,10 +353,23 @@ export function useTeachSession(
       .then((res) => {
         if (res?.stored === true) setSteps((n) => n + 1)
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        const message = err instanceof Error && err.message ? err.message : 'Could not record that step.'
+        setError(message)
+      })
   }, [])
 
-  useEffect(() => clearTimers, [clearTimers])
+  useEffect(() => {
+    return () => {
+      const phase = phaseRef.current
+      const task = taskIdRef.current
+      const run = runIdRef.current
+      clearTimers()
+      if (phase !== 'starting' && phase !== 'waiting' && phase !== 'recording') return
+      if (run) void setBotTakeover(run, false).catch(() => undefined)
+      if (task) void cancelBotTask(task).catch(() => undefined)
+    }
+  }, [clearTimers])
 
   return {
     phase, goal, taskId, runId, computer, frames, steps, error, skillId, skillName,

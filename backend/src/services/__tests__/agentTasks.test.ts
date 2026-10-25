@@ -115,6 +115,7 @@ describe('computer enqueue gate (fail fast)', () => {
       'BOT_COMPUTER_QUOTA',
       'BOT_TEACH_NOTHING_RECORDED',
       'BOT_TEACH_SKILL_NOT_SAVED',
+      'BOT_TEACH_NO_DEMO',
     ])
   })
 })

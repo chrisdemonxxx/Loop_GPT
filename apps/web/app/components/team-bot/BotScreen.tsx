@@ -115,6 +115,7 @@ export function BotScreen({ url, interactive = false, onOperatorInput }: BotScre
   const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('connecting')
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
+  const [cleanClose, setCleanClose] = useState(false)
   const retryCountRef = useRef(0)
   const securityErrorRef = useRef<string | null>(null)
   const onInputRef = useRef(onOperatorInput)
@@ -197,13 +198,22 @@ export function BotScreen({ url, interactive = false, onOperatorInput }: BotScre
             setError(securityErrorRef.current)
             return
           }
+          // A clean close is the operator or the VM hanging up. Retrying it
+          // looks like an endless wake. Offer Reconnect instead.
+          if (ev?.detail?.clean) {
+            setCleanClose(true)
+            setStatus('disconnected')
+            setError('Disconnected from the computer.')
+            return
+          }
+          setCleanClose(false)
           setStatus('disconnected')
-          if (!ev?.detail?.clean && retryCountRef.current < MAX_RETRIES) {
+          if (retryCountRef.current < MAX_RETRIES) {
             reconnectTimer = setTimeout(() => {
               retryCountRef.current += 1
               setAttempt((n) => n + 1)
             }, 4000)
-          } else if (!ev?.detail?.clean) {
+          } else {
             setStatus('error')
             setError('Lost connection to the computer after several retries.')
           }
@@ -295,14 +305,14 @@ export function BotScreen({ url, interactive = false, onOperatorInput }: BotScre
   }, [interactive, onOperatorInput])
 
   const showOverlay = status !== 'connected'
-  const retriesExhausted = status === 'error' || (status === 'disconnected' && retryCountRef.current >= MAX_RETRIES)
+  const showReconnect = status === 'error' || (status === 'disconnected' && cleanClose)
 
   return (
     <div className="relative w-full h-full bg-black overflow-hidden">
       <div ref={containerRef} className="absolute inset-0 w-full h-full" />
       {showOverlay && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-black text-center px-6">
-          {retriesExhausted ? (
+          {showReconnect ? (
             <>
               <Monitor size={22} className="text-[var(--danger)]" aria-hidden />
               <p className="text-ui-sm text-[var(--danger)] max-w-sm">{error || securityErrorRef.current || 'Could not connect to the computer.'}</p>
@@ -311,6 +321,7 @@ export function BotScreen({ url, interactive = false, onOperatorInput }: BotScre
                 onClick={() => {
                   securityErrorRef.current = null
                   retryCountRef.current = 0
+                  setCleanClose(false)
                   setError(null)
                   setAttempt((n) => n + 1)
                 }}

@@ -299,6 +299,7 @@ export function BotProfilePanel({ bot, conversationId, onLabel }: {
   const [memory, setMemory] = useState<string | null>(null)
   const [routines, setRoutines] = useState<Array<{ id: string; goal: string; schedule: string }> | null>(null)
   const [detailsError, setDetailsError] = useState(false)
+  const [skillError, setSkillError] = useState('')
   const wide = useWideProfile()
   const refreshSkills = () => { void listBotSkills(bot.id).then((d) => setSkills(d.skills || [])).catch(() => {}) }
   const teach = (useTeachSession as TeachHook)(() => refreshSkills(), bot.id, conversationId ?? null)
@@ -400,7 +401,14 @@ export function BotProfilePanel({ bot, conversationId, onLabel }: {
                         <button
                           type="button"
                           aria-label={`Delete ${s.name}`}
-                          onClick={() => { void deleteBotSkill(s.id).then(refreshSkills).catch(() => {}) }}
+                          onClick={() => {
+                            void deleteBotSkill(s.id).then(() => {
+                              setSkillError('')
+                              refreshSkills()
+                            }).catch((err: unknown) => {
+                              setSkillError((err as { message?: string })?.message || `Could not delete ${s.name}.`)
+                            })
+                          }}
                           className="text-slate-500 hover:text-rose-300"
                         >
                           <X size={12} />
@@ -411,6 +419,7 @@ export function BotProfilePanel({ bot, conversationId, onLabel }: {
                 </ul>
               )
           )}
+          {skillError && <p className="mt-2 text-[12px] text-rose-300" role="alert">{skillError}</p>}
         </div>
         )}
         {tab === 'computer' && !computerExpanded && (

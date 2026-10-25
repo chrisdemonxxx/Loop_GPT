@@ -1,12 +1,14 @@
 /**
  * Send and Watch helpers for /agents.
- * BOT_RUNNER_TOOLS mirrors backend BOT_DEFAULT_TOOLS. execute_code and
- * generate_image stay out of that list, so a bot cannot receive them here.
+ * BOT_RUNNER_TOOLS is what this client will put on a task. execute_code is
+ * granted when the bot lists it and the runner exposes it. generate_image
+ * stays out.
  */
 
 export const BOT_RUNNER_TOOLS = [
   'web_search', 'web_fetch', 'create_document',
   'calculator', 'get_current_time', 'remember', 'search_knowledge',
+  'execute_code',
 ] as const
 
 export function allowedToolsForBot(defaultTools: readonly string[] | null | undefined): string[] {
@@ -29,8 +31,33 @@ export interface WatchTarget {
   runId: string | null
   viewUrl: string | null
   interactiveUrl: string | null
-  /** True until the run's desktop stream exists. */
+  /** True only while a desktop may still appear. A 404 is not this. */
   starting: boolean
+  /** The run has no computer (404 or the bot never had one). */
+  noComputer?: boolean
+  /** starting stayed true until the watch timeout. */
+  timedOut?: boolean
+}
+
+/** How long Watch may sit on "starting" before it offers Trace. */
+export const WATCH_START_TIMEOUT_MS = 45_000
+
+function httpStatus(err: unknown): number | undefined {
+  if (!err || typeof err !== 'object' || !('status' in err)) return undefined
+  const status = (err as { status?: unknown }).status
+  return typeof status === 'number' ? status : undefined
+}
+
+/** Stop a watch that will never get a stream. A live URL wins over the timeout. */
+export function finishWatchTarget(target: WatchTarget, elapsedMs: number): WatchTarget {
+  if (target.viewUrl || target.interactiveUrl) {
+    return { ...target, starting: false, noComputer: false, timedOut: false }
+  }
+  if (target.noComputer) return { ...target, starting: false, timedOut: false }
+  if (target.starting && elapsedMs >= WATCH_START_TIMEOUT_MS) {
+    return { ...target, starting: false, timedOut: true }
+  }
+  return target
 }
 
 export async function resolveWatchTarget(
@@ -44,7 +71,10 @@ export async function resolveWatchTarget(
   try {
     const detail = await load.getTask(taskId)
     runId = detail.runs?.[0]?.id ?? null
-  } catch {
+  } catch (err) {
+    if (httpStatus(err) === 404) {
+      return { taskId, runId: null, viewUrl: null, interactiveUrl: null, starting: false, noComputer: true }
+    }
     return { taskId, runId: null, viewUrl: null, interactiveUrl: null, starting: true }
   }
   if (!runId) return { taskId, runId: null, viewUrl: null, interactiveUrl: null, starting: true }
@@ -52,8 +82,14 @@ export async function resolveWatchTarget(
     const computer = await load.getComputer(runId)
     const viewUrl = computer?.viewUrl ?? null
     const interactiveUrl = computer?.interactiveUrl ?? null
+    if (!viewUrl && !interactiveUrl && !computer) {
+      return { taskId, runId, viewUrl: null, interactiveUrl: null, starting: false, noComputer: true }
+    }
     return { taskId, runId, viewUrl, interactiveUrl, starting: !viewUrl && !interactiveUrl }
-  } catch {
+  } catch (err) {
+    if (httpStatus(err) === 404) {
+      return { taskId, runId, viewUrl: null, interactiveUrl: null, starting: false, noComputer: true }
+    }
     return { taskId, runId, viewUrl: null, interactiveUrl: null, starting: true }
   }
 }

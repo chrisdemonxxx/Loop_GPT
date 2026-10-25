@@ -253,9 +253,15 @@ router.post('/routines', asyncHandler(async (req, res) => {
       schedule,
       ...(typeof body.skillId === 'string' && body.skillId ? { skillId: body.skillId } : {}),
       ...(typeof body.botId === 'string' && body.botId ? { botId: body.botId } : {}),
+      ...(Array.isArray(body.allowedTools) ? { allowedTools: body.allowedTools } : {}),
+      ...(body.computer && typeof body.computer === 'object' ? { computer: body.computer } : {}),
+      ...(typeof body.conversationId === 'string' && body.conversationId ? { conversationId: body.conversationId } : {}),
     })
     res.status(201).json({ routine })
   } catch (error) {
+    if (error instanceof Error && error.name === 'ZodError') {
+      return res.status(400).json({ error: 'Invalid routine', code: 'invalid_request' })
+    }
     return botError(res, error)
   }
 }))
@@ -278,89 +284,105 @@ router.delete('/routines/:id', asyncHandler(async (req, res) => {
   res.json({ ok: true })
 }))
 
+const BOX_FILE_CODES = new Set(['no_box', 'bad_path', 'too_large', 'not_found', 'io'])
+
+async function sendBoxFileError(res: express.Response, error: unknown): Promise<boolean> {
+  const code = error && typeof error === 'object' ? (error as { code?: string }).code : undefined
+  if (error instanceof Error && code && BOX_FILE_CODES.has(code)) {
+    const { boxFileHttpStatus } = await import('../services/boxFiles')
+    res.status(boxFileHttpStatus(code)).json({ error: error.message, code })
+    return true
+  }
+  return false
+}
+
 /** GET /api/bot/computer/files?path= — list a directory in YOUR box. */
 router.get('/computer/files', asyncHandler(async (req, res) => {
-  const { listBoxFiles, BoxFilesError } = await import('../services/boxFiles')
+  const { listBoxFiles } = await import('../services/boxFiles')
   try {
     const entries = await listBoxFiles((req as any).userId, typeof req.query.path === 'string' ? req.query.path : '/workspace')
     res.json({ entries })
   } catch (error) {
-    if (error instanceof BoxFilesError) return res.status(error.code === 'no_box' ? 409 : error.code === 'bad_path' ? 400 : 404).json({ error: error.message, code: error.code })
-    throw error
+    if (await sendBoxFileError(res, error)) return
+    return botError(res, error)
   }
 }))
 
 /** GET /api/bot/computer/file?path= — read a text file from YOUR box. */
 router.get('/computer/file', asyncHandler(async (req, res) => {
-  const { readBoxFile, BoxFilesError } = await import('../services/boxFiles')
+  const { readBoxFile } = await import('../services/boxFiles')
   try {
     const body = await readBoxFile((req as any).userId, String(req.query.path || ''))
     res.json(body)
   } catch (error) {
-    if (error instanceof BoxFilesError) return res.status(error.code === 'no_box' ? 409 : error.code === 'bad_path' ? 400 : error.code === 'too_large' ? 413 : 404).json({ error: error.message, code: error.code })
-    throw error
+    if (await sendBoxFileError(res, error)) return
+    return botError(res, error)
   }
 }))
 
 /** PUT /api/bot/computer/file { path, content } — write a text file into YOUR box. */
 router.put('/computer/file', express.json({ limit: '4mb' }), asyncHandler(async (req, res) => {
-  const { writeBoxFile, BoxFilesError } = await import('../services/boxFiles')
+  const { writeBoxFile } = await import('../services/boxFiles')
   try {
     const result = await writeBoxFile((req as any).userId, String(req.body?.path || ''), String(req.body?.content ?? ''))
     res.json(result)
   } catch (error) {
-    if (error instanceof BoxFilesError) return res.status(error.code === 'no_box' ? 409 : error.code === 'bad_path' ? 400 : error.code === 'too_large' ? 413 : 404).json({ error: error.message, code: error.code })
-    throw error
+    if (await sendBoxFileError(res, error)) return
+    return botError(res, error)
   }
 }))
 
 /** DELETE /api/bot/computer/file?path= — remove a file or directory from YOUR box. */
 router.delete('/computer/file', asyncHandler(async (req, res) => {
-  const { deleteBoxPath, BoxFilesError } = await import('../services/boxFiles')
+  const { deleteBoxPath } = await import('../services/boxFiles')
   try {
     await deleteBoxPath((req as any).userId, String(req.query.path || ''))
     res.json({ ok: true })
   } catch (error) {
-    if (error instanceof BoxFilesError) return res.status(error.code === 'no_box' ? 409 : error.code === 'bad_path' ? 400 : 404).json({ error: error.message, code: error.code })
-    throw error
+    if (await sendBoxFileError(res, error)) return
+    return botError(res, error)
   }
 }))
 
 /** GET /api/bot/computer — read stream state only (no boot/resume side effects).
- *  Use POST /computer/wake to boot or resume the persistent box. */
+ *  Use POST /computer/wake to boot or resume the persistent box.
+ *  alive is true only after this process probes the VM. A stored sandbox id
+ *  with no live handle is paused, and its stream URLs stay null. */
 router.get('/computer', asyncHandler(async (req, res) => {
-  const { getBoxStreamState, getUserBoxStatus } = await import('../services/botBox')
-  const userId = (req as any).userId as string
-  const state = await getBoxStreamState(userId)
-  if (!state?.sandboxId) {
-    return res.json({
-      alive: false,
-      sandboxId: null,
-      viewUrl: null,
-      interactiveUrl: null,
-      resumed: false,
-      ageMinutes: null,
-      taskType: null,
-      workspaceDir: '/workspace',
-    })
+  const { getComputerStatus } = await import('../services/botBox')
+  res.json(await getComputerStatus((req as any).userId as string))
+}))
+
+/** POST /api/bot/computer/takeover { takeover } — operator control of the
+ *  persistent box. Does not boot. 409 when the box is not connected. */
+router.post('/computer/takeover', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { setUserBoxTakeover } = await import('../services/botBox')
+  const takeover = req.body?.takeover === true
+  try {
+    res.json(await setUserBoxTakeover((req as any).userId as string, takeover))
+  } catch (error) {
+    const code = (error as { code?: string })?.code
+    if (code === 'not_connected') {
+      return res.status(409).json({ error: (error as Error).message, code })
+    }
+    throw error
   }
-  const status = await getUserBoxStatus(userId)
-  res.json({
-    alive: status.alive,
-    sandboxId: state.sandboxId,
-    viewUrl: state.viewUrl || null,
-    interactiveUrl: state.interactiveUrl || null,
-    resumed: true,
-    ageMinutes: state.ageMinutes ?? status.ageMinutes ?? null,
-    taskType: state.taskType || 'default',
-    workspaceDir: state.workspaceDir || '/workspace',
-  })
+}))
+
+/** POST /api/bot/computer/settle — bill elapsed interactive VM minutes for the
+ *  open desktop. Does not boot. Zero whole minutes does not move lastSettledAt. */
+router.post('/computer/settle', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { recordInteractiveVmMinutes } = await import('../services/botComputerMeter')
+  const minutes = await recordInteractiveVmMinutes((req as any).userId as string)
+  res.json({ ok: true, minutes })
 }))
 
 /** POST /api/bot/computer/wake — boot or resume YOUR persistent box (side effects
  *  + interactive VM-minute metering). Body/query: taskType optional. */
 router.post('/computer/wake', asyncHandler(async (req, res) => {
-  const { ensureUserBox, getUserBoxStatus } = await import('../services/botBox')
+  const { ensureUserBox } = await import('../services/botBox')
   const { recordInteractiveVmMinutes } = await import('../services/botComputerMeter')
   const userId = (req as any).userId as string
   const user = hasDb && prisma ? await prisma.user.findUnique({ where: { id: userId }, select: { email: true } }) : null
@@ -385,16 +407,32 @@ router.post('/computer/wake', asyncHandler(async (req, res) => {
   // Metering must never wipe a successful boot — a thrown quota used to return
   // 402 with no stream URLs even when the box was already alive.
   await recordInteractiveVmMinutes(userId).catch(() => undefined)
-  const status = await getUserBoxStatus(userId)
+  // The Computer tab draws only when alive AND viewUrl are set. A follow-up
+  // probe can report paused (and drop the in-process handle) after this boot
+  // already returned a stream, which left Wake on screen forever. Alive tracks
+  // the stream this call just produced. interactiveUrl stays null until the
+  // persistent box takeover flag is on — wake does not turn that flag on.
+  let takeoverRequested = false
+  if (hasDb && prisma) {
+    const row = await prisma.botBox.findUnique({
+      where: { userId },
+      select: { takeoverRequested: true },
+    }).catch(() => null)
+    takeoverRequested = row?.takeoverRequested === true
+  }
+  const viewUrl = box.streamUrl || null
+  const alive = Boolean(viewUrl)
   res.json({
-    alive: status.alive,
+    alive,
     sandboxId: box.sandboxId,
-    viewUrl: box.streamUrl || null,
-    interactiveUrl: box.interactiveUrl || null,
+    viewUrl,
+    interactiveUrl: alive && takeoverRequested ? (box.interactiveUrl || null) : null,
     resumed: box.resumed,
     ageMinutes: box.ageMinutes,
     taskType: box.taskType,
     workspaceDir: box.workspaceDir,
+    takeoverRequested,
+    paused: !alive,
   })
 }))
 

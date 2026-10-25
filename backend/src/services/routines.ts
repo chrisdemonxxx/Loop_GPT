@@ -17,6 +17,7 @@ export interface RoutineRun {
   id: string
   status: string
   error: string | null
+  result: string | null
   startedAt: string | null
   completedAt: string | null
 }
@@ -31,6 +32,8 @@ export interface Routine {
   paused: boolean
   nextRunAt: string | null
   createdAt: string
+  /** Latest run's result text, when a run has one. */
+  result: string | null
   runs: RoutineRun[]
 }
 
@@ -46,10 +49,12 @@ function toRoutine(row: any): Routine {
     paused: !!nextRunAt && nextRunAt.getTime() >= PAUSED_AT.getTime(),
     nextRunAt: nextRunAt ? nextRunAt.toISOString() : null,
     createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : '',
+    result: row.runs?.[0]?.result ?? null,
     runs: (row.runs || []).map((run: any) => ({
       id: run.id,
       status: run.status,
       error: run.error ?? null,
+      result: run.result ?? null,
       startedAt: run.startedAt ? new Date(run.startedAt).toISOString() : null,
       completedAt: run.completedAt ? new Date(run.completedAt).toISOString() : null,
     })),
@@ -62,7 +67,7 @@ export async function listRoutines(userId: string): Promise<Routine[]> {
     where: { userId, kind: 'scheduled', status: { not: 'cancelled' } },
     orderBy: { createdAt: 'desc' },
     include: {
-      runs: { orderBy: { startedAt: 'desc' }, take: 20, select: { id: true, status: true, error: true, startedAt: true, completedAt: true } },
+      runs: { orderBy: { startedAt: 'desc' }, take: 20, select: { id: true, status: true, error: true, result: true, startedAt: true, completedAt: true } },
     },
   }).catch(() => [])
   return rows.map(toRoutine)
@@ -70,7 +75,15 @@ export async function listRoutines(userId: string): Promise<Routine[]> {
 
 export async function createRoutine(
   userId: string,
-  input: { goal: string; schedule: string; skillId?: string; botId?: string },
+  input: {
+    goal: string
+    schedule: string
+    skillId?: string
+    botId?: string
+    allowedTools?: string[]
+    computer?: { enabled: boolean; ttlMinutes?: number }
+    conversationId?: string
+  },
 ): Promise<Routine> {
   const { enqueueAgentTask } = await import('./agentTasks')
   const task = await enqueueAgentTask(
@@ -80,6 +93,9 @@ export async function createRoutine(
       schedule: input.schedule,
       ...(input.skillId ? { skillId: input.skillId } : {}),
       ...(input.botId ? { botId: input.botId } : {}),
+      ...(input.allowedTools ? { allowedTools: input.allowedTools } : {}),
+      ...(input.computer ? { computer: input.computer } : {}),
+      ...(input.conversationId ? { conversationId: input.conversationId } : {}),
       priority: 0,
     },
     userId,
@@ -118,12 +134,31 @@ export async function setRoutinePaused(userId: string, id: string, paused: boole
   }
   const rows = await prisma.agentTask.findFirst({
     where: { id },
-    include: { runs: { orderBy: { startedAt: 'desc' }, take: 20, select: { id: true, status: true, error: true, startedAt: true, completedAt: true } } },
+    include: { runs: { orderBy: { startedAt: 'desc' }, take: 20, select: { id: true, status: true, error: true, result: true, startedAt: true, completedAt: true } } },
   })
   return rows ? toRoutine(rows) : null
 }
 
 export async function deleteRoutine(userId: string, id: string): Promise<boolean> {
+  if (!hasDb || !prisma) return false
+  const owned = await prisma.agentTask.findFirst({
+    where: { id, userId, kind: 'scheduled' },
+    select: { status: true },
+  })
+  if (!owned || owned.status === 'cancelled') return false
+  if (owned.status === 'queued' || owned.status === 'dead_letter') {
+    const updated = await prisma.agentTask.updateMany({
+      where: { id, userId, kind: 'scheduled', status: owned.status },
+      data: {
+        status: 'cancelled',
+        leaseToken: null,
+        leaseExpiresAt: null,
+        cancelRequested: false,
+      },
+    })
+    return updated.count === 1
+  }
+  if (owned.status !== 'processing') return false
   const { cancelAgentTask } = await import('./agentTasks')
   try {
     await cancelAgentTask(id, { userId })

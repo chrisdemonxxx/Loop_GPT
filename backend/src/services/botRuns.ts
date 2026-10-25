@@ -27,6 +27,10 @@ interface Live {
   view: BotRunView
   listeners: Set<(event: AgentEvent) => void>
   persistTimer?: ReturnType<typeof setTimeout>
+  /** Serializes snapshots so a late running write cannot land after a terminal one. */
+  persistChain: Promise<void>
+  /** Set synchronously when the run reaches completed/failed/cancelled. */
+  terminal: boolean
   /** Next seq to assign (1-based). Survives event ring-buffer shifts. */
   nextSeq: number
 }
@@ -63,28 +67,59 @@ function redactEvent(event: AgentEvent): AgentEvent {
   }
 }
 
-async function persist(run: Live, final = false) {
-  if (!prisma) return
-  try {
-    await prisma.botRun.update({
-      where: { id: run.view.id },
-      data: {
-        status: run.view.status,
-        events: run.view.events as any,
-        result: run.view.result ?? null,
-        artifacts: (run.view.artifacts ?? null) as any,
-        usage: (run.view.usage ?? null) as any,
-        error: run.view.error ?? null,
-        completedAt: run.view.completedAt ? new Date(run.view.completedAt) : null,
-      },
-    })
-  } catch { /* persistence is best-effort; the live view still serves */ }
-  if (final && run.persistTimer) { clearTimeout(run.persistTimer); run.persistTimer = undefined }
+function snapshotData(run: Live) {
+  return {
+    status: run.view.status,
+    events: run.view.events as any,
+    result: run.view.result ?? null,
+    artifacts: (run.view.artifacts ?? null) as any,
+    usage: (run.view.usage ?? null) as any,
+    error: run.view.error ?? null,
+    completedAt: run.view.completedAt ? new Date(run.view.completedAt) : null,
+  }
+}
+
+/** A terminal write is queued immediately and runs after any in-flight snapshot.
+ *  A non-terminal write matches only rows still `running`, so it cannot
+ *  overwrite completed/failed. */
+async function persist(run: Live, final = false): Promise<void> {
+  const job = run.persistChain.then(async () => {
+    if (!prisma) return
+    if (!final && (run.terminal || run.view.status !== 'running')) return
+    const data = snapshotData(run)
+    if (!final && data.status !== 'running') return
+    try {
+      if (final) {
+        await prisma.botRun.update({ where: { id: run.view.id }, data })
+      } else {
+        await prisma.botRun.updateMany({
+          where: { id: run.view.id, status: 'running' },
+          data,
+        })
+      }
+    } catch { /* persistence is best-effort; the live view still serves */ }
+  })
+  run.persistChain = job.then(() => undefined, () => undefined)
+  return job
 }
 
 function schedulePersist(run: Live) {
+  if (run.terminal || run.view.status !== 'running') return
   if (run.persistTimer) return
-  run.persistTimer = setTimeout(() => { run.persistTimer = undefined; void persist(run) }, 400)
+  run.persistTimer = setTimeout(() => {
+    run.persistTimer = undefined
+    if (run.terminal || run.view.status !== 'running') return
+    void persist(run, false)
+  }, 400)
+}
+
+function markTerminal(run: Live) {
+  if (run.persistTimer) { clearTimeout(run.persistTimer); run.persistTimer = undefined }
+  run.terminal = true
+}
+
+function emitDone(run: Live) {
+  for (const listener of run.listeners) { try { listener({ type: 'done' }) } catch { /* ignore */ } }
 }
 
 export async function startRun(taskId: string): Promise<{
@@ -97,6 +132,8 @@ export async function startRun(taskId: string): Promise<{
   const id = randomUUID()
   const run: Live = {
     listeners: new Set(),
+    persistChain: Promise.resolve(),
+    terminal: false,
     nextSeq: 1,
     view: { id, taskId, status: 'running', events: [], startedAt: new Date().toISOString() },
   }
@@ -119,19 +156,21 @@ export async function startRun(taskId: string): Promise<{
       schedulePersist(run)
     },
     complete(result) {
+      markTerminal(run)
       run.view.status = 'completed'
       run.view.result = result.content
       run.view.artifacts = result.artifacts
       run.view.usage = result.usage
       run.view.completedAt = new Date().toISOString()
-      for (const listener of run.listeners) { try { listener({ type: 'done' }) } catch { /* ignore */ } }
+      emitDone(run)
       return persist(run, true).finally(() => live.delete(id))
     },
     fail(error, cancelled = false) {
+      markTerminal(run)
       run.view.status = cancelled ? 'cancelled' : 'failed'
       run.view.error = error.slice(0, 500)
       run.view.completedAt = new Date().toISOString()
-      for (const listener of run.listeners) { try { listener({ type: 'done' }) } catch { /* ignore */ } }
+      emitDone(run)
       return persist(run, true).finally(() => live.delete(id))
     },
   }
@@ -147,17 +186,26 @@ export function subscribe(runId: string, listener: (event: AgentEvent) => void, 
   const after = typeof opts?.after === 'number' && Number.isFinite(opts.after) ? opts.after : 0
   const run = live.get(runId)
   if (run) {
+    // Register before replay so a terminal write during replay cannot drop done.
+    let sawDone = false
+    const wrapped = (event: AgentEvent) => {
+      if (event.type === 'done') sawDone = true
+      try { listener(event) } catch { /* ignore */ }
+    }
+    if (run.view.status === 'running') run.listeners.add(wrapped)
     for (const event of run.view.events) {
       const seq = (event as Sequenced).seq
       if (typeof seq === 'number' && seq <= after) continue
       try { listener(event) } catch { /* ignore */ }
     }
     if (run.view.status !== 'running') {
-      try { listener({ type: 'done' }) } catch { /* ignore */ }
+      if (!sawDone) {
+        try { listener({ type: 'done' }) } catch { /* ignore */ }
+      }
+      run.listeners.delete(wrapped)
       return () => {}
     }
-    run.listeners.add(listener)
-    return () => run.listeners.delete(listener)
+    return () => { run.listeners.delete(wrapped) }
   }
   let stopped = false
   let cursor = after
@@ -207,6 +255,23 @@ export async function reconcileStuckBotRuns(): Promise<number> {
     let fixed = 0
     const now = new Date()
     for (const row of stuck) {
+      const inMemory = live.get(row.id)
+      if (row.task.status === 'succeeded') {
+        // The task already finished. Do not mark the run abandoned.
+        await prisma.botRun.updateMany({
+          where: { id: row.id, status: 'running' },
+          data: { status: 'completed', completedAt: now },
+        }).catch(() => undefined)
+        if (inMemory && !inMemory.terminal) {
+          markTerminal(inMemory)
+          inMemory.view.status = 'completed'
+          inMemory.view.completedAt = now.toISOString()
+          emitDone(inMemory)
+          live.delete(row.id)
+        }
+        fixed += 1
+        continue
+      }
       const leaseExpired = row.task.leaseExpiresAt != null && row.task.leaseExpiresAt.getTime() <= Date.now()
       const taskGone = row.task.status !== 'processing'
       if (!leaseExpired && !taskGone) continue
@@ -225,11 +290,12 @@ export async function reconcileStuckBotRuns(): Promise<number> {
           computer: patched as any,
         },
       }).catch(() => undefined)
-      const inMemory = live.get(row.id)
       if (inMemory) {
+        markTerminal(inMemory)
         inMemory.view.status = 'failed'
         inMemory.view.error = errMsg
         inMemory.view.completedAt = now.toISOString()
+        emitDone(inMemory)
         live.delete(row.id)
       }
       fixed += 1

@@ -43,6 +43,7 @@ describe('useTeachSession', () => {
     streamBotRun.mockReturnValue(() => {})
     getBotComputer.mockResolvedValue(null)
     setBotTakeover.mockResolvedValue({ takeoverRequested: true, interactiveUrl: null })
+    cancelBotTask.mockResolvedValue({ cancelled: true, immediate: false })
     appendBotTeachStep.mockResolvedValue({ ok: true, stored: true })
   })
 
@@ -277,6 +278,60 @@ describe('useTeachSession', () => {
     await act(async () => {
       onEvent?.({ type: 'skill_saved', skillId: 'after-cancel' })
     })
+    expect(result.current.phase).toBe('failed')
+    expect(result.current.skillId).toBeNull()
+  })
+
+  it('applies the takeover interactive url before the first click', async () => {
+    streamBotRun.mockReturnValue(() => {})
+    enqueueBotTask.mockResolvedValue({ task: { id: 'task-url' }, suggestedSkills: [] })
+    getBotTask.mockResolvedValue(runningTask('task-url', 'run-url'))
+    getBotComputer.mockReturnValue(new Promise(() => {}))
+    setBotTakeover.mockResolvedValue({ takeoverRequested: true, interactiveUrl: 'wss://drive' })
+
+    const { result } = renderHook(() => useTeachSession())
+    await act(async () => { await result.current.start('Show the checkout') })
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+
+    expect(result.current.phase).toBe('recording')
+    expect(result.current.computer?.interactiveUrl).toBe('wss://drive')
+    expect(result.current.computer?.takeoverRequested).toBe(true)
+
+    await act(async () => {
+      result.current.reportInput({ kind: 'click', x: 12, y: 34 })
+    })
+    expect(appendBotTeachStep).toHaveBeenCalledWith('run-url', expect.objectContaining({
+      kind: 'click', x: 12, y: 34,
+    }))
+  })
+
+  it('cancels the task when the session unmounts', async () => {
+    streamBotRun.mockReturnValue(() => {})
+    enqueueBotTask.mockResolvedValue({ task: { id: 'task-leave' }, suggestedSkills: [] })
+    getBotTask.mockResolvedValue(runningTask('task-leave', 'run-leave'))
+    cancelBotTask.mockResolvedValue({ cancelled: true, immediate: true })
+
+    const { result, unmount } = renderHook(() => useTeachSession())
+    await act(async () => { await result.current.start('Leave mid demo') })
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    expect(result.current.phase).toBe('recording')
+
+    unmount()
+    expect(cancelBotTask).toHaveBeenCalledWith('task-leave')
+    expect(setBotTakeover).toHaveBeenCalledWith('run-leave', false)
+  })
+
+  it('cancels the task when start times out', async () => {
+    enqueueBotTask.mockResolvedValue({ task: { id: 'task-slow' }, suggestedSkills: [] })
+    getBotTask.mockResolvedValue({ id: 'task-slow', status: 'processing', runs: [] })
+    cancelBotTask.mockResolvedValue({ cancelled: true, immediate: false })
+
+    const { result } = renderHook(() => useTeachSession())
+    await act(async () => { await result.current.start('Slow teach') })
+    expect(result.current.phase).toBe('starting')
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(90_000) })
+    expect(cancelBotTask).toHaveBeenCalledWith('task-slow')
     expect(result.current.phase).toBe('failed')
     expect(result.current.skillId).toBeNull()
   })

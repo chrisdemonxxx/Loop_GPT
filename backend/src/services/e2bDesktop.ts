@@ -300,12 +300,13 @@ export async function attachDesktop(sandboxId: string, persisted?: PersistedStre
     throw new E2BDesktopError('@e2b/desktop is not installed', 'unavailable')
   }
   const budgetMs = persisted?.timeoutMs
+  // Connect always gets at least 10 minutes and never more than the 1 hour
+  // cap. The caller's budget (the shared box lease, or a dedicated TTL) is
+  // applied with setTimeout only after the stream is up.
   const connectMs = budgetMs == null || !Number.isFinite(budgetMs)
-    ? undefined
+    ? MIN_BOOT_TIMEOUT_MS
     : Math.min(DESKTOP_TIMEOUT_CAP_MS, Math.max(MIN_BOOT_TIMEOUT_MS, budgetMs))
-  // Pass the timeout on connect, before any command or stream.start. A paused
-  // or nearly-expired sandbox otherwise dies on the first stream.
-  const desktop = await Sandbox.connect(sandboxId, connectMs != null ? { timeoutMs: connectMs } : undefined)
+  const desktop = await Sandbox.connect(sandboxId, { timeoutMs: connectMs })
   const settleMs = budgetMs == null || !Number.isFinite(budgetMs) || budgetMs <= 0
     ? undefined
     : Math.min(DESKTOP_TIMEOUT_CAP_MS, budgetMs)

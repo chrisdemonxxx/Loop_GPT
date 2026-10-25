@@ -1,12 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { TeachSession } from '../useTeachSession'
 
 const getBotBox = vi.fn()
+const setBotTakeover = vi.fn()
+const setBotBoxTakeover = vi.fn()
+const settleBotComputer = vi.fn(() => Promise.resolve({ ok: true as const, minutes: 0 }))
 
 vi.mock('../../../lib/bot', () => ({
   getBotBox: (...args: unknown[]) => getBotBox(...args),
   wakeBotComputer: vi.fn(),
+  setBotTakeover: (...args: unknown[]) => setBotTakeover(...args),
+  setBotBoxTakeover: (...args: unknown[]) => setBotBoxTakeover(...args),
+  settleBotComputer: (...args: unknown[]) => settleBotComputer(...args),
   BotApiError: class BotApiError extends Error {
     status: number
     code: string
@@ -16,6 +22,10 @@ vi.mock('../../../lib/bot', () => ({
       this.code = code
     }
   },
+}))
+
+vi.mock('../BotScreen', () => ({
+  BotScreen: ({ url }: { url: string }) => <div data-testid="bot-screen">{url}</div>,
 }))
 
 import { AgentComputerTab } from '../AgentComputerTab'
@@ -54,7 +64,12 @@ const asleepBox = {
 describe('AgentComputerTab stage', () => {
   beforeEach(() => {
     getBotBox.mockReset()
+    setBotTakeover.mockReset()
+    setBotBoxTakeover.mockReset()
+    settleBotComputer.mockClear()
     getBotBox.mockResolvedValue(asleepBox)
+    setBotTakeover.mockResolvedValue({ takeoverRequested: true, interactiveUrl: null })
+    setBotBoxTakeover.mockResolvedValue({ takeoverRequested: true, interactiveUrl: null })
   })
 
   it('uses one 16:9 frame, edge to edge, with no taller black stage around it', async () => {
@@ -89,5 +104,34 @@ describe('AgentComputerTab stage', () => {
     )
     expect(await screen.findByText('The desktop is starting.')).toBeInTheDocument()
     expect(screen.queryByText(/still rolling out/i)).not.toBeInTheDocument()
+  })
+
+  it('posts takeover and uses the returned interactive url', async () => {
+    setBotTakeover.mockResolvedValue({ takeoverRequested: true, interactiveUrl: '/novnc/drive' })
+    render(
+      <AgentComputerTab
+        session={session}
+        botName="Helm"
+        runView={{ taskId: 'task-1', runId: 'run-9', viewUrl: '/novnc/view', interactiveUrl: null, starting: false }}
+      />,
+    )
+    expect(await screen.findByTestId('bot-screen')).toHaveTextContent('/novnc/view')
+    fireEvent.click(await screen.findByRole('button', { name: 'Take control' }))
+    await waitFor(() => expect(setBotTakeover).toHaveBeenCalledWith('run-9', true))
+    expect(screen.getByTestId('bot-screen')).toHaveTextContent('/novnc/drive')
+  })
+
+  it('shows Wake when a stored sandbox has no live stream', async () => {
+    getBotBox.mockResolvedValue({
+      ...asleepBox,
+      alive: false,
+      paused: true,
+      sandboxId: 'sbx-paused',
+    })
+    render(<AgentComputerTab session={session} botName="Helm" />)
+    expect(await screen.findByRole('button', { name: /wake the computer/i })).toBeInTheDocument()
+    expect(screen.getByText('The computer is paused.')).toBeInTheDocument()
+    expect(screen.queryByTestId('bot-screen')).not.toBeInTheDocument()
+    expect(screen.queryByText(/waking up/i)).not.toBeInTheDocument()
   })
 })

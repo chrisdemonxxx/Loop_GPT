@@ -91,4 +91,55 @@ describe('useRunStream', () => {
     await act(async () => { onError?.('stream exploded') })
     expect(result.current.loadError).toMatch(/stream exploded/i)
   })
+
+  it('clears the previous run when the task changes', async () => {
+    getBotTask.mockImplementation(async (id: string) => ({
+      id,
+      goal: id,
+      runs: [{ id: `run-${id}`, status: 'running' }],
+    }))
+    const handlers: Array<(event: { type: string; message?: string }) => void> = []
+    streamBotRun.mockImplementation((_id: string, handler: (event: { type: string; message?: string }) => void) => {
+      handlers.push(handler)
+      return () => {}
+    })
+
+    const { result, rerender } = renderHook(({ id }: { id: string }) => useRunStream(id), {
+      initialProps: { id: 't1' },
+    })
+    await act(async () => { await Promise.resolve() })
+    await act(async () => { handlers[0]?.({ type: 'status', message: 'from-t1' }) })
+    expect(result.current.events.map((event) => event.message)).toContain('from-t1')
+    expect(result.current.runId).toBe('run-t1')
+
+    rerender({ id: 't2' })
+    await act(async () => { await Promise.resolve() })
+    expect(result.current.runId).toBe('run-t2')
+    expect(result.current.task && 'id' in result.current.task ? result.current.task.id : null).toBe('t2')
+    expect(result.current.events.map((event) => event.message)).not.toContain('from-t1')
+  })
+
+  it('reconnects the stream when retry is called', async () => {
+    getBotTask.mockResolvedValue({
+      id: 't1',
+      goal: 'g',
+      runs: [{ id: 'r1', status: 'running' }],
+    })
+    let onError: ((msg: string) => void) | undefined
+    streamBotRun.mockImplementation((_id, _onEvent, _onDone, err) => {
+      onError = err
+      return () => {}
+    })
+
+    const { result } = renderHook(() => useRunStream('t1'))
+    await act(async () => { await Promise.resolve() })
+    const calls = streamBotRun.mock.calls.length
+    await act(async () => { onError?.('stream exploded') })
+    expect(result.current.loadError).toMatch(/stream exploded/i)
+
+    await act(async () => { result.current.retry() })
+    await act(async () => { await Promise.resolve() })
+    expect(streamBotRun.mock.calls.length).toBeGreaterThan(calls)
+    expect(result.current.loadError).toBe('')
+  })
 })

@@ -1,8 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Ghost, Monitor, Loader2, Power, Maximize2, X } from 'lucide-react'
-import { getBotBox, wakeBotComputer, BotApiError, type BotBox } from '../../lib/bot'
+import { getBotBox, wakeBotComputer, setBotTakeover, setBotBoxTakeover, settleBotComputer, BotApiError, type BotBox } from '../../lib/bot'
 import { Dialog } from '@loop/ui'
 import { BotScreen } from './BotScreen'
 import type { WatchTarget } from '../../agents/botTask'
@@ -30,6 +30,8 @@ export function AgentComputerTab({
   autoProbe = true,
   /** Set while Watch is showing this run's desktop. Absent on the persistent Computer tab. */
   runView = null,
+  /** Open the written trace when Watch cannot show a desktop. */
+  onTrace,
 }: {
   session: TeachSession
   botName?: string
@@ -38,11 +40,15 @@ export function AgentComputerTab({
   onCollapse?: () => void
   autoProbe?: boolean
   runView?: WatchTarget | null
+  onTrace?: () => void
 }) {
   const [box, setBox] = useState<BotBox | null>(null)
   const [booting, setBooting] = useState(false)
   const [error, setError] = useState('')
   const [driving, setDriving] = useState(false)
+  const [drivenUrl, setDrivenUrl] = useState<string | null>(null)
+  const [takeoverBusy, setTakeoverBusy] = useState(false)
+  const wakeRef = useRef<() => Promise<void>>(async () => {})
 
   const taskType = session.phase === 'recording' || session.phase === 'waiting' ? 'teach' as const : 'default' as const
 
@@ -72,7 +78,7 @@ export function AgentComputerTab({
         // box may still stream — fall back to status GET.
         try {
           const b = await getBotBox(taskType)
-          if (b?.viewUrl || b?.interactiveUrl || b?.alive) {
+          if ((b?.viewUrl || b?.interactiveUrl) && b.alive) {
             setBox(b)
             if (err.status === 402) {
               setError('Daily computer minutes are used up — showing the existing desktop if it is still awake.')
@@ -96,6 +102,7 @@ export function AgentComputerTab({
       setBooting(false)
     }
   }, [taskType])
+  wakeRef.current = wake
 
   // Status probe only — never wake on mount (GET must stay side-effect free).
   useEffect(() => {
@@ -103,39 +110,139 @@ export function AgentComputerTab({
     void probe()
   }, [autoProbe, probe])
 
-  // When the user expands, wake if we don't have a stream yet.
+  // When the user expands the persistent desktop, trust a fresh status.
+  // No view URL means the box is not live — wake, even if an older payload had a URL.
   useEffect(() => {
     if (!expanded || runView) return
-    if (box?.viewUrl || box?.interactiveUrl) return
-    void wake()
-  }, [expanded, runView]) // eslint-disable-line react-hooks/exhaustive-deps -- wake once on expand of the persistent box
+    let cancelled = false
+    void (async () => {
+      let fresh: BotBox | null = null
+      try {
+        fresh = await getBotBox(taskType)
+        if (cancelled) return
+        setBox(fresh)
+      } catch {
+        fresh = null
+      }
+      if (cancelled) return
+      if (!fresh?.alive || !fresh.viewUrl) void wakeRef.current()
+    })()
+    return () => { cancelled = true }
+  }, [expanded, runView, taskType])
 
   const teachStream = session.phase === 'starting' || session.phase === 'waiting' || session.phase === 'recording' || session.phase === 'distilling'
   const comp = session.computer
   const watchingRun = !!runView
-  const viewUrl = (teachStream && comp?.viewUrl) || (watchingRun ? runView?.viewUrl : box?.viewUrl) || null
-  const interactiveUrl = (teachStream && comp?.interactiveUrl) || (watchingRun ? runView?.interactiveUrl : box?.interactiveUrl) || null
+  const persistentView = box?.alive ? box.viewUrl : null
+  const persistentInteractive = box?.alive ? (drivenUrl || box.interactiveUrl) : drivenUrl
+  const viewUrl = (teachStream && comp?.viewUrl) || (watchingRun ? runView?.viewUrl : persistentView) || null
+  const interactiveUrl = (teachStream && comp?.interactiveUrl) || (watchingRun ? (drivenUrl || runView?.interactiveUrl) : persistentInteractive) || null
 
   const recording = session.phase === 'recording'
   const inControl = recording || driving || !!(session.phase === 'waiting' && comp?.takeoverRequested)
   const showInteractive = !!(inControl && interactiveUrl)
   const shownUrl = showInteractive ? interactiveUrl : viewUrl
+  const streamOpen = Boolean(shownUrl)
 
-  /** Enqueue a teach run if needed, take over, and record. Does not save a skill. */
-  const startRecording = () => {
+  // Bill while a desktop is actually on screen, and once when it leaves.
+  useEffect(() => {
+    if (!streamOpen) return
+    const timer = setInterval(() => {
+      void settleBotComputer().catch(() => undefined)
+    }, 60_000)
+    return () => {
+      clearInterval(timer)
+      void settleBotComputer().catch(() => undefined)
+    }
+  }, [streamOpen])
+
+  /** The goal comes from the record bar. A generic sentence is not a demonstration. */
+  const startRecording = (goal: string) => {
+    const text = goal.trim()
+    if (!text) return
     void wake().finally(() => {
-      void session.start('Watch the operator demonstrate a workflow on this computer and learn it as a reusable skill.')
+      void session.start(text)
     })
   }
 
   const takeControl = () => {
-    if (session.phase === 'waiting' || session.phase === 'starting') void session.takeOver()
-    setDriving(true)
+    setError('')
+    if (session.phase === 'waiting' || session.phase === 'starting') {
+      void session.takeOver()
+      setDriving(true)
+      return
+    }
+    if (watchingRun && runView?.runId) {
+      const runId = runView.runId
+      setTakeoverBusy(true)
+      void setBotTakeover(runId, true)
+        .then((res) => {
+          if (!res.interactiveUrl) {
+            setError('Takeover did not return an interactive stream.')
+            return
+          }
+          setDrivenUrl(res.interactiveUrl)
+          setDriving(true)
+        })
+        .catch((err: unknown) => {
+          setError(err instanceof Error && err.message ? err.message : 'Could not take control.')
+        })
+        .finally(() => setTakeoverBusy(false))
+      return
+    }
+    setTakeoverBusy(true)
+    void (async () => {
+      try {
+        let current = box
+        if (!current?.alive || !current.viewUrl) {
+          setBooting(true)
+          current = await wakeBotComputer(taskType)
+          setBox(current)
+        }
+        if (!current?.alive || !current.viewUrl) {
+          setError('Wake the computer before taking control.')
+          return
+        }
+        const res = await setBotBoxTakeover(true)
+        if (!res.interactiveUrl) {
+          setError('Takeover did not return an interactive stream.')
+          return
+        }
+        setDrivenUrl(res.interactiveUrl)
+        setDriving(true)
+      } catch (err: unknown) {
+        const message = err instanceof Error && err.message ? err.message : 'Could not take control.'
+        setError(message)
+      } finally {
+        setBooting(false)
+        setTakeoverBusy(false)
+      }
+    })()
   }
 
   const stopControl = () => {
     setDriving(false)
-    if (session.phase === 'recording') void session.stop()
+    setDrivenUrl(null)
+    if (session.phase === 'recording') {
+      void session.stop()
+      return
+    }
+    if (watchingRun && runView?.runId) {
+      const runId = runView.runId
+      void setBotTakeover(runId, false).catch((err: unknown) => {
+        setError(err instanceof Error && err.message ? err.message : 'Could not release control.')
+      })
+      return
+    }
+    void setBotBoxTakeover(false).catch((err: unknown) => {
+      setError(err instanceof Error && err.message ? err.message : 'Could not release control.')
+    })
+  }
+
+  const closeComputer = () => {
+    const phase = session.phase
+    if (phase === 'starting' || phase === 'waiting' || phase === 'recording') void session.cancel()
+    onCollapse?.()
   }
 
   const screen = (
@@ -149,7 +256,27 @@ export function AgentComputerTab({
         />
       ) : (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 text-center px-6 bg-black">
-          {watchingRun && !shownUrl ? (
+          {watchingRun && runView?.noComputer ? (
+            <>
+              <Monitor size={22} className="text-white/50" aria-hidden />
+              <p className="text-ui-sm text-white/80">This bot has no computer — open the trace.</p>
+              {onTrace && (
+                <button type="button" onClick={onTrace} className="mt-1 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
+                  Trace
+                </button>
+              )}
+            </>
+          ) : watchingRun && runView?.timedOut ? (
+            <>
+              <Monitor size={22} className="text-white/50" aria-hidden />
+              <p className="text-ui-sm text-white/80">The desktop did not come up.</p>
+              {onTrace && (
+                <button type="button" onClick={onTrace} className="mt-1 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
+                  Trace
+                </button>
+              )}
+            </>
+          ) : watchingRun && !shownUrl ? (
             <>
               <Ghost size={28} className="text-white/80" aria-hidden />
               <p className="text-ui-sm text-white/80">The desktop is starting.</p>
@@ -170,7 +297,7 @@ export function AgentComputerTab({
           ) : (
             <>
               <Monitor size={22} className="text-white/50" aria-hidden />
-              <p className="text-ui-sm text-white/70">{box?.alive ? 'Stream offline — wake to reconnect.' : 'The computer is asleep.'}</p>
+              <p className="text-ui-sm text-white/70">{box?.paused ? 'The computer is paused.' : box?.alive ? 'Stream offline — wake to reconnect.' : 'The computer is asleep.'}</p>
               <button type="button" onClick={() => void wake()} className="mt-1 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-ui-xs text-white bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)] transition">
                 <Power size={12} aria-hidden /> Wake the computer
               </button>
@@ -179,10 +306,14 @@ export function AgentComputerTab({
         </div>
       )}
 
+      {shownUrl && error && (
+        <p className="absolute top-2 left-2 right-10 z-20 text-center text-ui-xs text-[var(--danger)]">{error}</p>
+      )}
+
       {shownUrl && (
         <ControlPill
           driving={inControl}
-          takeDisabled={!interactiveUrl && session.phase !== 'waiting'}
+          takeDisabled={takeoverBusy || (!viewUrl && session.phase !== 'waiting' && session.phase !== 'starting')}
           onTakeControl={takeControl}
           onStop={stopControl}
         />
@@ -191,7 +322,7 @@ export function AgentComputerTab({
       {!expanded && onExpand && (
         <button
           type="button"
-          onClick={() => { onExpand(); if (!box?.viewUrl) void wake() }}
+          onClick={onExpand}
           aria-label="Enlarge the computer view"
           title="Enlarge"
           className="absolute top-2 right-2 z-20 p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition"
@@ -227,7 +358,7 @@ export function AgentComputerTab({
         <div className="shrink-0 px-4 pt-2 text-center">
           <p className="text-ui-xs text-[var(--ink-muted)]">{botName}&apos;s screen</p>
           <p className="mt-1 text-2xs text-[var(--ink-muted)]">This desktop is shared across your bots.</p>
-          {session.phase === 'failed' && session.error && (
+          {session.error && (
             <p className="mt-1 text-ui-xs text-[var(--danger)]">{session.error}</p>
           )}
           {session.phase === 'done' && (
@@ -244,7 +375,7 @@ export function AgentComputerTab({
     return (
       <Dialog
         open
-        onClose={() => { onCollapse?.() }}
+        onClose={closeComputer}
         ariaLabel={`${botName}'s computer`}
         scrimClassName="bg-[var(--bg-base)] !p-0"
         panelClassName="w-full h-full rounded-none border-none bg-[var(--bg-base)] p-0 shadow-none outline-none flex flex-col"
@@ -254,7 +385,8 @@ export function AgentComputerTab({
           botName={botName}
           onStart={startRecording}
           onStop={stopControl}
-          onClose={onCollapse}
+          onDiscard={() => { void session.cancel() }}
+          onClose={closeComputer}
         />
         {stage}
       </Dialog>
@@ -304,15 +436,23 @@ function ControlPill({
 }
 
 function RecordBar({
-  session, botName, onStart, onStop, onClose,
+  session, botName, onStart, onStop, onDiscard, onClose,
 }: {
   session: TeachSession
   botName: string
-  onStart: () => void
+  onStart: (goal: string) => void
   onStop: () => void
+  onDiscard: () => void
   onClose?: () => void
 }) {
+  const [demo, setDemo] = useState('')
   const recording = session.phase === 'recording'
+  const canDiscard = session.phase === 'starting' || session.phase === 'waiting' || session.phase === 'recording'
+  const begin = () => {
+    const goal = demo.trim()
+    if (!goal) return
+    onStart(goal)
+  }
   return (
     <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border-subtle)] shrink-0">
       {recording ? (
@@ -321,36 +461,65 @@ function RecordBar({
           <span className="text-ui-sm text-[var(--ink-primary)]">
             {session.frames} {session.frames === 1 ? 'frame' : 'frames'} · {session.steps} {session.steps === 1 ? 'step' : 'steps'}
           </span>
+          {session.error && <span className="min-w-0 truncate text-ui-xs text-[var(--danger)]">{session.error}</span>}
+          <button
+            type="button"
+            onClick={onDiscard}
+            className="ml-auto px-3 py-1.5 rounded-lg text-ui-xs text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition"
+          >
+            Discard
+          </button>
           <button
             type="button"
             onClick={onStop}
-            className="ml-auto px-3 py-1.5 rounded-lg text-ui-xs font-medium text-white bg-[var(--danger-strong)] hover:bg-[var(--danger-strong-hover)] transition"
+            className="px-3 py-1.5 rounded-lg text-ui-xs font-medium text-white bg-[var(--danger-strong)] hover:bg-[var(--danger-strong-hover)] transition"
           >
             Stop
           </button>
         </>
       ) : (
         <>
-          <p className={`flex-1 min-w-0 text-ui-sm leading-snug ${session.phase === 'failed' ? 'text-[var(--danger)]' : 'text-[var(--ink-secondary)]'}`}>
-            {session.phase === 'failed'
-              ? session.error
-              : session.phase === 'distilling'
-                ? 'Saving skill…'
-                : session.phase === 'done'
-                  ? `Skill saved${session.skillName ? ` · ${session.skillName}` : ''}`
-                  : `Record yourself doing a task. ${botName} learns the steps and can run them again on its own.`}
-          </p>
+          {session.phase === 'failed' || session.phase === 'distilling' || session.phase === 'done' ? (
+            <p className={`flex-1 min-w-0 text-ui-sm leading-snug ${session.phase === 'failed' ? 'text-[var(--danger)]' : 'text-[var(--ink-secondary)]'}`}>
+              {session.phase === 'failed'
+                ? session.error
+                : session.phase === 'distilling'
+                  ? 'Saving skill…'
+                  : `Skill saved${session.skillName ? ` · ${session.skillName}` : ''}`}
+            </p>
+          ) : (
+            <input
+              value={demo}
+              onChange={(e) => setDemo(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); begin() } }}
+              placeholder={`What should ${botName} learn?`}
+              aria-label="What are you demonstrating?"
+              disabled={session.phase === 'starting'}
+              className="flex-1 min-w-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-2.5 py-1.5 text-ui-sm text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] focus:border-[var(--accent-soft-border)] focus:outline-none disabled:opacity-60"
+            />
+          )}
           {session.phase === 'distilling' ? (
             <Loader2 size={16} className="animate-spin text-[var(--accent-text)] shrink-0" aria-hidden />
-          ) : session.phase === 'done' ? null : (
-            <button
-              type="button"
-              onClick={onStart}
-              disabled={session.phase === 'starting'}
-              className="shrink-0 px-3 py-1.5 rounded-lg text-ui-xs font-medium text-white bg-[var(--danger-strong)] hover:bg-[var(--danger-strong-hover)] transition disabled:opacity-60"
-            >
-              {session.phase === 'starting' ? 'Starting…' : 'Start recording'}
-            </button>
+          ) : session.phase === 'done' || session.phase === 'failed' ? null : (
+            <>
+              {canDiscard && (
+                <button
+                  type="button"
+                  onClick={onDiscard}
+                  className="shrink-0 px-3 py-1.5 rounded-lg text-ui-xs text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition"
+                >
+                  Discard
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={begin}
+                disabled={session.phase === 'starting' || !demo.trim()}
+                className="shrink-0 px-3 py-1.5 rounded-lg text-ui-xs font-medium text-white bg-[var(--danger-strong)] hover:bg-[var(--danger-strong-hover)] transition disabled:opacity-60"
+              >
+                {session.phase === 'starting' ? 'Starting…' : 'Start recording'}
+              </button>
+            </>
           )}
         </>
       )}

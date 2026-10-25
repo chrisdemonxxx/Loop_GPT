@@ -105,6 +105,8 @@ model BotBox {
   userId          String    @id
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   sandboxId       String
+  /// Operator has taken control of this persistent desktop. View-only until set.
+  takeoverRequested Boolean @default(false)
   streamAuthKey   String?
   streamUrl       String?
   interactiveUrl  String?

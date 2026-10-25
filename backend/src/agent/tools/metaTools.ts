@@ -76,6 +76,12 @@ export const rememberFactTool: ToolDefinition = {
     const botId = typeof ctx?.scratch?.botId === 'string' ? ctx.scratch.botId : null
     if (!ctx?.userId || !botId) return { content: 'Error: memory is only available to a named bot.', isError: true }
     const ok = appendBotMemory(ctx.userId, botId, fact)
+    if (ok) {
+      try {
+        const { syncLiveBoxMemory } = await import('../../services/botBox')
+        await syncLiveBoxMemory(ctx.userId, botId)
+      } catch { /* the next wake rewrites MEMORY.md when the box is down */ }
+    }
     return ok
       ? { content: 'Noted — I will remember that next time.' }
       : { content: 'Error: the memory store is unavailable right now.', isError: true }

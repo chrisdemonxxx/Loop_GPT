@@ -28,6 +28,7 @@ import { botsForMessage, createBotGroup, createNamedBot, followUpTargets, groupF
 import AuthSidePanel from '../components/chat/AuthSidePanel'
 import type { Conversation, Message } from '../components/chat/types'
 import { agentsThreadHref, exactSlashAction, parseBotCommand, parseCommand, SLASH_COMMANDS } from '../lib/commands'
+import { allowedToolsForBot, computerForBot } from '../agents/botTask'
 import ProjectsPanel, { type Project } from '../components/ProjectsPanel'
 import ResearchPanel from '../components/ResearchPanel'
 import { useConversationQuery } from './conversationSelection'
@@ -509,9 +510,16 @@ export default function ChatPage() {
             : listed
         let botId = ''
         let conversationId = ''
+        let chosen: NamedBot | undefined
         if (conv?.kind === 'bot' && conv.botId && currentConversationId) {
           botId = conv.botId
           conversationId = currentConversationId
+          let bots = roster.bots
+          chosen = bots.find((b) => b.id === botId)
+          if (!chosen) {
+            try { bots = (await listNamedBots()).bots } catch { bots = [] }
+            chosen = bots.find((b) => b.id === botId)
+          }
         } else {
           let bots = roster.bots
           if (!bots.length) {
@@ -525,17 +533,30 @@ export default function ChatPage() {
             })
             botId = created.bot.id
             conversationId = created.conversationId
+            chosen = created.bot
           } else if (existing.conversationId) {
             botId = existing.id
             conversationId = existing.conversationId
+            chosen = existing
           } else {
             const thread = await openBotThread(existing.id)
             botId = existing.id
             conversationId = thread.id
+            chosen = existing
           }
         }
+        if (!chosen) throw new Error('Select a bot before sending.')
+        const allowedTools = allowedToolsForBot(chosen.defaultTools)
+        if (!allowedTools.length) throw new Error('This bot has no tools this runner can use.')
+        const computer = computerForBot(chosen.cloudComputer)
         const { enqueueBotTask } = await import('../lib/bot')
-        await enqueueBotTask({ goal: botCmd.goal, botId, conversationId })
+        await enqueueBotTask({
+          goal: botCmd.goal,
+          botId,
+          conversationId,
+          allowedTools,
+          ...(computer ? { computer } : {}),
+        })
         const href = agentsThreadHref(botId, conversationId)
         toast.push('success', `Loop Bot is on it — ${href}`)
         router.push(href)

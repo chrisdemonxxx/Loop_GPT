@@ -69,7 +69,7 @@ vi.mock('@e2b/desktop', () => ({
   },
 }))
 
-import { ensureUserBox } from '../botBox'
+import { ensureUserBox, getComputerStatus } from '../botBox'
 
 function fakeSandbox(id: string) {
   return {
@@ -181,6 +181,65 @@ describe('ensureUserBox boot timeout', () => {
     expect(create).toHaveBeenCalledTimes(2)
     expect(create.mock.calls[1][1].lifecycle).toBeUndefined()
     expect(logged).toContain('abc123sandbox')
+  })
+
+  it('does not report a stored sandbox id as alive until this process probes it', async () => {
+    findUnique.mockResolvedValue({
+      sandboxId: 'sbx-paused',
+      streamAuthKey: 'auth-key',
+      streamUrl: '/view-stored',
+      interactiveUrl: '/interactive-stored',
+      takeoverRequested: true,
+    })
+
+    const status = await getComputerStatus('user-paused-only')
+
+    expect(status.alive).toBe(false)
+    expect(status.paused).toBe(true)
+    expect(status.sandboxId).toBe('sbx-paused')
+    expect(status.viewUrl).toBeNull()
+    expect(status.interactiveUrl).toBeNull()
+    expect(status.takeoverRequested).toBe(true)
+    expect(connect).not.toHaveBeenCalled()
+  })
+
+  it('reports alive with a view url only after the live handle answers', async () => {
+    remainingVmMinutes.mockResolvedValue(30)
+    const sandbox = fakeSandbox('sbx-live')
+    create.mockResolvedValue(sandbox)
+    findUnique.mockResolvedValue(null)
+    await ensureUserBox('user-probed', 'ada')
+    findUnique.mockResolvedValue({
+      sandboxId: 'sbx-live',
+      streamAuthKey: 'auth-key',
+      streamUrl: '/stored',
+      interactiveUrl: '/stored-interactive',
+      takeoverRequested: false,
+    })
+
+    const status = await getComputerStatus('user-probed')
+
+    expect(status.alive).toBe(true)
+    expect(status.paused).toBe(false)
+    expect(status.viewUrl).toBe('/view')
+    expect(status.interactiveUrl).toBeNull()
+    expect(sandbox.commands.run).toHaveBeenCalled()
+  })
+
+  it('leaves sandboxId in place when reconnect times out', async () => {
+    remainingVmMinutes.mockResolvedValue(30)
+    findUnique.mockResolvedValue({
+      sandboxId: 'sbx-net',
+      streamAuthKey: 'k',
+      streamUrl: '/v',
+      interactiveUrl: null,
+    })
+    connect.mockRejectedValue(new Error('connect ETIMEDOUT'))
+
+    await expect(ensureUserBox('user-timeout', 'ada')).rejects.toMatchObject({ code: 'unavailable' })
+
+    expect(create).not.toHaveBeenCalled()
+    expect(update.mock.calls.some((call) => (call[0] as { data?: { sandboxId?: string } })?.data?.sandboxId === '')).toBe(false)
   })
 
   it('kills the sandbox and clears its id when GNOME setup fails', async () => {

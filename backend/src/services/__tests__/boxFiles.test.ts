@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const connect = vi.fn()
 const attachUserBoxFromDB = vi.fn(async () => 'sbx-test')
+const remainingVmMinutes = vi.fn(async () => 30)
 
 // boxFiles imports botBox for the live-box registry; botBox imports prisma.
 // The jail and the parsing are the security surface here, so the box handle
@@ -10,13 +11,24 @@ vi.mock('../../services/botBox', () => ({
   getLiveUserBox: vi.fn(() => null),
   attachUserBoxFromDB: (...args: unknown[]) => attachUserBoxFromDB(...args),
 }))
+vi.mock('../../services/agentTasks', () => ({
+  remainingVmMinutes: (...args: unknown[]) => remainingVmMinutes(...args),
+  AgentTaskError: class AgentTaskError extends Error {
+    code: string
+    constructor(code: string, detail?: string) {
+      super(detail || code)
+      this.code = code
+    }
+  },
+}))
 vi.mock('../../services/prisma', () => ({ prisma: null, hasDb: false }))
 vi.mock('../../services/e2bDesktop', () => ({ buildVncUrls: vi.fn(), isE2BConfigured: () => false }))
 vi.mock('@e2b/desktop', () => ({
   Sandbox: { connect: (...args: unknown[]) => connect(...args) },
 }))
 
-import { BoxFilesError, jailWorkspacePath, listBoxFiles, deleteBoxPath, readBoxFile } from '../../services/boxFiles'
+import { AgentTaskError } from '../../services/agentTasks'
+import { BoxFilesError, boxFileHttpStatus, jailWorkspacePath, listBoxFiles, deleteBoxPath, readBoxFile } from '../../services/boxFiles'
 
 describe('jailWorkspacePath', () => {
   it('resolves plain relative paths against the workspace root', () => {
@@ -50,6 +62,7 @@ describe('boxFiles CommandExitError handling', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     attachUserBoxFromDB.mockResolvedValue('sbx-test')
+    remainingVmMinutes.mockResolvedValue(30)
   })
 
   it('treats exit-1 CommandExitError as false for existence checks (not_found on delete)', async () => {
@@ -90,5 +103,27 @@ describe('boxFiles CommandExitError handling', () => {
     })
     connect.mockResolvedValue({ commands: { run } })
     await expect(readBoxFile('user-1', 'link')).rejects.toMatchObject({ code: 'bad_path' })
+  })
+
+  it('does not resume a paused box when the VM-minute quota is spent', async () => {
+    remainingVmMinutes.mockRejectedValue(new AgentTaskError('quota'))
+    await expect(listBoxFiles('user-1', '/workspace')).rejects.toMatchObject({ code: 'quota' })
+    expect(connect).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a connect failure as io with the provider message', async () => {
+    connect.mockRejectedValue(new Error('sandbox timeout'))
+    await expect(listBoxFiles('user-1', '/workspace')).rejects.toMatchObject({
+      code: 'io',
+      message: 'sandbox timeout',
+    })
+  })
+})
+
+describe('boxFileHttpStatus', () => {
+  it('maps io to 503 and a missing path to 404', () => {
+    expect(boxFileHttpStatus('io')).toBe(503)
+    expect(boxFileHttpStatus('not_found')).toBe(404)
+    expect(boxFileHttpStatus('no_box')).toBe(409)
   })
 })

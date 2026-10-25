@@ -9,7 +9,7 @@
  * Every path is jailed to /workspace: the jail is what makes an operator-
  * supplied path safe to hand to a shell and to the SDK's file calls.
  */
-import { attachUserBoxFromDB } from './botBox'
+import { attachUserBoxFromDB, getLiveUserBox } from './botBox'
 
 type Sandbox = any
 
@@ -27,6 +27,16 @@ export class BoxFilesError extends Error {
   ) {
     super(message)
   }
+}
+
+/** HTTP status for a box-file failure. Connect and IO problems are 503 with
+ *  the real message; a missing path stays 404. Quota is not a file error. */
+export function boxFileHttpStatus(code: string): number {
+  if (code === 'no_box') return 409
+  if (code === 'bad_path') return 400
+  if (code === 'too_large') return 413
+  if (code === 'io') return 503
+  return 404
 }
 
 const WORKSPACE_ROOT = '/workspace'
@@ -55,13 +65,20 @@ export function jailWorkspacePath(input: string): string {
 }
 
 async function liveSandboxOrThrow(userId: string): Promise<Sandbox> {
+  const live = getLiveUserBox(userId)
+  if (live) return live
   const sandboxId = await attachUserBoxFromDB(userId)
   if (!sandboxId) throw new BoxFilesError('The computer is not running — open it first.', 'no_box')
+  // A paused box resumes on connect. Refuse that before touching the provider
+  // so a spent VM budget is a quota error, not a missing file.
+  const { remainingVmMinutes } = await import('./agentTasks')
+  await remainingVmMinutes(userId)
   try {
     const { Sandbox } = await import('@e2b/desktop')
-    return await Sandbox.connect(sandboxId)
-  } catch {
-    throw new BoxFilesError('Could not connect to the computer.', 'io')
+    return await Sandbox.connect(sandboxId, { timeoutMs: 10 * 60 * 1000 })
+  } catch (error) {
+    const message = String((error as Error)?.message || error || 'Could not connect to the computer.')
+    throw new BoxFilesError(message, 'io')
   }
 }
 

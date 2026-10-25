@@ -63,10 +63,16 @@ export const getBotComputer = (runId: string) => req<BotComputer>('GET', `/api/b
  *  exists independent of any task. GET is status-only (no boot side effect);
  *  POST /computer/wake boots or resumes and returns the live stream. */
 export interface BotBox {
+  /** True only when a live probe connected. A stored sandbox id is not enough. */
   alive: boolean
+  /** Sandbox row exists, but the probe did not find a live machine. */
+  paused?: boolean
   sandboxId: string
+  /** Null unless alive. */
   viewUrl: string | null
+  /** Null unless alive and takeover is on. */
   interactiveUrl: string | null
+  takeoverRequested?: boolean
   resumed: boolean
   ageMinutes: number
   taskType: BotBoxTaskType
@@ -80,6 +86,17 @@ export const getBotBox = (taskType: BotBoxTaskType = 'default') =>
 /** Boot / resume the persistent box. Call when the user opens Computer or needs files. */
 export const wakeBotComputer = (taskType: BotBoxTaskType = 'default') =>
   req<BotBox>('POST', '/api/bot/computer/wake', { taskType })
+
+/**
+ * Take or release the persistent desktop. Does not boot — wake first.
+ * 409 when the box is not connected.
+ */
+export const setBotBoxTakeover = (takeover: boolean) =>
+  req<{ takeoverRequested: boolean; interactiveUrl: string | null }>('POST', '/api/bot/computer/takeover', { takeover })
+
+/** Bill minutes the Computer tab has been open. Safe to call on an interval and once on close. */
+export const settleBotComputer = () =>
+  req<{ ok: true; minutes: number }>('POST', '/api/bot/computer/settle', {})
 
 export const setBotTakeover = (runId: string, takeover: boolean) =>
   req<{ takeoverRequested: boolean; interactiveUrl: string | null }>('POST', `/api/bot/runs/${runId}/takeover`, { takeover })
@@ -135,7 +152,14 @@ export const mintNovncWsToken = (sandboxId: string) =>
 
 // ── Routines — recurring jobs (bot + skill + schedule) ──────────────────────
 
-export interface RoutineRun { id: string; status: string; error: string | null; startedAt: string | null; completedAt: string | null }
+export interface RoutineRun {
+  id: string
+  status: string
+  error: string | null
+  result?: string | null
+  startedAt: string | null
+  completedAt: string | null
+}
 
 export interface BotRoutine {
   id: string
@@ -147,6 +171,8 @@ export interface BotRoutine {
   paused: boolean
   nextRunAt: string | null
   createdAt: string
+  /** Latest run result, when the list payload includes one. */
+  result?: string | null
   runs: RoutineRun[]
 }
 
@@ -154,7 +180,15 @@ export const getBotMemory = (botId: string) => req<{ memory: string }>('GET', `/
 
 export const listBotRoutines = () => req<{ routines: BotRoutine[] }>('GET', '/api/bot/routines')
 
-export const createBotRoutine = (input: { goal: string; schedule: string; skillId?: string; botId?: string }) =>
+export const createBotRoutine = (input: {
+  goal: string
+  schedule: string
+  skillId?: string
+  botId?: string
+  allowedTools?: string[]
+  computer?: { enabled: boolean; ttlMinutes?: number }
+  conversationId?: string
+}) =>
   req<{ routine: BotRoutine }>('POST', '/api/bot/routines', input)
 
 export const setBotRoutinePaused = (id: string, paused: boolean) =>
