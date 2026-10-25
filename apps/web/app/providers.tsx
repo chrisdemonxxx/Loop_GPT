@@ -8,6 +8,7 @@ import { ToastProvider } from './lib/toast'
 import { ThemeProvider } from './lib/theme'
 import { RemindersEngine } from './components/RemindersEngine'
 import { OfflineBanner } from './components/OfflineBanner'
+import { watchShellUpdate } from './lib/shellUpdate'
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -24,6 +25,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   // credentials; authenticated API responses are never cached.
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
+    watchShellUpdate(navigator.serviceWorker, () => window.location.reload())
     const register = () => navigator.serviceWorker.register('/sw.js').catch(() => undefined)
     if (document.readyState === 'complete') register()
     else window.addEventListener('load', register, { once: true })

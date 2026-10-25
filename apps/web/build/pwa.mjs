@@ -72,6 +72,9 @@ self.addEventListener('install', event => {
       if (!response.ok || response.type === 'opaque') throw new Error('Shell installation failed');
       await cache.put(path, response);
     }
+    // A waiting worker keeps serving the previous shell until every tab of
+    // this origin closes. Take over as soon as the new shell is cached.
+    await self.skipWaiting();
   })());
 });
 self.addEventListener('activate', event => {
