@@ -133,6 +133,21 @@ describe('MemoryTab', () => {
 describe('SettingsPanel close and open paths', () => {
   beforeEach(() => { jsonOnce([]) })
 
+  it('closes the dialog after a tab change instead of stepping back one panel', async () => {
+    window.history.replaceState(null, '', '/chat')
+    const onClose = vi.fn()
+    render(<SettingsPanel onClose={onClose} />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Account' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Privacy' }))
+    expect(window.location.hash).toBe('#settings/privacy')
+    fireEvent.click(screen.getByRole('button', { name: 'Close settings' }))
+    for (let i = 0; i < 50 && window.location.hash.startsWith('#settings'); i++) {
+      await new Promise((r) => setTimeout(r, 10))
+    }
+    expect(window.location.hash.startsWith('#settings')).toBe(false)
+    expect(onClose).toHaveBeenCalled()
+  })
+
   it('closes from the X, the backdrop, and Escape, but not from a click inside', () => {
     const onClose = vi.fn()
     const { container } = render(<SettingsPanel onClose={onClose} />)

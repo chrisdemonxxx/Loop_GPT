@@ -20,7 +20,7 @@ import PrivacyTab from './settings/PrivacyTab'
 import BillingTab from './settings/BillingTab'
 import TimeFocusTab from './settings/TimeFocusTab'
 import CodeTab from './settings/CodeTab'
-import { pushSettingsHash, readCurrentSettingsHash, parseSettingsHash, type PrivacySub } from '../lib/settingsHash'
+import { pushSettingsHash, readCurrentSettingsHash, parseSettingsHash, exitSettingsHash, type PrivacySub } from '../lib/settingsHash'
 import { useFocusTrap } from '@loop/ui'
 
 interface Props { onClose: () => void; initialTab?: string; workspaceId?: string | null; asPage?: boolean }
@@ -105,11 +105,11 @@ export default function SettingsPanel({ onClose, initialTab, workspaceId, asPage
     pushSettingsHash(id, sub)
   }
 
-  /** Close: with a settings hash present (dialog mode), history.back()
-   *  empties it and the hashchange handler closes; otherwise close directly.
-   *  asPage has no dialog semantics — X always hands off to onClose. */
+  /** Close drops the whole settings history run. One history.back() only
+   *  returns to the previous panel, so X, Escape, and the backdrop would
+   *  leave the dialog open after a tab change. */
   const close = () => {
-    if (!asPage && parseSettingsHash(window.location.hash)) window.history.back()
+    if (!asPage && parseSettingsHash(window.location.hash)) exitSettingsHash()
     else onClose()
   }
 

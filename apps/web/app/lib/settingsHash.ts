@@ -55,11 +55,25 @@ export function toSettingsHash(panel: string, sub?: string): string {
   return `#settings/${id}`
 }
 
+/** How many settings entries this document pushed. Browser back walks one
+ *  panel; Close has to pop the whole run, including a deep link that was
+ *  never pushed from here. */
+let settingsEntries = 0
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('popstate', () => {
+    if (!parseSettingsHash(window.location.hash)) settingsEntries = 0
+    else settingsEntries = Math.max(0, settingsEntries - 1)
+  })
+}
+
 /** Push a settings hash as a history entry (back/forward walks panels). */
 export function pushSettingsHash(panel: string, sub?: string): void {
   const next = toSettingsHash(panel, sub)
   if (window.location.hash === next) return
+  if (!parseSettingsHash(window.location.hash)) settingsEntries = 0
   window.history.pushState(null, '', next)
+  settingsEntries += 1
   // pushState fires no hashchange — notify listeners ourselves so the app
   // reacts the same way to a UI click and a typed URL.
   window.dispatchEvent(new HashChangeEvent('hashchange'))
@@ -69,6 +83,22 @@ export function pushSettingsHash(panel: string, sub?: string): void {
 export function leaveSettingsHash(): void {
   if (!parseSettingsHash(window.location.hash)) return
   window.history.back()
+}
+
+/** Drop every settings entry opened in this document so Close, Escape, and
+ *  the backdrop leave the dialog. A deep link that was not pushed here is
+ *  replaced in place. */
+export function exitSettingsHash(): void {
+  if (!parseSettingsHash(window.location.hash)) return
+  if (settingsEntries <= 0) {
+    const bare = `${window.location.pathname}${window.location.search}`
+    window.history.replaceState(null, '', bare)
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    return
+  }
+  const steps = settingsEntries
+  settingsEntries = 0
+  window.history.go(-steps)
 }
 
 /** React binding: returns the CURRENT route (state-synced) plus helpers.
