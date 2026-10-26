@@ -915,6 +915,34 @@ def test_verify_runs_pipeline_through_workspace_runner(secret_material: SecretMa
     assert "Verification passed" in response.json()["summary"]
 
 
+def test_verify_default_checks_static_workspace(secret_material: SecretMaterial) -> None:
+    from loopit_workspace_dispatch.workspace import InMemoryWorkspace, InMemoryWorkspaceFactory
+
+    record = _record(allowed_tools=("run_shell",))
+    command_results = {
+        "sh -c 'ls -A | grep -q .'": CommandResult(0, stdout="verified\n"),
+    }
+    client, token, factory, _ = _client(
+        record,
+        secret_material,
+        workspace_factory=InMemoryWorkspaceFactory(command_results=command_results),
+    )
+    workspace = cast(
+        InMemoryWorkspace,
+        factory.create(lease=lease_id_to_lease(record), sandbox_id=record.sandbox_id),
+    )
+    workspace.files["index.html"] = "<h1>hello</h1>"
+
+    response = client.post(
+        "/dispatch",
+        headers=_headers(token),
+        json={"lease_id": record.lease_id, "tool": "verify", "args": {}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["verified"] is True
+
+
 def test_verify_requires_shell_permission(secret_material: SecretMaterial) -> None:
     record = _record(allowed_tools=("read_file",))
     client, token, _, _ = _client(record, secret_material)

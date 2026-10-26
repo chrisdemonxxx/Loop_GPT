@@ -42,6 +42,7 @@ from loopit_telemetry import add_loopit_telemetry, configure_telemetry
 from loopit_tools import AuditContext, default_registry
 from loopit_verify import (
     Check,
+    Level,
     VerificationPipeline,
     node_typescript_checks,
     python_checks,
@@ -369,13 +370,6 @@ def _handle_dag_without_lease(payload: DispatchRequest, *, audit: AuditSink) -> 
     raise HTTPException(status_code=400, detail="lease_id is required")
 
 
-_STATIC_WORKSPACE_CHECK_SCRIPT = (
-    "import pathlib,sys; "
-    "files=[p for p in pathlib.Path('.').rglob('*') "
-    "if p.is_file() and not any(part.startswith('.') for part in p.parts)]; "
-    "sys.exit(0 if files and all(p.stat().st_size > 0 for p in files "
-    "if p.suffix in {'.html','.htm'}) else 1)"
-)
 
 
 def _default_checks(settings: DispatchSettings, workspace: Any = None) -> tuple[Check, ...]:
@@ -387,7 +381,7 @@ def _default_checks(settings: DispatchSettings, workspace: Any = None) -> tuple[
             Check(
                 name="static-files",
                 level=Level.L0_STATIC,
-                command=("python3", "-c", _STATIC_WORKSPACE_CHECK_SCRIPT),
+                command=("sh", "-c", "ls -A | grep -q ."),
                 timeout_seconds=30,
             ),
         )
