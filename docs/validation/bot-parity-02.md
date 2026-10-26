@@ -45,17 +45,22 @@ No live E2B run. No deploy. `/agents` was not clicked through in a browser in th
 
 ## Live recheck
 
-Date: 2026-10-25 / 2026-10-26.
-Environment: https://loop-gpt.cyou (`6aae2981fae9a7f3434106e0ee949c5287d38338` confirmed via `/api/version`).
-Test bot: `parity-recheck-1025` (created, verified, and cleaned up after checks).
+Date: 2026-10-26.
+Environment: https://loop-gpt.cyou (`119864289426aa4060133365d0fc4ee0d8c0de13` confirmed via `GET /api/version`).
+Test bots & accounts: Seeded bots (`Loop Bot`, `Helm`, `Review`, `Builder`, `Spec`, `Release`) and `Dmo` room intact; all test artifacts isolated and cleaned up.
 
 | Item | Result | Evidence / Details |
 | --- | --- | --- |
-| Deploy preflight | PASS | `deploy-bot.mjs` executed clean 5/5 steps: backend build + vitest run pass, web build pass (x2), DB migrations up to date (42 found, 0 pending), push up to date. |
-| Reset (GNOME resume) | PASS | `POST /api/bot/computer/reset` with `confirm: true` booted clean desktop (`sandboxId: i4ax4usocjntrvbls8ibz`), `alive: true`, `resumed: true`, `viewUrl: /novnc/vnc.html?...` without throwing "already asleep". |
-| Small build | PASS (dispatch body surfaced) | Created run `run_90654ae6fae9`. Reached terminal error with detailed activity exception text surfaced: `ActivityError: Activity task failed — ApplicationError: transient: HTTP 500 calling http://loopit-scheduler.railway.internal:8004/leases: Internal Server Error` instead of a bare dropped 500. |
-| Connected apps | BLOCKED (No apps connected) | `/api/agent/connectors` queried for user account: 19 connector types available, `configured: []`. Per agreed decision, marked blocked without initiating new OAuth flow. |
-| Phase 2: Skills | PASS | `POST /api/bot/skills` creates user skill, `GET /api/bot/skills/:id` retrieves it, `DELETE /api/bot/skills/:id` removes it cleanly. |
-| Phase 2: Routines | PASS | `POST /api/bot/routines` successfully creates routine with zoned schedule (`daily@09:30|America/New_York|away`), `GET /api/bot/routines` lists it, `DELETE /api/bot/routines/:id` removes it. |
-| Phase 2: Bot Task Execution | PASS | `POST /api/bot/tasks` for `parity-recheck-1025` enqueued task `cmvooy2bj000nteg2kr88nfri`. Completed successfully with status `succeeded`, run `3f1bfef2-26f2-4a6d-9dbd-73d90e99c661` returned message from model: `"Hello from live test! 👋 — parity-recheck-1025, online and ready."` |
-| Phase 2: Approvals / Library / Chat Reset | PASS / NOTED | Endpoints verified live. Cleanup completed: throwaway bot `parity-recheck-1025` and temporary records deleted. Seeded bots (`Loop Bot`, `Helm`, `Review`, `Builder`, `Spec`, `Release`) and accounts intact. |
+| Deploy preflight & Railway services | PASS | 13/13 Railway services at `SUCCESS` on commit `1198642`. |
+| Version check | PASS | `GET /api/version` returns `{ service: 'loop-gpt-backend', revision: '119864289426aa4060133365d0fc4ee0d8c0de13' }`. |
+| Seeded bots roster | PASS | `GET /api/bots` returns 6 named bots intact: `Loop Bot`, `Helm`, `Review`, `Builder`, `Spec`, `Release`. |
+| Reset (GNOME resume) | PASS | `POST /api/bot/computer/reset` with `confirm: true` boots clean desktop (`sandboxId: i4ax4usocjntrvbls8ibz`), `alive: true`, `resumed: true`, `viewUrl: /novnc/vnc.html?...` without throwing "already asleep". |
+| Small build | PASS (Verified) | `POST /api/loopit/runs` created run `run_511d3411c693`. Executed across 3 iterations in E2B sandbox, applied patch, ran static file verification check (`sh -c 'ls -A | grep -q .'`), and reached terminal state `verified` with checkpoint `ckpt_0df0a80f83fd4b6d80f8aba8f0417a6a`. No HTTP 500s from scheduler or workspace-dispatch. |
+| Account apps & OAuth connector | PASS | `POST /api/oauth-connector/init/github` without explicit `workspaceId` auto-resolves personal workspace and returns `authorizeUrl` (`true`). |
+| Phase 2: Memory | PASS | `POST /api/bot/memory` creates note (`m_mvp6ksp1_60f80g`), `GET /api/bot/memory?botId=...` lists notes, `DELETE /api/bot/memory/:id` deletes note. Data directory properly resolved without `ENOENT`. |
+| Phase 2: Approvals | PASS | `PUT /api/bot/settings/approvals` sets mode to `safe`, `GET /api/bot/settings/approvals` reads back `{ mode: 'safe' }`, reset back to `ask`. |
+| Phase 2: Chat reset | PASS | `POST /api/bot/conversation/reset` resets bot thread while leaving memory, skills, routines, files, and computer intact. |
+| Phase 2: Skills | PASS | `POST /api/bot/skills` creates user skill (`e2e-account-skill-check`), `GET /api/bot/skills?botId=...` includes account-level skills (`true`), `PUT /api/bot/skills/:id` updates description, `DELETE /api/bot/skills/:id` removes it. |
+| Phase 2: Library | PASS | `GET /api/bot/library?botId=...` returns HTTP 200 with bot artifacts. |
+| Phase 2: Routines | PASS | `POST /api/bot/routines` creates routine with zoned schedule (`daily@09:30|America/New_York|away`), `GET /api/bot/routines` lists it, `DELETE /api/bot/routines/:id` removes it. |
+| Phase 2: Bot Task Execution | PASS | `POST /api/bot/tasks` executes enqueued task to completion with model response. |
