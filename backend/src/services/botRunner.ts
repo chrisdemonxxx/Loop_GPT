@@ -510,7 +510,7 @@ export async function executeBotTask(
         }
         sawTakeover = true
         recording.push({ at: Date.now(), png: Buffer.from(stored.pngBase64, 'base64') })
-        steps = stored.steps as typeof steps
+        steps = stored.steps as unknown as typeof steps
         emit({ type: 'status', message: 'Learning from the saved recording.' })
       } else {
         // Phase 1: announce readiness. create_skill is not granted on this turn.
@@ -591,7 +591,7 @@ export async function executeBotTask(
           id: run.runId,
           stepLog,
           frameCount: recording.length,
-          steps: steps as Array<Record<string, unknown>>,
+          steps: steps as unknown as Array<Record<string, unknown>>,
           pngBase64: recording[0].png.toString('base64'),
         })
       }

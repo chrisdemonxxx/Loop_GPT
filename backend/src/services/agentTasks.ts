@@ -196,7 +196,7 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string, o
       thinking: parsed.thinking ?? null,
       allowedTools: parsed.allowedTools ?? undefined,
       maxSteps: parsed.maxSteps ?? null,
-      computer: storedComputer ?? undefined,
+      computer: storedComputer as Prisma.InputJsonValue | undefined,
       skillId: parsed.skillId ?? null,
       botId,
       conversationId,
