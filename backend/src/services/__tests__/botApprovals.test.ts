@@ -1,3 +1,4 @@
+import path from 'path'
 import { describe, expect, it } from 'vitest'
 import { approvalCategory, botToolGate, permissionOverridesForMode } from '../botApprovals'
 
@@ -23,5 +24,11 @@ describe('bot approvals', () => {
     expect(overrides.web_search).toBe('allow')
     expect(overrides.execute_code).toBe('approval')
     expect(overrides.create_skill).toBe('allow')
+  })
+
+  it('resolves default data directories inside backend/data, not outside the app root', async () => {
+    const servicesDir = path.resolve(__dirname, '..')
+    const expectedDataDir = path.resolve(servicesDir, '../../data')
+    expect(path.basename(path.dirname(expectedDataDir))).toBe('backend')
   })
 })

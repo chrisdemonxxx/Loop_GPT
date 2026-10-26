@@ -62,7 +62,7 @@ router.post('/tasks', asyncHandler(async (req, res) => {
 router.get('/skills', asyncHandler(async (req, res) => {
   const { loadSkillsForUser } = await import('../agent/skills/skillLoader')
   const botId = typeof req.query.botId === 'string' ? req.query.botId : ''
-  const skills = loadSkillsForUser((req as any).userId).filter((skill) => !botId || skill.botId === botId)
+  const skills = loadSkillsForUser((req as any).userId).filter((skill) => !botId || !skill.botId || skill.botId === botId)
   res.json({ skills })
 }))
 

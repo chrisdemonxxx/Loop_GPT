@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 
 function activityFile(): string {
-  const root = process.env.BOT_ACTIVITY_DIR || path.join(process.env.AGENT_DATA_DIR || path.join(__dirname, '../../../data'), 'bot-activity')
+  const root = process.env.BOT_ACTIVITY_DIR || path.join(process.env.AGENT_DATA_DIR || path.join(__dirname, '../../data'), 'bot-activity')
   return path.join(root, 'last.json')
 }
 

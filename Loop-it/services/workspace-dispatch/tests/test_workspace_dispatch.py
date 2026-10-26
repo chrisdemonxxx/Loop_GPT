@@ -137,6 +137,40 @@ def _headers(token: str) -> dict[str, str]:
     return {"Authorization": "Bearer " + token}
 
 
+def test_unhandled_exception_names_the_error_without_secrets(
+    secret_material: SecretMaterial,
+) -> None:
+    from loopit_workspace_dispatch.workspace import WorkspaceFactory
+
+    class ExplodingFactory(WorkspaceFactory):
+        def create(self, *, lease: object, sandbox_id: str) -> object:
+            raise RuntimeError(
+                "checkpoint write failed password=hunter2 "
+                "postgresql://loop:secret-db-pass@db.internal/loopit"
+            )
+
+    record = _record(allowed_tools=("read_file",))
+    client, token, _, _ = _client(
+        record,
+        secret_material,
+        workspace_factory=ExplodingFactory(),
+        raise_server_exceptions=False,
+    )
+    response = client.post(
+        "/dispatch",
+        headers=_headers(token),
+        json={"lease_id": record.lease_id, "tool": "read_file", "args": {"path": "index.html"}},
+    )
+
+    body = response.text
+    assert response.status_code == 500
+    assert "RuntimeError" in body
+    assert "checkpoint write failed" in body
+    assert "hunter2" not in body
+    assert "secret-db-pass" not in body
+    assert body.strip() != "Internal Server Error"
+
+
 def test_healthz(secret_material: SecretMaterial) -> None:
     client, _, _, _ = _client(_record(), secret_material)
     assert client.get("/healthz").status_code == 200

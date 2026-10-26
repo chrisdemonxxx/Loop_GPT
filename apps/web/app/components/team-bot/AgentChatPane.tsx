@@ -244,7 +244,7 @@ export function AgentChatPane({
             <button
               type="button"
               onClick={() => void send()}
-              disabled={!draft.trim() || sending || sendLocked}
+              disabled={(!draft.trim() && attachments.length === 0) || sending || sendLocked}
               aria-label="Send"
               className="shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-white bg-[var(--accent)] hover:bg-[var(--accent-hover)] transition disabled:opacity-30 disabled:cursor-not-allowed"
             >

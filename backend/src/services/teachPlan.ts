@@ -56,7 +56,7 @@ export interface StoredTeachRecording {
 }
 
 function teachRoot(): string {
-  return process.env.BOT_TEACH_DIR || path.join(process.env.AGENT_DATA_DIR || path.join(__dirname, '../../../data'), 'teach-recordings')
+  return process.env.BOT_TEACH_DIR || path.join(process.env.AGENT_DATA_DIR || path.join(__dirname, '../../data'), 'teach-recordings')
 }
 
 function teachFile(ownerId: string): string | null {

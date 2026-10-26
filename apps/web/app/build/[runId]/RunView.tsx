@@ -874,19 +874,19 @@ function CheckpointList({ checkpoints, runLive, onAction, onCompare }: {
 /** Classify an activity row for its timeline icon from structured kind/tone first. */
 function activityIcon(item: Activity): { Icon: typeof FileText; cls: string } {
   if (item.tone === 'bad') return { Icon: AlertTriangle, cls: 'text-[var(--danger)]' }
-  if (item.kind === 'verification.completed') {
+  if (item.kind === 'verification') {
     return item.tone === 'good'
       ? { Icon: ShieldCheck, cls: 'text-[var(--success)]' }
       : { Icon: AlertTriangle, cls: 'text-[var(--danger)]' }
   }
-  if (item.kind === 'tool.called' || item.kind === 'tool.result' || item.kind === 'tool.completed') {
+  if (item.kind === 'tool') {
     const tool = item.tool ?? ''
     if (tool === 'apply_patch') return { Icon: FileCode2, cls: 'text-[var(--accent-text)]' }
     if (tool === 'read_file' || tool === 'search_code') return { Icon: FileText, cls: 'text-[var(--ink-muted)]' }
     if (tool === 'deploy') return { Icon: Rocket, cls: 'text-[var(--success)]' }
     return { Icon: Sparkles, cls: 'text-[var(--accent-text)]' }
   }
-  if (item.kind === 'task.started' || item.kind === 'task.completed' || item.kind === 'task.stopped') {
+  if (item.kind === 'task') {
     return item.tone === 'good'
       ? { Icon: CheckCircle2, cls: 'text-[var(--success)]' }
       : { Icon: Sparkles, cls: 'text-[var(--accent-text)]' }

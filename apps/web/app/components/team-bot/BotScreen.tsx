@@ -58,9 +58,15 @@ function parseVncUrl(url: string): {
 }
 
 /** Append the minted ws-token query param (`?token=` / `&token=`). */
-function appendWsToken(wsUrl: string, token: string, queryParam = 'token'): string {
-  const sep = wsUrl.includes('?') ? '&' : '?'
-  return `${wsUrl}${sep}${encodeURIComponent(queryParam)}=${encodeURIComponent(token)}`
+export function appendWsToken(wsUrl: string, token: string, queryParam = 'token'): string {
+  try {
+    const parsed = new URL(wsUrl)
+    parsed.searchParams.set(queryParam, token)
+    return parsed.toString()
+  } catch {
+    const sep = wsUrl.includes('?') ? '&' : '?'
+    return `${wsUrl}${sep}${encodeURIComponent(queryParam)}=${encodeURIComponent(token)}`
+  }
 }
 
 /** Map a CSS click on the scaled canvas back onto the 1366×768 framebuffer. */

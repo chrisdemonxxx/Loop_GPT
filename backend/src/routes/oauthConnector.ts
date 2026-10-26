@@ -31,7 +31,7 @@ import crypto from 'crypto'
 import { encryptConnectionConfig } from '../services/credentialVault'
 import { prisma } from '../services/prisma'
 import { configStore } from '../agent/configStore'
-import { requireMembership, WorkspaceError } from '../services/workspaces'
+import { requireMembership, ensurePersonalWorkspace, WorkspaceError } from '../services/workspaces'
 import { ALL_OAUTH_PROVIDERS, PLATFORM_OAUTH_PROVIDERS, MARKETPLACE_OAUTH_PROVIDERS, loginProviderForConnector, requestedScopes } from '../agent/connectors/oauthProviders'
 import { publicCallbackBase } from '../services/oauth'
 
@@ -140,7 +140,8 @@ function popupCloser(res: express.Response, payload: { ok: boolean; connectorTyp
 // ---------------------------------------------------------------------------
 oauthConnectorRouter.post('/init/:connectorType', authenticateToken, asyncHandler(async (req, res) => {
   const userId = (req as any).userId
-  const workspaceId = req.body?.workspaceId
+  const explicitWorkspaceId = typeof req.body?.workspaceId === 'string' && req.body.workspaceId ? req.body.workspaceId : ''
+  const workspaceId = explicitWorkspaceId || (userId ? (await ensurePersonalWorkspace(userId).catch(() => ({ id: `personal-${userId}` }))).id : '')
   const connectorType = req.params.connectorType
   if (!userId || typeof workspaceId !== 'string' || !workspaceId) return res.status(400).json({ error: 'Authentication and workspaceId required.' })
 
@@ -160,7 +161,7 @@ oauthConnectorRouter.post('/init/:connectorType', authenticateToken, asyncHandle
     return res.status(503).json({ error: `OAuth client not configured for ${connectorType}.` })
   }
   // Connection writes are owner-only, same as the workspace connections API.
-  try { await requireMembership(userId, workspaceId, 'owner') }
+  if (explicitWorkspaceId) try { await requireMembership(userId, workspaceId, 'owner') }
   catch (error) {
     if (error instanceof WorkspaceError) return res.status(error.status).json({ error: error.message })
     throw error

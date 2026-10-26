@@ -7,6 +7,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -16,8 +17,9 @@ from hashlib import sha256
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, Header, HTTPException
-from loopit_agent_core.audit import AuditEvent, AuditSink
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
+from loopit_agent_core.audit import AuditEvent, AuditSink, redact
 from loopit_agent_core.config import require_secret
 from loopit_sandbox_sdk.lease import ResourceCaps
 from loopit_store import (
@@ -120,6 +122,11 @@ def create_app(
     app.state.scheduler = scheduler_instance
     app.state.lease_store = lease_store or _lease_store(resolved)
 
+    @app.exception_handler(Exception)
+    def handle_unexpected_exception(_request: Request, exc: Exception) -> JSONResponse:
+        LOG.exception("unhandled scheduler exception")
+        return JSONResponse(status_code=500, content={"detail": _redact_exception_text(exc)})
+
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
@@ -130,6 +137,9 @@ def create_app(
         x_loopit_service_token: str | None = Header(default=None),
     ) -> dict[str, Any]:
         _require_service_token(x_loopit_service_token, settings=resolved)
+        ensure_tenant = getattr(app.state.lease_store, "ensure_tenant", None)
+        if callable(ensure_tenant):
+            ensure_tenant(payload.tenant_id)
         try:
             assignment = app.state.scheduler.acquire(
                 tenant_id=payload.tenant_id,
@@ -142,7 +152,16 @@ def create_app(
             )
         except TenantConcurrencyExceeded as exc:
             raise HTTPException(status_code=429, detail="tenant concurrency exceeded") from exc
-        record = app.state.lease_store.create(_record(assignment, payload.project_id))
+        try:
+            record = app.state.lease_store.create(_record(assignment, payload.project_id))
+        except Exception:
+            try:
+                app.state.scheduler.release(
+                    assignment.lease.lease_id, tenant_id=payload.tenant_id, reason="store_error"
+                )
+            except Exception:
+                pass
+            raise
         return {
             **_assignment(assignment, payload.project_id),
             "lease_token": _token(record, resolved),
@@ -274,6 +293,20 @@ def create_app(
         }
 
     return app
+
+
+_INLINE_SECRET_KV = re.compile(
+    r"\b(secret|token|password|passwd|api[_-]?key|authorization|credential)\s*([:=])\s*(\S+)",
+    re.IGNORECASE,
+)
+_URL_CREDENTIALS = re.compile(r"(://[^/\s:@]+:)([^@\s]+)(@)")
+
+
+def _redact_exception_text(exc: BaseException) -> str:
+    raw = str(redact(f"{type(exc).__name__}: {exc}"))
+    scrubbed = _INLINE_SECRET_KV.sub(r"\1\2[REDACTED]", raw)
+    scrubbed = _URL_CREDENTIALS.sub(r"\1[REDACTED]\3", scrubbed)
+    return scrubbed[:400]
 
 
 def _audit_sink(settings: ServerSettings) -> AuditSink:

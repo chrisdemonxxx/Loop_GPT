@@ -48,6 +48,9 @@ export function LibraryBoard({
             <li key={item.id} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] p-2.5">
               <div className="text-ui-sm text-[var(--ink-primary)]">{item.name}</div>
               <div className="text-3xs text-[var(--ink-muted)]">{item.path}</div>
+              {item.shareUrl && (
+                <input readOnly value={item.shareUrl} aria-label={`${item.name} share link`} onFocus={(e) => e.currentTarget.select()} className="mt-1.5 w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-2 py-1 font-mono text-2xs text-[var(--ink-secondary)]" />
+              )}
               <div className="mt-1.5 flex gap-2">
                 <button type="button" onClick={() => onShare(item.id)} className="text-2xs text-[var(--accent-text)]">Share {item.name}</button>
                 {item.shareUrl && (

@@ -12,7 +12,7 @@
 import fs from 'fs'
 import path from 'path'
 
-const DATA_DIR = process.env.AGENT_DATA_DIR || path.join(__dirname, '../../../data')
+const DATA_DIR = process.env.AGENT_DATA_DIR || path.join(__dirname, '../../data')
 
 /** Resolved lazily: tests point BOT_MEMORY_DIR at a temp dir after import. */
 function memoryRoot(): string {

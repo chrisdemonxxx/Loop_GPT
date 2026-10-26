@@ -12,7 +12,7 @@ import {
   enqueueBotTask, listBotTasks, cancelBotTask, getBotQuota, listBotSkills, deleteBotSkill,
   listBotRoutines, createBotRoutine, setBotRoutinePaused, deleteBotRoutine,
   getBotTask, getBotComputer, wakeBotComputer, streamBotRun, BotApiError,
-  createBotSkill, addBotMemory, deleteBotMemory, resetBotConversation,
+  createBotSkill, getBotSkill, updateBotSkill, addBotMemory, deleteBotMemory, resetBotConversation,
   listBotLibrary, shareBotLibraryItem, revokeBotLibraryItem,
   getBotApprovalMode, setBotApprovalMode, approveBotRun,
   type BotRoutine, type BotTask, type BotQuota, type BotSkillRef,
@@ -249,6 +249,7 @@ function AgentsPageInner() {
   const botMemory = memoryQuery.data?.memory ?? ''
   const memoryRows = memoryQuery.data?.memories ?? []
   const [skillEditor, setSkillEditor] = useState(false)
+  const [editingSkill, setEditingSkill] = useState<{ id: string; name: string; description: string; instructions: string } | null>(null)
   const [approvalMode, setApprovalMode] = useState<'ask' | 'safe' | 'accept'>('ask')
   const [pendingApproval, setPendingApproval] = useState<{ id: string; name: string; category: 'computer' | 'terminal' | 'tool'; runId: string } | null>(null)
   const libraryQuery = useQuery({
@@ -674,7 +675,30 @@ function AgentsPageInner() {
               <LibraryBoard
                 skills={(
               <>
-              <button type="button" onClick={() => setSkillEditor((open) => !open)} className="mb-2 text-ui-xs text-[var(--accent-text)]">Add skill</button>
+              <button type="button" onClick={() => { setEditingSkill(null); setSkillEditor((open) => !open) }} className="mb-2 text-ui-xs text-[var(--accent-text)]">Add skill</button>
+              {editingSkill && (
+                <SkillEditor
+                  key={editingSkill.id}
+                  initial={editingSkill}
+                  onCancel={() => setEditingSkill(null)}
+                  onRun={(input) => {
+                    if (!botId) return
+                    void enqueueBotTask({
+                      goal: input.description || input.name,
+                      skillId: editingSkill.id,
+                      computer: { enabled: true },
+                      botId,
+                      ...(activeThreadId ? { conversationId: activeThreadId } : {}),
+                    }).then(() => { void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] }) })
+                  }}
+                  onSave={(input) => {
+                    void updateBotSkill(editingSkill.id, input).then(() => {
+                      setEditingSkill(null)
+                      void queryClient.invalidateQueries({ queryKey: ['bot', 'skills'] })
+                    })
+                  }}
+                />
+              )}
               {skillEditor && (
                 <SkillEditor
                   onCancel={() => setSkillEditor(false)}
@@ -710,6 +734,12 @@ function AgentsPageInner() {
                       skill={skill}
                       attached={attachedSkill?.id === skill.id}
                       onAttach={() => setAttachedSkill(attachedSkill?.id === skill.id ? null : skill)}
+                      onEdit={() => {
+                        void getBotSkill(skill.id).then((detail) => {
+                          setSkillEditor(false)
+                          setEditingSkill({ id: detail.id, name: detail.name, description: detail.description, instructions: detail.instructions })
+                        }).catch(() => undefined)
+                      }}
                       onRun={() => {
                         if (!botId) return
                         void enqueueBotTask({
@@ -1047,11 +1077,12 @@ function RoutineCard({ routine, skills, onChanged }: { routine: BotRoutine; skil
 }
 
 function SkillCard({
-  skill, attached, onAttach, onRun, onDeleted,
+  skill, attached, onAttach, onEdit, onRun, onDeleted,
 }: {
   skill: BotSkillRef
   attached?: boolean
   onAttach?: () => void
+  onEdit?: () => void
   onRun?: () => void
   onDeleted: () => void
 }) {
@@ -1082,6 +1113,9 @@ function SkillCard({
         <div className="flex shrink-0 items-center gap-1">
           {onRun && (
             <button type="button" onClick={onRun} className="rounded-lg px-2 py-1 text-2xs text-[var(--accent-text)] hover:bg-[var(--bg-hover-strong)]">Run</button>
+          )}
+          {onEdit && (
+            <button type="button" onClick={onEdit} className="rounded-lg px-2 py-1 text-2xs text-[var(--ink-secondary)] hover:bg-[var(--bg-hover-strong)]">Edit</button>
           )}
           {onAttach && (
             <button type="button" onClick={onAttach} className="rounded-lg px-2 py-1 text-2xs text-[var(--accent-text)] hover:bg-[var(--bg-hover-strong)]">

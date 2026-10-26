@@ -374,3 +374,43 @@ def test_acquire_concurrency_denied() -> None:
     assert client.post("/leases", headers=service_headers(), json=payload).status_code == 200
     payload["run_id"] = "run-2"
     assert client.post("/leases", headers=service_headers(), json=payload).status_code == 429
+
+
+def test_acquire_releases_scheduler_slot_when_lease_store_fails() -> None:
+    class FailingLeaseStore:
+        def __init__(self) -> None:
+            self.should_fail = True
+
+        def create(self, record: LeaseRecord) -> LeaseRecord:
+            if self.should_fail:
+                raise RuntimeError("db write failed password=secret")
+            return record
+
+        def get(self, lease_id: str, *, tenant_id: str) -> LeaseRecord | None:
+            return None
+
+    scheduler = Scheduler(
+        pool=WarmPool(InMemoryProvider(), target_size=0, max_live=2),
+        audit=InMemoryAuditSink(),
+        tenant_concurrency=1,
+    )
+    store = FailingLeaseStore()
+    settings = ServerSettings(service_token=SERVICE_TOKEN, lease_token_secret=LEASE_SECRET)
+    client = TestClient(
+        create_app(scheduler=scheduler, settings=settings, lease_store=cast(Any, store)),
+        raise_server_exceptions=False,
+    )
+    payload = {
+        "tenant_id": "tenant",
+        "run_id": "run-1",
+        "project_id": "project",
+        "base_checkpoint_id": "ckpt",
+    }
+    first = client.post("/leases", headers=service_headers(), json=payload)
+    assert first.status_code == 500
+    assert "RuntimeError" in first.text
+    assert "secret" not in first.text
+
+    store.should_fail = False
+    second = client.post("/leases", headers=service_headers(), json=payload)
+    assert second.status_code == 200

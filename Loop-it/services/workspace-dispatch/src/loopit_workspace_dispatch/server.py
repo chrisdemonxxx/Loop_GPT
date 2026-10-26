@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -17,8 +18,9 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import uvicorn
-from fastapi import FastAPI, Header, HTTPException
-from loopit_agent_core import AuditEvent, AuditSink, ToolRejected, validate_tool_call
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
+from loopit_agent_core import AuditEvent, AuditSink, ToolRejected, redact, validate_tool_call
 from loopit_agent_core.config import UnsafeConfigurationError, has_production_marker, require_secret
 from loopit_checkpoint import (
     CheckpointError,
@@ -170,6 +172,11 @@ def create_app(
     )
     app.state.verification = verification if verification is not None else VerificationChecks()
     app.state.checkpoints = checkpoints if checkpoints is not None else _checkpoint_store(resolved)
+
+    @app.exception_handler(Exception)
+    def handle_unexpected_exception(_request: Request, exc: Exception) -> JSONResponse:
+        LOG.exception("unhandled workspace-dispatch exception")
+        return JSONResponse(status_code=500, content={"detail": _redact_exception_text(exc)})
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -692,6 +699,20 @@ def _checkpoint_label(payload: DispatchRequest, fallback: str) -> str:
     if payload.node_id:
         return f"dag-node:{payload.node_id}"
     return fallback
+
+
+_INLINE_SECRET_KV = re.compile(
+    r"\b(secret|token|password|passwd|api[_-]?key|authorization|credential)\s*([:=])\s*(\S+)",
+    re.IGNORECASE,
+)
+_URL_CREDENTIALS = re.compile(r"(://[^/\s:@]+:)([^@\s]+)(@)")
+
+
+def _redact_exception_text(exc: BaseException) -> str:
+    raw = str(redact(f"{type(exc).__name__}: {exc}"))
+    scrubbed = _INLINE_SECRET_KV.sub(r"\1\2[REDACTED]", raw)
+    scrubbed = _URL_CREDENTIALS.sub(r"\1[REDACTED]\3", scrubbed)
+    return scrubbed[:400]
 
 
 def _emit_refusal(audit: AuditSink, record: Any, tool: str | None, reason: str) -> None:

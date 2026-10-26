@@ -573,8 +573,42 @@ class PostgresAppendOnlyAuditSink(_Store):
 
 
 class PostgresLeaseStore(_Store):
+    def ensure_tenant(self, tenant_id: str) -> None:
+        try:
+            self._conn.execute(
+                "INSERT INTO tenants (tenant_id, name) VALUES (%s, %s) "
+                "ON CONFLICT (tenant_id) DO NOTHING",
+                (tenant_id, tenant_id),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+
     def create(self, lease: LeaseRecord) -> LeaseRecord:
         try:
+            self._conn.execute(
+                "INSERT INTO tenants (tenant_id, name) VALUES (%s, %s) "
+                "ON CONFLICT (tenant_id) DO NOTHING",
+                (lease.tenant_id, lease.tenant_id),
+            )
+            self._conn.execute(
+                "INSERT INTO projects (project_id, tenant_id, name, stack) "
+                "VALUES (%s, %s, %s, 'static') ON CONFLICT (project_id) DO NOTHING",
+                (lease.project_id, lease.tenant_id, lease.project_id),
+            )
+            self._conn.execute(
+                "INSERT INTO runs (run_id, tenant_id, project_id, prompt, status, "
+                "budget_max_iterations) VALUES (%s, %s, %s, %s, 'running', 12) "
+                "ON CONFLICT (run_id) DO NOTHING",
+                (lease.run_id, lease.tenant_id, lease.project_id, "lease-tracked run"),
+            )
+            self._conn.execute(
+                "INSERT INTO checkpoints (checkpoint_id, tenant_id, project_id, manifest, "
+                "verified, label, created_by_run_id) VALUES (%s, %s, %s, '{}'::jsonb, true, "
+                "'lease-base', %s) ON CONFLICT (checkpoint_id) DO NOTHING",
+                (lease.base_checkpoint_id, lease.tenant_id, lease.project_id, lease.run_id),
+            )
             row = self._conn.execute(
                 """
                 INSERT INTO sandbox_leases (
@@ -609,32 +643,44 @@ class PostgresLeaseStore(_Store):
         return record
 
     def get(self, lease_id: str, *, tenant_id: str) -> LeaseRecord | None:
-        row = self._conn.execute(
-            "SELECT * FROM sandbox_leases WHERE lease_id = %s AND tenant_id = %s",
-            (lease_id, tenant_id),
-        ).fetchone()
+        try:
+            row = self._conn.execute(
+                "SELECT * FROM sandbox_leases WHERE lease_id = %s AND tenant_id = %s",
+                (lease_id, tenant_id),
+            ).fetchone()
+        except Exception:
+            self._conn.rollback()
+            raise
         return _lease(row) if row else None
 
     def active_for_tenant(self, tenant_id: str) -> tuple[LeaseRecord, ...]:
-        rows = self._conn.execute(
-            """
-            SELECT * FROM sandbox_leases
-            WHERE tenant_id = %s AND status = 'active'
-            ORDER BY created_at, lease_id
-            """,
-            (tenant_id,),
-        ).fetchall()
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM sandbox_leases
+                WHERE tenant_id = %s AND status = 'active'
+                ORDER BY created_at, lease_id
+                """,
+                (tenant_id,),
+            ).fetchall()
+        except Exception:
+            self._conn.rollback()
+            raise
         return tuple(_lease(row) for row in rows)
 
     def release(self, lease_id: str, *, tenant_id: str, reason: str = "completed") -> LeaseRecord:
         status = "expired" if reason == "expired" else "released"
-        row = self._conn.execute(
-            """
-            UPDATE sandbox_leases SET status = %s, released_at = now()
-            WHERE lease_id = %s AND tenant_id = %s RETURNING *
-            """,
-            (status, lease_id, tenant_id),
-        ).fetchone()
+        try:
+            row = self._conn.execute(
+                """
+                UPDATE sandbox_leases SET status = %s, released_at = now()
+                WHERE lease_id = %s AND tenant_id = %s RETURNING *
+                """,
+                (status, lease_id, tenant_id),
+            ).fetchone()
+        except Exception:
+            self._conn.rollback()
+            raise
         if row is None:
             self._conn.rollback()
             raise KeyError(lease_id)
@@ -643,15 +689,19 @@ class PostgresLeaseStore(_Store):
         return record
 
     def renew(self, lease: LeaseRecord) -> LeaseRecord:
-        row = self._conn.execute(
-            """
-            UPDATE sandbox_leases
-            SET expires_at = %s, status = 'active', released_at = NULL
-            WHERE lease_id = %s AND tenant_id = %s
-            RETURNING *
-            """,
-            (lease.expires_at, lease.lease_id, lease.tenant_id),
-        ).fetchone()
+        try:
+            row = self._conn.execute(
+                """
+                UPDATE sandbox_leases
+                SET expires_at = %s, status = 'active', released_at = NULL
+                WHERE lease_id = %s AND tenant_id = %s
+                RETURNING *
+                """,
+                (lease.expires_at, lease.lease_id, lease.tenant_id),
+            ).fetchone()
+        except Exception:
+            self._conn.rollback()
+            raise
         if row is None:
             return self.create(lease)
         record = _lease(row)
@@ -659,13 +709,17 @@ class PostgresLeaseStore(_Store):
         return record
 
     def expire_due(self) -> tuple[LeaseRecord, ...]:
-        rows = self._conn.execute(
-            """
-            UPDATE sandbox_leases SET status = 'expired', released_at = now()
-            WHERE status = 'active' AND expires_at <= now()
-            RETURNING *
-            """
-        ).fetchall()
+        try:
+            rows = self._conn.execute(
+                """
+                UPDATE sandbox_leases SET status = 'expired', released_at = now()
+                WHERE status = 'active' AND expires_at <= now()
+                RETURNING *
+                """
+            ).fetchall()
+        except Exception:
+            self._conn.rollback()
+            raise
         expired = tuple(_lease(row) for row in rows)
         self._conn.commit()
         return expired

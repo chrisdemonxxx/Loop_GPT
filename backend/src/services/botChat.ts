@@ -6,7 +6,7 @@ import fs from 'fs'
 import path from 'path'
 
 function chatRoot(): string {
-  return process.env.BOT_CHAT_DIR || path.join(process.env.AGENT_DATA_DIR || path.join(__dirname, '../../../data'), 'bot-chat')
+  return process.env.BOT_CHAT_DIR || path.join(process.env.AGENT_DATA_DIR || path.join(__dirname, '../../data'), 'bot-chat')
 }
 
 function cursorFile(userId: string, botId: string): string | null {

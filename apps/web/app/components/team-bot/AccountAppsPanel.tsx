@@ -21,7 +21,14 @@ export function AccountAppsPanel({
       .then(async (res) => {
         if (!res.ok) throw new Error('Could not load apps')
         const data = await res.json()
-        setTypes(data.types || [])
+        const baseTypes: ConnectorType[] = Array.isArray(data.types) ? data.types : []
+        const seen = new Set(baseTypes.map((row) => row.type))
+        const marketTypes: ConnectorType[] = Array.isArray(data.marketplace)
+          ? data.marketplace
+              .filter((row: { type?: string; name?: string }) => row?.type && row?.name && !seen.has(row.type))
+              .map((row: { type: string; name: string }) => ({ type: row.type, name: row.name, oauth: true }))
+          : []
+        setTypes([...baseTypes, ...marketTypes])
         setConfigured(data.configured || [])
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Could not load apps'))
@@ -43,13 +50,29 @@ export function AccountAppsPanel({
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ redirectTo: '/agents' }),
       })
+        .then(async (res) => {
+          const data = await res.json().catch(() => ({}))
+          if (!res.ok) throw new Error(data.error || `Could not connect ${row.name}`)
+          if (data.authorizeUrl && typeof navigator !== 'undefined' && !/jsdom/i.test(navigator.userAgent)) {
+            window.location.assign(data.authorizeUrl)
+          }
+        })
+        .catch((err: unknown) => setError(err instanceof Error ? err.message : `Could not connect ${row.name}`))
       return
     }
     void fetch(`${apiUrl}/api/agent/connectors`, {
       method: 'POST',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: row.type, name: row.name, config: {}, enabled: true }),
-    }).then(() => load())
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}))
+          throw new Error(d.error || `Could not connect ${row.name}`)
+        }
+        load()
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : `Could not connect ${row.name}`))
   }
 
   return (

@@ -19,7 +19,7 @@ export interface LibraryItem {
 }
 
 function libraryRoot(): string {
-  return process.env.BOT_LIBRARY_DIR || path.join(process.env.AGENT_DATA_DIR || path.join(__dirname, '../../../data'), 'bot-library')
+  return process.env.BOT_LIBRARY_DIR || path.join(process.env.AGENT_DATA_DIR || path.join(__dirname, '../../data'), 'bot-library')
 }
 
 function libraryFile(userId: string): string | null {

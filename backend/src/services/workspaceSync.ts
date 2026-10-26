@@ -16,7 +16,7 @@ import path from 'path'
 
 type Sandbox = any
 
-const DATA_DIR = process.env.AGENT_DATA_DIR || path.join(__dirname, '../../../data')
+const DATA_DIR = process.env.AGENT_DATA_DIR || path.join(__dirname, '../../data')
 const STORE_DIR = process.env.BOT_WORKSPACE_STORE || path.join(DATA_DIR, 'box-workspaces')
 
 /** A workspace past this size is a sign something heavy landed (a checkout, a

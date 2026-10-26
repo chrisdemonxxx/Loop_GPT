@@ -17,8 +17,8 @@ export interface Activity {
   title: string
   body: string
   tone: 'neutral' | 'good' | 'bad' | 'work'
-  /** Audit event type (e.g. `tool.called`, `verification.completed`) for structured UI. */
-  kind?: string
+  /** Structured category (`verification` | `tool` | `task` | `other`) for timeline icons; never raw audit event names. */
+  kind?: 'verification' | 'tool' | 'task' | 'other'
   /** Tool name when the audit row is a tool call/result. */
   tool?: string
 }
@@ -48,7 +48,7 @@ export function toActivity(event: AuditStreamEvent, index: number): Activity {
 
   switch (event.type) {
     case 'task.started':
-      return { id, at, title: 'Started building', body: '', tone: 'work', kind: event.type }
+      return { id, at, title: 'Started building', body: '', tone: 'work', kind: 'task' }
     case 'tool.called':
       return {
         id,
@@ -56,7 +56,7 @@ export function toActivity(event: AuditStreamEvent, index: number): Activity {
         title: TOOL_TITLES[tool] ?? 'Working on the build',
         body: describeWork(detail),
         tone: 'work',
-        kind: event.type,
+        kind: 'tool',
         tool: tool || undefined,
       }
     case 'tool.result':
@@ -67,7 +67,7 @@ export function toActivity(event: AuditStreamEvent, index: number): Activity {
         title: event.outcome === 'failure' ? 'A step did not go as planned' : 'Step finished',
         body: '',
         tone: event.outcome === 'failure' ? 'bad' : 'neutral',
-        kind: event.type,
+        kind: 'tool',
         tool: tool || undefined,
       }
     case 'verification.completed':
@@ -80,7 +80,7 @@ export function toActivity(event: AuditStreamEvent, index: number): Activity {
             : 'The checks found something to fix',
         body: '',
         tone: event.outcome === 'success' ? 'good' : 'bad',
-        kind: event.type,
+        kind: 'verification',
       }
     case 'task.stopped':
     case 'task.completed':
@@ -90,12 +90,12 @@ export function toActivity(event: AuditStreamEvent, index: number): Activity {
         title: event.outcome === 'success' ? 'Build verified' : 'The build stopped',
         body: '',
         tone: event.outcome === 'success' ? 'good' : 'bad',
-        kind: event.type,
+        kind: 'task',
       }
     default:
       // Unknown event types still pace the timeline without leaking their
       // internal names.
-      return { id, at, title: 'Working…', body: '', tone: 'neutral', kind: event.type }
+      return { id, at, title: 'Working…', body: '', tone: 'neutral', kind: 'other' }
   }
 }
 

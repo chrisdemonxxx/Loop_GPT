@@ -13,7 +13,7 @@ export type ToolGate = 'allow' | 'approval'
 const MODES = new Set<ApprovalMode>(['ask', 'safe', 'accept'])
 
 function modeFile(): string {
-  const root = process.env.BOT_APPROVAL_DIR || path.join(process.env.AGENT_DATA_DIR || path.join(__dirname, '../../../data'), 'bot-approvals')
+  const root = process.env.BOT_APPROVAL_DIR || path.join(process.env.AGENT_DATA_DIR || path.join(__dirname, '../../data'), 'bot-approvals')
   return path.join(root, 'modes.json')
 }
 

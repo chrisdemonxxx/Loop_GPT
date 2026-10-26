@@ -109,6 +109,9 @@ export function useStartBuild() {
       tier?: RunTier
       attachmentUrls?: string[]
       background?: boolean
+      browser?: boolean
+      browserDeviceId?: string
+      browserGrantId?: string
     }) =>
       startRun(input.prompt, {
         ...(input.projectId ? { projectId: input.projectId } : {}),
@@ -116,6 +119,7 @@ export function useStartBuild() {
         ...(input.tier ? { tier: input.tier } : {}),
         ...(input.attachmentUrls?.length ? { attachmentUrls: input.attachmentUrls } : {}),
         ...(input.background ? { background: true } : {}),
+        ...(input.browser ? { browser: true, browserDeviceId: input.browserDeviceId, ...(input.browserGrantId ? { browserGrantId: input.browserGrantId } : {}) } : {}),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['loopit-runs'] })
@@ -364,7 +368,7 @@ export function usePreviewUrl(projectId: string | null, path: string | null) {
 export function useFileContent(runId: string, path: string | null) {
   return useQuery<string>({
     queryKey: ['loopit-file', runId, path],
-    queryFn: () => getFile(runId, path as string),
+    queryFn: async () => (await getFile(runId, path as string)) ?? '',
     enabled: typeof window !== 'undefined' && !!runId && runId !== '_' && !!path,
     retry: false,
   })
