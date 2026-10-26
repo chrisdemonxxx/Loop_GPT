@@ -301,7 +301,9 @@ def _verify(record: Any, lease: Any, *, app: FastAPI) -> dict[str, Any]:
         workspace,
         store_dsn=getattr(app.state.settings, "store_dsn", ""),
     )
-    checks = app.state.verification.checks or _default_checks(app.state.settings)
+    checks = app.state.verification.checks or _default_checks(
+        app.state.settings, workspace=workspace
+    )
     pipeline = VerificationPipeline(
         checks=checks,
         runner=WorkspaceCommandRunner(workspace),
@@ -367,10 +369,33 @@ def _handle_dag_without_lease(payload: DispatchRequest, *, audit: AuditSink) -> 
     raise HTTPException(status_code=400, detail="lease_id is required")
 
 
-def _default_checks(settings: DispatchSettings) -> tuple[Check, ...]:
+_STATIC_WORKSPACE_CHECK_SCRIPT = (
+    "import pathlib,sys; "
+    "files=[p for p in pathlib.Path('.').rglob('*') "
+    "if p.is_file() and not any(part.startswith('.') for part in p.parts)]; "
+    "sys.exit(0 if files and all(p.stat().st_size > 0 for p in files "
+    "if p.suffix in {'.html','.htm'}) else 1)"
+)
+
+
+def _default_checks(settings: DispatchSettings, workspace: Any = None) -> tuple[Check, ...]:
     if settings.verify_stack == "python":
         return python_checks()
-    return (*node_typescript_checks(), smoke_check(settings.verify_smoke_url), *security_checks())
+    state = _snapshot_state(workspace) if workspace is not None else None
+    if state is not None and "package.json" not in state:
+        return (
+            Check(
+                name="static-files",
+                level=Level.L0_STATIC,
+                command=("python3", "-c", _STATIC_WORKSPACE_CHECK_SCRIPT),
+                timeout_seconds=30,
+            ),
+        )
+    return (
+        *node_typescript_checks(package_manager="npm"),
+        smoke_check(settings.verify_smoke_url),
+        *security_checks(package_manager="npm"),
+    )
 
 
 def _workspace_factory(settings: DispatchSettings) -> WorkspaceFactory:

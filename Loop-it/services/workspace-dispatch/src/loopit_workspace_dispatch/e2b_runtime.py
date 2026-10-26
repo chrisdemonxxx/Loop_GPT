@@ -151,6 +151,7 @@ class E2BRuntimeWorkspaceFactory:
         session = self.connect(sandbox_id)
         signing_key = derive_lease_signing_key(self.root_signing_key, lease)
         env = {
+            "COREPACK_INTEGRITY_KEYS": "0",
             "LOOPIT_SANDBOX_SIGNING_KEY": _b64(signing_key),
             "LOOPIT_LEASE_ID": lease.lease_id,
             "LOOPIT_TENANT_ID": lease.tenant_id,

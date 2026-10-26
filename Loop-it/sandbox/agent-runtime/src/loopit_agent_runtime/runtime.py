@@ -28,6 +28,7 @@ IGNORED_DIRECTORIES = frozenset({".git", "node_modules", "__pycache__", ".venv",
 SAFE_ENV_KEYS = frozenset(
     {
         "CI",
+        "COREPACK_INTEGRITY_KEYS",
         "HOME",
         "LANG",
         "LC_ALL",

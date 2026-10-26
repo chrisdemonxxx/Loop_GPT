@@ -60,8 +60,8 @@ class ActionVerdict:
     rule: str | None = None
 
 
-_READ_ONLY_TOOLS = frozenset({"read_file", "search_code", "browser"})
-_WRITE_BUT_REVERSIBLE_TOOLS = frozenset({"apply_patch"})
+_READ_ONLY_TOOLS = frozenset({"read_file", "search_code", "browser", "read_logs"})
+_WRITE_BUT_REVERSIBLE_TOOLS = frozenset({"apply_patch", "install_package"})
 
 # Relative workspace path: no leading /, ~, or `..` components.
 _RELATIVE_PATH = r"(?:\./)?(?:[A-Za-z_][\w.\-]*)(?:/[A-Za-z_][\w.\-]*)*"
@@ -317,6 +317,18 @@ def _classify_tool_call(proposed: ProposedAction, rule_set: RuleSet) -> ActionVe
             GateRequirement.HUMAN_CONFIRM,
             f"provisioning {resource} can spend money or alter durable state",
             "provision-tool",
+        )
+    if proposed.tool == "start_dev_server":
+        command = str(proposed.args.get("command") or "npm run dev").strip()
+        for rule in rule_set.action_rules:
+            if re.search(rule.pattern, command, re.IGNORECASE):
+                return _verdict_from_rule(rule)
+        return ActionVerdict(
+            Reversibility.REVERSIBLE,
+            Destructiveness.BENIGN,
+            GateRequirement.AUTO_APPROVE,
+            "starting a local dev server inside the sandbox is reversible",
+            "start-dev-server",
         )
     if proposed.tool == "run_shell":
         return classify_action(
