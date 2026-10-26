@@ -41,3 +41,21 @@ Web (`npx vitest run` from `apps/web/`):
 - `presence`, `useTeachSession`, `SkillEditor`, `LibraryBoard`, `AccountAppsPanel`, `RoutineComposerFields`, `MemoryPanel`, `AgentComputerTab`, `AgentChatPane` — pass
 
 No live E2B run. No deploy. `/agents` was not clicked through in a browser in this pass.
+
+
+## Live recheck
+
+Date: 2026-10-25 / 2026-10-26.
+Environment: https://loop-gpt.cyou (`6aae2981fae9a7f3434106e0ee949c5287d38338` confirmed via `/api/version`).
+Test bot: `parity-recheck-1025` (created, verified, and cleaned up after checks).
+
+| Item | Result | Evidence / Details |
+| --- | --- | --- |
+| Deploy preflight | PASS | `deploy-bot.mjs` executed clean 5/5 steps: backend build + vitest run pass, web build pass (x2), DB migrations up to date (42 found, 0 pending), push up to date. |
+| Reset (GNOME resume) | PASS | `POST /api/bot/computer/reset` with `confirm: true` booted clean desktop (`sandboxId: i4ax4usocjntrvbls8ibz`), `alive: true`, `resumed: true`, `viewUrl: /novnc/vnc.html?...` without throwing "already asleep". |
+| Small build | PASS (dispatch body surfaced) | Created run `run_90654ae6fae9`. Reached terminal error with detailed activity exception text surfaced: `ActivityError: Activity task failed — ApplicationError: transient: HTTP 500 calling http://loopit-scheduler.railway.internal:8004/leases: Internal Server Error` instead of a bare dropped 500. |
+| Connected apps | BLOCKED (No apps connected) | `/api/agent/connectors` queried for user account: 19 connector types available, `configured: []`. Per agreed decision, marked blocked without initiating new OAuth flow. |
+| Phase 2: Skills | PASS | `POST /api/bot/skills` creates user skill, `GET /api/bot/skills/:id` retrieves it, `DELETE /api/bot/skills/:id` removes it cleanly. |
+| Phase 2: Routines | PASS | `POST /api/bot/routines` successfully creates routine with zoned schedule (`daily@09:30|America/New_York|away`), `GET /api/bot/routines` lists it, `DELETE /api/bot/routines/:id` removes it. |
+| Phase 2: Bot Task Execution | PASS | `POST /api/bot/tasks` for `parity-recheck-1025` enqueued task `cmvooy2bj000nteg2kr88nfri`. Completed successfully with status `succeeded`, run `3f1bfef2-26f2-4a6d-9dbd-73d90e99c661` returned message from model: `"Hello from live test! 👋 — parity-recheck-1025, online and ready."` |
+| Phase 2: Approvals / Library / Chat Reset | PASS / NOTED | Endpoints verified live. Cleanup completed: throwaway bot `parity-recheck-1025` and temporary records deleted. Seeded bots (`Loop Bot`, `Helm`, `Review`, `Builder`, `Spec`, `Release`) and accounts intact. |
