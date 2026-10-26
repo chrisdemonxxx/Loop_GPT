@@ -25,7 +25,9 @@ All surfaces in this repo:
 | CI | GitHub Actions (validation workflows, CodeQL, secret scan) |
 
 Out of scope: changing application code. This spec covers tooling only; the gap map
-it produces feeds later, separate plans.
+it produces feeds later, separate plans. Human-like production QA, including its extra
+drivers (Maestro, Android emulator, Electron Stagewright), is specified in
+`2026-10-26-human-qa-harness-design.md`.
 
 ## Constraints
 
