@@ -75,6 +75,7 @@ export function MessageBubble({
 }) {
   const { t } = useI18n()
   const [copied, setCopied] = useState(false)
+  const [copyFallback, setCopyFallback] = useState<string | null>(null)
   const [showPrompt, setShowPrompt] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
@@ -106,11 +107,18 @@ export function MessageBubble({
   const autoChip = mediaTask
     ? ({ t2i: 'auto · text-to-image', i2i: 'auto · image-to-image', t2v: 'auto · text-to-video', i2v: 'auto · image-to-video' } as Record<string, string>)[mediaTask] || `auto · ${mediaTask}`
     : routedTier && TIER_LABELS[routedTier] ? `auto · ${TIER_LABELS[routedTier]}` : null
-  const copy = () => {
-    navigator.clipboard?.writeText(readable).then(() => {
+  const copy = async () => {
+    try {
+      const write = navigator.clipboard?.writeText?.bind(navigator.clipboard)
+      if (!write) throw new Error('copy')
+      await write(readable)
+      setCopyFallback(null)
       setCopied(true)
       setTimeout(() => setCopied(false), 1400)
-    })
+    } catch {
+      setCopied(false)
+      setCopyFallback(readable)
+    }
   }
 
   if (message.role === 'user') {
@@ -168,6 +176,7 @@ export function MessageBubble({
             <ActionBtn onClick={copy} title={t('copyAction')} icon={copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />} />
           </div>
         )}
+        {copyFallback && <CopyFallback text={copyFallback} />}
       </motion.div>
     )
   }
@@ -294,6 +303,7 @@ export function MessageBubble({
           icon={<ThumbsDown size={14} />}
         />
       </div>
+      {copyFallback && <CopyFallback text={copyFallback} />}
 
       {/* Feedback modal (rating + optional comment → telemetry).
           Portaled to document.body: the bubble sits in a transformed list,
@@ -329,6 +339,22 @@ export function MessageBubble({
         document.body,
       )}
     </motion.div>
+  )
+}
+
+function CopyFallback({ text }: { text: string }) {
+  return (
+    <div className="max-w-[85%] space-y-1">
+      <p className="text-[11px] text-rose-400">Couldn&apos;t copy the message.</p>
+      <textarea
+        readOnly
+        value={text}
+        aria-label="Message text"
+        rows={3}
+        onFocus={(e) => e.currentTarget.select()}
+        className="w-full rounded-lg bg-white/[0.04] border border-white/[0.08] px-2 py-1 text-[12px] text-slate-200"
+      />
+    </div>
   )
 }
 

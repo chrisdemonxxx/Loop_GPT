@@ -130,6 +130,19 @@ describe('Sidebar — share', () => {
     expect(screen.queryByTitle('Link copied')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Chat' })).toBeInTheDocument()
   })
+
+  it('shows the share link in a selectable field when copy is blocked', async () => {
+    renderSidebar({
+      conversations: [conv('c1', 'Chat', 0)],
+      onShareConversation: vi.fn(async () => ({ error: 'copy' as const, link: 'https://loop-gpt.cyou/share/abc' })),
+    })
+    fireEvent.click(screen.getByTitle('Share public link'))
+    expect(await screen.findByText("Couldn't copy the link.")).toBeInTheDocument()
+    const field = screen.getByRole('textbox', { name: 'Share link' })
+    expect(field).toHaveValue('https://loop-gpt.cyou/share/abc')
+    expect(field).toHaveAttribute('readonly')
+    expect(screen.queryByTitle('Link copied')).not.toBeInTheDocument()
+  })
 })
 
 describe('Sidebar — message-body search', () => {

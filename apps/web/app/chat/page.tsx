@@ -32,6 +32,7 @@ import { allowedToolsForBot, computerForBot } from '../agents/botTask'
 import ProjectsPanel, { type Project } from '../components/ProjectsPanel'
 import ResearchPanel from '../components/ResearchPanel'
 import { useConversationQuery } from './conversationSelection'
+import { downloadConversationPdf } from './exportPdf'
 import { usePanels, useSidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, useWorkspaceProjects, useConversationsData, useChatStream, useKeyboardSafeBottom, useAttachments, conversationCreateBody, useConversationSearch, useMessageQueue, useWorkspaceConnections, useVoiceMode } from './hooks'
 import { useToast } from '../lib/toast'
 import { useTheme } from '../lib/theme'
@@ -39,16 +40,6 @@ import { useSpeech } from '../lib/voice'
 import type { QueuedMessage } from '../components/chat/types'
 
 // slash commands live in ../lib/commands (registry + parseCommand)
-
-function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, (ch) => (
-    ch === '&' ? '&amp;'
-      : ch === '<' ? '&lt;'
-        : ch === '>' ? '&gt;'
-          : ch === '"' ? '&quot;'
-            : '&#39;'
-  ))
-}
 
 /** The chat workspace: sidebar, header, transcript, composer, and the
  * activity/artifacts overlays. All run mechanics live in ./hooks; presenters
@@ -693,7 +684,7 @@ export default function ChatPage() {
   }
 
   /** Mint + copy a public read-only share link (audit Â§8-15). */
-  async function handleShareConversation(id: string): Promise<string | { error: 'share' | 'copy' }> {
+  async function handleShareConversation(id: string): Promise<string | { error: 'share' | 'copy'; link?: string }> {
     let link = ''
     try {
       const res = await axios.post(`${API_URL}/api/conversations/${id}/share`, {}, { headers: authHeaders() })
@@ -701,10 +692,10 @@ export default function ChatPage() {
       link = `${window.location.origin}${res.data.url}`
     } catch { return { error: 'share' } }
     try {
-      if (!navigator.clipboard?.writeText) return { error: 'copy' }
+      if (!navigator.clipboard?.writeText) return { error: 'copy', link }
       await navigator.clipboard.writeText(link)
       return link
-    } catch { return { error: 'copy' } }
+    } catch { return { error: 'copy', link } }
   }
 
   // -- Export / slash dispatch ---------------------------------------------
@@ -712,25 +703,7 @@ export default function ChatPage() {
     const title = (conversations as Conversation[]).find((c) => c.id === currentConversationId)?.title || 'conversation'
     const md = (messages as Message[]).map((m) => `**${m.role === 'user' ? 'You' : 'Loop GPT'}**\n\n${m.content}`).join('\n\n---\n\n')
     if (format === 'pdf') {
-      // Print-to-PDF: a clean transcript stylesheet + the browser print dialog.
-      // Title and body are escaped — a chat named `<script>` must not run.
-      const w = window.open('', '_blank', 'width=800,height=900')
-      if (!w) {
-        toast.push('error', 'Allow pop-ups to export a PDF.')
-        return
-      }
-      const safeTitle = escapeHtml(title)
-      w.document.write(`<!doctype html><html><head><title>${safeTitle}</title><style>
-        body{font:13px/1.65 -apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1e;max-width:720px;margin:32px auto;padding:0 24px}
-        h1{font-size:22px;margin-bottom:4px} .meta{color:#888;font-size:12px;margin-bottom:28px}
-        .msg{margin:18px 0;padding:14px;border-left:3px solid #c96442;background:#faf9f8;border-radius:6px;white-space:pre-wrap;word-break:break-word}
-        .user{border-left-color:#1a1a1e;background:#f4f4f5} .who{font-weight:600;font-size:12px;color:#777;margin-bottom:6px}
-      </style></head><body><h1>${safeTitle}</h1><div class="meta">Loop GPT transcript · ${escapeHtml(new Date().toLocaleString())}</div>
-      ${messages.map((m) => `<div class="msg ${m.role === 'user' ? 'user' : ''}"><div class="who">${m.role === 'user' ? 'You' : 'Loop GPT'}</div>${escapeHtml(m.content || '')}</div>`).join('')}
-      </body></html>`)
-      w.document.close()
-      w.focus()
-      setTimeout(() => w.print(), 250)
+      downloadConversationPdf(title, messages)
       return
     }
     const blob = new Blob([`# ${title}\n\n${md}`], { type: 'text/markdown' })

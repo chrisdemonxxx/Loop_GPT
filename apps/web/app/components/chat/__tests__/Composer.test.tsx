@@ -306,3 +306,28 @@ describe('group mentions', () => {
     expect(onInputChange).toHaveBeenCalledWith('hey @Helm ')
   })
 })
+
+describe('screen capture denial', () => {
+  it('shows why the browser denied screen capture', async () => {
+    const previous = navigator.mediaDevices
+    const getDisplayMedia = vi.fn(async () => {
+      const denied = new Error('Permission denied')
+      denied.name = 'NotAllowedError'
+      throw denied
+    })
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getDisplayMedia },
+    })
+    try {
+      renderComposer({ showPlus: true })
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Take a screenshot' }))
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveTextContent("Couldn't capture the screen.")
+      expect(alert).toHaveTextContent('Permission denied')
+      expect(getDisplayMedia).toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: previous })
+    }
+  })
+})

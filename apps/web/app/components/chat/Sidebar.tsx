@@ -54,8 +54,9 @@ interface SidebarProps {
   onDeleteConversation: (id: string) => void
   /** Pin/unpin (audit §8-13). */
   onPinConversation: (id: string, pinned: boolean) => void
-  /** Mint + copy a share link; resolves with the copied URL (audit §8-15). */
-  onShareConversation: (id: string) => Promise<string | { error: 'share' | 'copy' } | null>
+  /** Mint + copy a share link; resolves with the copied URL (audit §8-15).
+   * A blocked clipboard returns the link so the row can show it for manual copy. */
+  onShareConversation: (id: string) => Promise<string | { error: 'share' | 'copy'; link?: string } | null>
   /** Search box (page-owned so the message-body search hook shares it). */
   searchQuery: string
   onSearchChange: (v: string) => void
@@ -117,7 +118,7 @@ export default function Sidebar({
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [projectsOpen, setProjectsOpen] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  const [shareNote, setShareNote] = useState<{ id: string; kind: 'copied' | 'share' | 'copy' } | null>(null)
+  const [shareNote, setShareNote] = useState<{ id: string; kind: 'copied' | 'share' | 'copy'; link?: string } | null>(null)
   const { locale, setLocale, t } = useI18n()
 
   const q = searchQuery.trim().toLowerCase()
@@ -152,14 +153,15 @@ export default function Sidebar({
   }, [listed])
 
   async function handleShare(id: string) {
-    let result: string | null | { error: 'share' | 'copy' } = null
+    let result: string | null | { error: 'share' | 'copy'; link?: string } = null
     try { result = await onShareConversation(id) } catch { result = { error: 'share' } }
     if (typeof result === 'string' && result) {
       setShareNote({ id, kind: 'copied' })
       setTimeout(() => setShareNote((v) => (v?.id === id && v.kind === 'copied' ? null : v)), 1600)
       return
     }
-    setShareNote({ id, kind: result && typeof result === 'object' && result.error === 'copy' ? 'copy' : 'share' })
+    const copyBlocked = result && typeof result === 'object' && result.error === 'copy' ? result : null
+    setShareNote({ id, kind: copyBlocked ? 'copy' : 'share', link: copyBlocked?.link })
   }
 
   async function commitEdit(rawTitle?: string) {
@@ -313,6 +315,7 @@ export default function Sidebar({
                 editing={editingId === c.id}
                 editingTitle={editingTitle}
                 shareKind={shareNote?.id === c.id ? shareNote.kind : null}
+                shareLink={shareNote?.id === c.id ? shareNote.link : undefined}
                 onStartEdit={() => { setEditingId(c.id); setEditingTitle(c.title || '') }}
                 onEditChange={setEditingTitle}
                 onCommitEdit={commitEdit}
@@ -483,7 +486,7 @@ export default function Sidebar({
 
 /** One conversation row: title, star/pin, share, rename, delete. */
 function ConversationRow({
-  conversation: c, active, editing, editingTitle, shareKind,
+  conversation: c, active, editing, editingTitle, shareKind, shareLink,
   onStartEdit, onEditChange, onCommitEdit, onCancelEdit, onSelect, onPin, onShare, onDelete,
 }: {
   conversation: Conversation
@@ -491,6 +494,7 @@ function ConversationRow({
   editing: boolean
   editingTitle: string
   shareKind: 'copied' | 'share' | 'copy' | null
+  shareLink?: string
   onStartEdit: () => void
   onEditChange: (v: string) => void
   onCommitEdit: (value: string) => void
@@ -546,7 +550,20 @@ function ConversationRow({
       </div>
       {shareKind === 'copied' && <p className="px-2.5 pb-1.5 text-[11px] text-emerald-400" role="status">Link copied</p>}
       {shareKind === 'share' && <p className="px-2.5 pb-1.5 text-[11px] text-rose-400">Couldn&apos;t share this session.</p>}
-      {shareKind === 'copy' && <p className="px-2.5 pb-1.5 text-[11px] text-rose-400">Couldn&apos;t copy the link.</p>}
+      {shareKind === 'copy' && (
+        <div className="px-2.5 pb-1.5 space-y-1">
+          <p className="text-[11px] text-rose-400">Couldn&apos;t copy the link.</p>
+          {shareLink && (
+            <input
+              readOnly
+              value={shareLink}
+              aria-label="Share link"
+              onFocus={(e) => e.currentTarget.select()}
+              className="w-full rounded bg-white/[0.04] border border-white/[0.08] px-2 py-1 text-[11px] text-slate-200"
+            />
+          )}
+        </div>
+      )}
     </div>
   )
 }

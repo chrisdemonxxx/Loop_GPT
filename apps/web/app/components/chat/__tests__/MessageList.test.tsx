@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { ToastProvider } from '../../../lib/toast'
 import MessageList from '../MessageList'
 import { MessageBubble } from '../MessageBubble'
@@ -54,7 +54,7 @@ describe('chat text stays clean', () => {
     expect(screen.getByText(/next/)).toBeInTheDocument()
   })
 
-  it('strips tool JSON from stored thoughts and copies the shown answer', () => {
+  it('strips tool JSON from stored thoughts and copies the shown answer', async () => {
     const writeText = vi.fn(async (_text: string) => undefined)
     Object.assign(navigator, { clipboard: { writeText } })
     render(
@@ -70,8 +70,20 @@ describe('chat text stays clean', () => {
     expect(screen.getByText('Ready')).toBeInTheDocument()
     expect(screen.getByText(/Notes/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Copy message' }))
+    await act(async () => { await Promise.resolve() })
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Ready'))
     expect(String(writeText.mock.calls[0][0])).not.toMatch(/"tool"/)
+  })
+
+  it('shows the message in a selectable field when copy is blocked', async () => {
+    const writeText = vi.fn(async () => { throw new Error('NotAllowedError') })
+    Object.assign(navigator, { clipboard: { writeText } })
+    render(<MessageBubble message={msg({ content: 'Ready to copy' })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Copy message' }))
+    expect(await screen.findByText("Couldn't copy the message.")).toBeInTheDocument()
+    const field = screen.getByRole('textbox', { name: 'Message text' })
+    expect(field).toHaveValue('Ready to copy')
+    expect(field).toHaveAttribute('readonly')
   })
 })
 

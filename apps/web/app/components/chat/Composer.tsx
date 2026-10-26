@@ -109,6 +109,7 @@ export default function Composer({
   const [mentionDismissed, setMentionDismissed] = useState(false)
   const [mentionIndex, setMentionIndex] = useState(0)
   const [dragActive, setDragActive] = useState(false)
+  const [captureError, setCaptureError] = useState<string | null>(null)
   const dragDepth = useRef(0)
   const { t } = useI18n()
   const canScreenshot = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia
@@ -142,6 +143,7 @@ export default function Composer({
   const stopAndSend = () => { stopDictation(); requestAnimationFrame(() => onSend()) }
 
   const captureScreen = async () => {
+    setCaptureError(null)
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
       const track = stream.getVideoTracks()[0]
@@ -157,7 +159,11 @@ export default function Composer({
       canvas.toBlob((blob) => {
         if (blob) onImagesSelected([new File([blob], 'screenshot.png', { type: 'image/png' })])
       }, 'image/png')
-    } catch { /* user dismissed the picker; no-op */ }
+    } catch (err) {
+      const message = err instanceof Error ? err.message.trim() : ''
+      const name = err instanceof Error && err.name && err.name !== 'Error' ? err.name : ''
+      setCaptureError(message || name || 'The browser blocked screen capture.')
+    }
   }
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -262,6 +268,11 @@ export default function Composer({
       {/* Hidden file inputs */}
       <input ref={fileInputRef} type="file" accept="image/*,.pdf,.docx,.xlsx,.csv,.txt,.md,.markdown" multiple onChange={handleImageChange} className="hidden" />
 
+      {captureError && (
+        <p role="alert" className="mb-2 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-200">
+          Couldn&apos;t capture the screen. {captureError}
+        </p>
+      )}
       {/* Input form */}
       <form
         onSubmit={onSend}
