@@ -7,10 +7,14 @@ function hashFile(filepath: string): string {
   return createHash('sha256').update(fs.readFileSync(filepath)).digest('hex')
 }
 
-describe('extension packaging drift test (Decision 2)', () => {
-  const root = path.resolve(__dirname, '../../../..')
-  const srcDir = path.join(root, 'packages/browser-extension/src')
-  const srcFiles = fs.readdirSync(srcDir).filter((f) => f !== 'manifest.json' && f !== 'host.js')
+const root = path.resolve(__dirname, '../../../..')
+const srcDir = path.join(root, 'packages/browser-extension/src')
+const hasMonorepoRoot = fs.existsSync(srcDir)
+
+describe.skipIf(!hasMonorepoRoot)('extension packaging drift test (Decision 2)', () => {
+  const srcFiles = hasMonorepoRoot
+    ? fs.readdirSync(srcDir).filter((f) => f !== 'manifest.json' && f !== 'host.js')
+    : []
 
   const targetDirs = [
     path.join(root, 'apps/extension'),
