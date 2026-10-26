@@ -238,6 +238,7 @@ class Workspace:
         secret_handler: Any | None = None,
         approved_gates: frozenset[str] = frozenset(),
         run_id: str = "local",
+        browser_handler: Any | None = None,
     ) -> ToolExecutor:
         """The dispatch table handed to the agent loop.
 
@@ -257,6 +258,8 @@ class Workspace:
             handlers["provision"] = provision_handler
         if secret_handler is not None and mode == "build":
             handlers["request_secret"] = secret_handler
+        if browser_handler is not None and mode != "chat":
+            handlers["browser"] = browser_handler
         return ToolExecutor(
             handlers,
             approved_gates=approved_gates,

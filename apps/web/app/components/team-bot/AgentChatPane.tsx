@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUp, Bot, Clock, Loader2, Monitor, Square, GraduationCap } from 'lucide-react'
 import { BOT_STATUS_LABEL, type BotQuota, type BotSkillRef, type BotTask } from '../../lib/bot'
 import { computerUnavailableMessage, taskInProgress } from '../../agents/botTask'
+import { BrowserRunSwitch } from '../browser/BrowserRunSwitch'
 import { Markdown } from '../chat/Markdown'
 import { PdfView, SheetView, useSheetRows } from '../chat/ArtifactViewers'
 
@@ -50,6 +51,10 @@ export function AgentChatPane({
   pendingApproval = null,
   onApprove,
   onApprovalMode,
+  browserEnabled = false,
+  browserDeviceId = '',
+  onBrowserEnabled,
+  onBrowserDevice,
 }: {
   tasks: BotTask[] | null
   sending: boolean
@@ -76,6 +81,10 @@ export function AgentChatPane({
   pendingApproval?: { id: string; name: string; category: 'computer' | 'terminal' | 'tool'; args?: Record<string, unknown> } | null
   onApprove?: (approvalId: string, approved: boolean) => void
   onApprovalMode?: (mode: 'ask' | 'safe' | 'accept') => void
+  browserEnabled?: boolean
+  browserDeviceId?: string
+  onBrowserEnabled?: (next: boolean) => void
+  onBrowserDevice?: (id: string) => void
 }) {
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<Array<{ name: string; path: string }>>([])
@@ -112,7 +121,15 @@ export function AgentChatPane({
 
   return (
     <div className="flex flex-col min-h-0 h-full">
-      <div className="flex items-center justify-end gap-2 px-5 pt-3">
+      <div className="flex items-center justify-between gap-2 px-5 pt-3">
+        <BrowserRunSwitch
+          enabled={browserEnabled}
+          deviceId={browserDeviceId}
+          onEnabled={(next) => onBrowserEnabled?.(next)}
+          onDevice={(id) => onBrowserDevice?.(id)}
+          compact
+        />
+        <div className="flex items-center gap-2">
         {onApprovalMode && (
           <label className="text-2xs text-[var(--ink-muted)]">
             Approvals
@@ -133,6 +150,7 @@ export function AgentChatPane({
             Reset conversation
           </button>
         )}
+        </div>
       </div>
       {approvalMode !== 'accept' && pendingApproval && (
         <div className="mx-5 mt-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-3 py-2 text-ui-xs">

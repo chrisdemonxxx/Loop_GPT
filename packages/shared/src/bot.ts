@@ -135,6 +135,8 @@ export interface EnqueueBotInput {
   allowedTools?: string[]
   maxSteps?: number
   computer?: { enabled: boolean; ttlMinutes?: number }
+  /** Paired browser beside the cloud computer. */
+  browser?: { enabled: boolean; deviceId?: string }
   skillId?: string
   /** Named bot this task runs as. Omitted → the owner's primary Loop Bot. */
   botId?: string

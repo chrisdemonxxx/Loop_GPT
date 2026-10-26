@@ -57,6 +57,10 @@ class RunWorkflowInput:
     budget: WorkflowBudget = field(default_factory=WorkflowBudget)
     task_id: str = "task-1"
     stack: str = "react"
+    #: Paired browser on the shared Node bridge. Empty device id leaves preview smoke.
+    browser: bool = False
+    browser_device_id: str = ""
+    browser_grant_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)

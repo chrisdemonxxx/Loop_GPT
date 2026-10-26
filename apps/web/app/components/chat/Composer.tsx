@@ -35,6 +35,11 @@ interface ComposerProps {
    *  off = explicit no-think. Wired against the Brain tri-state above it. */
   thinking: EffortValue
   onToggleThinking: (next: EffortValue) => void
+  /** Paired browser for the next agent or research turn. Off by default. */
+  browser?: boolean
+  browserDeviceId?: string
+  onBrowserChange?: (next: boolean) => void
+  onBrowserDeviceChange?: (id: string) => void
   /** Context meter (§2.5): 0-100 estimated window usage. */
   contextPct?: number
   contextTokens?: number
@@ -91,6 +96,7 @@ const MAX_IMAGES = 4
 export default function Composer({
   input, attachments, onRemoveAttachment, onRetryAttachment, running, runMode,
   webSearch, onToggleWebSearch, thinking, onToggleThinking,
+  browser, browserDeviceId, onBrowserChange, onBrowserDeviceChange,
   contextTokens, incognito,
   showSlash, showPlus,
   onInputChange, onSelectSlashCommand, onSend, onStop,
@@ -442,9 +448,13 @@ export default function Composer({
             runMode={runMode}
             webSearch={webSearch}
             thinking={thinking}
+            browser={browser}
+            browserDeviceId={browserDeviceId}
             onRunModeChange={onRunModeChange}
             onWebSearchChange={onToggleWebSearch}
             onThinkingChange={onToggleThinking}
+            onBrowserChange={onBrowserChange}
+            onBrowserDeviceChange={onBrowserDeviceChange}
             dismissSignal={runDismiss}
             onOpen={onClosePlus}
           />

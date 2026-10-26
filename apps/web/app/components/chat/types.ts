@@ -93,6 +93,9 @@ export interface QueuedMessage {
   incognito: boolean
   projectId?: string
   webSearch?: 'auto' | 'on' | 'off'
+  /** Paired browser captured with the queued message. */
+  browser?: boolean
+  browserDeviceId?: string
   /** Effort union (contract §A, rank 7): the 6 composer positions —
    *  auto = server default, low/medium/high/xhigh, off = no CoT. */
   thinking?: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'off'

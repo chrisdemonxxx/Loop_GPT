@@ -75,6 +75,8 @@ export default function ChatPage() {
   const [runMode, setRunMode] = useState<'auto' | 'plan' | 'accept' | 'step'>('auto')
   // â”€â”€ Per-run capability toggles (Â§8-25/26): auto = server default.
   const [webSearch, setWebSearch] = useState<'auto' | 'on' | 'off'>('auto')
+  const [browserOn, setBrowserOn] = useState(false)
+  const [browserDeviceId, setBrowserDeviceId] = useState('')
   // Effort union (contract Â§A): auto/low/medium/high/xhigh/off —
   // the 6-way selector that replaced the tri-state Brain toggle.
   const [thinking, setThinking] = useState<EffortValue>('auto')
@@ -435,6 +437,8 @@ export default function ChatPage() {
       projectId: snapshot.projectId,
       // Explicit overrides only (Â§8-25/26): undefined keeps the server default.
       webSearch: snapshot.webSearch === 'auto' ? undefined : snapshot.webSearch === 'on',
+      browser: snapshot.browser === true,
+      browserDeviceId: snapshot.browserDeviceId,
       // Effort union (contract Â§A): autoâ†’undefined, offâ†’false,
       // low..xhigh pass through; 'medium'â†’true keeps legacy clients 200ing
       // (the old tri-state's 'on').
@@ -603,6 +607,8 @@ export default function ChatPage() {
       runMode, modelTier, selectedTools, incognito,
       projectId: activeProjectId || undefined,
       webSearch, thinking,
+      browser: browserOn,
+      browserDeviceId,
       ...(connectionIds ? { connectionIds } : {}),
       ...(branchParent !== undefined ? { branchParent } : {}),
     }
@@ -1179,6 +1185,19 @@ export default function ChatPage() {
               onToggleWebSearch={setWebSearch}
               thinking={thinking}
               onToggleThinking={setThinking}
+              browser={browserOn}
+              browserDeviceId={browserDeviceId}
+              onBrowserChange={(next) => {
+                setBrowserOn(next)
+                if (!next && chat.liveRunId) {
+                  void fetch(`${API_URL}/api/browser/release`, {
+                    method: 'POST',
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ source: 'chat', runId: chat.liveRunId }),
+                  }).catch(() => undefined)
+                }
+              }}
+              onBrowserDeviceChange={setBrowserDeviceId}
               contextTokens={contextTokens}
               incognito={incognito}
               showSlash={showSlash}

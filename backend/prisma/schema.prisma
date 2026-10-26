@@ -91,6 +91,8 @@ model User {
   botBox        BotBox?
   batchJobs     BatchJob[]
   abuseReports  AbuseReport[]
+  browserDevices BrowserDevice[]
+  browserGrants  BrowserGrant[]
 
   @@index([role])
   @@index([plan])
@@ -757,6 +759,8 @@ model AgentTask {
   maxSteps        Int?
   /// Reserved for the dedicated-computer phase: { enabled, takeover, ttlMinutes }.
   computer        Json?
+  /// Paired browser for this task, beside computer: { enabled, deviceId }.
+  browser         Json?
   priority        Int       @default(0)
   attempts        Int       @default(0)
   failures        Int       @default(0)
@@ -951,4 +955,45 @@ model AbuseReport {
 
   @@index([status, slaDueAt])
   @@index([targetType, targetId])
+}
+
+/// Paired browser extension device for driving person's browser from Chat/Build/Bot.
+model BrowserDevice {
+  id             String         @id @default(cuid())
+  userId         String
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  family         String         // 'chromium' | 'firefox' | 'tor' | 'octo'
+  browserName    String
+  profileLabel   String         @default("")
+  packageVersion String         @default("")
+  packageKind    String         @default("")
+  installId      String
+  tokenHash      String         @unique
+  pairedAt       DateTime       @default(now())
+  lastSeenAt     DateTime       @default(now())
+  needsYou       Json?          // { reason: string, at: string } | null
+  grants         BrowserGrant[]
+
+  @@unique([userId, installId])
+  @@index([userId])
+}
+
+/// Single-use / short-lived authorization grant for driving a paired browser (Build / Bot / Chat).
+model BrowserGrant {
+  id        String        @id @default(cuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId  String
+  device    BrowserDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  source    String        // 'chat' | 'bot' | 'build'
+  runId     String?       // Bound when execution begins
+  used      Boolean       @default(false)
+  revoked   Boolean       @default(false)
+  expiresAt DateTime
+  createdAt DateTime      @default(now())
+
+  @@index([userId, deviceId])
+  @@index([runId])
+  @@index([expiresAt])
 }

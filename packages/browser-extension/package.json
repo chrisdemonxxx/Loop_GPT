@@ -1,0 +1,10 @@
+{
+  "name": "@loop/browser-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Source package and synchronization build for Loop browser extensions",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  }
+}

@@ -694,6 +694,10 @@ class RunRequest:
     #: Phase 2.9: approved plans can run detached; finish creates a pending
     #: review instead of staying on the main checkpoint line.
     background: bool = False
+    #: Paired browser on the shared Node bridge. Off leaves the preview smoke path.
+    browser: bool = False
+    browser_device_id: str = ""
+    browser_grant_id: str = ""
 
 
 @dataclass(slots=True)
@@ -960,6 +964,8 @@ class RunManager:
         # targets and published snapshots outlive the process.
         self._checkpoints = FileCheckpointStore(self._projects_root / ".checkpoints")
         self._lock = threading.Lock()
+        #: run_id → (actor user id, paired device id) for cancel/stop.
+        self._browser_runs: dict[str, tuple[str, str]] = {}
 
     # -- queries ---------------------------------------------------------
 
@@ -983,6 +989,11 @@ class RunManager:
         if state is None or state.finished_at is not None:
             return False
         state.cancelled.set()
+        paired = self._browser_runs.pop(run_id, None)
+        if paired is not None:
+            from .browser_bridge import stop_paired_browser
+
+            stop_paired_browser(user_id=paired[0], run_id=run_id)
         return True
 
     def list_runs(self, *, tenant_id: str | None = None) -> list[RunState]:
@@ -1365,6 +1376,13 @@ class RunManager:
                 system = CHAT_SYSTEM_PROMPT + "\n" + guidance_for(state.stack)
             elif state.mode == "plan":
                 system = PLAN_SYSTEM_PROMPT + "\n" + guidance_for(state.stack)
+            if request.browser and request.browser_device_id:
+                system += (
+                    "\n\nA paired browser is available through the browser tool "
+                    "(goto, click, fill, screenshot, console_errors, assert_text). "
+                    "An .onion URL works only when that device paired as Tor Browser. "
+                    "smoke still checks the project preview."
+                )
 
             from .verify_bridge import build_verifier
 
@@ -1431,12 +1449,43 @@ class RunManager:
                         {"request_id": req["request_id"], "name": req["name"]},
                     )
 
+            browser_handler = None
+            if request.browser and request.browser_device_id and tool_mode != "chat":
+                from loopit_agent_core.tools import ToolCall, ToolResult
+
+                from .browser_bridge import invoke_paired_browser, translate_browser_action
+
+                self._browser_runs[state.run_id] = (state.actor_id, request.browser_device_id)
+
+                def browser_handler(call: ToolCall) -> ToolResult:  # noqa: F811
+                    translated = translate_browser_action(dict(call.args))
+                    if translated is None:
+                        return ToolResult(
+                            False,
+                            "smoke and unknown browser actions stay on the preview checker",
+                            {},
+                        )
+                    tool, args = translated
+                    outcome = invoke_paired_browser(
+                        user_id=state.actor_id,
+                        device_id=request.browser_device_id,
+                        run_id=state.run_id,
+                        tool=tool,
+                        args=args,
+                        grant_id=request.browser_grant_id,
+                    )
+                    content = str(outcome.get("content") or outcome.get("error") or "")
+                    if outcome.get("ok") is False or outcome.get("isError"):
+                        return ToolResult(False, content, {})
+                    return ToolResult(True, content, {})
+
             loop = AgentLoop(
                 model=model,
                 executor=workspace.executor(
                     mode=tool_mode,
                     provision_handler=provision_handler,
                     secret_handler=secret_handler,
+                    browser_handler=browser_handler,
                     approved_gates=frozenset(state.approved_gate_bindings),
                     run_id=state.run_id,
                 ),

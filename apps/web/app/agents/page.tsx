@@ -20,6 +20,8 @@ import {
 import { API_URL, authHeaders, getStoredUser } from '../lib/api'
 import { computerLevel, rosterPresence } from './presence'
 import { AccountAppsPanel } from '../components/team-bot/AccountAppsPanel'
+import { BrowserDeviceNames } from '../components/browser/BrowserConnectors'
+import { releaseBrowser } from '../components/browser/useBrowserDevices'
 import { LibraryBoard } from '../components/team-bot/LibraryBoard'
 import { MemoryPanel } from '../components/team-bot/MemoryPanel'
 import { RoutineComposerFields } from '../components/team-bot/RoutineComposerFields'
@@ -112,6 +114,8 @@ function AgentsPageInner() {
   const [computerExpanded, setComputerExpanded] = useState(false)
   const [suggestedSkills, setSuggestedSkills] = useState<BotSkillRef[]>([])
   const [sendError, setSendError] = useState('')
+  const [browserOn, setBrowserOn] = useState(false)
+  const [browserDeviceId, setBrowserDeviceId] = useState('')
   const [actionError, setActionError] = useState('')
   const watchStartedRef = useRef(0)
 
@@ -372,6 +376,7 @@ function AgentsPageInner() {
         maxSteps: 16,
         allowedTools,
         ...(computer ? { computer } : {}),
+        ...(browserOn && browserDeviceId ? { browser: { enabled: true, deviceId: browserDeviceId } } : {}),
         conversationId,
         botId,
         ...(skillId ? { skillId } : {}),
@@ -477,6 +482,13 @@ function AgentsPageInner() {
           attachedSkill={attachedSkill}
           onAttachSkill={setAttachedSkill}
           onDismissSuggestions={() => setSuggestedSkills([])}
+          browserEnabled={browserOn}
+          browserDeviceId={browserDeviceId}
+          onBrowserEnabled={(next) => {
+            setBrowserOn(next)
+            if (!next) void releaseBrowser('bot')
+          }}
+          onBrowserDevice={setBrowserDeviceId}
           onSend={async (text, attachments) => { await sendInstruction.mutateAsync({ text, attachments }) }}
           onReset={() => {
             if (!botId) return
@@ -635,6 +647,7 @@ function AgentsPageInner() {
                     }}
                   />
                 )}
+                <BrowserDeviceNames />
                 <AccountAppsPanel apiUrl={API_URL} authHeaders={authHeaders} />
                 <div>
                   <h3 className="text-2xs uppercase tracking-widest text-[var(--ink-muted)] font-medium mb-2">Routines</h3>

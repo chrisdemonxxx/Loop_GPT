@@ -31,7 +31,7 @@ interface Props { onClose: () => void; initialTab?: string; workspaceId?: string
  *
  * Tab groups (blueprint IA): Settings — general · account · privacy · billing ·
  * tools(≡capabilities) · memory · reflect · time · code; Customize — skills ·
- * connectors · plugins · personalization · appearance.
+ * connectors (browser pairing lives here, not on Plugins) · plugins · personalization · appearance.
  *
  * `#settings/<panel>` / `#settings/privacy/<sub>` drive the active panel:
  * selecting pushes a history entry (back/forward walks panels), and leaving

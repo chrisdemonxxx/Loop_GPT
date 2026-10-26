@@ -31,6 +31,9 @@ import { ComputerSession } from './computerSession'
 import { E2BDesktopError, attachDesktop } from './e2bDesktop'
 import { attachUserBoxFromDB, createBoxTaskFolder, extendUserBoxLease, sharedBoxAttachBudget } from './botBox'
 import { COMPUTER_TOOL_NAMES, computerToolsForScreen } from '../agent/tools/computerTools'
+import { BROWSER_TOOL_NAMES } from '../agent/browserGrant'
+import { browserToolDefinitions } from '../agent/tools/browserTools'
+import { armBrowserRun, endBrowserRun, isDeviceLive } from './browserBridge'
 import { rememberFactTool } from '../agent/tools/metaTools'
 import { builtinToolNames } from '../agent'
 import { saveArtifact } from '../agent/artifacts'
@@ -264,6 +267,13 @@ class BotAbort extends Error {
   constructor(public readonly reason: 'cancelled' | 'lease_lost' | 'worker_stop' | 'computer_ttl') { super(reason) }
 }
 
+/** task.browser JSON → the paired device for this task (off by default). */
+export function browserConfig(raw: unknown): { enabled: boolean; deviceId: string } {
+  const cfg = raw && typeof raw === 'object' ? raw as { enabled?: unknown; deviceId?: unknown } : {}
+  const deviceId = typeof cfg.deviceId === 'string' ? cfg.deviceId : ''
+  return { enabled: cfg.enabled === true && deviceId.length > 0, deviceId }
+}
+
 /** task.computer JSON → a bounded session config (disabled by default). */
 function computerConfig(raw: unknown): { enabled: boolean; ttlMinutes: number } {
   const cfg = raw && typeof raw === 'object' ? raw as { enabled?: unknown; ttlMinutes?: unknown } : {}
@@ -467,12 +477,21 @@ export async function executeBotTask(
     if (skillTool && !runNames.includes('create_skill')) runNames = [...runNames, 'create_skill']
     const connectorTools = task.userId ? connectorRegistry.toolsFor(task.userId) : []
     runNames = mergeConnectorTools(runNames, connectorTools)
+    const browserCfg = browserConfig((task as { browser?: unknown }).browser)
+    const browserOn = !!task.userId && browserCfg.enabled && isDeviceLive(task.userId, browserCfg.deviceId)
+    if (browserOn && task.userId) {
+      armBrowserRun({ runId: run.runId, userId: task.userId, deviceId: browserCfg.deviceId, source: 'bot' })
+      ctx.scratch.browser = { runId: run.runId, userId: task.userId, deviceId: browserCfg.deviceId, source: 'bot' }
+      runNames = [...new Set([...runNames, ...BROWSER_TOOL_NAMES])]
+      systemPrompt += '\n\nA paired browser is available through browser_* tools, separate from the cloud computer. It is the person\'s visible window. Every action includes console and network lines since the previous action. If a result says to continue in the browser, stop and wait. If a browser tool says the device is offline or was turned off, use web_search for public pages.'
+    }
     const approvalMode = isTeach ? 'accept' as const : (task.userId ? readApprovalMode(task.userId) : 'ask' as const)
     // Grant AFTER identity/skill attachment so remember_fact (and skill tools)
     // are actually authorized — building earlier left them as names-only → 403.
     // Tool descriptions use the live xdpyinfo size so clicks match the canvas.
     const computerTools = computer ? computerToolsForScreen(screen) : []
-    const catalog = botRunToolCatalog(runNames, { builtins, computerTools, skillTool, extra: connectorTools })
+    const browserTools = browserOn ? browserToolDefinitions() : []
+    const catalog = botRunToolCatalog(runNames, { builtins, computerTools, skillTool, extra: [...connectorTools, ...browserTools] })
     const grantedTools = buildGrantedTools(runNames, catalog)
     const authorizedCtx = await authorizeRunContext(ctx, identity.workspaceId, grantedTools)
     run.emit({ type: 'run', runId: run.runId } as AgentEvent)
@@ -712,6 +731,7 @@ export async function executeBotTask(
     workerSignal?.removeEventListener('abort', stopFromWorker)
     if (ttlTimer) clearTimeout(ttlTimer)
     clearTeachSteps(run.runId)
+    if (task.userId && run?.runId) endBrowserRun(task.userId, run.runId, abort.signal.aborted)
     if (computer) {
       // Meter VM-minutes onto the run record before tearing the desktop down.
       await setRunComputer(run.runId, { minutes: computer.minutes(), endedAt: new Date().toISOString() })

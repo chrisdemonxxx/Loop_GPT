@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Loop GPT",
+  "version": "1.0.0",
+  "description": "Drive a visible tab group from Loop Chat, Build, and Loop Bot.",
+  "permissions": [
+    "debugger",
+    "tabs",
+    "tabGroups",
+    "scripting",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Loop GPT"
+  }
+}

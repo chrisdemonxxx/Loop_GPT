@@ -17,6 +17,9 @@ import { prepareRunConversation } from '../services/runWorkspace'
 import { WorkspaceError } from '../services/workspaces'
 import { authorizeRunContext } from '../agent/runAuthorization'
 import { availableTools } from '../agent'
+import { applyWebSearchToggle, withBrowserGrant } from '../agent/browserGrant'
+import { browserToolDefinitions } from '../agent/tools/browserTools'
+import { armBrowserRun, endBrowserRun, isDeviceLive } from '../services/browserBridge'
 import { getActiveSkills } from '../agent/skills/skillLoader'
 import { BUILTIN_SKILLS } from '../agent/skills/builtin'
 import { selectedConnectionIds, workspaceConnectionTools } from '../services/workspaceTools'
@@ -200,8 +203,12 @@ export const streamInput = z.object({
   projectId: z.string().min(1).max(160).optional(),
   /** Web-search override (audit §8-25): true forces web_search+web_fetch in;
    * false strips them — regardless of the per-chat tool selection. Agent
-   * mode only (chat has no tools; research requires them). */
+   * mode only (chat has no tools; research requires them). It never adds
+   * or removes browser_* tools. */
   webSearch: z.boolean().optional(),
+  /** Paired browser for this turn. Granted only when true and that device socket is live. */
+  browser: z.boolean().optional(),
+  browserDeviceId: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/).optional(),
   /** Extended-thinking override (audit §8-26), widened to effort tiers
    * (contract §A): `true` ≡ `'medium'`, `false` ≡ off, omitted ≡ the
    * operator env default. Resolved by agent/thinking.ts. */
@@ -298,10 +305,7 @@ export async function streamAgentRun(req: Request, res: Response) {
   // explicit override of the tool list — on forces the web tools in even
   // when the per-chat selection excluded them; off strips them out.
   if (mode === 'agent' && input.data.webSearch !== undefined) {
-    const WEB_TOOLS = ['web_search', 'web_fetch']
-    selectedNames = input.data.webSearch
-      ? [...new Set([...selectedNames, ...WEB_TOOLS.filter((n) => selectableNames.includes(n))])]
-      : selectedNames.filter((n) => !WEB_TOOLS.includes(n))
+    selectedNames = applyWebSearchToggle(selectedNames, input.data.webSearch, selectableNames)
   }
   if (mode === 'research' && !['web_search', 'web_fetch'].every((name) => selectedNames.includes(name))) return res.status(400).json({ error: 'Research requires web_search and web_fetch' })
   if (attachmentIds.length && conversationId === 'new') return res.status(400).json({ error: 'Use the conversation ID returned by image upload' })
@@ -561,8 +565,18 @@ export async function streamAgentRun(req: Request, res: Response) {
       const userSkills = active.skills.filter((s) => !s.builtin)
       const skillInstructions = [...builtinMatched, ...userSkills].map((skill) => skill.instructions)
       const skillIndex = [...builtinMatched, ...userSkills].map((skill) => `- ${skill.name}: ${skill.description}`)
+      const browserDeviceId = input.data.browserDeviceId
+      const browserLive = input.data.browser === true && !!browserDeviceId && isDeviceLive(userId, browserDeviceId)
+      selectedNames = withBrowserGrant(selectedNames, { mode, browser: input.data.browser, deviceLive: browserLive })
+      if (browserLive && browserDeviceId && replayRun) {
+        armBrowserRun({ runId: replayRun.runId, userId, deviceId: browserDeviceId, source: 'chat' })
+        ctx.scratch.browser = { runId: replayRun.runId, userId, deviceId: browserDeviceId, source: 'chat' }
+      }
       const systemPrompt = [
         botPersona || getBaseSystemPrompt(),
+        selectedNames.includes('browser_navigate')
+          ? 'A paired browser is available through browser_* tools. It is the person\'s visible window. Every action includes the console and network lines since the previous action. If a result says to continue in the browser, stop and wait. If a browser tool says the device is offline or was turned off, use web_search for public pages. An .onion address only works on a Tor Browser device.'
+          : '',
         selectedNames.includes(LOOPIT_START_TOOL) ? LOOPIT_BUILD_INSTRUCTIONS : '',
         skillIndex.length ? `Available skills (already applied where relevant):\n${skillIndex.join('\n')}` : '',
         ...skillInstructions,
@@ -597,7 +611,11 @@ export async function streamAgentRun(req: Request, res: Response) {
         },
       }
 
-      const authorizedCtx = await authorizeRunContext(capturingCtx, conversation.workspaceId!, reviewed.filter((tool) => selectedNames.includes(tool.name)))
+      const browserDefs = browserToolDefinitions().filter((tool) => selectedNames.includes(tool.name))
+      const authorizedCtx = await authorizeRunContext(capturingCtx, conversation.workspaceId!, [
+        ...reviewed.filter((tool) => selectedNames.includes(tool.name)),
+        ...browserDefs,
+      ])
       lifecycle.check()
       const dispatch = dailyDispatch(reservation.id, researchRun ? researchRun.signal : lifecycle.signal)
       const beforeDispatch = async () => {
@@ -716,6 +734,7 @@ export async function streamAgentRun(req: Request, res: Response) {
       }).catch(() => {})
     }
   } finally {
+    if (replayRun) endBrowserRun(userId, replayRun.runId, false)
     try { await cleanupDailyReservation(reservation?.id) }
     finally {
       try { stopKeepalive?.() } catch { /* timer already gone */ }

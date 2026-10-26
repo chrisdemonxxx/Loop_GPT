@@ -75,6 +75,13 @@ describe('enqueueInput schema', () => {
     expect(() => enqueueInput.parse({ ...base, conversationId: '' })).toThrow()
   })
 
+  it('accepts a paired browser device and rejects an enabled flag without one', () => {
+    const parsed = enqueueInput.parse({ ...base, browser: { enabled: true, deviceId: 'brw_abc' } })
+    expect(parsed.browser).toEqual({ enabled: true, deviceId: 'brw_abc' })
+    expect(() => enqueueInput.parse({ ...base, browser: { enabled: true } })).toThrow()
+    expect(enqueueInput.parse({ ...base, browser: { enabled: false } }).browser).toEqual({ enabled: false })
+  })
+
   it('accepts teach tasks and skillId links; teach must carry a computer', () => {
     expect(enqueueInput.parse({ ...base, kind: 'teach', computer: { enabled: true } }).kind).toBe('teach')
     expect(enqueueInput.parse({ ...base, skillId: 'cold-email-writer' }).skillId).toBe('cold-email-writer')

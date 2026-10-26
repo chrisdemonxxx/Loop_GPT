@@ -265,6 +265,18 @@ def execute_agent_step(payload: AgentStepInput) -> AgentStepResult:
                 ),
             )
         consumed_gate_binding = binding
+    if tool == "browser" and payload.run.browser_device_id:
+        bridged = _paired_browser_step(payload, args)
+        if bridged is not None:
+            summary, ok = bridged
+            return AgentStepResult(
+                StepOutcome.CONTINUE if ok else StepOutcome.STALLED,
+                summary,
+                usage,
+                failure_class=None if ok else classify_failure(summary).value,
+                consumed_gate_binding=consumed_gate_binding,
+                transcript_delta=_transcript_delta(model.content, tool, args, summary),
+            )
     if not settings.workspace_dispatch_url:
         _raise_non_retryable(FailureClass.HARD_ERROR, "LOOPIT_WORKSPACE_DISPATCH_URL is not set")
 
@@ -758,9 +770,78 @@ _SYSTEM_PROMPT = (
 )
 
 
+def _paired_browser_step(
+    payload: AgentStepInput, args: dict[str, Any]
+) -> tuple[str, bool] | None:
+    """Forward a personal-browser action to the Node bridge. Smoke stays on preview."""
+    import urllib.error
+    import urllib.request
+
+    action = str(args.get("action") or "")
+    mapped: dict[str, tuple[str, dict[str, Any]]] = {
+        "goto": ("browser_navigate", {"url": str(args.get("path") or "")}),
+        "click": ("browser_click", {"selector": str(args.get("selector") or "")}),
+        "fill": (
+            "browser_type",
+            {"selector": str(args.get("selector") or ""), "text": str(args.get("value") or "")},
+        ),
+        "screenshot": ("browser_screenshot", {}),
+        "console_errors": ("browser_console", {}),
+        "assert_text": ("browser_snapshot", {}),
+    }
+    chosen = mapped.get(action)
+    if chosen is None:
+        return None
+    tool, call_args = chosen
+    secret = os.environ.get("BROWSER_BRIDGE_SECRET", "").strip()
+    if not secret:
+        return ("Paired browser is not configured: set BROWSER_BRIDGE_SECRET.", False)
+    base = os.environ.get("LOOP_API_URL", "http://127.0.0.1:3001").rstrip("/")
+    body = json.dumps(
+        {
+            "userId": payload.run.actor_id,
+            "deviceId": payload.run.browser_device_id,
+            "runId": payload.run.run_id,
+            "tool": tool,
+            "args": call_args,
+            "source": "build",
+            **({"grantId": payload.run.browser_grant_id} if getattr(payload.run, "browser_grant_id", "") else {}),
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{base}/api/browser/invoke",
+        data=body,
+        headers={"Content-Type": "application/json", "x-loop-browser-bridge": secret},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        return (f"Paired browser call failed ({exc.code}): {detail}", False)
+    except OSError as exc:
+        return (f"Paired browser is unreachable: {exc}", False)
+    try:
+        decoded = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return ("Paired browser returned a non-JSON result.", False)
+    if not isinstance(decoded, dict):
+        return ("Paired browser returned an unexpected result.", False)
+    content = str(decoded.get("content") or decoded.get("error") or "")
+    return (content, not bool(decoded.get("isError")))
+
+
 def _chat_messages(payload: AgentStepInput) -> list[dict[str, str]]:
+    system = _SYSTEM_PROMPT
+    if payload.run.browser and payload.run.browser_device_id:
+        system += (
+            " A paired browser is available via the browser tool. An .onion URL "
+            "works only when that device paired as Tor Browser. smoke still "
+            "checks the project preview, not the paired browser."
+        )
     messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {"role": "user", "content": payload.run.prompt},
     ]
     for item in payload.transcript:

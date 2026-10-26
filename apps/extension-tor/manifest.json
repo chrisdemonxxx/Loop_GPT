@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Loop GPT for Tor Browser",
+  "version": "1.0.0",
+  "description": "Drive a visible Tor Browser window. Built for Firefox ESR 128.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "loop-gpt-tor@loop-gpt.cyou",
+      "strict_min_version": "128.0"
+    }
+  },
+  "permissions": [
+    "tabs",
+    "scripting",
+    "storage",
+    "webRequest",
+    "webRequestBlocking",
+    "webRequestFilterResponse",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ],
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Loop GPT"
+  }
+}

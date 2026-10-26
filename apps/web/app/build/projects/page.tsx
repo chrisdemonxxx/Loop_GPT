@@ -26,6 +26,7 @@ import { ErrorNotice } from '../shell'
 import { formatWhen, statusLabel, statusTone } from '../status'
 import { ModeSwitch } from '../ModeSwitch'
 import { CostTransparencyBar, EffortEstimateNotice, EffortSwitch } from '../EffortSwitch'
+import { BrowserRunSwitch } from '../../components/browser/BrowserRunSwitch'
 import { AnalyticsPanel, CollaborationPanel, ConnectorsPanel } from '../Phase3Panels'
 import { ProjectDomainsPanel, ProjectGitPanel } from './ProjectSyncPanels'
 import {
@@ -405,6 +406,8 @@ function ProjectView({ projectId }: { projectId: string }) {
   const [prompt, setPrompt] = useState('')
   const [mode, setMode] = useState<RunMode>('build')
   const [tier, setTier] = useState<EffortTier>('standard')
+  const [browserOn, setBrowserOn] = useState(false)
+  const [browserDeviceId, setBrowserDeviceId] = useState('')
   const [attachments, setAttachments] = useState<BuildAttachment[]>([])
   const [hydrated, setHydrated] = useState(false)
 
@@ -428,6 +431,7 @@ function ProjectView({ projectId }: { projectId: string }) {
         mode,
         tier,
         attachmentUrls: urls,
+        ...(browserOn ? { browser: true, browserDeviceId } : {}),
       })
       router.push(`/build/?run=${encodeURIComponent(created.run_id)}`)
     } catch {
@@ -543,6 +547,7 @@ function ProjectView({ projectId }: { projectId: string }) {
           <SectionHeader title="Continue this project" />
           <div className="flex flex-wrap items-center gap-2">
             <EffortSwitch value={tier} onChange={setTier} disabled={start.isPending} />
+            <BrowserRunSwitch enabled={browserOn} deviceId={browserDeviceId} onEnabled={setBrowserOn} onDevice={setBrowserDeviceId} disabled={start.isPending} compact />
             <ModeSwitch value={mode} onChange={setMode} disabled={start.isPending} />
           </div>
         </div>

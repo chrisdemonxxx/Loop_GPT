@@ -272,6 +272,10 @@ class StartRunBody(BaseModel):
     attachment_urls: list[str] = Field(default_factory=list, max_length=8)
     #: Phase 2.9: run detached; finish creates a pending Apply-changes review.
     background: bool = False
+    #: Paired browser on the shared Node bridge. Device id is the pair socket.
+    browser: bool = False
+    browser_device_id: str = Field(default="", max_length=80)
+    browser_grant_id: str = Field(default="", max_length=120)
 
 
 class RenameProjectBody(BaseModel):
@@ -1067,6 +1071,9 @@ def create_app(
                     difficulty=body.difficulty,  # type: ignore[arg-type]
                     budget=WorkflowBudget(max_iterations=body.max_iterations or 12),
                     stack=body.stack,
+                    browser=bool(body.browser),
+                    browser_device_id=body.browser_device_id if body.browser else "",
+                    browser_grant_id=body.browser_grant_id if body.browser else "",
                 )
             )
             metadata = {
@@ -1118,6 +1125,9 @@ def create_app(
                     mode=body.mode,
                     attachment_urls=attachments,
                     background=bool(body.background),
+                    browser=bool(body.browser),
+                    browser_device_id=body.browser_device_id if body.browser else "",
+                    browser_grant_id=body.browser_grant_id if body.browser else "",
                 )
             )
         except ValueError as error:

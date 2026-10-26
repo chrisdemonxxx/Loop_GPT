@@ -10,6 +10,7 @@ import { openOAuthPopup, oauthPopupNotice } from '../../lib/oauthPopup'
 import { Dialog } from '@loop/ui'
 import { Badge, btnGhost, btnPrimary, EmptyState, inputCls, SearchInput, SectionHeader, StatusDot } from '../ui/primitives'
 import { BrandMark } from '../connectors/BrandMark'
+import { BrowserConnectors } from '../browser/BrowserConnectors'
 
 interface ConnectorField { key: string; label: string; secret?: boolean; required?: boolean; placeholder?: string }
 interface ConnectorType { type: string; name: string; description: string; category: string; icon: string | null; oauth: boolean; fields: ConnectorField[] }
@@ -158,6 +159,8 @@ export default function ConnectorsTab({ workspaceId }: { workspaceId?: string | 
       <Link href="/customize/connectors/all" className="inline-flex items-center gap-1.5 text-ui-xs text-[var(--accent-text)] hover:underline">
         <Globe size={12} /> Browse the full connector directory
       </Link>
+
+      <BrowserConnectors />
 
       {/* Connected */}
       <SectionHeader title="Connected" count={data.configured.length} />

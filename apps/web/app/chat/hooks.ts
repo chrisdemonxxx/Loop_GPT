@@ -730,6 +730,9 @@ export interface ChatStreamSendOptions {
   projectId?: string
   /** Explicit per-run overrides (§8-25/26): undefined = server default. */
   webSearch?: boolean
+  /** Paired browser for this turn. Chat mode still sends no tools. */
+  browser?: boolean
+  browserDeviceId?: string
   /** Effort union (contract §A): the page dispatches low..xhigh + the
    *  legacy booleans (medium→true keeps old clients 200ing). */
   thinking?: boolean | 'low' | 'medium' | 'high' | 'xhigh'
@@ -774,6 +777,7 @@ export function useChatStream() {
   const abortRef = useRef<AbortController | null>(null)
   /** The active durable run's id (§8-30) — the stop button cancels it. */
   const runIdRef = useRef<string | null>(null)
+  const [liveRunId, setLiveRunId] = useState<string | null>(null)
   /** The conversation the active run belongs to (for the cancel POST). */
   const activeConvRef = useRef<string | null>(null)
   /** Conversation the user is looking at. Events for any other id are ignored. */
@@ -917,7 +921,7 @@ export function useChatStream() {
       setStatusMsg(`The model is busy — retrying automatically${attempt ? ` (attempt ${attempt})` : ''}${afterMs ? ` in ${Math.ceil(afterMs / 1000)}s` : ''}…`)
     },
     // The durable run id — the stop button's cancel target (§8-30).
-    onRun: (id: string) => { if (!applies(convId, gen)) return; runIdRef.current = id },
+    onRun: (id: string) => { if (!applies(convId, gen)) return; runIdRef.current = id; setLiveRunId(id) },
     // Batched per frame (§8-33): per-token callbacks only buffer; the
     // flush applies them in one state update (see flushLive/scheduleFlush).
     onDelta: (step: number, text: string) => {
@@ -1014,7 +1018,7 @@ export function useChatStream() {
   })
 
   async function send(opts: ChatStreamSendOptions) {
-    const { content, sendMode, commandTools, attachmentIds, previews, docNames, runMode, modelTier, selectedTools, incognito, projectId, webSearch, thinking, parentMessageId, regenerateOf, connectionIds, workspaceId, botId, skipUserPersist, ensureConversation } = opts
+    const { content, sendMode, commandTools, attachmentIds, previews, docNames, runMode, modelTier, selectedTools, incognito, projectId, webSearch, browser, browserDeviceId, thinking, parentMessageId, regenerateOf, connectionIds, workspaceId, botId, skipUserPersist, ensureConversation } = opts
     const gen = ++generationRef.current
     flushOwnerRef.current = gen
     parkedRef.current = false
@@ -1022,6 +1026,7 @@ export function useChatStream() {
     setPendingApproval(null) // (S2) no approval card carries into a new run
     setErrorMsg('')
     runIdRef.current = null
+    setLiveRunId(null)
     // §8-22: a retry anchors under the re-answered user row; an edit under
     // the edited prompt's predecessor; a normal send appends (no truncation).
     setLiveAnchorId(regenerateOf ?? (parentMessageId !== undefined ? parentMessageId : null))
@@ -1054,6 +1059,7 @@ export function useChatStream() {
         projectId,
       // Explicit capability overrides — only present when chosen (§8-25/26).
       ...(webSearch !== undefined ? { webSearch } : {}),
+      ...(browser ? { browser: true, browserDeviceId } : { browser: false }),
       ...(thinking !== undefined ? { thinking } : {}),
       // Pinned connections (§8-40) + the workspace for a new conversation.
       ...(connectionIds?.length ? { connectionIds } : {}),
@@ -1128,7 +1134,7 @@ export function useChatStream() {
   return {
     running, statusMsg, errorMsg, clearError: () => setErrorMsg(''),
     liveUser, liveSteps, liveArtifacts, liveThinking, liveAnswer,
-    liveConversationId,
+    liveConversationId, liveRunId,
     pendingApproval, setPendingApproval, liveAnchorId, liveLoopitRunId,
     stopRun, resetLive, clearTurn, send, reattach, noteViewed, parkRun, takeParked,
   }

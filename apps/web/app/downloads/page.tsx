@@ -13,8 +13,8 @@ interface InstallPromptEvent extends Event {
 /**
  * Apps & extensions (blueprint §9.6 → contract team/CONTRACT_S3_ROUTES.md).
  * Every claim is real: the PWA shell is shipped (`build/pwa.mjs`), the mobile
- * app is in development, the browser extension is not shipped, and the CLI
- * surface lives at /developer. No invented store links.
+ * app is in development, the browser packages install from this repo, and the
+ * CLI surface lives at /developer. No invented store links.
  */
 export default function DownloadsPage() {
   const [installNote, setInstallNote] = useState('')
@@ -78,7 +78,22 @@ export default function DownloadsPage() {
         </section>
       </div>
 
-      {/* On the roadmap — one subdued strip, not two fake cards. */}
+      <section aria-label="Browser extension" className={`${panelCls} mt-10 p-4`}>
+        <div className="flex items-start gap-3">
+          <Puzzle size={18} className="mt-0.5 shrink-0 text-[var(--ink-secondary)]" aria-hidden />
+          <div className="min-w-0">
+            <h3 className="text-ui-sm font-medium text-[var(--ink-primary)]">Browser extension</h3>
+            <ul className="mt-2 space-y-1.5 text-ui-xs leading-relaxed text-[var(--ink-secondary)]">
+              <li>Chromium: load unpacked from apps/extension while developing. A packed CRX is the release install.</li>
+              <li>Firefox: install a signed XPI (addons.mozilla.org or a package you signed yourself).</li>
+              <li>Tor Browser: use the Firefox build and set xpinstall.signatures.required to false.</li>
+              <li>Octo: the desktop app you already run, plus Settings → Connectors. Load the Chromium package inside a profile you have already started.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      {/* On the roadmap — mobile only. */}
       <h2 className="mt-10 text-2xs uppercase tracking-widest text-[var(--ink-muted)] font-medium">On the roadmap</h2>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <section aria-label="Mobile" className="rounded-2xl border border-dashed border-[var(--border-subtle)] p-4 opacity-70">
@@ -88,17 +103,6 @@ export default function DownloadsPage() {
               <h3 className="text-ui-sm font-medium text-[var(--ink-secondary)]">iOS &amp; Android</h3>
               <p className="mt-1 text-ui-xs leading-relaxed text-[var(--ink-muted)]">
                 In development. Today, install the web app from your phone&apos;s browser menu (&ldquo;Add to Home Screen&rdquo;).
-              </p>
-            </div>
-          </div>
-        </section>
-        <section aria-label="Browser extension" className="rounded-2xl border border-dashed border-[var(--border-subtle)] p-4 opacity-70">
-          <div className="flex items-start gap-3">
-            <Puzzle size={18} className="mt-0.5 shrink-0 text-[var(--ink-muted)]" aria-hidden />
-            <div className="min-w-0">
-              <h3 className="text-ui-sm font-medium text-[var(--ink-secondary)]">Browser extension</h3>
-              <p className="mt-1 text-ui-xs leading-relaxed text-[var(--ink-muted)]">
-                Not shipped yet — it will land here first.
               </p>
             </div>
           </div>

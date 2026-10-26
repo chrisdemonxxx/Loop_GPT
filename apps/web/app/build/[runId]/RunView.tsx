@@ -56,6 +56,8 @@ import { runConversationId } from '../runLink'
 import { FileChangeChips } from '../DiffView'
 import { ModeSwitch } from '../ModeSwitch'
 import { CostTransparencyBar, EffortEstimateNotice, EffortSwitch } from '../EffortSwitch'
+import { BrowserRunSwitch } from '../../components/browser/BrowserRunSwitch'
+import { releaseBrowser } from '../../components/browser/useBrowserDevices'
 import { MobileBuildSplit } from '../MobileBuildSplit'
 import { NotificationsBell } from '../NotificationsBell'
 import {
@@ -113,6 +115,9 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const [terminalOpen, setTerminalOpen] = useState(false)
   const [continueMode, setContinueMode] = useState<RunMode>('build')
   const [continueTier, setContinueTier] = useState<EffortTier>('standard')
+  const [browserOn, setBrowserOn] = useState(false)
+  const [browserDeviceId, setBrowserDeviceId] = useState('')
+  const browserFields = browserOn ? { browser: true as const, browserDeviceId } : {}
   const [inspectMode, setInspectMode] = useState(false)
   const [inspectTarget, setInspectTarget] = useState<InspectTarget | null>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -296,7 +301,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
           if (forkedProjectId) {
             // Open a new run on the forked project so the copy is reachable.
             const prompt = ui.run?.prompt ?? query.data?.prompt ?? 'Continue from this saved copy'
-            startBuild.mutate({ prompt, projectId: forkedProjectId }, {
+            startBuild.mutate({ prompt, projectId: forkedProjectId, ...browserFields }, {
               onSuccess: (created) => router.push(`/build/?run=${encodeURIComponent(created.run_id)}`),
               onError: (cause) => toast.push('error', toUserFacingError(cause).message),
             })
@@ -338,6 +343,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
         projectId,
         mode: continueMode,
         tier: continueTier,
+        ...browserFields,
       }).then((created) => {
         router.push(`/build/?run=${encodeURIComponent(created.run_id)}`)
       }).catch(fail)
@@ -347,6 +353,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
 
   const handleCancel = () => {
     if (!live || cancel.isPending) return
+    void releaseBrowser('build', runId)
     cancel.mutate(undefined, {
       onSuccess: () => toast.push('info', 'Build stopped'),
       onError: (cause) => toast.push('error', toUserFacingError(cause).message),
@@ -358,7 +365,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
    *  rather than by layering a patch on top of it. */
   const handleResend = (text: string) => {
     if (startBuild.isPending || !projectId) return
-    startBuild.mutate({ prompt: text, projectId }, {
+    startBuild.mutate({ prompt: text, projectId, ...browserFields }, {
       onSuccess: (created) => router.push(`/build/?run=${encodeURIComponent(created.run_id)}`),
       onError: (cause) => toast.push('error', toUserFacingError(cause).message),
     })
@@ -373,7 +380,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
       return
     }
     if (startBuild.isPending || !projectId) return
-    startBuild.mutate({ prompt: text, projectId, mode: continueMode, tier: continueTier }, {
+    startBuild.mutate({ prompt: text, projectId, mode: continueMode, tier: continueTier, ...browserFields }, {
       onSuccess: (created) => router.push(`/build/?run=${encodeURIComponent(created.run_id)}`),
       onError: (cause) => toast.push('error', toUserFacingError(cause).message),
     })
@@ -383,7 +390,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
   const handleApprovePlan = (background = false) => {
     const goal = ui.dag?.goal || ui.run?.prompt || query.data?.prompt
     if (!goal || !projectId || startBuild.isPending) return
-    startBuild.mutate({ prompt: goal, projectId, mode: 'build', tier: continueTier, background }, {
+    startBuild.mutate({ prompt: goal, projectId, mode: 'build', tier: continueTier, background, ...browserFields }, {
       onSuccess: (created) => {
         if (background) {
           toast.push('success', 'Building in the background — we will notify you when it is ready to apply')
@@ -458,6 +465,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
           ) : status ? (
             <>
               <EffortSwitch value={continueTier} onChange={setContinueTier} disabled={startBuild.isPending} />
+              <BrowserRunSwitch enabled={browserOn} deviceId={browserDeviceId} onEnabled={(next) => { setBrowserOn(next); if (!next) void releaseBrowser('build', runId) }} onDevice={setBrowserDeviceId} disabled={startBuild.isPending} compact />
               <ModeSwitch value={continueMode} onChange={setContinueMode} disabled={startBuild.isPending} />
               <button
                 type="button"
@@ -584,6 +592,7 @@ export default function RunView({ runId: runIdProp }: { runId?: string }) {
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <EffortSwitch value={continueTier} onChange={setContinueTier} disabled={startBuild.isPending} />
+            <BrowserRunSwitch enabled={browserOn} deviceId={browserDeviceId} onEnabled={(next) => { setBrowserOn(next); if (!next) void releaseBrowser('build', runId) }} onDevice={setBrowserDeviceId} disabled={startBuild.isPending} compact />
             <CostTransparencyBar tier={continueTier} />
           </div>
           <div className="mt-2">

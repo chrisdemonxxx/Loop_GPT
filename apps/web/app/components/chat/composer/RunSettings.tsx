@@ -5,6 +5,7 @@ import { Zap, Brain, ChevronDown, Check } from 'lucide-react'
 import { THOUGHT_EFFORTS, type EffortValue } from './EffortSelector'
 import { RUN_MODES, type ToggleState } from './SlashPalette'
 import { FramePopover } from './FramePopover'
+import { BrowserRunSwitch } from '../../browser/BrowserRunSwitch'
 
 /**
  * Run settings — ONE popover for the three run axes (Option A, redesign
@@ -19,18 +20,26 @@ export function RunSettings({
   runMode,
   webSearch,
   thinking,
+  browser = false,
+  browserDeviceId = '',
   onRunModeChange,
   onWebSearchChange,
   onThinkingChange,
+  onBrowserChange,
+  onBrowserDeviceChange,
   dismissSignal = 0,
   onOpen,
 }: {
   runMode: 'auto' | 'plan' | 'step' | 'accept'
   webSearch: ToggleState
   thinking: EffortValue
+  browser?: boolean
+  browserDeviceId?: string
   onRunModeChange: (mode: 'auto' | 'plan' | 'step' | 'accept') => void
   onWebSearchChange: (next: ToggleState) => void
   onThinkingChange: (next: EffortValue) => void
+  onBrowserChange?: (next: boolean) => void
+  onBrowserDeviceChange?: (id: string) => void
   /** Bumps when another composer menu opens, so this one closes. */
   dismissSignal?: number
   onOpen?: () => void
@@ -44,7 +53,7 @@ export function RunSettings({
     setOpen(false)
   }, [dismissSignal])
 
-  const customized = runMode !== 'auto' || webSearch !== 'auto' || thinking !== 'auto'
+  const customized = runMode !== 'auto' || webSearch !== 'auto' || thinking !== 'auto' || browser
   const activeMode = RUN_MODES.find((m) => m.id === runMode) || RUN_MODES[0]
 
   return (
@@ -119,6 +128,16 @@ export function RunSettings({
                   </button>
                 )
               })}
+            </div>
+
+            <div className="px-3 pt-2.5 pb-2 text-[10px] uppercase tracking-widest text-slate-500 font-medium border-t border-white/[0.05]">Browser</div>
+            <div className="px-3 pb-2.5">
+              <BrowserRunSwitch
+                enabled={browser}
+                deviceId={browserDeviceId}
+                onEnabled={(next) => onBrowserChange?.(next)}
+                onDevice={(id) => onBrowserDeviceChange?.(id)}
+              />
             </div>
 
             {/* Reasoning */}

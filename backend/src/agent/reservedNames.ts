@@ -9,10 +9,12 @@ export const BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
   'remember', 'generate_style', 'create_skill', 'create_custom_tool',
   'computer_screenshot', 'computer_click', 'computer_move', 'computer_scroll', 'computer_drag',
   'computer_type', 'computer_press', 'computer_launch', 'computer_wait',
+  'browser_navigate', 'browser_snapshot', 'browser_screenshot', 'browser_click', 'browser_type',
+  'browser_key', 'browser_scroll', 'browser_tabs', 'browser_wait', 'browser_console', 'browser_network',
 ])
 
 /** Prefixes owned by server-namespaced tool families. */
-const RESERVED_PREFIXES = ['connector__', 'connection_', 'mcp__', 'computer_', 'system_', 'loop_', 'loopit_']
+const RESERVED_PREFIXES = ['connector__', 'connection_', 'mcp__', 'computer_', 'browser_', 'system_', 'loop_', 'loopit_']
 
 export function isReservedToolName(name: string): boolean {
   const lower = String(name || '').toLowerCase()

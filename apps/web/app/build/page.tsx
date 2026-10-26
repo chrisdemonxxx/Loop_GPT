@@ -12,6 +12,7 @@ import { ErrorNotice } from './shell'
 import { BuildSessionRail } from './SessionRail'
 import { ModeSwitch } from './ModeSwitch'
 import { CostTransparencyBar, EffortEstimateNotice, EffortSwitch } from './EffortSwitch'
+import { BrowserRunSwitch } from '../components/browser/BrowserRunSwitch'
 import { NotificationsBell } from './NotificationsBell'
 import { collectImageFiles, readPreview, uploadBuildImage, type BuildAttachment } from './attachments'
 
@@ -48,6 +49,8 @@ function BuildBoard() {
   }, [seededPrompt])
   const [mode, setMode] = useState<RunMode>('build')
   const [tier, setTier] = useState<EffortTier>('standard')
+  const [browserOn, setBrowserOn] = useState(false)
+  const [browserDeviceId, setBrowserDeviceId] = useState('')
   const [attachments, setAttachments] = useState<BuildAttachment[]>([])
 
   async function addImages(files: File[]) {
@@ -71,7 +74,10 @@ function BuildBoard() {
     if (!text || start.isPending) return
     const urls = attachments.filter((a) => a.status === 'done' && a.url).map((a) => a.url!)
     try {
-      const created = await start.mutateAsync({ prompt: text, mode, tier, attachmentUrls: urls })
+      const created = await start.mutateAsync({
+        prompt: text, mode, tier, attachmentUrls: urls,
+        ...(browserOn ? { browser: true, browserDeviceId } : {}),
+      })
       router.push(`/build/?run=${encodeURIComponent(created.run_id)}`)
     } catch {
       // The mutation records the error; the notice under the form renders it.
@@ -97,6 +103,14 @@ function BuildBoard() {
           <label className="text-ui-xs text-[var(--ink-muted)]">What should we build?</label>
           <div className="flex flex-wrap items-center gap-2">
             <EffortSwitch value={tier} onChange={setTier} disabled={start.isPending} />
+            <BrowserRunSwitch
+              enabled={browserOn}
+              deviceId={browserDeviceId}
+              onEnabled={setBrowserOn}
+              onDevice={setBrowserDeviceId}
+              disabled={start.isPending}
+              compact
+            />
             <ModeSwitch value={mode} onChange={setMode} disabled={start.isPending} />
           </div>
         </div>

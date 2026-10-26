@@ -299,6 +299,10 @@ export interface LoopitClient {
     mode?: RunMode
     attachmentUrls?: string[]
     background?: boolean
+    /** Paired browser on the same user-scoped bridge Chat and Loop Bot use. */
+    browser?: boolean
+    browserDeviceId?: string
+    browserGrantId?: string
   }) => Promise<RunSummary>
   listNotifications: (options?: { unreadOnly?: boolean }) => Promise<{ notifications: BuildNotification[]; unread_count: number }>
   markNotificationsRead: (notificationId?: string | null) => Promise<{ marked: number; unread_count: number }>
@@ -612,6 +616,7 @@ export function createLoopitClient(options: LoopitClientOptions = {}): LoopitCli
         ...(runOptions.mode ? { mode: runOptions.mode } : {}),
         ...(runOptions.attachmentUrls?.length ? { attachment_urls: runOptions.attachmentUrls } : {}),
         ...(runOptions.background ? { background: true } : {}),
+        ...(runOptions.browser ? { browser: true, browser_device_id: runOptions.browserDeviceId, ...(runOptions.browserGrantId ? { browser_grant_id: runOptions.browserGrantId } : {}) } : {}),
       }),
     }),
     listNotifications: async (listOptions = {}) => {

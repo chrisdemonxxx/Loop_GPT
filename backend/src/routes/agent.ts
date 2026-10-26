@@ -18,6 +18,8 @@ import { connectorRegistry } from '../agent/connectors/connectorRegistry'
 import { CONNECTOR_CATALOG, probeConnector } from '../agent/connectors/catalog'
 import { isMarketplaceConnector, probeMarketplaceConnector } from '../agent/connectors/marketplaceAdapters'
 import { MARKETPLACE_LIST } from '../agent/connectors/oauthProviders'
+import { probeOctoConnector } from '../agent/connectors/octoConnector'
+import { probeCaptchaSolverConnector } from '../services/captchaSolver'
 import { buildCustomTool, CustomToolError, customToolRegistry } from '../agent/customTools'
 import { mcpRegistry } from '../agent/mcp/mcpRegistry'
 import { randomUUID } from 'crypto'
@@ -254,7 +256,7 @@ router.get('/connectors', authenticateToken, (req, res) => {
   res.json({ types: connectorRegistry.listTypes(),
     configured: configStore.listConnectors(uid(req)).map((c) => ({ id: c.id, type: c.type, name: c.name, enabled: c.enabled,
       fields: publicConnectorConfig(c), account: c.account || null,
-      lastTestedAt: c.lastTestedAt || null, lastTestOk: c.lastTestOk ?? null })),
+      lastTestedAt: c.lastTestedAt || null, lastTestOk: c.lastTestOk ?? null, lastTestMessage: c.lastTestMessage || null })),
     marketplace: MARKETPLACE_LIST })
 })
 
@@ -262,6 +264,16 @@ router.get('/connectors', authenticateToken, (req, res) => {
  * (Opt out with CONNECTOR_VALIDATE_ON_SAVE=false; skipped under test.) */
 async function validateConnectorCredentials(type: string, config: Record<string, string>) {
   if (process.env.NODE_ENV === 'test' || process.env.CONNECTOR_VALIDATE_ON_SAVE === 'false') return { ok: true, message: 'Credential accepted.' }
+  if (type === 'octo') {
+    const probe = await probeOctoConnector(config)
+    if (probe.invalidCredentials) return { ok: false, message: `The provider rejected this credential: ${probe.message}` }
+    return { ok: true, message: probe.message }
+  }
+  if (type === 'captcha_solver') {
+    const probe = await probeCaptchaSolverConnector(config)
+    if (probe.invalidCredentials) return { ok: false, message: `The provider rejected this credential: ${probe.message}` }
+    return { ok: true, message: probe.message }
+  }
   const def = CONNECTOR_CATALOG.find((d) => d.type === type)
   if (!def || def.oauth || !def.tools?.length) return { ok: true, message: 'No validation available for this connector.' }
   const probe = await probeConnector(def, { id: 'probe', type, name: def.name, config, enabled: true })
@@ -294,7 +306,11 @@ router.post('/connectors/:id/test', authenticateToken, asyncHandler(async (req, 
   const cfg = configStore.listConnectors(uid(req)).find((c) => c.id === req.params.id)
   if (!cfg) return res.status(404).json({ error: 'Connector not found' })
   let probe: { ok: boolean; invalidCredentials: boolean; message: string; ms: number }
-  if (isMarketplaceConnector(cfg.type)) {
+  if (cfg.type === 'octo') {
+    probe = await probeOctoConnector(cfg.config || {})
+  } else if (cfg.type === 'captcha_solver') {
+    probe = await probeCaptchaSolverConnector(cfg.config || {})
+  } else if (isMarketplaceConnector(cfg.type)) {
     probe = await probeMarketplaceConnector(cfg)
   } else {
     const def = CONNECTOR_CATALOG.find((d) => d.type === cfg.type)
@@ -369,10 +385,10 @@ router.get('/research/:runId', authenticateToken, asyncHandler(async (req, res) 
   const run = await getResearchRun(req.params.runId, (req as any).userId)
   if (!run) return res.status(404).json({ error: 'Research run not found' })
   res.json(run)
-}))
+}) )
 
 /**
- * POST /:conversationId/stream � full pipeline in controllers/agentStream.ts.
+ * POST /:conversationId/stream — full pipeline in controllers/agentStream.ts.
  * Body: { content, attachmentId?, mode?: 'chat'|'agent'|'research', model? }
  * Streams Server-Sent Events describing the run; persists both messages.
  */
@@ -428,6 +444,8 @@ router.post('/:conversationId/runs/:runId/cancel', authenticateToken, asyncHandl
   const run = findRun(req.params.runId, (req as any).userId, req.params.conversationId)
   if (!run) return res.status(404).json({ error: 'Run not found' })
   const cancelled = cancelRun(run)
+  const { stopBrowserRun } = await import('../services/browserBridge')
+  stopBrowserRun((req as { userId?: string }).userId || '', req.params.runId)
   res.json({ ok: cancelled, alreadyDone: !cancelled })
 }))
 

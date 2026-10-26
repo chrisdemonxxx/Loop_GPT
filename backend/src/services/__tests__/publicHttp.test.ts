@@ -54,7 +54,8 @@ describe('public destination classification', () => {
   it.each(['http://127.0.0.1', 'http://2130706433', 'http://0x7f000001', 'http://0177.0.0.1',
     'http://[::ffff:127.0.0.1]', 'http://localhost', 'http://api.localhost', 'http://metadata.google.internal',
     'http://printer.local', 'http://singlelabel', 'http://metadata.packet.net', 'https://example.com.', 'file:///etc/passwd',
-    'https://user:secret@example.com', 'https://example.com:8443', 'https://example.com\\@127.0.0.1', ' https://example.com'])('rejects unsafe URL %s before transport', async (url) => {
+    'https://user:secret@example.com', 'https://example.com:8443', 'https://example.com\\@127.0.0.1', ' https://example.com',
+    'http://example.onion', 'https://hidden.onion/path'])('rejects unsafe URL %s before transport', async (url) => {
     await expect(publicRequest(url)).rejects.toThrow()
     expect(requests).toHaveLength(0)
     expect(dns.lookup).not.toHaveBeenCalled()

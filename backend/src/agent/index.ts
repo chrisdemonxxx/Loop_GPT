@@ -25,6 +25,7 @@ import { mcpRegistry } from './mcp/mcpRegistry'
 import { BUILTIN_TOOL_NAMES } from './reservedNames'
 import type { ToolDefinition } from './types'
 
+// browser_* tools are granted per turn (browserGrant.ts), not offered here.
 const BUILTIN_TOOLS = [
   webSearchTool,
   webFetchTool,

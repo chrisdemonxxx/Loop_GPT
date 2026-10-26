@@ -19,6 +19,7 @@ import { prisma, hasDb } from './prisma'
 import { builtinToolNames } from '../agent'
 import { THINKING_EFFORTS } from '../agent/thinking'
 import { isE2BConfigured } from './e2bDesktop'
+import { deviceOwnedBy } from './browserBridge'
 import { matchSkillsForGoal } from '../agent/skills/skillLoader'
 
 export class AgentTaskError extends Error {
@@ -96,6 +97,11 @@ export const enqueueInput = z.object({
     enabled: z.boolean(),
     ttlMinutes: z.number().int().min(5).max(240).optional(),
   }).optional(),
+  /** Paired browser beside the cloud computer. Granted only while that device socket is live. */
+  browser: z.object({
+    enabled: z.boolean(),
+    deviceId: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/).optional(),
+  }).optional().refine((value) => !value?.enabled || !!value.deviceId, { message: 'device' }),
   /** Attach an existing skill as the run's operating procedure. */
   skillId: z.string().regex(/^[a-zA-Z0-9-]{1,64}$/).optional(),
   /** Named bot this task runs as. Omitted → the owner's primary Loop Bot. */
@@ -134,6 +140,9 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string, o
   const builtins = new Set(builtinToolNames())
   if (parsed.allowedTools?.some((name) => !builtins.has(name))) throw new AgentTaskError('invalid_request')
 
+  if (parsed.browser?.enabled) {
+    if (!ownerId || !(await deviceOwnedBy(ownerId, parsed.browser.deviceId))) throw new AgentTaskError('invalid_request')
+  }
   let computer = parsed.computer
   if (computer?.enabled) {
     // Fail fast: an unconfigured provider would dead-letter this task after
@@ -197,6 +206,7 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string, o
       allowedTools: parsed.allowedTools ?? undefined,
       maxSteps: parsed.maxSteps ?? null,
       computer: storedComputer as Prisma.InputJsonValue | undefined,
+      browser: parsed.browser as Prisma.InputJsonValue | undefined,
       skillId: parsed.skillId ?? null,
       botId,
       conversationId,

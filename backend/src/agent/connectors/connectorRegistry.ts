@@ -16,6 +16,8 @@ import { CONNECTOR_CATALOG, buildCatalogTools, type CatalogConnector } from './c
 import { GOOGLE_CONNECTOR_ADAPTERS } from './googleAdapters'
 import { MARKETPLACE_CONNECTOR_TYPES, marketplaceConnectorTools } from './marketplaceAdapters'
 import { MARKETPLACE_LIST } from './oauthProviders'
+import { octoConnectorType } from './octoConnector'
+import { captchaSolverConnectorType } from '../../services/captchaSolver'
 
 export interface ConnectorType {
   type: string
@@ -144,6 +146,8 @@ class ConnectorRegistry {
   constructor() {
     this.registerType(githubConnector)
     this.registerType(httpConnector)
+    this.registerType(octoConnectorType)
+    this.registerType(captchaSolverConnectorType)
     // Google OAuth services (Drive/Gmail/Calendar/Sheets) with real tools.
     for (const [type, adapter] of Object.entries(GOOGLE_CONNECTOR_ADAPTERS)) {
       const def = CONNECTOR_CATALOG.find((d) => d.type === type)
