@@ -178,8 +178,17 @@ const SCHEDULE_LABELS: Record<string, string> = {
 }
 
 export function routineScheduleLabel(schedule: string): string {
-  if (SCHEDULE_LABELS[schedule]) return SCHEDULE_LABELS[schedule]
-  const match = /^(\d+)([mhd])$/.exec(schedule)
+  const [expr, zone] = schedule.split('|')
+  const suffix = zone && zone !== 'away' ? ` (${zone})` : ''
+  if (expr === 'hourly') return `every hour${suffix}`
+  const daily = /^daily@(\d{2}:\d{2})$/.exec(expr)
+  if (daily) return `every day at ${daily[1]}${suffix}`
+  const weekdays = /^weekdays@(\d{2}:\d{2})$/.exec(expr)
+  if (weekdays) return `weekdays at ${weekdays[1]}${suffix}`
+  const weekly = /^weekly:(mon|tue|wed|thu|fri|sat|sun)@(\d{2}:\d{2})$/.exec(expr)
+  if (weekly) return `weekly on ${weekly[1]} at ${weekly[2]}${suffix}`
+  if (SCHEDULE_LABELS[expr]) return `${SCHEDULE_LABELS[expr]}${suffix}`
+  const match = /^(\d+)([mhd])$/.exec(expr)
   if (!match) return schedule
   const n = Number(match[1])
   if (match[2] === 'd' && n === 1) return 'daily'
@@ -189,7 +198,7 @@ export function routineScheduleLabel(schedule: string): string {
     : match[2] === 'h'
       ? (n === 1 ? 'hour' : 'hours')
       : (n === 1 ? 'day' : 'days')
-  return `every ${n} ${unit}`
+  return `every ${n} ${unit}${suffix}`
 }
 
 export function routineSkillLabel(

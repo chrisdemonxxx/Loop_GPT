@@ -14,6 +14,21 @@ import { hasDb, prisma } from '../services/prisma'
 
 const router = express.Router()
 router.use(authenticateTokenOrApiKey)
+router.use((req, _res, next) => {
+  const userId = (req as any).userId as string | undefined
+  if (userId) {
+    void import('../services/botActivity').then(({ touchBotActive }) => touchBotActive(userId)).catch(() => undefined)
+  }
+  next()
+})
+
+export const botShareRoutes = express.Router()
+botShareRoutes.get('/:token', asyncHandler(async (req, res) => {
+  const { readShare } = await import('../services/botLibrary')
+  const item = readShare(req.params.token, new Date())
+  if (!item) return res.status(404).json({ error: 'Share link is not active' })
+  res.json({ name: item.name, kind: item.kind, path: item.path })
+}))
 
 const noDb = (res: express.Response) => res.status(503).json({ error: 'Loop Bot requires a database.' })
 
@@ -49,6 +64,27 @@ router.get('/skills', asyncHandler(async (req, res) => {
   const botId = typeof req.query.botId === 'string' ? req.query.botId : ''
   const skills = loadSkillsForUser((req as any).userId).filter((skill) => !botId || skill.botId === botId)
   res.json({ skills })
+}))
+
+/** POST /api/bot/skills — create a skill through the account skill loader. */
+router.post('/skills', asyncHandler(async (req, res) => {
+  const { postBotSkill } = await import('../services/botSkills')
+  const result = postBotSkill((req as any).userId, req.body || {})
+  res.status(result.status).json(result.body)
+}))
+
+/** GET /api/bot/skills/:id — source for the editor. */
+router.get('/skills/:id', asyncHandler(async (req, res) => {
+  const { getBotSkill } = await import('../services/botSkills')
+  const result = getBotSkill((req as any).userId, req.params.id)
+  res.status(result.status).json(result.body)
+}))
+
+/** PUT /api/bot/skills/:id — update one of the caller's skills. */
+router.put('/skills/:id', asyncHandler(async (req, res) => {
+  const { putBotSkill } = await import('../services/botSkills')
+  const result = putBotSkill((req as any).userId, req.params.id, req.body || {})
+  res.status(result.status).json(result.body)
 }))
 
 /** DELETE /api/bot/skills/:id — remove one of the caller's own skills. */
@@ -99,7 +135,12 @@ router.get('/tasks', asyncHandler(async (req, res) => {
   const status = typeof req.query.status === 'string' ? req.query.status : undefined
   const limit = Number(req.query.limit) || 50
   const conversationId = typeof req.query.conversationId === 'string' ? req.query.conversationId : undefined
-  res.json({ tasks: await listAgentTasks({ status, limit, conversationId, scope: { userId: (req as any).userId } }) })
+  const userId = (req as any).userId as string
+  const tasks = await listAgentTasks({ status, limit, conversationId, scope: { userId } })
+  const botId = typeof req.query.botId === 'string' ? req.query.botId : ''
+  if (!botId) return res.json({ tasks })
+  const { readChatCursor, visibleChatTasks } = await import('../services/botChat')
+  res.json({ tasks: visibleChatTasks(tasks, readChatCursor(userId, botId)) })
 }))
 
 /** GET /api/bot/tasks/:id — your task, with its recent runs. */
@@ -224,17 +265,54 @@ router.post('/runs/:runId/teach-steps', asyncHandler(async (req, res) => {
 /** GET /api/bot/memory?botId= — one bot's remembered notes (its long-term
  *  memory file, mirrored from the box). */
 router.get('/memory', asyncHandler(async (req, res) => {
-  const { readBotMemory } = await import('../services/botMemory')
+  const { memoriesForViewer, readBotMemory } = await import('../services/botMemory')
   const botId = typeof req.query.botId === 'string' ? req.query.botId : ''
   if (!botId) return res.status(400).json({ error: 'botId is required', code: 'invalid_request' })
-  res.json({ memory: readBotMemory((req as any).userId, botId) })
+  const userId = (req as any).userId as string
+  const visible = memoriesForViewer(userId, botId, userId)
+  res.json({ memory: readBotMemory(userId, botId), memories: visible.memories })
+}))
+
+router.post('/memory', asyncHandler(async (req, res) => {
+  const { addBotMemory } = await import('../services/botMemory')
+  const botId = String(req.body?.botId || '')
+  const content = String(req.body?.content || '')
+  const visibility = req.body?.visibility === 'team' ? 'team' : 'private'
+  const entry = addBotMemory((req as any).userId, botId, content, visibility)
+  if (!entry) return res.status(400).json({ error: 'Could not save that memory', code: 'invalid_request' })
+  res.status(201).json({ memory: entry })
+}))
+
+router.delete('/memory/:id', asyncHandler(async (req, res) => {
+  const { deleteBotMemory } = await import('../services/botMemory')
+  const botId = typeof req.query.botId === 'string' ? req.query.botId : ''
+  if (!botId) return res.status(400).json({ error: 'botId is required', code: 'invalid_request' })
+  const ok = deleteBotMemory((req as any).userId, botId, req.params.id)
+  if (!ok) return res.status(404).json({ error: 'Memory not found' })
+  res.json({ ok: true })
 }))
 
 /** GET /api/bot/routines — YOUR recurring jobs (bot + skill + schedule) with run history. */
 router.get('/routines', asyncHandler(async (req, res) => {
   if (!hasDb || !prisma) return noDb(res)
-  const { listRoutines } = await import('../services/routines')
-  res.json({ routines: await listRoutines((req as any).userId) })
+  const { listRoutines, pauseRoutinesForAway } = await import('../services/routines')
+  const { awayRoutineIds } = await import('../services/routineSchedule')
+  const { readBotActive } = await import('../services/botActivity')
+  const userId = (req as any).userId as string
+  let routines = await listRoutines(userId)
+  const lastActive = readBotActive(userId)
+  const awayIds = lastActive
+    ? awayRoutineIds(routines.map((routine) => ({
+      id: routine.id,
+      autoPauseWhenAway: routine.autoPauseWhenAway,
+      paused: routine.paused,
+    })), lastActive, new Date())
+    : []
+  if (awayIds.length) {
+    await pauseRoutinesForAway(userId, awayIds)
+    routines = await listRoutines(userId)
+  }
+  res.json({ routines, awayPaused: awayIds })
 }))
 
 /** POST /api/bot/routines { goal, schedule, skillId?, botId? } — create one. */
@@ -244,8 +322,9 @@ router.post('/routines', asyncHandler(async (req, res) => {
   const body = req.body || {}
   const goal = String(body.goal || '').trim()
   const schedule = String(body.schedule || '')
-  if (!goal || !/^\d+[mhd]$/.test(schedule)) {
-    return res.status(400).json({ error: 'A routine needs a goal and a schedule like 30m, 6h, or 1d', code: 'invalid_request' })
+  const { isValidSchedule } = await import('../services/routineSchedule')
+  if (!goal || !isValidSchedule(schedule)) {
+    return res.status(400).json({ error: 'A routine needs a goal and a schedule like 30m, daily@09:30, or weekdays@09:30', code: 'invalid_request' })
   }
   try {
     const routine = await createRoutine((req as any).userId, {
@@ -561,6 +640,84 @@ router.post('/computer/ws-token', asyncHandler(async (req, res) => {
   const { mintNovncWsToken } = await import('../services/novncProxy')
   const minted = mintNovncWsToken(userId, sandboxId)
   res.json({ token: minted.token, expiresIn: minted.expiresIn, queryParam: 'token' })
+}))
+
+router.post('/conversation/reset', asyncHandler(async (req, res) => {
+  const { resetChatCursor } = await import('../services/botChat')
+  const botId = String(req.body?.botId || '')
+  if (!botId) return res.status(400).json({ error: 'botId is required', code: 'invalid_request' })
+  const resetAt = resetChatCursor((req as any).userId, botId, new Date())
+  res.json({ ok: true, resetAt })
+}))
+
+router.get('/teach/recordings', asyncHandler(async (req, res) => {
+  const { listTeachRecordings } = await import('../services/teachPlan')
+  const recordings = listTeachRecordings((req as any).userId).map((row) => ({
+    id: row.id,
+    frameCount: row.frameCount,
+    stepLog: row.stepLog,
+  }))
+  res.json({ recordings })
+}))
+
+router.post('/runs/:runId/teach/discard', asyncHandler(async (req, res) => {
+  const { teachEnd, deleteTeachRecording } = await import('../services/teachPlan')
+  const end = teachEnd('discard')
+  const recordingId = typeof req.body?.recordingId === 'string' ? req.body.recordingId : req.params.runId
+  if (end.deleteRecording) deleteTeachRecording((req as any).userId, recordingId)
+  res.json({ ok: true, discarded: true, event: end.event })
+}))
+
+router.get('/library', asyncHandler(async (req, res) => {
+  const { listLibrary } = await import('../services/botLibrary')
+  const botId = typeof req.query.botId === 'string' ? req.query.botId : undefined
+  const kind = typeof req.query.kind === 'string' ? req.query.kind as any : undefined
+  res.json({ items: listLibrary((req as any).userId, botId, kind) })
+}))
+
+router.post('/library/:id/share', asyncHandler(async (req, res) => {
+  const { mintShare } = await import('../services/botLibrary')
+  try {
+    res.status(201).json(mintShare((req as any).userId, req.params.id, new Date()))
+  } catch {
+    res.status(404).json({ error: 'Library item not found' })
+  }
+}))
+
+router.delete('/library/:id/share', asyncHandler(async (req, res) => {
+  const { revokeShare } = await import('../services/botLibrary')
+  const ok = revokeShare((req as any).userId, req.params.id)
+  if (!ok) return res.status(404).json({ error: 'Share link not found' })
+  res.json({ ok: true })
+}))
+
+router.get('/settings/approvals', asyncHandler(async (req, res) => {
+  const { readApprovalMode } = await import('../services/botApprovals')
+  res.json({ mode: readApprovalMode((req as any).userId) })
+}))
+
+router.put('/settings/approvals', asyncHandler(async (req, res) => {
+  const { writeApprovalMode } = await import('../services/botApprovals')
+  const mode = req.body?.mode
+  if (mode !== 'ask' && mode !== 'safe' && mode !== 'accept') {
+    return res.status(400).json({ error: 'mode must be ask, safe, or accept', code: 'invalid_request' })
+  }
+  res.json({ mode: writeApprovalMode((req as any).userId, mode) })
+}))
+
+router.post('/runs/:runId/approve', asyncHandler(async (req, res) => {
+  if (!hasDb || !prisma) return noDb(res)
+  const { resolveApprovalById } = await import('../agent/approvalStore')
+  const run = await prisma.botRun.findUnique({
+    where: { id: req.params.runId },
+    include: { task: { select: { userId: true } } },
+  })
+  if (!run || run.task.userId !== (req as any).userId) return res.status(404).json({ error: 'Bot task not found' })
+  const approvalId = String(req.body?.approvalId || '')
+  if (!approvalId) return res.status(400).json({ error: 'approvalId is required', code: 'invalid_request' })
+  const ok = resolveApprovalById((req as any).userId, approvalId, req.body?.approved === true)
+  if (!ok) return res.status(404).json({ error: 'Approval is not pending' })
+  res.json({ ok: true, approved: req.body?.approved === true })
 }))
 
 export default router

@@ -4,12 +4,31 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUp, Bot, Clock, Loader2, Monitor, Square, GraduationCap } from 'lucide-react'
 import { BOT_STATUS_LABEL, type BotQuota, type BotSkillRef, type BotTask } from '../../lib/bot'
 import { computerUnavailableMessage, taskInProgress } from '../../agents/botTask'
+import { Markdown } from '../chat/Markdown'
+import { PdfView, SheetView, useSheetRows } from '../chat/ArtifactViewers'
 
 /**
  * Task thread for a named bot. A message becomes a one-shot task. The thread
  * shows each instruction and the run's outcome. The greeting uses the bot's
  * name when the thread's messages are not loaded here.
  */
+function BotArtifact({ artifact }: { artifact: { id: string; kind: string; name: string; url?: string } }) {
+  const sheet = /\.(xlsx|csv)$/i.test(artifact.name)
+  const rows = useSheetRows(sheet ? artifact.url : undefined)
+  if (/\.docx$/i.test(artifact.name)) {
+    return (
+      <a href={artifact.url || '#'} download={artifact.name} className="mt-2 inline-flex text-ui-xs text-[var(--accent-text)] underline">
+        Download {artifact.name}
+      </a>
+    )
+  }
+  if (/\.pdf$/i.test(artifact.name) && artifact.url) {
+    return <PdfView a={artifact} open={{ url: artifact.url, error: false, retry: () => undefined }} />
+  }
+  if (sheet && artifact.url) return <SheetView rows={rows.rows} error={rows.error} onRetry={rows.retry} />
+  return <span className="mt-2 block text-ui-xs text-[var(--ink-secondary)]">{artifact.name}</span>
+}
+
 export function AgentChatPane({
   tasks,
   sending,
@@ -26,6 +45,11 @@ export function AgentChatPane({
   onCancel,
   onDismissSuggestions,
   onAttachSkill,
+  onReset,
+  approvalMode = 'ask',
+  pendingApproval = null,
+  onApprove,
+  onApprovalMode,
 }: {
   tasks: BotTask[] | null
   sending: boolean
@@ -39,7 +63,7 @@ export function AgentChatPane({
   requiresComputer?: boolean
   /** False while the thread list is still loading. Send stays disabled. */
   threadsReady?: boolean
-  onSend: (text: string) => Promise<void>
+  onSend: (text: string, attachments?: Array<{ name: string; path: string }>) => Promise<void>
   /** Active run → open that run's computer. */
   onWatch: (taskId: string) => void
   /** Finished run → open the run's written trace. */
@@ -47,8 +71,14 @@ export function AgentChatPane({
   onCancel: (taskId: string) => void
   onDismissSuggestions?: () => void
   onAttachSkill?: (skill: BotSkillRef | null) => void
+  onReset?: () => void
+  approvalMode?: 'ask' | 'safe' | 'accept'
+  pendingApproval?: { id: string; name: string; category: 'computer' | 'terminal' | 'tool'; args?: Record<string, unknown> } | null
+  onApprove?: (approvalId: string, approved: boolean) => void
+  onApprovalMode?: (mode: 'ask' | 'safe' | 'accept') => void
 }) {
   const [draft, setDraft] = useState('')
+  const [attachments, setAttachments] = useState<Array<{ name: string; path: string }>>([])
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
 
@@ -70,13 +100,49 @@ export function AgentChatPane({
 
   const send = async () => {
     const text = draft.trim()
-    if (!text || sending || sendLocked) return
+    if ((!text && attachments.length === 0) || sending || sendLocked) return
     setDraft('')
-    try { await onSend(text) } catch { setDraft(text) }
+    const files = attachments
+    setAttachments([])
+    try {
+      if (files.length) await onSend(text, files)
+      else await onSend(text)
+    } catch { setDraft(text); setAttachments(files) }
   }
 
   return (
     <div className="flex flex-col min-h-0 h-full">
+      <div className="flex items-center justify-end gap-2 px-5 pt-3">
+        {onApprovalMode && (
+          <label className="text-2xs text-[var(--ink-muted)]">
+            Approvals
+            <select
+              aria-label="Approval mode"
+              value={approvalMode}
+              onChange={(e) => onApprovalMode(e.target.value as 'ask' | 'safe' | 'accept')}
+              className="ml-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-2 py-1 text-ui-xs"
+            >
+              <option value="ask">Ask</option>
+              <option value="safe">Auto</option>
+              <option value="accept">Accept all</option>
+            </select>
+          </label>
+        )}
+        {onReset && (
+          <button type="button" onClick={onReset} className="text-ui-xs text-[var(--ink-muted)] hover:text-[var(--ink-primary)]">
+            Reset conversation
+          </button>
+        )}
+      </div>
+      {approvalMode !== 'accept' && pendingApproval && (
+        <div className="mx-5 mt-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-3 py-2 text-ui-xs">
+          <p className="text-[var(--ink-secondary)]">Allow {pendingApproval.name.replace(/_/g, ' ')}? This is a {pendingApproval.category} action.</p>
+          <div className="mt-2 flex gap-2">
+            <button type="button" onClick={() => onApprove?.(pendingApproval.id, true)} className="rounded-lg bg-[var(--accent-fill)] px-2.5 py-1 text-white">Approve</button>
+            <button type="button" onClick={() => onApprove?.(pendingApproval.id, false)} className="rounded-lg px-2.5 py-1 text-[var(--ink-secondary)]">Deny</button>
+          </div>
+        </div>
+      )}
       {/* Thread */}
       <div
         ref={scrollRef}
@@ -148,7 +214,23 @@ export function AgentChatPane({
               <button type="button" onClick={() => onAttachSkill?.(null)} className="text-[var(--ink-muted)] hover:underline">Clear</button>
             </p>
           )}
-          <div className={`flex items-end gap-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-3.5 py-2.5 focus-within:border-[var(--accent)] transition ${sendLocked ? 'opacity-60' : ''}`}>
+          {attachments.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {attachments.map((file) => (
+                <span key={file.name} className="rounded-lg bg-[var(--bg-hover)] px-2 py-1 text-2xs text-[var(--ink-secondary)]">{file.name}</span>
+              ))}
+            </div>
+          )}
+          <div
+            className={`flex items-end gap-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] px-3.5 py-2.5 focus-within:border-[var(--accent)] transition ${sendLocked ? 'opacity-60' : ''}`}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault()
+              const files = Array.from(e.dataTransfer?.files || [])
+              if (!files.length) return
+              setAttachments((cur) => [...cur, ...files.map((file) => ({ name: file.name, path: `/workspace/inbox/${file.name}` }))])
+            }}
+          >
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -224,8 +306,13 @@ function Exchange({
             <span>{replyFor(task)}</span>
           </div>
           {(task.status === 'succeeded' || waitingRoutine) && task.result && (
-            <p className="mt-2 whitespace-pre-wrap text-ui-sm text-[var(--ink-secondary)] leading-relaxed">{task.result}</p>
+            <div className="mt-2 text-ui-sm text-[var(--ink-secondary)] leading-relaxed">
+              <Markdown content={task.result} />
+            </div>
           )}
+          {task.artifacts?.map((artifact) => (
+            <BotArtifact key={artifact.id} artifact={artifact} />
+          ))}
           <div className="mt-2 flex items-center gap-2">
             {active && (
               <button

@@ -35,6 +35,7 @@ export interface BotTask {
   createdBy?: string
   /** Latest run result text when the list/detail payload includes it. */
   result?: string | null
+  artifacts?: Array<{ id: string; kind: string; name: string; url?: string }>
   createdAt: string
   updatedAt: string
 }
@@ -109,6 +110,9 @@ export interface BotEvent {
   runId?: string
   /** Present on `skill_saved` teach events. */
   skillId?: string
+  /** Present on `approval_required` events. */
+  approvalId?: string
+  category?: 'computer' | 'terminal' | 'tool' | 'safe'
 }
 
 /** Live feed frame (SSE + poll fallback both emit this shape). */
@@ -137,6 +141,8 @@ export interface EnqueueBotInput {
   /** Bot thread the task is filed under. */
   conversationId?: string
   priority?: number
+  teach?: { name?: string; description?: string; recordingId?: string }
+  attachments?: Array<{ name: string; path: string }>
 }
 
 export interface EnqueueBotResult {

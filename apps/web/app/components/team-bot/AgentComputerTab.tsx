@@ -37,6 +37,8 @@ export function AgentComputerTab({
   onOpenFiles,
   /** Set when this account cannot start a desktop. Send still works without one. */
   unavailableMessage = null,
+  /** mark = status only, preview = side view while chat stays up, takeover = help is needed. */
+  level,
 }: {
   session: TeachSession
   botName?: string
@@ -48,6 +50,7 @@ export function AgentComputerTab({
   onTrace?: () => void
   onOpenFiles?: () => void
   unavailableMessage?: string | null
+  level?: 'mark' | 'preview' | 'takeover'
 }) {
   const [box, setBox] = useState<BotBox | null>(null)
   const [booting, setBooting] = useState(false)
@@ -185,11 +188,12 @@ export function AgentComputerTab({
   }, [streamOpen])
 
   /** The goal comes from the record bar. A generic sentence is not a demonstration. */
-  const startRecording = (goal: string) => {
-    const text = goal.trim()
+  const allowTakeover = level !== 'preview' && level !== 'mark'
+  const startRecording = (input: { goal: string; name?: string; description?: string }) => {
+    const text = input.goal.trim()
     if (!text) return
     void wake().finally(() => {
-      void session.start(text)
+      void session.start({ goal: text, name: input.name, description: input.description })
     })
   }
 
@@ -379,7 +383,7 @@ export function AgentComputerTab({
         <p className="absolute top-2 left-2 right-10 z-20 text-center text-ui-xs text-[var(--danger)]">{error}</p>
       )}
 
-      {shownUrl && (
+      {shownUrl && allowTakeover && (
         <ControlPill
           driving={inControl}
           takeDisabled={takeoverBusy || (!viewUrl && session.phase !== 'waiting' && session.phase !== 'starting')}
@@ -451,6 +455,20 @@ export function AgentComputerTab({
     </div>
   )
 
+  if (level === 'mark') {
+    return (
+      <div data-testid="computer-level" data-level="mark" className="px-4 py-3 text-ui-xs text-[var(--ink-muted)]">
+        {box?.alive ? 'Computer is awake' : 'Computer is asleep'}
+      </div>
+    )
+  }
+
+  const leveled = (
+    <div data-testid="computer-level" data-level={level === 'takeover' ? 'takeover' : 'preview'} className={expanded ? 'contents' : 'flex flex-col min-h-0 flex-1'}>
+      {stage}
+    </div>
+  )
+
   if (expanded) {
     return (
       <Dialog
@@ -465,7 +483,9 @@ export function AgentComputerTab({
           botName={botName}
           onStart={startRecording}
           onStop={stopControl}
-          onDiscard={() => { void session.cancel() }}
+          onDiscard={() => { void session.discard() }}
+          onCancel={() => { void session.cancel() }}
+          onLearn={(recordingId, name, description) => { void session.learn({ recordingId, name, description }) }}
           onClose={closeComputer}
         />
         <ComputerActions
@@ -484,7 +504,7 @@ export function AgentComputerTab({
     )
   }
 
-  return stage
+  return leveled
 }
 
 function ComputerActions({
@@ -586,22 +606,27 @@ function ControlPill({
 }
 
 function RecordBar({
-  session, botName, onStart, onStop, onDiscard, onClose,
+  session, botName, onStart, onStop, onDiscard, onCancel, onLearn, onClose,
 }: {
   session: TeachSession
   botName: string
-  onStart: (goal: string) => void
+  onStart: (input: { goal: string; name?: string; description?: string }) => void
   onStop: () => void
   onDiscard: () => void
+  onCancel: () => void
+  onLearn: (recordingId: string, name?: string, description?: string) => void
   onClose?: () => void
 }) {
   const [demo, setDemo] = useState('')
+  const [skillName, setSkillName] = useState('')
+  const [skillDescription, setSkillDescription] = useState('')
+  const [recordingId, setRecordingId] = useState('')
   const recording = session.phase === 'recording'
   const canDiscard = session.phase === 'starting' || session.phase === 'waiting' || session.phase === 'recording'
   const begin = () => {
     const goal = demo.trim()
     if (!goal) return
-    onStart(goal)
+    onStart({ goal, name: skillName.trim() || undefined, description: skillDescription.trim() || undefined })
   }
   return (
     <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border-subtle)] shrink-0">
@@ -638,6 +663,21 @@ function RecordBar({
                   : `Skill saved${session.skillName ? ` · ${session.skillName}` : ''}`}
             </p>
           ) : (
+            <>
+            <input
+              value={skillName}
+              onChange={(e) => setSkillName(e.target.value)}
+              placeholder="Skill name"
+              aria-label="Skill name"
+              className="w-36 shrink-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-2.5 py-1.5 text-ui-sm text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] focus:border-[var(--accent-soft-border)] focus:outline-none"
+            />
+            <input
+              value={skillDescription}
+              onChange={(e) => setSkillDescription(e.target.value)}
+              placeholder="When to use it"
+              aria-label="Skill description"
+              className="w-40 shrink-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-2.5 py-1.5 text-ui-sm text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] focus:border-[var(--accent-soft-border)] focus:outline-none"
+            />
             <input
               value={demo}
               onChange={(e) => setDemo(e.target.value)}
@@ -647,20 +687,44 @@ function RecordBar({
               disabled={session.phase === 'starting'}
               className="flex-1 min-w-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-2.5 py-1.5 text-ui-sm text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] focus:border-[var(--accent-soft-border)] focus:outline-none disabled:opacity-60"
             />
+            </>
           )}
           {session.phase === 'distilling' ? (
             <Loader2 size={16} className="animate-spin text-[var(--accent-text)] shrink-0" aria-hidden />
           ) : session.phase === 'done' || session.phase === 'failed' ? null : (
             <>
               {canDiscard && (
-                <button
-                  type="button"
-                  onClick={onDiscard}
-                  className="shrink-0 px-3 py-1.5 rounded-lg text-ui-xs text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition"
-                >
-                  Discard
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={onCancel}
+                    className="shrink-0 px-3 py-1.5 rounded-lg text-ui-xs text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onDiscard}
+                    className="shrink-0 px-3 py-1.5 rounded-lg text-ui-xs text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition"
+                  >
+                    Discard recording
+                  </button>
+                </>
               )}
+              <input
+                value={recordingId}
+                onChange={(e) => setRecordingId(e.target.value)}
+                placeholder="Saved recording"
+                aria-label="Saved recording"
+                className="w-32 shrink-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-2 py-1.5 text-ui-xs text-[var(--ink-primary)] focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => { if (recordingId.trim()) onLearn(recordingId.trim(), skillName.trim() || undefined, skillDescription.trim() || undefined) }}
+                className="shrink-0 px-3 py-1.5 rounded-lg text-ui-xs text-[var(--ink-secondary)] hover:bg-[var(--bg-hover)] transition"
+              >
+                Learn from recording
+              </button>
               <button
                 type="button"
                 onClick={begin}

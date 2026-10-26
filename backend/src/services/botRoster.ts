@@ -140,6 +140,7 @@ export function groupPreamble(selfName: string, otherNames: string[], projectIns
     'Answer the user. If someone @mentioned you, answer them.',
     'If you need one other member who has not answered, mention them once as @Name.',
     'Do not repeat another member\'s answer, and do not address every member again.',
+    'Use only your own memory. Do not merge another member\'s notes into your answer.',
   ]
   const instructions = (projectInstructions || '').trim()
   if (instructions) lines.push(`Project instructions:\n${instructions}`)

@@ -101,4 +101,30 @@ describe('AgentComputerTab unavailable desktop', () => {
     await user.click(within(confirm).getByRole('button', { name: 'Reset computer' }))
     expect(resetBotComputer).toHaveBeenCalled()
   })
+
+  it('previews beside chat and offers takeover only when the bot needs help', async () => {
+    vi.mocked(getBotBox).mockResolvedValue({
+      alive: true,
+      paused: false,
+      sandboxId: 'sbx',
+      viewUrl: 'https://example.test/view',
+      interactiveUrl: 'https://example.test/interactive',
+      resumed: true,
+      ageMinutes: 1,
+      taskType: 'default',
+      workspaceDir: '/workspace',
+    })
+    const { rerender } = render(<AgentComputerTab session={session} level="preview" />)
+    expect(await screen.findByText('screen')).toBeInTheDocument()
+    expect(screen.getByTestId('computer-level')).toHaveAttribute('data-level', 'preview')
+    expect(screen.queryByRole('button', { name: /take control/i })).not.toBeInTheDocument()
+
+    rerender(<AgentComputerTab session={session} level="takeover" />)
+    expect(screen.getByTestId('computer-level')).toHaveAttribute('data-level', 'takeover')
+    expect(screen.getByRole('button', { name: /take control/i })).toBeInTheDocument()
+
+    rerender(<AgentComputerTab session={session} level="mark" autoProbe={false} />)
+    expect(screen.getByTestId('computer-level')).toHaveAttribute('data-level', 'mark')
+    expect(screen.queryByText('screen')).not.toBeInTheDocument()
+  })
 })

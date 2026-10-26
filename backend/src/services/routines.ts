@@ -8,6 +8,7 @@
  * would drift; one store with two views cannot.
  */
 import { hasDb, prisma } from './prisma'
+import { parseRoutineSchedule } from './routineSchedule'
 
 /** nextAttemptAt this far out means paused: the row stays, its history stays,
  *  and the claim loop never picks it up. */
@@ -35,10 +36,15 @@ export interface Routine {
   /** Latest run's result text, when a run has one. */
   result: string | null
   runs: RoutineRun[]
+  timezone: string
+  autoPauseWhenAway: boolean
+  pausedReason: 'user' | 'away' | null
 }
 
 function toRoutine(row: any): Routine {
   const nextRunAt = row.nextAttemptAt ? new Date(row.nextAttemptAt) : null
+  const schedule = parseRoutineSchedule(row.schedule || '')
+  const paused = !!nextRunAt && nextRunAt.getTime() >= PAUSED_AT.getTime()
   return {
     id: row.id,
     goal: row.goal,
@@ -46,7 +52,10 @@ function toRoutine(row: any): Routine {
     skillId: row.skillId ?? null,
     botId: row.botId ?? null,
     status: row.status,
-    paused: !!nextRunAt && nextRunAt.getTime() >= PAUSED_AT.getTime(),
+    paused,
+    timezone: schedule.timeZone,
+    autoPauseWhenAway: schedule.autoPauseWhenAway,
+    pausedReason: paused ? (row.lastErrorCode === 'AWAY' ? 'away' : 'user') : null,
     nextRunAt: nextRunAt ? nextRunAt.toISOString() : null,
     createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : '',
     result: row.runs?.[0]?.result ?? null,
@@ -137,6 +146,14 @@ export async function setRoutinePaused(userId: string, id: string, paused: boole
     include: { runs: { orderBy: { startedAt: 'desc' }, take: 20, select: { id: true, status: true, error: true, result: true, startedAt: true, completedAt: true } } },
   })
   return rows ? toRoutine(rows) : null
+}
+
+export async function pauseRoutinesForAway(userId: string, ids: string[]): Promise<void> {
+  if (!hasDb || !prisma || !ids.length) return
+  await prisma.agentTask.updateMany({
+    where: { id: { in: ids }, userId, kind: 'scheduled', status: { not: 'cancelled' } },
+    data: { nextAttemptAt: PAUSED_AT, lastErrorCode: 'AWAY' },
+  })
 }
 
 export async function deleteRoutine(userId: string, id: string): Promise<boolean> {

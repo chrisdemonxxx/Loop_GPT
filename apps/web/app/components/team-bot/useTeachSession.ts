@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   enqueueBotTask, getBotTask, getBotComputer, setBotTakeover, cancelBotTask, streamBotRun,
-  appendBotTeachStep,
+  appendBotTeachStep, discardBotTeach,
   type BotComputer, type BotEvent, type BotTeachStep,
 } from '../../lib/bot'
 
@@ -30,10 +30,14 @@ export interface TeachSessionState {
   error: string
   skillId: string | null
   skillName: string | null
-  start: (goal: string) => Promise<void>
+  start: (goal: string | { goal: string; name?: string; description?: string }) => Promise<void>
   takeOver: () => Promise<void>
   /** Release takeover and distill. Only valid while recording. */
   stop: () => Promise<void>
+  /** Stop the session and delete the recording. Distinct from cancel. */
+  discard: () => Promise<void>
+  /** Distill a saved recording. Does not take over the desktop. */
+  learn: (input: { recordingId: string; name?: string; description?: string }) => Promise<void>
   cancel: () => Promise<void>
   reset: () => void
   /** Post one operator input while recording. No-op in every other phase. */
@@ -258,7 +262,7 @@ export function useTeachSession(
     computerPollRef.current = setInterval(() => { void pullComputer() }, 5000)
   }, [handleEvent, fail])
 
-  const start = useCallback(async (teachGoal: string) => {
+  const start = useCallback(async (teachGoal: string | { goal: string; name?: string; description?: string }) => {
     const current = phaseRef.current
     if (current === 'recording' || current === 'distilling' || current === 'done' || current === 'starting') return
     if (current === 'waiting' && runIdRef.current) {
@@ -275,8 +279,13 @@ export function useTeachSession(
     setSkillName(null)
     setFrames(0)
     setSteps(0)
+    const goalText = typeof teachGoal === 'string' ? teachGoal : teachGoal.goal
+    const teach = typeof teachGoal === 'string' ? undefined : {
+      ...(teachGoal.name ? { name: teachGoal.name } : {}),
+      ...(teachGoal.description ? { description: teachGoal.description } : {}),
+    }
     movePhase('starting')
-    setGoal(teachGoal)
+    setGoal(goalText)
     phaseTimerRef.current = setTimeout(() => {
       if (phaseRef.current === 'starting' || phaseRef.current === 'waiting') {
         void abandon('Timed out waiting for the teach computer. Cancel and try again.')
@@ -284,10 +293,11 @@ export function useTeachSession(
     }, START_TIMEOUT_MS)
     try {
       const res = await enqueueBotTask({
-        goal: teachGoal,
+        goal: goalText,
         kind: 'teach',
         maxSteps: 16,
         computer: { enabled: true, ttlMinutes: 30 },
+        ...(teach && Object.keys(teach).length ? { teach } : {}),
         ...(botId ? { botId } : {}),
         ...(conversationId ? { conversationId } : {}),
       })
@@ -347,6 +357,56 @@ export function useTeachSession(
     await abandon('Teach session cancelled.')
   }, [abandon])
 
+  const discard = useCallback(async () => {
+    const run = runIdRef.current
+    const task = taskIdRef.current
+    clearTimers()
+    distillArmedRef.current = false
+    if (run) {
+      try { await discardBotTeach(run) } catch { /* the recording delete is best-effort */ }
+    }
+    if (task) {
+      try { await cancelBotTask(task) } catch { /* still leave the session */ }
+    }
+    generationRef.current += 1
+    abandoningRef.current = false
+    movePhase('idle')
+    setGoal(null)
+    setTaskId(null)
+    setRunId(null)
+    taskIdRef.current = null
+    runIdRef.current = null
+    setComputer(null)
+    setFrames(0)
+    setSteps(0)
+    setError('')
+    setSkillId(null)
+    setSkillName(null)
+  }, [clearTimers, movePhase])
+
+  const learn = useCallback(async (input: { recordingId: string; name?: string; description?: string }) => {
+    clearTimers()
+    distillArmedRef.current = true
+    setError('')
+    movePhase('distilling')
+    const res = await enqueueBotTask({
+      goal: input.name || 'Learn from the saved recording',
+      kind: 'teach',
+      maxSteps: 16,
+      computer: { enabled: true, ttlMinutes: 30 },
+      teach: {
+        recordingId: input.recordingId,
+        ...(input.name ? { name: input.name } : {}),
+        ...(input.description ? { description: input.description } : {}),
+      },
+      ...(botId ? { botId } : {}),
+      ...(conversationId ? { conversationId } : {}),
+    })
+    setTaskId(res.task.id)
+    taskIdRef.current = res.task.id
+    setGoal(input.name || 'Learn from the saved recording')
+  }, [botId, clearTimers, conversationId, movePhase])
+
   const reportInput = useCallback((input: TeachOperatorInput) => {
     const id = runIdRef.current
     if (phaseRef.current !== 'recording' || !id) return
@@ -374,6 +434,6 @@ export function useTeachSession(
 
   return {
     phase, goal, taskId, runId, computer, frames, steps, error, skillId, skillName,
-    start, takeOver, stop, cancel, reset, reportInput,
+    start, takeOver, stop, cancel, discard, learn, reset, reportInput,
   }
 }

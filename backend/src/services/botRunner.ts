@@ -21,6 +21,12 @@ import { DailyCreditError, captureDailyReservation, cleanupDailyReservation, dai
 import { sanitizeMetadata } from '../agent/guardrails'
 import { startRun, setRunComputer, isRunTakeoverRequested } from './botRuns'
 import { clearTeachSteps, formatTeachStepLog, loadTeachSteps } from './teachSteps'
+import { readTeachMeta, saveTeachRecording, teachDistillPrompt, teachNeedsTakeover, readTeachRecording } from './teachPlan'
+import { mergeConnectorTools } from './botConnectors'
+import { connectorRegistry } from '../agent/connectors/connectorRegistry'
+import { approvalCategory, permissionOverridesForMode, readApprovalMode } from './botApprovals'
+import { routineTranscript } from './routineSchedule'
+import { catalogLibraryItem, catalogRunOutputs } from './botLibrary'
 import { ComputerSession } from './computerSession'
 import { E2BDesktopError, attachDesktop } from './e2bDesktop'
 import { attachUserBoxFromDB, createBoxTaskFolder, extendUserBoxLease, sharedBoxAttachBudget } from './botBox'
@@ -49,6 +55,7 @@ const BOT_SYSTEM_PROMPT = [
   '- Never ask questions or wait for input. Make reasonable assumptions and state them.',
   '- Use the available tools proactively: search and read the web, run code, produce documents.',
   '- Save deliverables with create_document. Durable facts go into the remember tool.',
+  '- Publish pages and apps under /workspace/sites/<name>/index.html and files under /workspace/exports/.',
   '- Finish with a concise final report: what you did, key findings, and where the artifacts are.',
 ].join('\n')
 
@@ -72,17 +79,6 @@ const TEACH_READY_PROMPT = [
   'You are in TEACH MODE on a dedicated cloud desktop.',
   'Say in one short sentence: "Ready — take over the live computer and demonstrate the task; press Release when done." Then STOP — do not take any actions, call no tools, end your turn immediately.',
 ].join('\n')
-
-/** Teach-mode phase 2: distill the demonstration into a reusable Skill. */
-function teachDistillPrompt(frameCount: number, stepLog: string): string {
-  return [
-    'You are in TEACH MODE. The operator just demonstrated a task on the dedicated cloud desktop; the attached frames are the recorded screen timeline (in order, with timestamps).',
-    `Write a reusable Skill that automates this task end-to-end: call create_skill with a clear name, a one-line description, trigger keywords a user might say, and complete step-by-step instructions derived from the demo (exact sites, exact text to type, keyboard-first shortcuts, what "done" looks like). ${frameCount} frames were recorded.`,
-    'Operator input, in order (framebuffer pixels):',
-    stepLog,
-    'Then reply with: the skill name, its trigger keywords, and a 2-3 sentence summary of the procedure you distilled. Do not ask questions; make reasonable assumptions and state them.',
-  ].join('\n')
-}
 
 /** Load an attached skill and fold it into the run: instructions into the
  *  system prompt, its tools into the allowlist (validated against builtins). */
@@ -132,12 +128,14 @@ export function botRunToolCatalog(
     builtins: readonly ToolDefinition[]
     computerTools?: readonly ToolDefinition[]
     skillTool?: ToolDefinition
+    extra?: readonly ToolDefinition[]
   },
 ): ToolDefinition[] {
   const catalog: ToolDefinition[] = [
     ...parts.builtins,
     ...(parts.computerTools ?? []),
     ...(parts.skillTool ? [parts.skillTool] : []),
+    ...(parts.extra ?? []),
   ]
   if (runNames.includes('remember_fact') && !catalog.some((tool) => tool.name === 'remember_fact')) {
     catalog.push(rememberFactTool)
@@ -357,6 +355,16 @@ export async function executeBotTask(
       }
       run.emit(event)
       // Explicit skill_saved so the teach UI can stop waiting on a timer.
+      if (event.type === 'pending_approval') {
+        const category = approvalCategory(event.tool_name)
+        run.emit({
+          type: 'approval_required',
+          approvalId: event.approvalId,
+          name: event.tool_name,
+          args: event.args,
+          category: category === 'safe' ? 'tool' : category,
+        })
+      }
       if (teachDistilling && event.type === 'tool_result' && event.name === 'create_skill' && !event.isError) {
         const skill = event.data && typeof event.data === 'object' ? (event.data as { skill?: { id?: string; name?: string } }).skill : undefined
         if (skill?.id) {
@@ -457,11 +465,14 @@ export async function executeBotTask(
     runNames = identified.names
     systemPrompt = identified.systemPrompt
     if (skillTool && !runNames.includes('create_skill')) runNames = [...runNames, 'create_skill']
+    const connectorTools = task.userId ? connectorRegistry.toolsFor(task.userId) : []
+    runNames = mergeConnectorTools(runNames, connectorTools)
+    const approvalMode = isTeach ? 'accept' as const : (task.userId ? readApprovalMode(task.userId) : 'ask' as const)
     // Grant AFTER identity/skill attachment so remember_fact (and skill tools)
     // are actually authorized — building earlier left them as names-only → 403.
     // Tool descriptions use the live xdpyinfo size so clicks match the canvas.
     const computerTools = computer ? computerToolsForScreen(screen) : []
-    const catalog = botRunToolCatalog(runNames, { builtins, computerTools, skillTool })
+    const catalog = botRunToolCatalog(runNames, { builtins, computerTools, skillTool, extra: connectorTools })
     const grantedTools = buildGrantedTools(runNames, catalog)
     const authorizedCtx = await authorizeRunContext(ctx, identity.workspaceId, grantedTools)
     run.emit({ type: 'run', runId: run.runId } as AgentEvent)
@@ -475,7 +486,8 @@ export async function executeBotTask(
       systemPrompt: prompt,
       maxSteps: task.maxSteps ?? undefined,
       thinking: (task.thinking || undefined) as ThinkingInput,
-      autoApprove: true, // allowlisted tools only; no interactive gate exists off-HTTP
+      autoApprove: approvalMode === 'accept',
+      permissionOverrides: permissionOverridesForMode(approvalMode, runNames),
       useMemory: true,
       ctx: authorizedCtx,
       // The first real model dispatch flips the reservation to dispatched.
@@ -484,36 +496,51 @@ export async function executeBotTask(
 
     let messages: ChatMessage[] = [{ role: 'user', content: task.goal }]
     if (isTeach && computer) {
-      // Phase 1: announce readiness. create_skill is not granted on this turn.
-      const readinessNames = runNames.filter((name) => name !== 'create_skill')
-      await runAgentOnce([{ role: 'user', content: 'Announce teach readiness now.' }], `${BOT_SYSTEM_PROMPT}\n\n${TEACH_READY_PROMPT}`, readinessNames)
-      if (abort.signal.aborted) throw abort.signal.reason instanceof BotAbort ? abort.signal.reason : new BotAbort('worker_stop')
-      emit({ type: 'status', message: 'Waiting for the operator to take over and demonstrate… (the session records what you do)' })
-      // Phase 1.5: record the takeover demonstration. Frames every ~1.5s while
-      // the operator drives; the step list (clicks/keys/types) sits beside them.
-      // Stop on Release or a time cap (no hard frame count).
-      // The run TTL does not end this wait — it is armed after recording.
+      const teachMeta = readTeachMeta(task.computer)
+      const fromRecording = !teachNeedsTakeover(teachMeta.recordingId)
       const recording: Array<{ at: number; png: Buffer }> = []
-      const teachWindowMs = Number(process.env.BOT_TEACH_MAX_MS || process.env.BOT_TAKEOVER_TIMEOUT_MS || 30 * 60_000)
-      const teachPollMs = Number.isFinite(options.teachPollMs) ? Math.max(0, options.teachPollMs as number) : 1500
-      const takeoverDeadline = Date.now() + teachWindowMs
       let sawTakeover = false
       let steps = await loadTeachSteps(run.runId)
-      while (Date.now() < takeoverDeadline && !abort.signal.aborted) {
-        const takeover = await isRunTakeoverRequested(run.runId).catch(() => false)
-        if (takeover) {
-          sawTakeover = true
-          try { recording.push({ at: Date.now(), png: await computer.captureSilent() }) } catch { /* transient */ }
-          steps = await loadTeachSteps(run.runId)
-          emit({ type: 'status', message: `Recording the demonstration… ${recording.length} frame(s), ${steps.length} step(s)` })
-        } else if (sawTakeover) {
-          break // released: the demo is done
+      if (fromRecording) {
+        const stored = task.userId && teachMeta.recordingId ? readTeachRecording(task.userId, teachMeta.recordingId) : null
+        if (!stored || stored.frameCount < 1) {
+          if (reservationId) await cleanupDailyReservation(reservationId)
+          await run.fail('That recording is not available.')
+          return failAgentTask(claim, 'BOT_TEACH_NOTHING_RECORDED', 'Nothing was recorded')
         }
-        await new Promise((r) => setTimeout(r, teachPollMs))
-      }
-      steps = await loadTeachSteps(run.runId)
-      if (abort.signal.aborted) {
-        throw abort.signal.reason instanceof BotAbort ? abort.signal.reason : new BotAbort('worker_stop')
+        sawTakeover = true
+        recording.push({ at: Date.now(), png: Buffer.from(stored.pngBase64, 'base64') })
+        steps = stored.steps as typeof steps
+        emit({ type: 'status', message: 'Learning from the saved recording.' })
+      } else {
+        // Phase 1: announce readiness. create_skill is not granted on this turn.
+        const readinessNames = runNames.filter((name) => name !== 'create_skill')
+        await runAgentOnce([{ role: 'user', content: 'Announce teach readiness now.' }], `${BOT_SYSTEM_PROMPT}\n\n${TEACH_READY_PROMPT}`, readinessNames)
+        if (abort.signal.aborted) throw abort.signal.reason instanceof BotAbort ? abort.signal.reason : new BotAbort('worker_stop')
+        emit({ type: 'status', message: 'Waiting for the operator to take over and demonstrate… (the session records what you do)' })
+        // Phase 1.5: record the takeover demonstration. Frames every ~1.5s while
+        // the operator drives; the step list (clicks/keys/types) sits beside them.
+        // Stop on Release or a time cap (no hard frame count).
+        // The run TTL does not end this wait — it is armed after recording.
+        const teachWindowMs = Number(process.env.BOT_TEACH_MAX_MS || process.env.BOT_TAKEOVER_TIMEOUT_MS || 30 * 60_000)
+        const teachPollMs = Number.isFinite(options.teachPollMs) ? Math.max(0, options.teachPollMs as number) : 1500
+        const takeoverDeadline = Date.now() + teachWindowMs
+        while (Date.now() < takeoverDeadline && !abort.signal.aborted) {
+          const takeover = await isRunTakeoverRequested(run.runId).catch(() => false)
+          if (takeover) {
+            sawTakeover = true
+            try { recording.push({ at: Date.now(), png: await computer.captureSilent() }) } catch { /* transient */ }
+            steps = await loadTeachSteps(run.runId)
+            emit({ type: 'status', message: `Recording the demonstration… ${recording.length} frame(s), ${steps.length} step(s)` })
+          } else if (sawTakeover) {
+            break // released: the demo is done
+          }
+          await new Promise((r) => setTimeout(r, teachPollMs))
+        }
+        steps = await loadTeachSteps(run.runId)
+        if (abort.signal.aborted) {
+          throw abort.signal.reason instanceof BotAbort ? abort.signal.reason : new BotAbort('worker_stop')
+        }
       }
       // Arm the computer TTL for the distill phase now that recording is done.
       if (!ttlTimer) {
@@ -527,8 +554,10 @@ export async function executeBotTask(
       }
       // Stop can land between polls. Count the release frame before deciding
       // the demo is empty, so a click-then-Stop still has a screenshot.
-      try { recording.push({ at: Date.now(), png: await computer.captureSilent() }) } catch { /* transient */ }
-      steps = await loadTeachSteps(run.runId)
+      if (!fromRecording) {
+        try { recording.push({ at: Date.now(), png: await computer.captureSilent() }) } catch { /* transient */ }
+        steps = await loadTeachSteps(run.runId)
+      }
       // One screenshot and one stored step is a demo. No takeover and zero
       // steps never reach create_skill.
       if (recording.length < 1 || steps.length < 1) {
@@ -554,11 +583,22 @@ export async function executeBotTask(
         for (let i = 0; i < 10; i++) picked.push(Math.min(recording.length - 1, Math.floor(i * step)))
       }
       const timelineText = picked.map((i) => `frame ${i + 1}/${recording.length} at +${Math.round((recording[i].at - recording[0].at) / 1000)}s`).join(', ')
-      const stepLog = formatTeachStepLog(steps)
+      const stepLog = fromRecording && teachMeta.recordingId && task.userId
+        ? (readTeachRecording(task.userId, teachMeta.recordingId)?.stepLog || formatTeachStepLog(steps))
+        : formatTeachStepLog(steps)
+      if (!fromRecording && task.userId && recording[0]) {
+        saveTeachRecording(task.userId, {
+          id: run.runId,
+          stepLog,
+          frameCount: recording.length,
+          steps: steps as Array<Record<string, unknown>>,
+          pngBase64: recording[0].png.toString('base64'),
+        })
+      }
       const teachMessage: ChatMessage = {
         role: 'user',
         content: [
-          { type: 'text', text: `${task.goal}\n\n${teachDistillPrompt(recording.length, stepLog)}\n\nTimeline: ${timelineText}.` },
+          { type: 'text', text: `${task.goal}\n\n${teachDistillPrompt(recording.length, stepLog, teachMeta)}\n\nTimeline: ${timelineText}.` },
           ...picked.map((i) => ({ type: 'image_url' as const, image_url: { url: `data:image/png;base64,${recording[i].png.toString('base64')}` } })),
         ],
       }
@@ -602,9 +642,17 @@ export async function executeBotTask(
     }
     // Task thread when the row belongs to the owner; otherwise the standing
     // Loop Bot chat, or Ops Bot for a system task.
+    const posted = task.kind === 'scheduled'
+      ? routineTranscript(task.goal, finalContent || 'The routine finished without a written result.').content
+      : (finalContent || '(no response)')
+    if (task.userId && task.botId) {
+      for (const item of catalogRunOutputs(finalContent, artifacts.map((artifact) => ({ name: artifact.name, kind: artifact.kind })))) {
+        try { catalogLibraryItem(task.userId, { botId: task.botId, ...item }) } catch { /* path jail */ }
+      }
+    }
     await saveMessage(identity.conversationId, {
       role: 'assistant',
-      content: finalContent || '(no response)',
+      content: posted,
       messageType: artifacts.some((a) => a.kind === 'image') ? 'image' : 'text',
       toolUsed: 'bot',
       metadata: sanitizeMetadata({

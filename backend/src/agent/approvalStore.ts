@@ -91,6 +91,16 @@ export async function waitForApproval(approvalId: string, timeoutMs = 120_000, s
   return false
 }
 
+/** Resolve by id when the bot route does not have the tool name handy. */
+export function resolveApprovalById(userId: string, approvalId: string, approved: boolean): boolean {
+  sweep()
+  const entry = store.get(approvalId)
+  if (!entry || entry.userId !== userId || entry.resolvedAt !== null) return false
+  entry.approved = approved
+  entry.resolvedAt = Date.now()
+  return true
+}
+
 export function clearApproval(conversationId: string, userId?: string): void {
   for (const [k, entry] of store) {
     if (entry.conversationId === conversationId && (userId === undefined || entry.userId === userId)) store.delete(k)

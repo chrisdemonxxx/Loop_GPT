@@ -13,6 +13,7 @@
  */
 import { randomUUID } from 'crypto'
 import { z } from 'zod'
+import { isValidSchedule, scheduleDelayMs } from './routineSchedule'
 import { Prisma } from '@prisma/client'
 import { prisma, hasDb } from './prisma'
 import { builtinToolNames } from '../agent'
@@ -77,7 +78,16 @@ export function parseScheduleMs(schedule: string): number {
 export const enqueueInput = z.object({
   goal: z.string().trim().min(1).max(20_000),
   kind: z.enum(['ops', 'scheduled', 'teach']).default('ops'),
-  schedule: z.string().regex(SCHEDULE_RE).optional(),
+  schedule: z.string().min(1).max(120).refine((value) => isValidSchedule(value)).optional(),
+  teach: z.object({
+    name: z.string().trim().min(1).max(120).optional(),
+    description: z.string().trim().max(500).optional(),
+    recordingId: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/).optional(),
+  }).optional(),
+  attachments: z.array(z.object({
+    name: z.string().trim().min(1).max(180),
+    path: z.string().trim().min(1).max(300),
+  })).max(8).optional(),
   model: z.string().regex(/^[A-Za-z0-9._:/-]{1,120}$/).optional(),
   thinking: z.string().refine((v) => (THINKING_EFFORTS as readonly string[]).includes(v)).optional(),
   allowedTools: z.array(z.string().regex(/^[A-Za-z0-9_]{1,64}$/)).max(32).optional(),
@@ -115,8 +125,7 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string, o
   if (!createdBy) throw new AgentTaskError('invalid_request')
   const parsed = enqueueInput.parse(input)
   if (parsed.kind === 'scheduled') {
-    if (!parsed.schedule) throw new AgentTaskError('invalid_request')
-    parseScheduleMs(parsed.schedule) // bounds check
+    if (!parsed.schedule || !isValidSchedule(parsed.schedule)) throw new AgentTaskError('invalid_request')
   } else if (parsed.schedule) throw new AgentTaskError('invalid_request')
   // Teach tasks are demonstrations on the dedicated computer — computer-less
   // teach is meaningless.
@@ -168,16 +177,26 @@ export async function enqueueAgentTask(input: EnqueueInput, createdBy: string, o
     if (!thread) throw new AgentTaskError('invalid_request')
     conversationId = thread.id
   }
+  let goal = parsed.goal
+  if (parsed.attachments?.length) {
+    const { attachmentPreface, inboxPath } = await import('./botChat')
+    for (const file of parsed.attachments) {
+      if (file.path !== inboxPath(file.name)) throw new AgentTaskError('invalid_request')
+    }
+    goal = `${attachmentPreface(parsed.attachments)}\n\n${goal}`
+  }
+  let storedComputer = computer as Record<string, unknown> | undefined
+  if (parsed.teach) storedComputer = { ...(storedComputer || {}), teach: parsed.teach }
   const created = await database().agentTask.create({
     data: {
       kind: parsed.kind,
-      goal: parsed.goal,
+      goal,
       schedule: parsed.schedule ?? null,
       model: parsed.model ?? null,
       thinking: parsed.thinking ?? null,
       allowedTools: parsed.allowedTools ?? undefined,
       maxSteps: parsed.maxSteps ?? null,
-      computer: computer ?? undefined,
+      computer: storedComputer ?? undefined,
       skillId: parsed.skillId ?? null,
       botId,
       conversationId,
@@ -350,7 +369,9 @@ export async function completeAgentTask(claim: AgentTaskClaim): Promise<'succeed
         AND "leaseToken" = ${claim.leaseToken} AND "leaseExpiresAt" > clock_timestamp()`
     return cancelled === 1 ? 'cancelled' : 'lease_lost'
   }
-  const intervalMs = task?.kind === 'scheduled' && task.schedule ? parseScheduleMs(task.schedule) : null
+  const intervalMs = task?.kind === 'scheduled' && task.schedule && isValidSchedule(task.schedule)
+    ? scheduleDelayMs(task.schedule)
+    : null
   const count = await db.$executeRaw`
     UPDATE "AgentTask"
     SET "status" = CASE WHEN ${intervalMs}::bigint IS NULL THEN 'succeeded' ELSE 'queued' END,

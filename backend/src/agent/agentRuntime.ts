@@ -501,7 +501,10 @@ export async function runAgent(opts: RunAgentOptions & { beforeDispatch?: () => 
       // pre-approved, emit a pending_approval event and wait for the user
       // to respond via POST /api/agent/:conversationId/approve.
       const toolDef = tools.find((tool) => tool.name === call.name)
-      const permission = permissionFor(call.name, toolDef?.needsApproval, toolDef?.source, configStore.getToolPermissions(ctx.userId))
+      const permission = permissionFor(call.name, toolDef?.needsApproval, toolDef?.source, {
+        ...configStore.getToolPermissions(ctx.userId),
+        ...(opts.permissionOverrides || {}),
+      })
 
       // Blocked: never execute; tell the model and record it.
       if (permission === 'blocked') {

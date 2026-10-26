@@ -40,11 +40,12 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 export const enqueueBotTask = (input: EnqueueBotInput) =>
   req<EnqueueBotResult>('POST', '/api/bot/tasks', input)
 
-export const listBotTasks = (opts: { status?: string; limit?: number; conversationId?: string } = {}) => {
+export const listBotTasks = (opts: { status?: string; limit?: number; conversationId?: string; botId?: string } = {}) => {
   const params = new URLSearchParams()
   if (opts.status) params.set('status', opts.status)
   if (opts.limit) params.set('limit', String(opts.limit))
   if (opts.conversationId) params.set('conversationId', opts.conversationId)
+  if (opts.botId) params.set('botId', opts.botId)
   return req<{ tasks: BotTask[] }>('GET', `/api/bot/tasks${params.size ? `?${params}` : ''}`)
 }
 
@@ -190,9 +191,12 @@ export interface BotRoutine {
   /** Latest run result, when the list payload includes one. */
   result?: string | null
   runs: RoutineRun[]
+  timezone?: string
+  autoPauseWhenAway?: boolean
+  pausedReason?: 'user' | 'away' | null
 }
 
-export const getBotMemory = (botId: string) => req<{ memory: string }>('GET', `/api/bot/memory?botId=${encodeURIComponent(botId)}`)
+export const getBotMemory = (botId: string) => req<{ memory: string; memories?: Array<{ id: string; content: string; visibility: 'private' | 'team'; createdAt: string }> }>('GET', `/api/bot/memory?botId=${encodeURIComponent(botId)}`)
 
 export const listBotRoutines = () => req<{ routines: BotRoutine[] }>('GET', '/api/bot/routines')
 
@@ -215,6 +219,47 @@ export const deleteBotRoutine = (id: string) => req<{ ok: boolean }>('DELETE', `
 export const listBotSkills = (botId?: string) =>
   req<{ skills: BotSkillRef[] }>('GET', `/api/bot/skills${botId ? `?botId=${encodeURIComponent(botId)}` : ''}`)
 export const deleteBotSkill = (id: string) => req<{ ok: true }>('DELETE', `/api/bot/skills/${id}`)
+
+export const createBotSkill = (input: { name: string; description: string; instructions: string; triggers?: string[]; botId?: string }) =>
+  req<{ id: string; name: string; description: string; instructions: string }>('POST', '/api/bot/skills', input)
+
+export const updateBotSkill = (id: string, input: { name: string; description: string; instructions: string; triggers?: string[] }) =>
+  req<{ id: string; name: string; description: string; instructions: string }>('PUT', `/api/bot/skills/${id}`, input)
+
+export const getBotSkill = (id: string) =>
+  req<{ id: string; name: string; description: string; instructions: string; triggers?: string[] }>('GET', `/api/bot/skills/${id}`)
+
+export const resetBotConversation = (botId: string) =>
+  req<{ ok: true; resetAt: string }>('POST', '/api/bot/conversation/reset', { botId })
+
+export const addBotMemory = (input: { botId: string; content: string; visibility?: 'private' | 'team' }) =>
+  req<{ memory: { id: string; content: string; visibility: 'private' | 'team'; createdAt: string } }>('POST', '/api/bot/memory', input)
+
+export const deleteBotMemory = (id: string, botId: string) =>
+  req<{ ok: true }>('DELETE', `/api/bot/memory/${id}?botId=${encodeURIComponent(botId)}`)
+
+export const discardBotTeach = (runId: string, recordingId?: string) =>
+  req<{ ok: true; discarded: true }>('POST', `/api/bot/runs/${runId}/teach/discard`, recordingId ? { recordingId } : {})
+
+export const listTeachRecordings = () =>
+  req<{ recordings: Array<{ id: string; frameCount: number; stepLog: string }> }>('GET', '/api/bot/teach/recordings')
+
+export const listBotLibrary = (botId?: string) =>
+  req<{ items: Array<{ id: string; kind: string; name: string; path: string; shareToken?: string | null }> }>('GET', `/api/bot/library${botId ? `?botId=${encodeURIComponent(botId)}` : ''}`)
+
+export const shareBotLibraryItem = (id: string) =>
+  req<{ token: string; url: string; expiresAt: string }>('POST', `/api/bot/library/${id}/share`, {})
+
+export const revokeBotLibraryItem = (id: string) =>
+  req<{ ok: true }>('DELETE', `/api/bot/library/${id}/share`)
+
+export const getBotApprovalMode = () => req<{ mode: 'ask' | 'safe' | 'accept' }>('GET', '/api/bot/settings/approvals')
+
+export const setBotApprovalMode = (mode: 'ask' | 'safe' | 'accept') =>
+  req<{ mode: 'ask' | 'safe' | 'accept' }>('PUT', '/api/bot/settings/approvals', { mode })
+
+export const approveBotRun = (runId: string, approvalId: string, approved: boolean) =>
+  req<{ ok: true; approved: boolean }>('POST', `/api/bot/runs/${runId}/approve`, { approvalId, approved })
 
 /**
  * Run event stream — replay buffered events then attach live (SSE). Uses

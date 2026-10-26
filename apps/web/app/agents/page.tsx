@@ -11,10 +11,19 @@ import { ConfirmDialog } from '@loop/ui'
 import {
   enqueueBotTask, listBotTasks, cancelBotTask, getBotQuota, listBotSkills, deleteBotSkill,
   listBotRoutines, createBotRoutine, setBotRoutinePaused, deleteBotRoutine,
-  getBotTask, getBotComputer, wakeBotComputer, BotApiError,
+  getBotTask, getBotComputer, wakeBotComputer, streamBotRun, BotApiError,
+  createBotSkill, addBotMemory, deleteBotMemory, resetBotConversation,
+  listBotLibrary, shareBotLibraryItem, revokeBotLibraryItem,
+  getBotApprovalMode, setBotApprovalMode, approveBotRun,
   type BotRoutine, type BotTask, type BotQuota, type BotSkillRef,
 } from '../lib/bot'
-import { getStoredUser } from '../lib/api'
+import { API_URL, authHeaders, getStoredUser } from '../lib/api'
+import { computerLevel, rosterPresence } from './presence'
+import { AccountAppsPanel } from '../components/team-bot/AccountAppsPanel'
+import { LibraryBoard } from '../components/team-bot/LibraryBoard'
+import { MemoryPanel } from '../components/team-bot/MemoryPanel'
+import { RoutineComposerFields } from '../components/team-bot/RoutineComposerFields'
+import { SkillEditor } from '../components/team-bot/SkillEditor'
 import { getBotMemory } from '../lib/bot'
 import { listNamedBots, listBotThreads, createBotThread, renameBotThread, deleteBotThread, type NamedBot, type BotThreadSummary } from '../lib/namedBots'
 import { COMPUTER_PANE_DEFAULT, COMPUTER_PANE_KEY, COMPUTER_PANE_MIN, clampComputerPaneWidth, computerPaneMax } from './computerPane'
@@ -173,11 +182,11 @@ function AgentsPageInner() {
   }, [pathname, router, searchParams])
 
   const tasksQuery = useQuery<{ tasks: BotTask[]; quota: BotQuota | null }>({
-    queryKey: ['bot', 'tasks', activeThreadId],
+    queryKey: ['bot', 'tasks', activeThreadId, botId],
     queryFn: async () => {
       const [t, q] = await Promise.all([
         activeThreadId
-          ? listBotTasks({ limit: 100, conversationId: activeThreadId })
+          ? listBotTasks({ limit: 100, conversationId: activeThreadId, ...(botId ? { botId } : {}) })
           : Promise.resolve({ tasks: [] as BotTask[] }),
         getBotQuota().catch(() => null),
       ])
@@ -228,7 +237,7 @@ function AgentsPageInner() {
     : ''
   const desktopUnavailable = computerUnavailableMessage(quota)
 
-  const memoryQuery = useQuery<{ memory: string } | null>({
+  const memoryQuery = useQuery<{ memory: string; memories?: Array<{ id: string; content: string; visibility: 'private' | 'team'; createdAt: string }> } | null>({
     queryKey: ['bot', 'memory', botId],
     queryFn: async () => {
       if (!botId) return null
@@ -238,6 +247,36 @@ function AgentsPageInner() {
     retry: false,
   })
   const botMemory = memoryQuery.data?.memory ?? ''
+  const memoryRows = memoryQuery.data?.memories ?? []
+  const [skillEditor, setSkillEditor] = useState(false)
+  const [approvalMode, setApprovalMode] = useState<'ask' | 'safe' | 'accept'>('ask')
+  const [pendingApproval, setPendingApproval] = useState<{ id: string; name: string; category: 'computer' | 'terminal' | 'tool'; runId: string } | null>(null)
+  const libraryQuery = useQuery({
+    queryKey: ['bot', 'library', botId],
+    queryFn: () => listBotLibrary(botId || undefined),
+    enabled: typeof window !== 'undefined' && !!user && !!botId,
+    retry: false,
+  })
+  useEffect(() => {
+    if (!user) return
+    void getBotApprovalMode().then((res) => setApprovalMode(res.mode)).catch(() => undefined)
+  }, [user])
+  useEffect(() => {
+    const active = (tasks || []).find((task) => task.status === 'processing' || task.status === 'queued')
+    if (!active || approvalMode === 'accept') return
+    let stop = () => {}
+    let cancelled = false
+    void getBotTask(active.id).then((detail) => {
+      const run = detail.runs.find((row) => row.status === 'running') || detail.runs[0]
+      if (cancelled || !run) return
+      stop = streamBotRun(run.id, (event) => {
+        if (event.type !== 'approval_required' || !event.approvalId) return
+        const category = event.category === 'computer' || event.category === 'terminal' || event.category === 'tool' ? event.category : 'tool'
+        setPendingApproval({ id: event.approvalId, name: event.name || 'tool', category, runId: run.id })
+      })
+    }).catch(() => undefined)
+    return () => { cancelled = true; stop() }
+  }, [approvalMode, tasks])
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] })
@@ -307,7 +346,7 @@ function AgentsPageInner() {
 
   /** Chat is the instruction channel: a message = a one-shot task on this thread. */
   const sendInstruction = useMutation({
-    mutationFn: async (text: string) => {
+    mutationFn: async (input: { text: string; attachments?: Array<{ name: string; path: string }> }) => {
       if (!botId || !activeBot) {
         throw new Error(botsError || (unknownBot ? 'No bot matches this link.' : 'Select a bot before sending.'))
       }
@@ -325,8 +364,10 @@ function AgentsPageInner() {
       }
       const computer = computerForSend(activeBot.cloudComputer, quota)
       const skillId = attachedSkill?.id
+      const text = input.text
       return enqueueBotTask({
-        goal: text,
+        goal: text || 'Look at the attached files.',
+        ...(input.attachments?.length ? { attachments: input.attachments } : {}),
         maxSteps: 16,
         allowedTools,
         ...(computer ? { computer } : {}),
@@ -435,7 +476,23 @@ function AgentsPageInner() {
           attachedSkill={attachedSkill}
           onAttachSkill={setAttachedSkill}
           onDismissSuggestions={() => setSuggestedSkills([])}
-          onSend={async (text) => { await sendInstruction.mutateAsync(text) }}
+          onSend={async (text, attachments) => { await sendInstruction.mutateAsync({ text, attachments }) }}
+          onReset={() => {
+            if (!botId) return
+            void resetBotConversation(botId).then(() => {
+              void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] })
+            })
+          }}
+          approvalMode={approvalMode}
+          pendingApproval={pendingApproval}
+          onApprove={(approvalId, approved) => {
+            if (!pendingApproval) return
+            void approveBotRun(pendingApproval.runId, approvalId, approved).finally(() => setPendingApproval(null))
+          }}
+          onApprovalMode={(mode) => {
+            setApprovalMode(mode)
+            void setBotApprovalMode(mode).catch(() => undefined)
+          }}
           onWatch={(id) => { void openComputer(id) }}
           onTrace={(id) => setTraceTaskId(id)}
           onCancel={(id) => { cancel.mutate(id) }}
@@ -486,7 +543,19 @@ function AgentsPageInner() {
           className={`flex flex-col min-h-0 overflow-hidden border-t lg:border-t-0 lg:border-l border-[var(--border-subtle)] bg-[var(--bg-sunken)] max-lg:max-h-[28dvh] w-full lg:w-[var(--computer-pane)] lg:shrink-0 ${paneResizing ? '' : 'lg:transition-[width] duration-200 ease-out'}`}
         >
           <div className="flex flex-col items-center pt-7 pb-4 px-4 shrink-0">
-            <div className="w-16 h-16 rounded-[22px] bg-[var(--accent-soft)] border border-[var(--accent-soft-border)] flex items-center justify-center">
+            <div
+              data-presence={rosterPresence({
+                status: tasks?.[0]?.status,
+                action: tasks?.[0]?.status === 'processing' ? tasks[0].goal : (tasks?.[0]?.result || tasks?.[0]?.goal),
+                needsHelp: teach.phase === 'waiting' || teach.phase === 'recording',
+              }).state}
+              title={rosterPresence({
+                status: tasks?.[0]?.status,
+                action: tasks?.[0]?.status === 'processing' ? tasks[0].goal : (tasks?.[0]?.result || tasks?.[0]?.goal),
+                needsHelp: teach.phase === 'waiting' || teach.phase === 'recording',
+              }).action}
+              className="w-16 h-16 rounded-[22px] bg-[var(--accent-soft)] border border-[var(--accent-soft-border)] flex items-center justify-center"
+            >
               <Bot size={30} className="text-[var(--accent-text)]" aria-hidden />
             </div>
             <div className="mt-3 text-ui-md font-semibold text-[var(--ink-primary)]">{botName || 'Bot'}</div>
@@ -549,17 +618,28 @@ function AgentsPageInner() {
                       : `${quota.remaining ?? 0} of ${quota.cap ?? 0} computer minutes left today.`}
                   </p>
                 )}
-                {botMemory && (
-                  <div>
-                    <h3 className="text-2xs uppercase tracking-widest text-[var(--ink-muted)] font-medium mb-1.5">Memory</h3>
-                    <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tint)] p-2.5">
-                      <p className="whitespace-pre-wrap text-2xs leading-relaxed text-[var(--ink-secondary)]">{botMemory}</p>
-                      <p className="mt-1.5 text-3xs text-[var(--ink-muted)]">Kept from earlier sessions; the bot updates it as it learns.</p>
-                    </div>
-                  </div>
+                {botId && (
+                  <MemoryPanel
+                    memories={memoryRows.length ? memoryRows : (botMemory ? [{ id: 'mirror', content: botMemory, visibility: 'private' as const, createdAt: '' }] : [])}
+                    onAdd={(input) => {
+                      void addBotMemory({ botId, content: input.content, visibility: input.visibility }).then(() => {
+                        void queryClient.invalidateQueries({ queryKey: ['bot', 'memory', botId] })
+                      })
+                    }}
+                    onDelete={(id) => {
+                      if (id === 'mirror') return
+                      void deleteBotMemory(id, botId).then(() => {
+                        void queryClient.invalidateQueries({ queryKey: ['bot', 'memory', botId] })
+                      })
+                    }}
+                  />
                 )}
+                <AccountAppsPanel apiUrl={API_URL} authHeaders={authHeaders} />
                 <div>
                   <h3 className="text-2xs uppercase tracking-widest text-[var(--ink-muted)] font-medium mb-2">Routines</h3>
+                  {routineRows?.some((routine) => routine.pausedReason === 'away') && (
+                    <p className="mb-2 text-ui-xs text-[var(--ink-secondary)]">Routines were paused after 7 days away. Resume the ones you still want.</p>
+                  )}
                   <RoutineComposer
                     skills={skills ?? []}
                     botId={botId}
@@ -591,7 +671,22 @@ function AgentsPageInner() {
             )}
 
             {tab === 'library' && (
-              skillsPhase === 'error' ? (
+              <LibraryBoard
+                skills={(
+              <>
+              <button type="button" onClick={() => setSkillEditor((open) => !open)} className="mb-2 text-ui-xs text-[var(--accent-text)]">Add skill</button>
+              {skillEditor && (
+                <SkillEditor
+                  onCancel={() => setSkillEditor(false)}
+                  onSave={(input) => {
+                    void createBotSkill({ ...input, ...(botId ? { botId } : {}) }).then(() => {
+                      setSkillEditor(false)
+                      void queryClient.invalidateQueries({ queryKey: ['bot', 'skills'] })
+                    })
+                  }}
+                />
+              )}
+              {skillsPhase === 'error' ? (
                 <p className="text-ui-xs text-[var(--danger)]" role="alert">
                   {skillsError}
                   <button type="button" onClick={() => { void skillsQuery.refetch() }} className="ml-2 text-[var(--accent-text)] hover:underline">Retry</button>
@@ -615,11 +710,33 @@ function AgentsPageInner() {
                       skill={skill}
                       attached={attachedSkill?.id === skill.id}
                       onAttach={() => setAttachedSkill(attachedSkill?.id === skill.id ? null : skill)}
+                      onRun={() => {
+                        if (!botId) return
+                        void enqueueBotTask({
+                          goal: skill.description || skill.name,
+                          skillId: skill.id,
+                          computer: { enabled: true },
+                          botId,
+                          ...(activeThreadId ? { conversationId: activeThreadId } : {}),
+                        }).then(() => { void queryClient.invalidateQueries({ queryKey: ['bot', 'tasks'] }) })
+                      }}
                       onDeleted={() => { void queryClient.invalidateQueries({ queryKey: ['bot', 'skills'] }) }}
                     />
                   ))}
                 </div>
-              )
+              )}
+              </>
+                )}
+                items={(libraryQuery.data?.items || []).map((item) => ({
+                  id: item.id,
+                  kind: item.kind as 'page' | 'file' | 'app',
+                  name: item.name,
+                  path: item.path,
+                  shareUrl: item.shareToken ? `/api/bot/share/${item.shareToken}` : null,
+                }))}
+                onShare={(id) => { void shareBotLibraryItem(id).then(() => libraryQuery.refetch()) }}
+                onRevoke={(id) => { void revokeBotLibraryItem(id).then(() => libraryQuery.refetch()) }}
+              />
             )}
           </div>
           )}
@@ -627,7 +744,14 @@ function AgentsPageInner() {
           {/* Skip embedded mount while expanded — avoids duplicate status probes. */}
           {tab === 'computer' && !computerExpanded && (
             <div className="flex-1 min-h-0 flex flex-col">
-              <AgentComputerTab botName={botName || 'Bot'} session={teach} unavailableMessage={desktopUnavailable} onExpand={() => setComputerExpanded(true)} onOpenFiles={() => setTab('files')} />
+              <AgentComputerTab
+                botName={botName || 'Bot'}
+                session={teach}
+                unavailableMessage={desktopUnavailable}
+                level={computerLevel({ chatOpen: true, needsHelp: teach.phase === 'waiting' || teach.phase === 'recording' })}
+                onExpand={() => setComputerExpanded(true)}
+                onOpenFiles={() => setTab('files')}
+              />
             </div>
           )}
 
@@ -644,6 +768,7 @@ function AgentsPageInner() {
         <AgentComputerTab
           botName={botName || 'Bot'}
           session={teach}
+          level="takeover"
           expanded
           runView={watch}
           unavailableMessage={desktopUnavailable}
@@ -795,14 +920,6 @@ function BotThreadRail({
 
 // ── Routine composer + card ──────────────────────────────────────────────────
 
-const SCHEDULE_OPTIONS = [
-  { value: '30m', label: 'every 30 min' },
-  { value: '2h', label: 'every 2 hours' },
-  { value: '6h', label: 'every 6 hours' },
-  { value: '1d', label: 'daily' },
-  { value: '7d', label: 'weekly' },
-]
-
 function RoutineComposer({
   skills, botId, conversationId, allowedTools, computer, onCreated,
 }: {
@@ -849,10 +966,8 @@ function RoutineComposer({
         placeholder="What should the bot do on a schedule? e.g. Check the deploy status and post a summary here."
         className="w-full resize-none rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-2.5 py-1.5 text-ui-xs text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] focus:border-[var(--accent-soft-border)] focus:outline-none"
       />
+      <RoutineComposerFields value={schedule} onChange={(next) => setSchedule(next.schedule)} />
       <div className="flex items-center gap-2">
-        <select value={schedule} onChange={(e) => setSchedule(e.target.value)} className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-2 py-1 text-2xs text-[var(--ink-secondary)] focus:outline-none">
-          {SCHEDULE_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-        </select>
         <select value={skillId} onChange={(e) => setSkillId(e.target.value)} className="flex-1 min-w-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-base)] px-2 py-1 text-2xs text-[var(--ink-secondary)] focus:outline-none">
           <option value="">No attached skill</option>
           {skills.map((skill) => <option key={skill.id} value={skill.id}>{skill.name}</option>)}
@@ -932,11 +1047,12 @@ function RoutineCard({ routine, skills, onChanged }: { routine: BotRoutine; skil
 }
 
 function SkillCard({
-  skill, attached, onAttach, onDeleted,
+  skill, attached, onAttach, onRun, onDeleted,
 }: {
   skill: BotSkillRef
   attached?: boolean
   onAttach?: () => void
+  onRun?: () => void
   onDeleted: () => void
 }) {
   const [deleteError, setDeleteError] = useState('')
@@ -964,6 +1080,9 @@ function SkillCard({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {onRun && (
+            <button type="button" onClick={onRun} className="rounded-lg px-2 py-1 text-2xs text-[var(--accent-text)] hover:bg-[var(--bg-hover-strong)]">Run</button>
+          )}
           {onAttach && (
             <button type="button" onClick={onAttach} className="rounded-lg px-2 py-1 text-2xs text-[var(--accent-text)] hover:bg-[var(--bg-hover-strong)]">
               {attached ? 'Attached' : 'Attach'}

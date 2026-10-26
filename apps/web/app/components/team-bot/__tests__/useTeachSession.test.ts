@@ -9,6 +9,7 @@ const setBotTakeover = vi.fn()
 const cancelBotTask = vi.fn()
 const streamBotRun = vi.fn()
 const appendBotTeachStep = vi.fn()
+const discardBotTeach = vi.fn()
 
 vi.mock('../../../lib/bot', () => ({
   enqueueBotTask: (...args: unknown[]) => enqueueBotTask(...args),
@@ -18,6 +19,7 @@ vi.mock('../../../lib/bot', () => ({
   cancelBotTask: (...args: unknown[]) => cancelBotTask(...args),
   streamBotRun: (...args: unknown[]) => streamBotRun(...args),
   appendBotTeachStep: (...args: unknown[]) => appendBotTeachStep(...args),
+  discardBotTeach: (...args: unknown[]) => discardBotTeach(...args),
 }))
 
 type TeachEvent = { type: string; skillId?: string; message?: string; name?: string }
@@ -40,6 +42,8 @@ describe('useTeachSession', () => {
     cancelBotTask.mockReset()
     streamBotRun.mockReset()
     appendBotTeachStep.mockReset()
+    discardBotTeach.mockReset()
+    discardBotTeach.mockResolvedValue({ ok: true, discarded: true })
     streamBotRun.mockReturnValue(() => {})
     getBotComputer.mockResolvedValue(null)
     setBotTakeover.mockResolvedValue({ takeoverRequested: true, interactiveUrl: null })
@@ -350,5 +354,51 @@ describe('useTeachSession', () => {
     expect(cancelBotTask).toHaveBeenCalledWith('task-slow')
     expect(result.current.phase).toBe('failed')
     expect(result.current.skillId).toBeNull()
+  })
+
+  it('sends the skill name and description, and discard is not cancel', async () => {
+    enqueueBotTask.mockResolvedValue({ task: { id: 'task-name' }, suggestedSkills: [] })
+    getBotTask.mockResolvedValue(runningTask('task-name', 'run-name'))
+    const { result } = renderHook(() => useTeachSession())
+    await act(async () => {
+      await result.current.start({ goal: 'Export invoices', name: 'Invoice export', description: 'Pull the CSV from billing' })
+    })
+    expect(enqueueBotTask).toHaveBeenCalledWith(expect.objectContaining({
+      goal: 'Export invoices',
+      kind: 'teach',
+      teach: { name: 'Invoice export', description: 'Pull the CSV from billing' },
+    }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    discardBotTeach.mockClear()
+    cancelBotTask.mockClear()
+    await act(async () => { await result.current.discard() })
+    expect(discardBotTeach).toHaveBeenCalledWith('run-name')
+    expect(cancelBotTask).toHaveBeenCalledWith('task-name')
+    expect(result.current.phase).toBe('idle')
+
+    enqueueBotTask.mockResolvedValue({ task: { id: 'task-cancel' }, suggestedSkills: [] })
+    getBotTask.mockResolvedValue(runningTask('task-cancel', 'run-cancel'))
+    await act(async () => { await result.current.start('Another demo') })
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    discardBotTeach.mockClear()
+    await act(async () => { await result.current.cancel() })
+    expect(discardBotTeach).not.toHaveBeenCalled()
+    expect(result.current.phase).toBe('failed')
+    expect(result.current.error).toMatch(/cancelled/i)
+  })
+
+  it('learns from a saved recording without taking over', async () => {
+    enqueueBotTask.mockResolvedValue({ task: { id: 'task-learn' }, suggestedSkills: [] })
+    getBotTask.mockResolvedValue(runningTask('task-learn', 'run-learn'))
+    const { result } = renderHook(() => useTeachSession())
+    await act(async () => {
+      await result.current.learn({ recordingId: 'rec-1', name: 'Invoice export', description: 'Pull the CSV from billing' })
+    })
+    expect(enqueueBotTask).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'teach',
+      teach: { recordingId: 'rec-1', name: 'Invoice export', description: 'Pull the CSV from billing' },
+    }))
+    expect(setBotTakeover).not.toHaveBeenCalled()
+    expect(result.current.phase).toBe('distilling')
   })
 })

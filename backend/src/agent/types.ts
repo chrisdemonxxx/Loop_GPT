@@ -79,6 +79,8 @@ export type AgentEvent =
   | { type: 'tool_result'; step: number; name: string; content: string; data?: any; isError?: boolean }
   | { type: 'artifact'; artifact: ArtifactRef }
   | { type: 'pending_approval'; tool_name: string; args: Record<string, any>; prompt: string; approvalId?: string }
+  | { type: 'approval_required'; approvalId?: string; name: string; args?: Record<string, any>; category?: 'computer' | 'terminal' | 'tool' | 'safe' }
+  | { type: 'teach_discarded' }
   | { type: 'final'; content: string; metadata?: any }
   | { type: 'error'; message: string }
   /** Teach flow: create_skill succeeded — frontend waits on this (not a timer). */
@@ -112,6 +114,8 @@ export interface RunAgentOptions {
      * applies; this only auto-approves the interactive gate.
      */
     autoApprove?: boolean
+    /** Per-run permission overrides. Bot approval modes use this so chat settings stay put. */
+    permissionOverrides?: Record<string, 'allow' | 'approval' | 'blocked'>
     /**
      * "Ask before each action" run mode: every tool call pauses for approval,
      * regardless of its configured permission level. 'blocked' still wins;
