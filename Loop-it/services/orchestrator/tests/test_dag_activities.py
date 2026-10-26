@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 import pytest
@@ -39,6 +41,66 @@ def _node_payload(lease: LeaseInfo | None = None) -> DagNodeRunInput:
         destructive=False,
         lease=lease or LeaseInfo("lease-a", "token-a", "sandbox-a", "later", ("read_file",)),
     )
+
+
+@pytest.mark.asyncio
+async def test_execute_dag_node_includes_workspace_dispatch_error_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length:
+                self.rfile.read(length)
+            if self.path.endswith("/v1/chat/completions"):
+                raw = json.dumps(
+                    {
+                        "model": "fake",
+                        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "credits": 0},
+                        "choices": [
+                            {
+                                "finish_reason": "stop",
+                                "message": {
+                                    "content": json.dumps(
+                                        {"tool": "read_file", "args": {"path": "src/App.tsx"}}
+                                    )
+                                },
+                            }
+                        ],
+                    }
+                ).encode()
+                status = 200
+            else:
+                raw = json.dumps(
+                    {"detail": "projects_tenant_id_fkey: tenant row is missing"}
+                ).encode()
+                status = 500
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, format: str, *args: object) -> None:
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    monkeypatch.setenv("LOOPIT_ROUTER_URL", base)
+    monkeypatch.setenv("LOOPIT_WORKSPACE_DISPATCH_URL", f"{base}/dispatch")
+    try:
+        with pytest.raises(ApplicationError) as exc:
+            execute_dag_node(_node_payload())
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1.0)
+
+    message = str(exc.value)
+    assert "HTTP 500" in message
+    assert "projects_tenant_id_fkey: tenant row is missing" in message
 
 
 @pytest.mark.asyncio

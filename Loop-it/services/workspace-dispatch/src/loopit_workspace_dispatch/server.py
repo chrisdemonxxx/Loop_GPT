@@ -587,17 +587,23 @@ _ROOT_SENTINELS = frozenset({"", "root"})
 
 
 def _ensure_project_row(store_dsn: str, project_id: str, tenant_id: str, run_id: str) -> None:
-    """Ensure projects/runs rows exist so checkpoint FKs resolve.
+    """Ensure tenant/project/run rows exist so checkpoint FKs resolve.
 
     The API persists run/project rows at start. This remains an idempotent
     fallback for races or older in-flight workflows whose catalog insert has
-    not committed yet. Genesis checkpoints violate
-    ``checkpoints_project_id_fkey`` / ``checkpoints_created_by_run_id_fkey``
-    without these rows.
+    not committed yet. ``projects.tenant_id`` references ``tenants``, and
+    genesis checkpoints violate ``checkpoints_project_id_fkey`` /
+    ``checkpoints_created_by_run_id_fkey`` without these rows. A missing tenant
+    is not one of the caught checkpoint errors, so it surfaces as HTTP 500.
     """
     if not store_dsn:
         return
     with connect(store_dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO tenants (tenant_id, name) VALUES (%s, %s) "
+            "ON CONFLICT (tenant_id) DO NOTHING",
+            (tenant_id, tenant_id),
+        )
         cur.execute(
             "INSERT INTO projects (project_id, tenant_id, name, stack) "
             "VALUES (%s, %s, %s, %s) ON CONFLICT (project_id) DO NOTHING",

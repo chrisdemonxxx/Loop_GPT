@@ -49,6 +49,7 @@ def _record(
     allowed_tools: tuple[str, ...] = ("read_file", "search_code", "apply_patch", "run_shell"),
     status: str = "active",
     expires_at: datetime | None = None,
+    base_checkpoint_id: str = "ckpt-1",
 ) -> LeaseRecord:
     provider = InMemoryProvider()
     sandbox = provider.create(ResourceCaps())
@@ -59,7 +60,7 @@ def _record(
         run_id="run-1",
         project_id="project-1",
         sandbox_id=sandbox.sandbox_id,
-        base_checkpoint_id="ckpt-1",
+        base_checkpoint_id=base_checkpoint_id,
         expires_at=expires_at or datetime.now(UTC) + timedelta(minutes=10),
         caps={
             "cpu_millicores": 2000,
@@ -81,6 +82,8 @@ def _client(
     audit: InMemoryAuditSink | None = None,
     checks: tuple[Check, ...] | None = None,
     checkpoints: Any | None = None,
+    store_dsn: str = "",
+    raise_server_exceptions: bool = True,
 ) -> tuple[TestClient, str, WorkspaceFactory, InMemoryAuditSink]:
     from loopit_checkpoint import ContentAddressedCheckpointStore, InMemoryBlobStore
     from loopit_scheduler.server import ServerSettings, _token
@@ -93,6 +96,7 @@ def _client(
         lease_token_secret=secret_material.lease_secret,
         service_token=secret_material.service_token,
         sandbox_signing_key=secret_material.sandbox_key,
+        store_dsn=store_dsn,
     )
     scheduler_settings = ServerSettings(
         lease_token_secret=secret_material.lease_secret,
@@ -121,7 +125,12 @@ def _client(
         verification=VerificationChecks(checks),
         checkpoints=checkpoint_store,
     )
-    return TestClient(app), _token(record, scheduler_settings), factory, sink
+    return (
+        TestClient(app, raise_server_exceptions=raise_server_exceptions),
+        _token(record, scheduler_settings),
+        factory,
+        sink,
+    )
 
 
 def _headers(token: str) -> dict[str, str]:
@@ -693,6 +702,131 @@ def test_blob_store_failure_is_not_reported_as_preserved(
         record.project_id, tenant_id=record.tenant_id
     )
     assert current.checkpoint_id == record.base_checkpoint_id
+
+
+class _SchemaDb:
+    def __init__(self) -> None:
+        self.tenants: set[str] = set()
+        self.projects: set[str] = set()
+        self.runs: set[str] = set()
+
+
+class _ForeignKeyViolation(Exception):
+    """Stand-in for the control-plane foreign keys in 001_initial_control_plane.sql."""
+
+
+class _SchemaCursor:
+    def __init__(self, db: _SchemaDb) -> None:
+        self._db = db
+
+    def __enter__(self) -> _SchemaCursor:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def execute(self, sql: str, params: tuple[object, ...] | None = None) -> None:
+        statement = " ".join(sql.split()).lower()
+        values = tuple(params or ())
+        if statement.startswith("insert into tenants"):
+            self._db.tenants.add(str(values[0]))
+            return
+        if statement.startswith("insert into projects"):
+            tenant_id = str(values[1])
+            if tenant_id not in self._db.tenants:
+                raise _ForeignKeyViolation(
+                    'insert or update on table "projects" violates foreign key '
+                    'constraint "projects_tenant_id_fkey"'
+                )
+            self._db.projects.add(str(values[0]))
+            return
+        if statement.startswith("insert into runs"):
+            tenant_id = str(values[1])
+            project_id = str(values[2])
+            if tenant_id not in self._db.tenants or project_id not in self._db.projects:
+                raise _ForeignKeyViolation(
+                    'insert or update on table "runs" violates foreign key constraint'
+                )
+            self._db.runs.add(str(values[0]))
+            return
+        raise AssertionError(f"unexpected SQL: {statement}")
+
+
+class _SchemaConnection:
+    def __init__(self, db: _SchemaDb) -> None:
+        self._db = db
+
+    def __enter__(self) -> _SchemaConnection:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def cursor(self) -> _SchemaCursor:
+        return _SchemaCursor(self._db)
+
+
+class _HiddenCurrentCheckpoints:
+    """current() stays empty until genesis explicitly advances the pointer."""
+
+    def __init__(self) -> None:
+        from loopit_checkpoint import ContentAddressedCheckpointStore, InMemoryBlobStore
+        from loopit_store import InMemoryCheckpointStore
+
+        self._inner = ContentAddressedCheckpointStore(
+            InMemoryCheckpointStore(), InMemoryBlobStore()
+        )
+        self.visible = False
+
+    def current(self, project_id: str, *, tenant_id: str) -> Any:
+        if not self.visible:
+            return None
+        return self._inner.current(project_id, tenant_id=tenant_id)
+
+    def set_current(self, project_id: str, *, tenant_id: str, checkpoint_id: str) -> None:
+        self.visible = True
+        self._inner.set_current(project_id, tenant_id=tenant_id, checkpoint_id=checkpoint_id)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def test_root_lineage_seeds_tenant_before_project(
+    secret_material: SecretMaterial, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from loopit_workspace_dispatch import server
+
+    db = _SchemaDb()
+
+    def connect(dsn: str) -> _SchemaConnection:
+        assert dsn
+        return _SchemaConnection(db)
+
+    monkeypatch.setattr(server, "connect", connect)
+    record = _record(allowed_tools=("run_shell",), base_checkpoint_id="root")
+    client, token, _, _ = _client(
+        record,
+        secret_material,
+        checkpoints=_HiddenCurrentCheckpoints(),
+        store_dsn="postgresql://db.internal/loopit",
+        raise_server_exceptions=False,
+    )
+
+    response = client.post(
+        "/dispatch",
+        headers=_headers(token),
+        json={
+            "lease_id": record.lease_id,
+            "tool": "run_shell",
+            "args": {"command": "npm run build"},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["checkpoint_created"] is True
+    assert record.tenant_id in db.tenants
+    assert record.project_id in db.projects
+    assert record.run_id in db.runs
 
 
 def test_production_construction_requires_durable_checkpoint_blob_store(
