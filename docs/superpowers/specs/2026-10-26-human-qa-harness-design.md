@@ -20,13 +20,17 @@ fixes, and re-verify. Nothing counts as done without evidence.
 | On confirmed bug | Fix, ship to production automatically, re-verify; no human review |
 | Database migrations | Auto-ship only additive, backward-compatible migrations; destructive ones wait for the owner |
 | Approach | Custom project skills over trusted drivers; community QA agents used as pattern references only |
+| iOS | EAS Build simulator builds + Limrun cloud simulator (free trial first; owner approves the $20/month Entry plan before it is needed) |
+| Taste judgements | Measurable checks + multi-model judge panel, calibrated to the owner with a ~40-screen golden set and a "your call" queue |
 
 ## Drivers
 
 | Surface | Primary driver | Fallback |
 |---|---|---|
 | `apps/web`, admin | Playwright plugin | `agent-browser`, Cursor IDE browser |
-| `mobile` (Expo) | Maestro MCP on a local Android emulator | — (iOS is not testable on Windows) |
+| `mobile` (Expo), Android | Maestro MCP on a local Android emulator | Limrun Android emulator |
+| `mobile` (Expo), iOS | Limrun MCP cloud iOS simulator | EAS Workflows Maestro iOS job (scripted flows only) |
+| WebView and web content on Safari's engine | Playwright WebKit, local | Safari inside the Limrun simulator |
 | `apps/desktop` (Electron) | Cursor computer use | Electron Stagewright MCP (gated, low trust) |
 | Browser extensions | Playwright with the unpacked extension loaded | Cursor computer use |
 | E2B desktop and sandbox views | Cursor IDE browser through noVNC | Cursor computer use |
@@ -133,26 +137,88 @@ runs first on every later sweep.
 One subagent per inventory area, in parallel. Web areas may run as Cursor cloud agents.
 Mobile and desktop areas run locally because they need the emulator and computer use.
 
+### 9. iOS pipeline
+
+- Add an `ios-simulator` profile to `mobile/eas.json` (`"ios": { "simulator": true }`).
+  Simulator builds are unsigned, so no Apple Developer membership is needed. Built by
+  EAS Build from Windows (free tier: 15 iOS builds per month).
+- Interactive sweeps: the Limrun MCP creates a cloud iOS simulator, installs the build,
+  and exposes screenshot + element tree, actions, logs, and a live stream. The sweep
+  applies the same angle set as Android, plus iOS-specific angles: swipe-back gesture,
+  safe areas and the notch, Dynamic Type sizes, dark mode, VoiceOver labels, and
+  app backgrounding and resume.
+- Spend control: the guardrail caps Limrun minutes per run. When trial credits run low,
+  the harness stops and asks the owner to approve the Entry plan; it never enables
+  overage itself.
+- Regression: verified iOS flows run as Maestro YAML in an EAS Workflows Maestro job
+  (alpha, free tier 60 CI minutes per month).
+- Not covered by simulators: camera hardware, push delivery, and real touch latency.
+  These rows are marked `blocked: needs-device` in the ledger rather than `verified`.
+
+### 10. Taste judgement system
+
+Three layers, applied in order. A layer that produces a confident answer ends the check.
+
+1. Measurable proxies (deterministic):
+   - Perceived speed: click-to-visible-feedback time per element, graded at 0.1 s,
+     1 s, and 10 s; Core Web Vitals (LCP, INP, CLS) and Lighthouse for web; Flashlight
+     score, FPS, and JS-thread CPU for Android; dropped frames in performance traces.
+   - Brand consistency: computed colours, spacing, typography, and radius checked
+     against the design tokens in `packages/ui`; Playwright screenshot baselines for drift.
+   - Design match: screens compared with their Figma frames through the Figma plugin,
+     where a frame exists.
+2. Judge panel: at least three different models from those available in Cursor.
+   - Each scores named criteria (Nielsen's 10 heuristics, visual hierarchy, alignment,
+     readability, copy clarity), not an overall impression.
+   - Pairwise comparisons against the previous release and against comparable
+     production apps found through the Mobbin plugin.
+   - Each verdict is repeated for three personas: first-time user, power user, low-vision user.
+3. Owner calibration:
+   - `qa/taste/golden-set/`: ~40 representative screens the owner rates once,
+     per criterion and pairwise.
+   - Each judge's agreement with the owner is measured per criterion (Cohen's kappa).
+     A judge may decide a criterion alone only at kappa ≥ 0.6. Otherwise, panel
+     disagreement or a low-agreement criterion sends the item to `qa/taste/queue.md`.
+   - Each owner answer from the queue is appended to `qa/taste/examples/` as a few-shot
+     example and re-scored into agreement, so the queue shrinks as calibration improves.
+
+Taste findings follow the same skeptic, ledger, and fix-ship rules as functional findings.
+
+### 11. Stale web shell fix (app change)
+
+Open tabs can keep running the previous PWA shell after a deploy. Fix: expose the
+deployed build version, have the client poll it and react to service-worker updates,
+and prompt users to reload (or reload on next navigation). The fix ships through the
+normal fix-ship loop. Afterwards, post-deploy checks also run in a pre-opened tab to
+confirm that it picks up the new version.
+
 ## Additional tooling (adds to the toolkit spec)
 
-| Tool | Install | Trust |
-|---|---|---|
-| Maestro CLI + MCP (`maestro mcp`) | Maestro Windows installer; Java 21 is present | high (~16k stars) |
-| Android emulator | Android Studio command-line tools | high |
-| Electron Stagewright MCP | npm, gated by the low-trust read | low (12 stars) |
-| `agent-browser` with its `dogfood` skill | already installed | high (~45k stars) |
+| Tool | Install | Trust | Cost |
+|---|---|---|---|
+| Maestro CLI + MCP (`maestro mcp`) | Maestro Windows installer; Java 21 is present | high (~16k stars) | free |
+| Android emulator | Android Studio command-line tools | high | free |
+| EAS CLI | `npm i -g eas-cli`, Expo account sign-in | high (official) | free tier |
+| Limrun plugin + MCP | `git clone https://github.com/limrun-inc/skills` into `~/.cursor/plugins/local/limrun`, gated by the low-trust read | medium (vendor) | trial, then $20/month on approval |
+| Flashlight | Windows installer from flashlight.dev, downloaded and read before running (not piped into `iex`) | medium | free |
+| Lighthouse CI | npm dev dependency in `apps/web` | high | free |
+| Electron Stagewright MCP | npm, gated by the low-trust read | low (12 stars) | free |
+| `agent-browser` with its `dogfood` skill | already installed | high (~45k stars) | free |
 
-## Limits
+## Remaining limits
 
-- Agent judgement covers broken, confusing, inconsistent, and inaccessible behaviour well.
-  Taste-level calls (brand feel, perceived speed) are approximations.
-- iOS is out of scope on this Windows machine.
+- Camera hardware, push delivery, and real touch latency on iOS need a physical device
+  and are tracked as `blocked: needs-device`.
+- Taste calibration reflects the owner's taste, not a broad user panel.
 - A full sweep is expensive; areas are re-swept when their code changes.
 
 ## Definition of done
 
 - Inventory exists for every surface, with no `unexplained` elements left unresolved.
-- Every applicable ledger row is `verified` with evidence.
+- Every applicable ledger row is `verified` with evidence, except rows marked
+  `blocked: needs-device`, which are listed for physical-device testing.
 - Every confirmed bug has a shipped fix, a regression test, and a passing post-deploy re-check,
   or is listed as waiting on the owner (destructive migration).
-- Verified flows are codified and pass in CI.
+- Verified flows are codified and pass in CI, including the EAS Maestro iOS job.
+- Every taste check passed through a calibrated layer, or was answered by the owner.
+- The taste queue is empty, and every judge used alone meets the agreement threshold.
