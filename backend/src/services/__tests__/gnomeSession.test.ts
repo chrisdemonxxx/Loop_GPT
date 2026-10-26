@@ -5,9 +5,15 @@ function fakeSandbox(opts: {
   gnomePresent?: boolean
   shellAfter?: number
   marker?: boolean
+  /** gnome-shell stays down until one gnome-session launch that does not kill XFCE. */
+  shellAfterGnomeStart?: boolean
 }) {
   let shellChecks = 0
+  let gnomeStarted = false
   const run = vi.fn(async (cmd: string) => {
+    if (cmd.includes('gnome-session --session=gnome') && !cmd.includes('pkill') && !cmd.includes('xfce')) {
+      gnomeStarted = true
+    }
     if (cmd.includes('test -f /tmp/.loop-gnome-session')) {
       return { exitCode: opts.marker ? 0 : 1 }
     }
@@ -16,6 +22,9 @@ function fakeSandbox(opts: {
     }
     if (cmd.includes('pgrep -x gnome-shell')) {
       shellChecks += 1
+      if (opts.shellAfterGnomeStart) {
+        return { exitCode: gnomeStarted ? 0 : 1 }
+      }
       const readyAfter = opts.shellAfter ?? 1
       return { exitCode: shellChecks >= readyAfter ? 0 : 1 }
     }
@@ -69,6 +78,30 @@ describe('gnomeSession', () => {
     const cmds = sandbox.commands.run.mock.calls.map((call) => String(call[0]))
     expect(cmds.some((cmd) => cmd.includes('gnome-session') || cmd.includes('pkill'))).toBe(false)
     vi.useRealTimers()
+  })
+
+  it('starts one GNOME session when a resumed snapshot has no running shell', async () => {
+    vi.useFakeTimers()
+    try {
+      const sandbox = fakeSandbox({ gnomePresent: true, shellAfterGnomeStart: true })
+      let failure: unknown
+      const pending = awaitGnomeDesktop(sandbox as any, { resumeSnapshot: true }).catch((error) => {
+        failure = error
+      })
+      await vi.advanceTimersByTimeAsync(25_000)
+      await pending
+      expect(failure, failure instanceof Error ? failure.message : String(failure)).toBeUndefined()
+      const cmds = sandbox.commands.run.mock.calls.map((call) => String(call[0]))
+      const starts = cmds.filter(
+        (cmd) => cmd.includes('gnome-session --session=gnome') || cmd.includes('gnome-shell --x11'),
+      )
+      expect(starts).toHaveLength(1)
+      expect(starts[0]).toContain('/usr/bin/gnome-session')
+      expect(starts[0]).not.toMatch(/pkill|xfce/)
+      expect(cmds.some((cmd) => cmd.includes('pkill') || cmd.includes('xfce'))).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('seedDesktopLaunchers writes Chrome + Terminal desktop entries', async () => {

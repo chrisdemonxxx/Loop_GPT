@@ -48,6 +48,30 @@ async function gnomeShellRunning(sandbox: Sandbox): Promise<boolean> {
   }
 }
 
+/** One GNOME session on an existing display. Does not kill XFCE or replace a running shell. */
+const START_GNOME_SESSION =
+  'cd /home/user && sudo -u user DISPLAY=:0 XDG_SESSION_TYPE=x11 XDG_CURRENT_DESKTOP=GNOME LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe /usr/bin/dbus-run-session -- /usr/bin/gnome-session --session=gnome > /tmp/gnome-session.log 2>&1 &'
+
+async function startGnomeSession(sandbox: Sandbox): Promise<void> {
+  try {
+    const handle = await sandbox.commands.run(START_GNOME_SESSION, { background: true, timeoutMs: 0 })
+    await handle.disconnect?.().catch(() => undefined)
+  } catch {
+    /* the following wait reports failure */
+  }
+}
+
+async function waitForGnomeShell(sandbox: Sandbox, attempts: number, started: string): Promise<boolean> {
+  for (let i = 0; i < attempts; i += 1) {
+    if (await gnomeShellRunning(sandbox)) {
+      console.info(started)
+      return true
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+  }
+  return false
+}
+
 /**
  * Block until GNOME owns DISPLAY=:0, or throw.
  * Callers must not return Computer / stream URLs until this resolves.
@@ -56,18 +80,24 @@ export async function awaitGnomeDesktop(
   sandbox: Sandbox,
   options?: { resumeSnapshot?: boolean },
 ): Promise<void> {
-  // A baseline snapshot was taken after GNOME was already up. Killing XFCE
-  // and starting a second session on that disk is what left Reset asleep.
+  // Snapshot resume keeps the disk and drops running processes. If gnome-shell
+  // is already up, leave it. Otherwise start one GNOME session on that disk.
+  // Do not kill XFCE or start a second session.
   if (options?.resumeSnapshot) {
-    for (let i = 0; i < 20; i += 1) {
-      if (await gnomeShellRunning(sandbox)) {
-        console.info('[gnome-session] resumed snapshot already has GNOME')
-        return
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+    if (await waitForGnomeShell(sandbox, 20, '[gnome-session] resumed snapshot already has GNOME')) {
+      return
+    }
+    if (!(await gnomeBinariesPresent(sandbox))) {
+      throw new Error(
+        'GNOME desktop is not installed in this sandbox template. Set E2B_DESKTOP_TEMPLATE to the loop-gnome-desktop image (see infra/e2b-gnome-desktop).',
+      )
+    }
+    await startGnomeSession(sandbox)
+    if (await waitForGnomeShell(sandbox, 20, '[gnome-session] started GNOME on the resumed desktop')) {
+      return
     }
     throw new Error(
-      'The saved desktop did not resume. Reset left that snapshot alone instead of starting a second GNOME session.',
+      'GNOME session failed to start on the resumed desktop. Check /tmp/gnome-session.log in the sandbox.',
     )
   }
 
@@ -99,7 +129,7 @@ export async function awaitGnomeDesktop(
   const swap = [
     'pkill -f xfce4-session 2>/dev/null; pkill -x xfwm4 2>/dev/null; pkill -x xfdesktop 2>/dev/null; true',
     'sleep 1',
-    'cd /home/user && sudo -u user DISPLAY=:0 XDG_SESSION_TYPE=x11 XDG_CURRENT_DESKTOP=GNOME LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe /usr/bin/dbus-run-session -- /usr/bin/gnome-session --session=gnome > /tmp/gnome-session.log 2>&1 &',
+    START_GNOME_SESSION,
     `touch ${marker}`,
   ].join('; ')
 
