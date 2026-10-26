@@ -71,7 +71,10 @@ export function conversationPdfBytes(title: string, messages: Array<{ role: stri
 
 export function downloadConversationPdf(title: string, messages: Array<{ role: string; content?: string | null }>) {
   const filename = `${(title || 'conversation').replace(/[^a-z0-9]/gi, '-') || 'conversation'}.pdf`
-  const blob = new Blob([conversationPdfBytes(title, messages)], { type: 'application/pdf' })
+  const bytes = conversationPdfBytes(title, messages)
+  const copy = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(copy).set(bytes)
+  const blob = new Blob([copy], { type: 'application/pdf' })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
