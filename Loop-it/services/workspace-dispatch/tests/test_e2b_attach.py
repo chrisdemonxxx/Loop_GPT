@@ -151,3 +151,35 @@ def test_unknown_provider_still_refuses() -> None:
         )
     )
     assert isinstance(factory, RefusingWorkspaceFactory)
+
+
+def test_sdk_e2b_session_pipes_stdin_via_base64_without_sdk_stdin_flag() -> None:
+    from loopit_workspace_dispatch.e2b_runtime import SdkE2BSession
+
+    calls: list[tuple[str, dict[str, str] | None, dict[str, object]]] = []
+
+    class FakeCommands:
+        def run(self, cmd: str, envs: dict[str, str] | None = None, **kwargs: object) -> object:
+            calls.append((cmd, envs, kwargs))
+
+            class Res:
+                stdout = '{"ok":true}\n'
+
+            return Res()
+
+    class FakeHandle:
+        commands = FakeCommands()
+
+    session = SdkE2BSession(FakeHandle(), sandbox_id="sbx_123")
+    out = session.run(
+        "python -m loopit_agent_runtime --workspace /workspace",
+        env={"LOOPIT_LEASE_ID": "lease_1"},
+        stdin='{"tool":"read_file"}\n',
+    )
+    assert out == '{"ok":true}\n'
+    assert len(calls) == 1
+    cmd, envs, kwargs = calls[0]
+    assert "stdin" not in kwargs
+    assert envs == {"LOOPIT_LEASE_ID": "lease_1"}
+    assert "base64 -d | python -m loopit_agent_runtime --workspace /workspace" in cmd
+

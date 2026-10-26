@@ -186,7 +186,11 @@ class SdkE2BSession:
         commands = getattr(self._handle, "commands", None)
         if commands is None or not hasattr(commands, "run"):
             raise WorkspaceUnavailable("E2B sandbox handle has no commands.run")
-        result = commands.run(command, envs=dict(env) or None, stdin=stdin or None)
+        run_cmd = command
+        if stdin:
+            encoded = base64.b64encode(stdin.encode("utf-8")).decode("ascii")
+            run_cmd = f"printf '%s' {shlex.quote(encoded)} | base64 -d | {command}"
+        result = commands.run(run_cmd, envs=dict(env) or None)
         stdout = getattr(result, "stdout", None)
         if stdout is None:
             stdout = str(result)
